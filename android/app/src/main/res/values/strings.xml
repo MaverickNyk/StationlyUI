@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Stationly</string>
+    <string name="app_widget_name">Stationly Departures</string>
+    <string name="app_widget_description">Real-time departure information</string>
+    <string name="widget_name">Stationly Departures Widget</string>
+    
+    <!-- UI Strings -->
+    <string name="select_station">Select Station</string>
+    <string name="add_station">Add Station</string>
+    <string name="refresh">Refresh</string>
+    <string name="delete">Delete</string>
+    <string name="no_stations">No Stations Selected</string>
+    <string name="no_stations_desc">Add your first station to see real-time departure information</string>
+    <string name="waiting_for_data">Waiting for real-time data...</string>
+    <string name="no_trains_found">No trains found</string>
+    <string name="last_updated">Last Updated: %s</string>
+    
+    <!-- Widget Strings -->
+    <string name="widget_line_name">MindTheTime</string>
+    <string name="widget_platform">Platform</string>
+    <string name="widget_destination">Destination</string>
+    <string name="widget_eta">ETA</string>
+    <string name="widget_all_departed">All trains have departed!</string>
+    <string name="widget_searching">Searching for Platform 9¾...</string>
+    <string name="widget_mind_the_gap">Mind the Gap!</string>
+    
+    <!-- Selection Flow Strings -->
+    <string name="step_mode">1. Select Mode</string>
+    <string name="step_line">2. Select Line</string>
+    <string name="step_station">3. Select Station</string>
+    <string name="step_direction">4. Select Direction</string>
+    
+    <!-- Error Messages -->
+    <string name="error_network">Network error. Please check your connection.</string>
+    <string name="error_api">API error. Please try again.</string>
+    <string name="error_unknown">Something went wrong. Please try again.</string>
+</resources>

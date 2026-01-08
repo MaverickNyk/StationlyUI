@@ -1,0 +1,54 @@
+[
+    {
+        "merged": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-debug-79:/drawable_departure_board_unlit_background.xml.flat",
+        "source": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-main-81:/drawable/departure_board_unlit_background.xml"
+    },
+    {
+        "merged": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-debug-79:/drawable_departure_board_active_row_background.xml.flat",
+        "source": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-main-81:/drawable/departure_board_active_row_background.xml"
+    },
+    {
+        "merged": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-debug-79:/layout_widget_departure_row.xml.flat",
+        "source": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-main-81:/layout/widget_departure_row.xml"
+    },
+    {
+        "merged": "com.stationly.mobile.app-debug-79:/layout_widget_departure_board.xml.flat",
+        "source": "com.stationly.mobile.app-main-81:/layout/widget_departure_board.xml"
+    },
+    {
+        "merged": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-debug-79:/drawable_ic_launcher_foreground.xml.flat",
+        "source": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-main-81:/drawable/ic_launcher_foreground.xml"
+    },
+    {
+        "merged": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-debug-79:/xml_backup_rules.xml.flat",
+        "source": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-main-81:/xml/backup_rules.xml"
+    },
+    {
+        "merged": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-debug-79:/layout_widget_platform_header.xml.flat",
+        "source": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-main-81:/layout/widget_platform_header.xml"
+    },
+    {
+        "merged": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-debug-79:/layout_widget_departure_board.xml.flat",
+        "source": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-main-81:/layout/widget_departure_board.xml"
+    },
+    {
+        "merged": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-debug-79:/drawable_ic_settings.xml.flat",
+        "source": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-main-81:/drawable/ic_settings.xml"
+    },
+    {
+        "merged": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-debug-79:/xml_data_extraction_rules.xml.flat",
+        "source": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-main-81:/xml/data_extraction_rules.xml"
+    },
+    {
+        "merged": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-debug-79:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-main-81:/mipmap-anydpi-v26/ic_launcher.xml"
+    },
+    {
+        "merged": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-debug-79:/xml_departure_widget_info.xml.flat",
+        "source": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-main-81:/xml/departure_widget_info.xml"
+    },
+    {
+        "merged": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-debug-79:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "/Users/nikhilkumar/.gradle/daemon/8.10.2/com.stationly.mobile.app-main-81:/mipmap-anydpi-v26/ic_launcher_round.xml"
+    }
+]
