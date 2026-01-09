@@ -108,19 +108,31 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         loadLines(mode)
     }
     
+    private var cachedLines: List<com.stationly.core.model.LineInfo> = emptyList()
+    
     private fun loadLines(mode: String) {
         viewModelScope.launch {
             try {
                 _uiState.value = _uiState.value.copy(isLoading = true)
                 
                 val lines = getLinesUseCase(mode)
+                cachedLines = lines
                 val lineNames = lines.map { it.name }
-                _uiState.value = _uiState.value.copy(
-                    availableLines = lineNames,
-                    isLoading = false
-                )
                 
                 Log.d("SelectionViewModel", "Loaded ${lineNames.size} lines for mode $mode")
+
+                if (lines.size == 1) {
+                    // Auto-select the only line
+                    _uiState.value = _uiState.value.copy(
+                        availableLines = lineNames
+                    )
+                    onLineSelected(lines[0].name)
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        availableLines = lineNames,
+                        isLoading = false
+                    )
+                }
             } catch (e: Exception) {
                 Log.e("SelectionViewModel", "Error loading lines", e)
                 _uiState.value = _uiState.value.copy(
@@ -131,65 +143,37 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
     
-    fun onLineSelected(line: String) {
+    fun onLineSelected(lineName: String) {
+        val line = cachedLines.find { it.name == lineName }
+        val lineId = line?.id ?: lineName
+        
         _uiState.value = _uiState.value.copy(
-            selectedLine = line,
+            selectedLine = lineName, // Keep name for UI display
+            // We should store ID internally if needed, but uiState doesn't have a separate field.
+            // We'll look it up again or rely on cachedMaps. 
+            // Better: use the find result for next step.
             selectedStation = null,
             selectedDirection = null,
             availableStations = emptyList(),
             availableDirections = emptyList()
         )
         
-        loadStations(line)
+        loadDirections(lineId)
     }
-    
-    private fun loadStations(line: String) {
+
+    private fun loadDirections(lineId: String) {
         viewModelScope.launch {
             try {
                 _uiState.value = _uiState.value.copy(isLoading = true)
                 
-                val stations = searchStationsUseCase(line)
-                val stationNames = stations.map { it.commonName }
-                _uiState.value = _uiState.value.copy(
-                    availableStations = stationNames,
-                    isLoading = false
-                )
-                
-                Log.d("SelectionViewModel", "Loaded ${stationNames.size} stations for line $line")
-            } catch (e: Exception) {
-                Log.e("SelectionViewModel", "Error loading stations", e)
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    error = "Failed to load stations: ${e.message}"
-                )
-            }
-        }
-    }
-    
-    fun onStationSelected(station: String, stationName: String) {
-        _uiState.value = _uiState.value.copy(
-            selectedStation = station,
-            selectedStationName = stationName,
-            selectedDirection = null,
-            availableDirections = emptyList()
-        )
-        
-        loadDirections(station)
-    }
-    
-    private fun loadDirections(station: String) {
-        viewModelScope.launch {
-            try {
-                _uiState.value = _uiState.value.copy(isLoading = true)
-                
-                val routeResponse = getRouteUseCase(station)
+                val routeResponse = getRouteUseCase(lineId)
                 val directions = routeResponse.directions.map { it.direction }
                 _uiState.value = _uiState.value.copy(
                     availableDirections = directions,
                     isLoading = false
                 )
                 
-                Log.d("SelectionViewModel", "Loaded ${directions.size} directions for station $station")
+                Log.d("SelectionViewModel", "Loaded ${directions.size} directions for line $lineId")
             } catch (e: Exception) {
                 Log.e("SelectionViewModel", "Error loading directions", e)
                 _uiState.value = _uiState.value.copy(
@@ -201,7 +185,59 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
     }
     
     fun onDirectionSelected(direction: String) {
-        _uiState.value = _uiState.value.copy(selectedDirection = direction)
+        _uiState.value = _uiState.value.copy(
+            selectedDirection = direction,
+            selectedStation = null,
+            availableStations = emptyList()
+        )
+        
+        val lineName = _uiState.value.selectedLine
+        val lineId = cachedLines.find { it.name == lineName }?.id
+        
+        if (lineId != null) {
+            loadStations(lineId, direction)
+        } else {
+             _uiState.value = _uiState.value.copy(error = "Line ID not found for $lineName")
+        }
+    }
+
+    private fun loadStations(lineId: String, direction: String) {
+        viewModelScope.launch {
+            try {
+                _uiState.value = _uiState.value.copy(isLoading = true)
+                
+                // Construct key as requested
+                val searchKey = "${lineId}_$direction"
+                val stations = searchStationsUseCase(searchKey)
+                cachedStations = stations
+                
+                // Format for UI: "Name (ID)"
+                val stationStrings = stations.map { "${it.commonName} (${it.naptanId})" }
+                
+                _uiState.value = _uiState.value.copy(
+                    availableStations = stationStrings,
+                    isLoading = false
+                )
+                
+                Log.d("SelectionViewModel", "Loaded ${stationStrings.size} stations for $searchKey")
+            } catch (e: Exception) {
+                Log.e("SelectionViewModel", "Error loading stations", e)
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    error = "Failed to load stations: ${e.message}"
+                )
+            }
+        }
+    }
+
+    private var cachedStations: List<com.stationly.core.model.StationBrief> = emptyList()
+    
+    // onStationSelected remains the same as in previous modify but good to preserve
+    fun onStationSelected(stationId: String, stationName: String) {
+         _uiState.value = _uiState.value.copy(
+            selectedStation = stationId,
+            selectedStationName = stationName
+        )
     }
     
     fun saveSelection() {

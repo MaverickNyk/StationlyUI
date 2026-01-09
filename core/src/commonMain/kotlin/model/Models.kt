@@ -32,13 +32,16 @@ data class LineInfo(
 data class StationBrief(
     val naptanId: String,
     val commonName: String,
-    val lines: List<LineSummary>
+    val lines: List<LineSummary>? = null
 ) {
     @Serializable
     data class LineSummary(
         val id: String,
         val name: String
     )
+    
+    // Helper method to safely get lines
+    fun getLinesOrEmpty(): List<LineSummary> = lines ?: emptyList()
 }
 
 /**

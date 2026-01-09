@@ -140,11 +140,25 @@ fun SelectionScreen(
                     }
                 }
                 
-                // Station Selection
+                // Direction Selection
                 if (uiState.selectedLine != null) {
                     item {
                         SelectionCard(
-                            title = "3. Select Station",
+                            title = "3. Select Direction",
+                            selectedValue = uiState.selectedDirection,
+                            options = uiState.availableDirections,
+                            showDropdown = showDirectionDropdown,
+                            onDropdownToggle = { showDirectionDropdown = it },
+                            onOptionSelected = { viewModel.onDirectionSelected(it) }
+                        )
+                    }
+                }
+
+                // Station Selection
+                if (uiState.selectedDirection != null) {
+                    item {
+                        SelectionCard(
+                            title = "4. Select Station",
                             selectedValue = uiState.selectedStationName ?: uiState.selectedStation,
                             options = uiState.availableStations,
                             showDropdown = showStationDropdown,
@@ -155,20 +169,6 @@ fun SelectionScreen(
                                 val stationName = it.substringBefore(" (")
                                 viewModel.onStationSelected(stationId, stationName)
                             }
-                        )
-                    }
-                }
-                
-                // Direction Selection
-                if (uiState.selectedStation != null) {
-                    item {
-                        SelectionCard(
-                            title = "4. Select Direction",
-                            selectedValue = uiState.selectedDirection,
-                            options = uiState.availableDirections,
-                            showDropdown = showDirectionDropdown,
-                            onDropdownToggle = { showDirectionDropdown = it },
-                            onOptionSelected = { viewModel.onDirectionSelected(it) }
                         )
                     }
                 }
