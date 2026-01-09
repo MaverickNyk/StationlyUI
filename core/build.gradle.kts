@@ -47,9 +47,9 @@ kotlin {
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
                 
                 // HTTP client (Ktor for multiplatform)
-                implementation("io.ktor:ktor-client-core:2.3.11")
-                implementation("io.ktor:ktor-client-content-negotiation:2.3.11")
-                implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.11")
+                implementation("io.ktor:ktor-client-core:3.0.0-rc-1")
+                implementation("io.ktor:ktor-client-content-negotiation:3.0.0-rc-1")
+                implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.0-rc-1")
                 
                 // Date/time handling
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
@@ -59,14 +59,14 @@ kotlin {
         val commonTest by getting {
             dependencies {
                 implementation(kotlin("test"))
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0")
             }
         }
         
         val androidMain by getting {
             dependencies {
                 // Ktor for Android
-                implementation("io.ktor:ktor-client-android:2.3.11")
+                implementation("io.ktor:ktor-client-android:3.0.0-rc-1")
                 implementation("androidx.core:core-ktx:1.12.0")
                 
                 // Android-specific dependencies for platform implementations
@@ -78,13 +78,13 @@ kotlin {
         
         val iosArm64Main by getting {
             dependencies {
-                implementation("io.ktor:ktor-client-darwin:2.3.11")
+                implementation("io.ktor:ktor-client-darwin:3.0.0-rc-1")
             }
         }
         
         val iosSimulatorArm64Main by getting {
             dependencies {
-                implementation("io.ktor:ktor-client-darwin:2.3.11")
+                implementation("io.ktor:ktor-client-darwin:3.0.0-rc-1")
             }
         }
     }

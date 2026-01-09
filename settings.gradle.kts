@@ -5,8 +5,9 @@ pluginManagement {
         mavenCentral()
     }
     plugins {
-        kotlin("multiplatform") version "1.9.20"
-        kotlin("plugin.serialization") version "1.9.20"
+        kotlin("multiplatform") version "2.0.0"
+        kotlin("plugin.serialization") version "2.0.0"
+        kotlin("plugin.compose") version "2.0.0"
         id("org.jetbrains.compose") version "1.6.11"
     }
 }
