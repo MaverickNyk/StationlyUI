@@ -1,0 +1,110 @@
+# Kotlin Multiplatform / Gradle / Android / Web build files
+
+# Build directories
+build/
+**/build/
+**/build/**/*
+!build.gradle.kts
+!**/build.gradle.kts
+
+# Gradle
+.gradle/
+**/.gradle/
+.gradle/**/*
+.gradle/*/  # All subdirectories in .gradle
+.gradle/*/.*  # Hidden files in .gradle subdirectories
+.gradle/caches/
+.gradle/caches/**/*
+.gradle/daemon/
+.gradle/daemon/**/*
+.gradle/native/
+.gradle/native/**/*
+.gradle/workers/
+.gradle/workers/**/*
+.gradle/8.10.2/  # Specific Gradle version cache
+.gradle/8.10.2/**/*
+.gradle/buildOutputCleanup/
+.gradle/buildOutputCleanup/**/*
+gradle/wrapper/gradle-wrapper.jar
+gradle/wrapper/gradle-wrapper.properties
+**/gradle/wrapper/gradle-wrapper.jar
+**/gradle/wrapper/gradle-wrapper.properties
+# Gradle properties files (but keep build.gradle.kts and settings.gradle.kts)
+gradle.properties
+**/gradle.properties
+
+# Local properties (Android SDK path etc.)
+local.properties
+**/local.properties
+
+# IDE files
+.idea/
+**/.idea/
+*.iml
+**/*.iml
+*.ipr
+*.iws
+*.class
+*.jar
+*.war
+*.ear
+
+# OS files
+.DS_Store
+**/.DS_Store
+Thumbs.db
+**/Thumbs.db
+
+# Logs
+*.log
+**/*.log
+logs/
+**/logs/
+# Build logs
+build_log*.txt
+**/build_log*.txt
+
+# Compiled files
+*.class
+*.dex
+*.o
+*.so
+*.a
+*.dll
+*.exe
+
+# Node.js (if any)
+node_modules/
+**/node_modules/
+package-lock.json
+**/package-lock.json
+
+# Kotlin/JS
+*.js.map
+*.js.map
+**/*.js.map
+
+# Kotlin/Native
+*.klib
+**/*.klib
+
+# Android specific
+**/android/app/build/
+**/android/app/build/**/*
+**/android/build/
+**/android/build/**/*
+**/core/build/
+**/core/build/**/*
+**/web/build/
+**/web/build/**/*
+
+# Generated files
+**/generated/
+**/gen/
+**/out/
+
+# Test files
+**/test-results/
+**/test-results/**/*
+**/test-results.xml
+**/test-results/**/*
