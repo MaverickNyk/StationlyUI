@@ -1,18 +1,21 @@
-# Kotlin Multiplatform / Gradle / Android / Web build files
+# StationlyUI - Comprehensive Git Ignore
 
-# Build directories
+# ===================================================================
+# BUILD DIRECTORIES (Primary)
+# ===================================================================
+# Exclude ALL build directories and their contents
 build/
 **/build/
 **/build/**/*
 !build.gradle.kts
 !**/build.gradle.kts
 
-# Gradle
+# ===================================================================
+# GRADLE
+# ===================================================================
 .gradle/
 **/.gradle/
 .gradle/**/*
-.gradle/*/  # All subdirectories in .gradle
-.gradle/*/.*  # Hidden files in .gradle subdirectories
 .gradle/caches/
 .gradle/caches/**/*
 .gradle/daemon/
@@ -21,90 +24,205 @@ build/
 .gradle/native/**/*
 .gradle/workers/
 .gradle/workers/**/*
-.gradle/8.10.2/  # Specific Gradle version cache
-.gradle/8.10.2/**/*
-.gradle/buildOutputCleanup/
-.gradle/buildOutputCleanup/**/*
+.gradle/*/  # All version-specific gradle dirs
+.gradle/*/**/*
 gradle/wrapper/gradle-wrapper.jar
 gradle/wrapper/gradle-wrapper.properties
 **/gradle/wrapper/gradle-wrapper.jar
 **/gradle/wrapper/gradle-wrapper.properties
-# Gradle properties files (but keep build.gradle.kts and settings.gradle.kts)
-gradle.properties
-**/gradle.properties
 
-# Local properties (Android SDK path etc.)
-local.properties
-**/local.properties
+# ===================================================================
+# KOTLIN/JS BUILD ARTIFACTS
+# ===================================================================
+# Kotlin/JS generated files
+*.js.map
+**/*.js.map
+*.d.ts
+**/*.d.ts
 
-# IDE files
-.idea/
-**/.idea/
-*.iml
-**/*.iml
-*.ipr
-*.iws
-*.class
-*.jar
-*.war
-*.ear
+# Kotlin/JS package artifacts (keep yarn.lock)
+kotlin-js-store/
+**/kotlin-js-store/**/*
+!kotlin-js-store/yarn.lock
 
-# OS files
-.DS_Store
-**/.DS_Store
-Thumbs.db
-**/Thumbs.db
-
-# Logs
-*.log
-**/*.log
-logs/
-**/logs/
-# Build logs
-build_log*.txt
-**/build_log*.txt
-
-# Compiled files
-*.class
+# ===================================================================
+# ANDROID
+# ===================================================================
+# Android build outputs
+*.apk
+*.ap_
+*.aab
 *.dex
+*.class
 *.o
 *.so
 *.a
 *.dll
 *.exe
-
-# Node.js (if any)
-node_modules/
-**/node_modules/
-package-lock.json
-**/package-lock.json
-
-# Kotlin/JS
-*.js.map
-*.js.map
-**/*.js.map
-
-# Kotlin/Native
-*.klib
-**/*.klib
+*.war
+*.ear
 
 # Android specific
 **/android/app/build/
 **/android/app/build/**/*
 **/android/build/
 **/android/build/**/*
-**/core/build/
-**/core/build/**/*
-**/web/build/
-**/web/build/**/*
+local.properties
+**/local.properties
 
+# ===================================================================
+# IDE FILES
+# ===================================================================
+.idea/
+**/.idea/
+*.iml
+**/*.iml
+*.ipr
+*.iws
+*.iwr
+*.vscode/
+**/.vscode/
+*.code-workspace
+**/*.code-workspace
+
+# ===================================================================
+# OS FILES
+# ===================================================================
+.DS_Store
+**/.DS_Store
+Thumbs.db
+**/Thumbs.db
+*.DS_Store
+._*
+
+# ===================================================================
+# LOGS
+# ===================================================================
+*.log
+**/*.log
+logs/
+**/logs/
+build_log*.txt
+**/build_log*.txt
+deployment*.log
+**/deployment*.log
+
+# ===================================================================
+# NODE.JS
+# ===================================================================
+node_modules/
+**/node_modules/
+package-lock.json
+**/package-lock.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===================================================================
+# DEPLOYMENT & TEST FILES
+# ===================================================================
+# Deployment scripts and test files
+deploy*.sh
+**/deploy*.sh
+test*.sh
+**/test*.sh
+trace*.sh
+**/trace*.sh
+
+# Deployment input files
+deploy_input.txt
+deployment_inputs.txt
+RUN_THIS.txt
+QUICK_START.sh
+DEPLOYMENT_SUMMARY.txt
+DEPLOYMENT_GUIDE.md
+README_DEPLOYMENT.md
+
+# ===================================================================
+# GENERATED & TEMPORARY FILES
+# ===================================================================
 # Generated files
 **/generated/
 **/gen/
 **/out/
+**/tmp/
+**/temp/
 
-# Test files
+# Test artifacts
 **/test-results/
 **/test-results/**/*
 **/test-results.xml
-**/test-results/**/*
+**/test-results/**/*%
+
+# ===================================================================
+# COMPOSE & WEB
+# ===================================================================
+# Compose web artifacts
+web/build/processedResources/
+**/web/build/processedResources/**/*
+web/build/compose/
+**/web/build/compose/**/*
+
+# ===================================================================
+# KOTLIN/NATIVE
+# ===================================================================
+*.klib
+**/*.klib
+
+# ===================================================================
+# SECURITY & SECRETS
+# ===================================================================
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+**/id_rsa
+**/id_rsa.pub
+.env
+**/.env
+.env.local
+**/.env.local
+
+# ===================================================================
+# OTHER
+# ===================================================================
+*.tmp
+*.swp
+*~
+*.bak
+*.orig
+*.rej
+*.swo
+*.swn
+*.bak
+*.old
+*.new
+*.tmp
+*.temp
+*.cache
+*.pid
+*.seed
+*.lock
+*.lck
+
+# ===================================================================
+# EXCEPTIONS (IMPORTANT - DO NOT IGNORE)
+# ===================================================================
+# Keep these files even if they match patterns above
+!README.md
+!kmp-architecture-plan.md
+!gradle.properties
+!settings.gradle.kts
+!build.gradle.kts
+!**/build.gradle.kts
+!gradlew
+!gradlew.bat
+!gradle/wrapper/gradle-wrapper.properties
+!gradle/wrapper/gradle-wrapper.jar
+!.github/copilot-instructions.md
+!kotlin-js-store/yarn.lock
+!web/src/wasmJsMain/resources/index.html
+!web/build/processedResources/wasmJs/main/index.html
