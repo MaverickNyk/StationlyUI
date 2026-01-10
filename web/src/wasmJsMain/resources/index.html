@@ -4,16 +4,115 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stationly</title>
-    <script type="application/javascript" src="stationly-web.js"></script>
     <style>
-        body, html {
+        * {
             margin: 0;
             padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body, html {
             height: 100%;
             width: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            background: #1F1F1F;
+            color: #FFF;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        
+        #root {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .fallback-content {
+            text-align: center;
+            padding: 40px;
+            max-width: 600px;
+        }
+        
+        .fallback-content h1 {
+            font-size: 48px;
+            font-weight: bold;
+            color: #0066FF;
+            margin-bottom: 16px;
+        }
+        
+        .fallback-content h2 {
+            font-size: 18px;
+            color: #CCC;
+            margin-bottom: 40px;
+        }
+        
+        .banner {
+            background: #0066FF;
+            border-radius: 12px;
+            padding: 24px;
+            margin: 20px 0;
+        }
+        
+        .banner h3 {
+            font-size: 24px;
+            font-weight: bold;
+            color: white;
+            margin-bottom: 12px;
+        }
+        
+        .banner p {
+            font-size: 16px;
+            color: white;
+        }
+        
+        .features {
+            font-size: 14px;
+            color: #AAA;
+            margin-top: 40px;
+            white-space: pre-line;
+            line-height: 1.8;
         }
     </style>
 </head>
 <body>
+    <div id="root">
+        <!-- Fallback content while loading -->
+        <div class="fallback-content">
+            <h1>Stationly</h1>
+            <h2>London Underground Departure Board</h2>
+            <div class="banner">
+                <h3>🚀 Coming Soon</h3>
+                <p>Download the Stationly app very soon to get real-time London Underground departure information at your fingertips.</p>
+            </div>
+            <div class="features">✓ Real-time departures
+✓ Line status updates
+✓ Saved stations
+✓ Available on iOS, Android & Web</div>
+        </div>
+    </div>
+    
+    <script>
+        // Log when script loads
+        console.log('index.html loaded, preparing to load WASM app');
+    </script>
+    <script src="stationly-web.js"></script>
+    <script>
+        // Log after WASM loads
+        console.log('stationly-web.js loaded');
+    </script>
 </body>
 </html>

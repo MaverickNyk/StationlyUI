@@ -34,6 +34,12 @@ kotlin {
                 
                 // Coroutines
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+                
+                // Date/time handling
+                implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
+                
+                // Browser APIs for localStorage and console
+                implementation("org.jetbrains.kotlinx:kotlinx-browser:0.3")
             }
         }
     }

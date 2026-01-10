@@ -87,6 +87,15 @@ kotlin {
                 implementation("io.ktor:ktor-client-darwin:3.0.0-rc-1")
             }
         }
+        
+        val wasmJsMain by getting {
+            dependencies {
+                // Ktor for WASM/JS
+                implementation("io.ktor:ktor-client-js:3.0.0-rc-1")
+                // Browser localStorage API
+                implementation("org.jetbrains.kotlinx:kotlinx-browser:0.3")
+            }
+        }
     }
 }
 
