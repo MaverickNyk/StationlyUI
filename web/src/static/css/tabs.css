@@ -1,0 +1,150 @@
+/* Tab Navigation Header */
+.header {
+    background: var(--color-primary);
+    padding: 1.2rem var(--space-lg);
+    border-bottom: 4px solid var(--color-accent);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.header-content {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-lg);
+}
+
+.logo-section {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-shrink: 0;
+}
+
+.roundel {
+    width: 45px;
+    height: 45px;
+    background: var(--color-accent);
+    border-radius: 50%;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.roundel::before {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 6px;
+    background: var(--color-primary);
+}
+
+.roundel-text {
+    color: white;
+    font-size: 1.3rem;
+    font-weight: 700;
+    z-index: 1;
+    background: var(--color-accent);
+    padding: 0 0.3rem;
+}
+
+.logo-text {
+    color: white;
+    font-size: 1.8rem;
+    font-weight: 700;
+}
+
+/* Tabs Navigation */
+.tabs-nav {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.tab-button, .section-link {
+    background: transparent;
+    color: white;
+    border: 2px solid transparent;
+    padding: 0.6rem 1.2rem;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 1rem;
+    border-radius: 6px;
+    transition: all 0.3s;
+    text-transform: capitalize;
+}
+
+.tab-button:hover, .section-link:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.tab-button-active, .section-link-active {
+    background: transparent;
+    color: white;
+    border-bottom: 3px solid var(--color-accent);
+}
+
+/* Page Container */
+.pages-container {
+    min-height: calc(100vh - 80px);
+}
+
+.page-content {
+    display: none;
+    animation: fadeIn 0.3s ease-in;
+}
+
+.page-content-active {
+    display: block;
+}
+
+/* Developer Page Overlay */
+.developer-page {
+    position: fixed;
+    top: 80px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: calc(100vh - 80px);
+    background: white;
+    z-index: 999;
+}
+
+.developer-page.page-content-active {
+    display: flex;
+    flex-direction: column;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .header-content {
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .tabs-nav {
+        width: 100%;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .tab-button, .section-link {
+        font-size: 0.9rem;
+        padding: 0.5rem 0.8rem;
+    }
+}
