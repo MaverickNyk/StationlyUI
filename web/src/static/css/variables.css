@@ -1,19 +1,18 @@
-/* CSS Variables - Design System */
 :root {
-    --color-primary: #113B92;
-    --color-accent: #DC241F;
-    --color-highlight: #FFD700;
-    --bg-light: #F8F8F8;
-    --bg-white: #ffffff;
-    --bg-gradient-1: #667eea;
-    --bg-gradient-2: #764ba2;
-    --text-dark: #000000;
-    --text-grey: #333333;
-    --widget-bg: #000000;
-    --widget-text: #FFD700;
-    --space-xs: 0.5rem;
-    --space-sm: 1rem;
-    --space-md: 1.5rem;
-    --space-lg: 2rem;
-    --space-xl: 4rem;
+    --primary: #DD2C33;
+    /* Tube Red */
+    --primary-dark: #B91C22;
+    --secondary: #1A237E;
+    /* Deep Blue */
+    --accent: #5C6BC0;
+    /* Soft Blue */
+    --bg-dark: #0F172A;
+    --bg-darker: #020617;
+    --text-main: #F8FAFC;
+    --text-muted: #94A3B8;
+    --white: #FFFFFF;
+
+    /* Glass Effect Variables */
+    --glass: rgba(255, 255, 255, 0.03);
+    --glass-border: rgba(255, 255, 255, 0.05);
 }
