@@ -1,0 +1,27 @@
+/* Phone Mockup */
+.phone-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-xl);
+    align-items: center;
+}
+
+.phone-demo-wrapper {
+    position: relative;
+    max-width: 350px;
+    margin: 0 auto;
+}
+
+.phone-demo-wrapper img {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 40px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+}
+
+@media (max-width: 968px) {
+    .phone-grid {
+        grid-template-columns: 1fr;
+    }
+}

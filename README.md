@@ -106,12 +106,18 @@ cd ios
 # Upload to App Store Connect
 ```
 
-### Web
+### Web (Landing Page)
 ```bash
-cd web/app
-npm run build
-npm run deploy
+# Build
+./gradlew :web:build
+
+# Deploy to Oracle Server
+./deploy.sh
+
+# Accessible at https://stationly.co.uk
 ```
+
+For detailed deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md)
 
 ## Team
 - **Lead Architect**: [Your Name]
