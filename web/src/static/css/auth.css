@@ -1,0 +1,108 @@
+/* Auth CSS */
+.auth-form .form-group {
+    margin-bottom: 1.5rem;
+}
+
+.auth-form label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.auth-form input {
+    width: 100%;
+    padding: 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    color: white;
+    font-size: 1rem;
+    outline: none;
+    transition: all 0.2s;
+}
+
+.auth-form input:focus {
+    border-color: var(--primary);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.cta-btn {
+    width: 100%;
+    padding: 1rem;
+    background: var(--primary);
+    border: none;
+    border-radius: 12px;
+    color: white;
+    font-weight: 700;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: transform 0.2s, background 0.2s;
+}
+
+.cta-btn:hover {
+    transform: translateY(-2px);
+    background: var(--primary-dark);
+}
+
+/* User Profile Avatar Large (Profile Tab) */
+.avatar-circle {
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 0 auto;
+    font-size: 2.5rem;
+    font-weight: 800;
+    color: white;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+    /* Ensure image doesn't bleed out */
+}
+
+.avatar-circle img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* Nav Bar Avatar Small */
+.nav-avatar-btn {
+    width: 38px !important;
+    height: 38px !important;
+    padding: 0 !important;
+    border-radius: 50% !important;
+    /* Forces circle */
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-weight: 800;
+    color: white;
+    border: 2px solid rgba(255, 255, 255, 0.8) !important;
+    cursor: pointer;
+    overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.2s;
+    /* Ensure alignment with text buttons */
+    margin-top: -2px;
+    /* Slight optical adjustment if needed */
+}
+
+.nav-avatar-btn:hover {
+    transform: scale(1.1);
+    box-shadow: 0 0 15px rgba(255, 51, 102, 0.4);
+}
+
+.nav-avatar-btn.active {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 10px var(--primary);
+}
+
+.nav-avatar-btn img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
