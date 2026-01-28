@@ -226,3 +226,4 @@ id_rsa.pub
 !kotlin-js-store/yarn.lock
 !web/src/wasmJsMain/resources/index.html
 !web/build/processedResources/wasmJs/main/index.html
+google-services.json
