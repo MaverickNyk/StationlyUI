@@ -15,4 +15,5 @@
     <color name="stationly_background">#FFFFFFFF</color>
     <color name="stationly_surface">#FFF5F5F5</color>
     <color name="stationly_error">#FFB00020</color>
+    <color name="tfl_amber">#FFC819</color>
 </resources>

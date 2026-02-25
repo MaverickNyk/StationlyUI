@@ -21,11 +21,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.stationly.core.model.UserSelection
 import com.stationly.mobile.ui.theme.*
+import com.stationly.mobile.R
+import androidx.compose.foundation.Image
 
 /**
  * SelectionScreen - Jetpack Compose UI for station selection
@@ -62,21 +65,40 @@ fun SelectionScreen(
     }
     
     Scaffold(
+        containerColor = Color.Black,
         topBar = {
-            TopAppBar(
-                title = { Text("MindTheTime - Select Station") },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            )
+            Surface(
+                color = Color.Black,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.Start,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.stationly_logo),
+                        contentDescription = "Logo",
+                        modifier = Modifier.size(30.dp).padding(end = 8.dp)
+                    )
+                    Text(
+                        text = "Stationly", 
+                        color = TflAmber, 
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp
+                    ) 
+                }
+            }
         },
         floatingActionButton = {
             if (uiState.selectedMode != null && uiState.selectedLine != null &&
                 uiState.selectedStation != null && uiState.selectedDirection != null) {
                 FloatingActionButton(
                     onClick = { viewModel.saveSelection() },
-                    containerColor = MaterialTheme.colorScheme.primary
+                    containerColor = TflAmber,
+                    contentColor = Color.Black
                 ) {
                     Icon(Icons.Default.Check, "Save Selection")
                 }
@@ -86,6 +108,7 @@ fun SelectionScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(Color.Black)
                 .padding(padding)
                 .padding(16.dp)
         ) {
@@ -104,7 +127,7 @@ fun SelectionScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator()
+                    CircularProgressIndicator(color = TflAmber)
                 }
                 return@Column
             }
@@ -181,6 +204,7 @@ fun SelectionScreen(
                             text = "Saved Selections",
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
+                            color = TflAmber,
                             modifier = Modifier.padding(vertical = 8.dp)
                         )
                     }
@@ -206,10 +230,11 @@ private fun SelectionCard(
     onDropdownToggle: (Boolean) -> Unit,
     onOptionSelected: (String) -> Unit
 ) {
+    
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable { onDropdownToggle(!showDropdown) },
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
+            containerColor = SurfaceDark
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
@@ -222,38 +247,37 @@ private fun SelectionCard(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = TflAmber
             )
             
             Spacer(modifier = Modifier.height(8.dp))
             
             Box(modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    value = selectedValue ?: "Select...",
-                    onValueChange = {},
-                    readOnly = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    trailingIcon = {
-                        IconButton(onClick = { onDropdownToggle(!showDropdown) }) {
-                            Icon(Icons.Default.ArrowDropDown, "Dropdown")
-                        }
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surface,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                Row(
+                   modifier = Modifier.fillMaxWidth(),
+                   horizontalArrangement = Arrangement.SpaceBetween,
+                   verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = selectedValue ?: "Select...",
+                        color = if (selectedValue != null) TflAmber else TflAmber.copy(alpha=0.5f),
+                        modifier = Modifier.weight(1f)
                     )
-                )
+                    IconButton(onClick = { onDropdownToggle(!showDropdown) }) {
+                        Icon(Icons.Default.ArrowDropDown, "Dropdown", tint = TflAmber)
+                    }
+                }
                 
                 // Dropdown Menu
                 if (showDropdown && options.isNotEmpty()) {
                     DropdownMenu(
                         expanded = showDropdown,
                         onDismissRequest = { onDropdownToggle(false) },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().background(SurfaceDark)
                     ) {
                         options.forEach { option ->
                             DropdownMenuItem(
-                                text = { Text(option) },
+                                text = { Text(option, color = TflAmber) },
                                 onClick = {
                                     onOptionSelected(option)
                                     onDropdownToggle(false)
@@ -272,12 +296,13 @@ private fun SavedSelectionItem(
     selection: UserSelection,
     onDelete: () -> Unit
 ) {
+    
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = SurfaceDark
         )
     ) {
         Row(
@@ -291,12 +316,13 @@ private fun SavedSelectionItem(
                 Text(
                     text = selection.stationName,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    color = TflAmber
                 )
                 Text(
                     text = "${selection.line} • ${selection.direction}",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = TflAmber.copy(alpha = 0.7f)
                 )
             }
             

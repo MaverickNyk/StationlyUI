@@ -11,6 +11,7 @@ import com.stationly.core.model.WidgetState
 import com.stationly.core.platform.AndroidStorageManager
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.usecase.FormatDeparturesUseCase
+import com.stationly.mobile.util.FormatUtils
 import kotlinx.coroutines.runBlocking
 import java.time.Duration
 import java.time.Instant
@@ -70,10 +71,11 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             context: Context,
             appWidgetManager: AppWidgetManager,
             appWidgetId: Int,
-            stationName: String = "MindTheTime",
+            stationName: String = "Stationly",
             lineName: String = "",
             predictions: List<PredictionDisplay> = emptyList(),
-            lineStatus: String? = null
+            lineStatusSeverity: String? = null,
+            lineStatusReason: String? = null
         ) {
             android.util.Log.d("Widget", "Updating widget $appWidgetId for $stationName")
             
@@ -91,12 +93,12 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             )
             
             // Show/hide line status
-            if (lineStatus != null) {
+            if (lineStatusSeverity != null) {
                 views.setViewVisibility(R.id.status_container, android.view.View.VISIBLE)
-                views.setTextViewText(R.id.status_severity, lineStatus)
+                views.setTextViewText(R.id.status_severity, lineStatusSeverity)
                 views.setTextViewText(
                     R.id.status_reason,
-                    formatStatusReason("")
+                    FormatUtils.formatStatusReason(lineStatusReason ?: "")
                 )
             } else {
                 views.setViewVisibility(R.id.status_container, android.view.View.GONE)
@@ -113,14 +115,31 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // Clear existing rows
             views.removeAllViews(R.id.rows_container)
             
+            // Checking actual selection state
+            val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+            val json = prefs.getString("selections", "[]") ?: "[]"
+            val hasSelection = json.length > 5
+            
             if (predictions.isEmpty()) {
-                // Show waiting state
+                // Show waiting state or no selection state
                 views.setViewVisibility(R.id.waiting_container, android.view.View.GONE)
-                val row = RemoteViews(context.packageName, R.layout.widget_departure_row)
-                row.setTextViewText(R.id.destination_text, "All trains have departed!")
-                row.setTextViewText(R.id.eta_text, "")
-                row.setTextViewText(R.id.departure_number, "-")
-                views.addView(R.id.rows_container, row)
+                
+                val header = RemoteViews(context.packageName, R.layout.widget_platform_header)
+                header.setTextViewText(R.id.platform_name, if (hasSelection) "Service Update" else "Welcome to Stationly")
+                views.addView(R.id.rows_container, header)
+                
+                for (i in 0 until 3) {
+                    val row = RemoteViews(context.packageName, R.layout.widget_departure_row)
+                    if (i == 0) {
+                        row.setTextViewText(R.id.departure_number, "-")
+                        row.setTextViewText(R.id.destination_text, if (hasSelection) "All trains have departed!" else "Select a station inside the app")
+                    } else {
+                        row.setTextViewText(R.id.departure_number, "")
+                        row.setTextViewText(R.id.destination_text, "")
+                    }
+                    row.setTextViewText(R.id.eta_text, "")
+                    views.addView(R.id.rows_container, row)
+                }
             } else {
                 // Show predictions grouped by platform
                 views.setViewVisibility(R.id.waiting_container, android.view.View.GONE)
@@ -130,24 +149,22 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 groupedByPlatform.forEach { (platform, platformPreds) ->
                     // Add platform header
                     val header = RemoteViews(context.packageName, R.layout.widget_platform_header)
-                    val combinedTitle = if (lineName.isNotEmpty()) "$lineName : $platform" else platform
+                    val combinedTitle = if (lineName.isNotEmpty()) "${lineName.replaceFirstChar { it.uppercase() }} : $platform" else platform
                     header.setTextViewText(R.id.platform_name, combinedTitle)
                     views.addView(R.id.rows_container, header)
                     
-                    // Sort predictions by ETA
-                    val sortedPreds = platformPreds.sortedBy { it.eta }
-                    
-                    // Add up to 3 predictions per platform
+                    // We assume predictions are already sorted by time when parsed by FCM service
+                    // Add exactly 3 predictions per platform
                     for (i in 0 until 3) {
                         val row = RemoteViews(context.packageName, R.layout.widget_departure_row)
-                        if (i < sortedPreds.size) {
-                            val pred = sortedPreds[i]
+                        if (i < platformPreds.size) {
+                            val pred = platformPreds[i]
                             row.setTextViewText(R.id.departure_number, (i + 1).toString())
-                            row.setTextViewText(R.id.destination_text, formatDestination(pred.destination))
+                            row.setTextViewText(R.id.destination_text, FormatUtils.formatDestination(pred.destination))
                             row.setTextViewText(R.id.eta_text, pred.eta)
                         } else {
-                            row.setTextViewText(R.id.departure_number, (i + 1).toString())
-                            row.setTextViewText(R.id.destination_text, "-")
+                            row.setTextViewText(R.id.departure_number, "")
+                            row.setTextViewText(R.id.destination_text, "")
                             row.setTextViewText(R.id.eta_text, "")
                         }
                         views.addView(R.id.rows_container, row)
@@ -155,7 +172,13 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 }
             }
             
-            appWidgetManager.updateAppWidget(appWidgetId, views)
+            // Important: Handle appWidgetId correctly if updating all from invalid
+            if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                appWidgetManager.updateAppWidget(appWidgetId, views)
+            } else {
+                val componentName = android.content.ComponentName(context, DepartureWidgetProvider::class.java)
+                appWidgetManager.updateAppWidget(componentName, views)
+            }
         }
         
         /**
@@ -175,8 +198,9 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             for (appWidgetId in appWidgetIds) {
                 val views = RemoteViews(context.packageName, R.layout.widget_departure_board)
                 views.setTextViewText(R.id.line_name, stationName)
+                views.removeAllViews(R.id.rows_container)
                 views.setViewVisibility(R.id.waiting_container, android.view.View.VISIBLE)
-                views.setTextViewText(R.id.funny_message, getRandomFunnyMessage())
+                views.setTextViewText(R.id.funny_message, FormatUtils.getRandomFunnyMessage())
                 views.setChronometer(
                     R.id.last_updated_timer,
                     SystemClock.elapsedRealtime(),
@@ -209,7 +233,8 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             stationName: String,
             lineName: String,
             predictions: List<PredictionDisplay>,
-            lineStatus: String? = null
+            lineStatusSeverity: String? = null,
+            lineStatusReason: String? = null
         ) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
             val appWidgetIds = appWidgetManager.getAppWidgetIds(
@@ -224,40 +249,10 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     stationName,
                     lineName,
                     predictions,
-                    lineStatus
+                    lineStatusSeverity,
+                    lineStatusReason
                 )
             }
-        }
-        
-        // Private helper methods (same as MindTheTimeAndroid)
-        
-        private fun formatStatusReason(reason: String): String {
-            var text = if (reason.contains(":")) reason.substringAfter(":").trim() else reason
-            val firstDot = text.indexOf('.')
-            if (firstDot != -1) {
-                val secondDot = text.indexOf('.', firstDot + 1)
-                text = if (secondDot != -1) text.substring(0, secondDot + 1)
-                else text.substring(0, firstDot + 1)
-            }
-            return text
-        }
-        
-        private fun formatDestination(name: String): String {
-            val cleanName = name.replace(" Underground Station", "")
-                .replace(" DLR Station", "")
-                .replace(" Rail Station", "")
-                .trim()
-            return if (cleanName.length > 25) cleanName.take(22) + "..." else cleanName
-        }
-        
-        private fun getRandomFunnyMessage(): String {
-            return listOf(
-                "⚡ Searching for Platform 9¾...",
-                "📢 Mind the Gap!",
-                "🪄 Clearing leaves from the tracks...",
-                "☕ Driver's having a quick tea break...",
-                "🏃‍♂️ Sprinting through the Ministry..."
-            ).random()
         }
     }
 }

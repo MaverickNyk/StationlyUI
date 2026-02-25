@@ -11,10 +11,10 @@
         <item name="colorSecondary">@color/stationly_secondary</item>
         
         <!-- Status bar color -->
-        <item name="android:statusBarColor">@color/stationly_primary</item>
+        <item name="android:statusBarColor">#1E1E1E</item>
         
         <!-- Navigation bar color -->
-        <item name="android:navigationBarColor">@color/white</item>
+        <item name="android:navigationBarColor">#000000</item>
         
         <!-- App bar color -->
         <item name="colorSurfaceVariant">@color/stationly_surface</item>
@@ -22,8 +22,8 @@
 
     <!-- Splash screen theme -->
     <style name="Theme.Stationly.Splash" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">@color/stationly_primary</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="windowSplashScreenBackground">@color/white</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/stationly_logo</item>
         <item name="postSplashScreenTheme">@style/Theme.Stationly</item>
     </style>
 </resources>
