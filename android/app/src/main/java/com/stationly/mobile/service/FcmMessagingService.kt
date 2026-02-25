@@ -109,12 +109,19 @@ class FcmMessagingService : FirebaseMessagingService() {
                 
                 Log.d("FCM", "Found ${preds.size} predictions for selection ${selection.stationName} ($lineIdLower - ${selection.direction}).")
                 
+                // Determine a valid platform to fallback to if "Unknown" is encountered
+                val knownPlatform = preds.firstOrNull { 
+                    !it.platform.equals("Unknown", ignoreCase = true) && it.platform.isNotBlank() 
+                }?.platform ?: "Unknown"
+
                 // Format and sort predictions for widget (Earliest ETA first)
                 val formattedPredictions = preds.map { pred ->
                     val etaString = formatETA(pred.eta)
+                    val displayPlatform = if (pred.platform.equals("Unknown", ignoreCase = true) || pred.platform.isBlank()) knownPlatform else pred.platform
+                    
                     com.stationly.core.model.PredictionDisplay(
                         destination = com.stationly.mobile.util.FormatUtils.formatDestination(pred.displayName),
-                        platform = pred.platform,
+                        platform = displayPlatform,
                         eta = etaString,
                         isDue = etaString == "Due"
                     )
