@@ -260,23 +260,43 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         
         viewModelScope.launch {
             try {
+                // Get existing selections
+                val existing = _savedSelections.value
+                
+                // Unsubscribe from all existing topics
+                val nManager = AndroidNotificationManager(context)
+                existing.forEach { oldSel ->
+                    val oldTopics = listOf(
+                        "Station_${oldSel.station}",
+                        "LineStatus_${oldSel.mode}_${oldSel.line}"
+                    )
+                    nManager.unsubscribeFromTopics(oldTopics)
+                }
+                
+                // Clear any other storage (predictions, line status)
+                val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+                val editor = prefs.edit()
+                editor.remove("line_status_data")
+                existing.forEach {
+                    editor.remove("predictions_${it.station}_${it.line}")
+                }
+                editor.apply()
+                
+                // Clear repository to ensure we only have one primary selection
+                selectionRepository.clearAll()
+
                 // Use the save selection use case
                 saveSelectionUseCase(selection)
                 
-                // Update UI
-                val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-                val existingJson = prefs.getString("selections", "[]")
-                val type = object : TypeToken<List<UserSelection>>() {}.type
-                val existing: List<UserSelection> = gson.fromJson(existingJson, type)
-                val updated = existing + selection
-                _savedSelections.value = updated
+                // Update UI stream
+                _savedSelections.value = listOf(selection)
                 
                 _uiState.value = state.copy(
                     success = "Selection saved!",
                     showSuccessDialog = true
                 )
                 
-                Log.d("SelectionViewModel", "Saved selection: $selection")
+                Log.d("SelectionViewModel", "Saved selection as primary: $selection")
             } catch (e: Exception) {
                 Log.e("SelectionViewModel", "Error saving selection", e)
                 _uiState.value = state.copy(error = "Failed to save: ${e.message}")

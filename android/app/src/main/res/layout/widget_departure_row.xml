@@ -2,39 +2,35 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:layout_marginTop="2dp"
+    android:background="@drawable/departure_board_active_row_background"
     android:orientation="horizontal"
-    android:padding="6dp"
-    android:background="@android:color/transparent">
+    android:paddingStart="4dp"
+    android:paddingEnd="4dp">
 
     <TextView
         android:id="@+id/departure_number"
-        android:layout_width="24dp"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="1"
-        android:textColor="@android:color/white"
-        android:textSize="12sp"
-        android:textStyle="bold"
-        android:gravity="center" />
+        android:layout_marginEnd="6dp"
+        android:textColor="@color/tfl_amber"
+        android:textSize="15sp" />
 
     <TextView
         android:id="@+id/destination_text"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
-        android:text="Destination"
-        android:textColor="@android:color/white"
-        android:textSize="12sp"
+        android:singleLine="true"
         android:ellipsize="end"
-        android:maxLines="1" />
+        android:textColor="@color/tfl_amber"
+        android:textSize="15sp" />
 
     <TextView
         android:id="@+id/eta_text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="5 min"
-        android:textColor="@android:color/white"
-        android:textSize="12sp"
-        android:textStyle="bold"
-        android:layout_marginStart="8dp" />
+        android:textColor="@color/tfl_amber"
+        android:textSize="15sp" />
 
 </LinearLayout>

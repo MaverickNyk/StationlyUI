@@ -2,6 +2,7 @@ package com.stationly.mobile.ui.summary
 
 import android.app.Application
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.google.firebase.messaging.FirebaseMessaging
 
 /**
  * SummaryViewModel - Android ViewModel for summary screen
@@ -75,8 +77,35 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     private val _predictions = MutableStateFlow<Map<String, List<PredictionDisplay>>>(emptyMap())
     val predictions: StateFlow<Map<String, List<PredictionDisplay>>> = _predictions.asStateFlow()
     
+    // Line Statuses (Key: mode_line)
+    private val _lineStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
+    val lineStatuses: StateFlow<Map<String, String>> = _lineStatuses.asStateFlow()
+    
+    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key != null && key.startsWith("predictions_")) {
+            // A prediction changed via FCM. Reload predictions for all selections
+            viewModelScope.launch {
+                _selections.value.forEach { loadPredictions(it) }
+            }
+        } else if (key == "line_status_data") {
+            viewModelScope.launch {
+                _selections.value.forEach { loadLineStatus(it) }
+            }
+        } else if (key == "selections") {
+            loadSavedSelections()
+        }
+    }
+    
     init {
+        context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(prefsListener)
         loadSavedSelections()
+    }
+    
+    override fun onCleared() {
+        super.onCleared()
+        context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+            .unregisterOnSharedPreferenceChangeListener(prefsListener)
     }
     
     private fun loadSavedSelections() {
@@ -90,9 +119,14 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 _selections.value = selections
                 Log.d("SummaryViewModel", "Loaded ${selections.size} saved selections")
                 
-                // Load predictions for each selection
+                // Load predictions for each selection AND ensure subscribed
+                val fcm = FirebaseMessaging.getInstance()
                 selections.forEach { selection ->
+                    // Re-subscribe to stay reliable in case of token change or app reboot
+                    fcm.subscribeToTopic("Station_${selection.station}")
+                    fcm.subscribeToTopic("LineStatus_${selection.mode}_${selection.line}")
                     loadPredictions(selection)
+                    loadLineStatus(selection)
                 }
             } catch (e: Exception) {
                 Log.e("SummaryViewModel", "Error loading saved selections", e)
@@ -113,15 +147,29 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 val cachedJson = prefs.getString(cacheKey, null)
                 
                 if (cachedJson != null) {
-                    val type = object : TypeToken<List<PredictionDisplay>>() {}.type
-                    val cachedPredictions: List<PredictionDisplay> = gson.fromJson(cachedJson, type)
-                    
-                    // Update predictions map
-                    val currentMap = _predictions.value.toMutableMap()
-                    currentMap[selection.station] = cachedPredictions
-                    _predictions.value = currentMap
-                    
-                    Log.d("SummaryViewModel", "Loaded cached predictions for ${selection.stationName}")
+                    val mapType = object : TypeToken<Map<String, Any>>() {}.type
+                    try {
+                        val cachedMap: Map<String, Any> = gson.fromJson(cachedJson, mapType)
+                        val timestamp = (cachedMap["timestamp"] as? Number)?.toLong() ?: 0
+                        val dataJson = cachedMap["data"] as? String
+                        
+                        // Check if predictions are less than 2 mins old
+                        if (System.currentTimeMillis() - timestamp < 120_000 && dataJson != null) {
+                            val type = object : TypeToken<List<PredictionDisplay>>() {}.type
+                            val cachedPredictions: List<PredictionDisplay> = gson.fromJson(dataJson, type)
+                            
+                            val currentMap = _predictions.value.toMutableMap()
+                            currentMap[selection.station] = cachedPredictions
+                            _predictions.value = currentMap
+                            Log.d("SummaryViewModel", "Loaded cached predictions for ${selection.stationName}")
+                        } else {
+                            val currentMap = _predictions.value.toMutableMap()
+                            currentMap[selection.station] = emptyList()
+                            _predictions.value = currentMap
+                        }
+                    } catch (e: Exception) {
+                        Log.e("SummaryViewModel", "Error parsing cached predictions: ", e)
+                    }
                 } else {
                     // Show waiting state
                     val currentMap = _predictions.value.toMutableMap()
@@ -130,6 +178,84 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 }
             } catch (e: Exception) {
                 Log.e("SummaryViewModel", "Error loading predictions for ${selection.station}", e)
+            }
+        }
+    }
+    
+    private fun loadLineStatus(selection: UserSelection) {
+        viewModelScope.launch {
+            try {
+                val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+                val statusJson = prefs.getString("line_status_data", null)
+                val timestamp = if (statusJson != null) {
+                    val statusData = gson.fromJson<Map<String, Any>>(statusJson, object : TypeToken<Map<String, Any>>() {}.type)
+                    (statusData["timestamp"] as? Number)?.toLong() ?: 0
+                } else 0
+                
+                val now = System.currentTimeMillis()
+                var validDataJson: String? = null
+                
+                // Keep cache for 1 hour ttl
+                if (statusJson != null && now - timestamp < 3600_000) {
+                    val statusData = gson.fromJson<Map<String, Any>>(statusJson, object : TypeToken<Map<String, Any>>() {}.type)
+                    validDataJson = statusData["data"] as? String
+                    if (validDataJson == null || !validDataJson.contains(selection.line, ignoreCase = true)) {
+                        validDataJson = null
+                    }
+                }
+                
+                // If we don't have valid cached data, fetch from API
+                if (validDataJson == null) {
+                    Log.d("SummaryViewModel", "No local line status for ${selection.line}, fetching from API")
+                    val apiStatus = apiService.getLineStatuses(selection.line).firstOrNull()
+                    if (apiStatus != null) {
+                        validDataJson = gson.toJson(apiStatus)
+                        val newStatusData = mapOf(
+                            "data" to validDataJson,
+                            "timestamp" to now
+                        )
+                        prefs.edit().putString("line_status_data", gson.toJson(newStatusData)).apply()
+                        Log.d("SummaryViewModel", "Saved line status from API")
+                    }
+                }
+                
+                if (validDataJson != null && validDataJson.contains(selection.line, ignoreCase = true)) {
+                    var severityStr = ""
+                    var reasonStr = ""
+                    try {
+                        val parsedData = gson.fromJson<Map<String, Any>>(validDataJson, object : TypeToken<Map<String, Any>>() {}.type)
+                        val severity = parsedData["statusSeverityDescription"] as? String ?: ""
+                        val reason = parsedData["reason"] as? String ?: ""
+                        severityStr = severity
+                        reasonStr = reason
+                        
+                        var cleanReason = com.stationly.mobile.util.FormatUtils.formatStatusReason(reason).trim()
+                        if (cleanReason.isNotEmpty()) {
+                            cleanReason = ": $cleanReason"
+                        }
+                        val formattedStatus = "$severity$cleanReason"
+                        
+                        val currentMap = _lineStatuses.value.toMutableMap()
+                        currentMap["${selection.mode}_${selection.line}"] = formattedStatus
+                        _lineStatuses.value = currentMap
+                    } catch (e: Exception) {
+                        val currentMap = _lineStatuses.value.toMutableMap()
+                        currentMap["${selection.mode}_${selection.line}"] = validDataJson
+                        _lineStatuses.value = currentMap
+                    }
+                    
+                    // Trigger widget update with fresh status
+                    com.stationly.mobile.widget.DepartureWidgetProvider.updateWidgetContent(
+                        context,
+                        selection.stationName,
+                        selection.line.replaceFirstChar { it.uppercase() },
+                        getPredictionsForSelection(selection),
+                        severityStr,
+                        reasonStr
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("SummaryViewModel", "Error managing line status", e)
             }
         }
     }
@@ -183,6 +309,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                     prefs.edit().remove(cacheKey).apply()
                     
                     loadPredictions(selection)
+                    loadLineStatus(selection)
                 }
                 
                 _uiState.value = _uiState.value.copy(
@@ -215,9 +342,12 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 
                 val updated = existing.filter { it != selection }
                 val updatedJson = gson.toJson(updated)
-                prefs.edit().putString("selections", updatedJson).apply()
+                prefs.edit()
+                    .putString("selections", updatedJson)
+                    .remove("line_status_data")
+                    .apply()
                 
-                // Update UI
+                // Update UI stream implicitly handled by listener, but we can do it explicitly
                 _selections.value = updated
                 
                 // Remove from predictions
@@ -228,6 +358,12 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 // Clear cache
                 val cacheKey = "predictions_${selection.station}_${selection.line}"
                 prefs.edit().remove(cacheKey).apply()
+                
+                com.stationly.mobile.widget.DepartureWidgetProvider.updateAppWidget(
+                    context, android.appwidget.AppWidgetManager.getInstance(context), 
+                    android.appwidget.AppWidgetManager.INVALID_APPWIDGET_ID,
+                    "Stationly", "", emptyList(), null, null
+                )
                 
                 Log.d("SummaryViewModel", "Deleted selection: ${selection.stationName}")
             } catch (e: Exception) {
@@ -250,6 +386,10 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     fun hasPredictions(selection: UserSelection): Boolean {
         val preds = _predictions.value[selection.station]
         return !preds.isNullOrEmpty()
+    }
+    
+    fun getLineStatusForSelection(selection: UserSelection): String? {
+        return _lineStatuses.value["${selection.mode}_${selection.line}"]
     }
     
     /**

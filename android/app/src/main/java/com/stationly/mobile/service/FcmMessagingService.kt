@@ -67,9 +67,11 @@ class FcmMessagingService : FirebaseMessagingService() {
         Log.d("FCM", "Saved line status data")
         
         // Update widget with current data from storage
-        val primarySelection = getPrimarySelection()
-        if (primarySelection != null) {
-            updateWidgetFromStorage(this, primarySelection)
+        val selections = getAllSelections()
+        selections.forEach { selection ->
+            if (payloadJson.contains(selection.line, ignoreCase = true)) {
+                 updateWidgetFromStorage(this, selection)
+            }
         }
     }
     
@@ -81,52 +83,56 @@ class FcmMessagingService : FirebaseMessagingService() {
             // Parse FCM payload using KMP model
             val payload = gson.fromJson(payloadJson, FcmPayload::class.java)
             
-            // Get primary selection
-            val primarySelection = getPrimarySelection() ?: return
-            Log.d("FCM", "Active primary selection: Station=${primarySelection.stationName}, Line=${primarySelection.line}")
+            // Get all selections
+            val allSelections = getAllSelections()
+            if (allSelections.isEmpty()) return
             
-            // Validate station ID
-            if (payload.id != primarySelection.station) {
-                Log.d("FCM", "Payload station ID (${payload.id}) does not match primary selection (${primarySelection.station}). Ignoring.")
+            // Find selections that match this station
+            val matchingSelections = allSelections.filter { it.station == payload.id }
+            if (matchingSelections.isEmpty()) {
+                Log.d("FCM", "Payload station ID (${payload.id}) does not match any active selection. Ignoring.")
                 return
             }
             
-            // Get line data
-            val lineData = payload.lines[primarySelection.line]
-            if (lineData == null) {
-                Log.d("FCM", "Payload does not contain line: ${primarySelection.line}. Ignoring.")
-                return
-            }
-            
-            // Get predictions for the direction
-            val dirData = lineData.dirs[primarySelection.direction]
-            val preds = dirData?.preds ?: emptyList()
-            
-            Log.d("FCM", "Found ${preds.size} predictions for primary selection.")
-            
-            // Format predictions for widget
-            val formattedPredictions = preds.map { pred ->
-                val etaString = formatETA(pred.eta)
-                com.stationly.core.model.PredictionDisplay(
-                    destination = cleanDestinationName(pred.displayName),
-                    platform = pred.platform,
-                    eta = etaString,
-                    isDue = etaString == "Due"
+            matchingSelections.forEach { selection ->
+                // Get line data
+                val lineIdLower = selection.line.lowercase()
+                val lineData = payload.lines[lineIdLower]
+                if (lineData == null) {
+                    Log.d("FCM", "Payload does not contain line: $lineIdLower for selection ${selection.stationName}. Ignoring.")
+                    return@forEach
+                }
+                
+                // Get predictions for the direction
+                val dirData = lineData.dirs[selection.direction]
+                val preds = dirData?.preds ?: emptyList()
+                
+                Log.d("FCM", "Found ${preds.size} predictions for selection ${selection.stationName} ($lineIdLower - ${selection.direction}).")
+                
+                // Format predictions for widget
+                val formattedPredictions = preds.map { pred ->
+                    val etaString = formatETA(pred.eta)
+                    com.stationly.core.model.PredictionDisplay(
+                        destination = com.stationly.mobile.util.FormatUtils.formatDestination(pred.displayName),
+                        platform = pred.platform,
+                        eta = etaString,
+                        isDue = etaString == "Due"
+                    )
+                }
+                
+                // Save predictions with timestamp
+                val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+                val predictionsData = mapOf(
+                    "data" to gson.toJson(formattedPredictions),
+                    "timestamp" to System.currentTimeMillis()
                 )
-            }
-            
-            // Save predictions with timestamp
-            val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-            val predictionsData = mapOf(
-                "data" to formattedPredictions,
-                "timestamp" to System.currentTimeMillis()
-            )
-            prefs.edit().putString("predictions_${primarySelection.station}_${primarySelection.line}", gson.toJson(predictionsData)).apply()
-            Log.d("FCM", "Saved predictions for ${primarySelection.station}")
-            
-            // Update widget with current data from storage
-            CoroutineScope(Dispatchers.Main).launch {
-                updateWidgetFromStorage(this@FcmMessagingService, primarySelection)
+                prefs.edit().putString("predictions_${selection.station}_${selection.line}", gson.toJson(predictionsData)).apply()
+                Log.d("FCM", "Saved predictions for ${selection.station}")
+                
+                // Update widget with current data from storage
+                CoroutineScope(Dispatchers.Main).launch {
+                    updateWidgetFromStorage(this@FcmMessagingService, selection)
+                }
             }
             
         } catch (e: Exception) {
@@ -139,7 +145,8 @@ class FcmMessagingService : FirebaseMessagingService() {
         val now = System.currentTimeMillis()
         
         // Load line status with TTL check
-        var lineStatus: String? = null
+        var lineStatusSeverity: String? = null
+        var lineStatusReason: String? = null
         val statusJson = prefs.getString("line_status_data", null)
         if (statusJson != null) {
             try {
@@ -147,8 +154,10 @@ class FcmMessagingService : FirebaseMessagingService() {
                 val timestamp = (statusData["timestamp"] as? Number)?.toLong() ?: 0
                 if (now - timestamp < LINE_STATUS_TTL_MS) {
                     val dataJson = statusData["data"] as String
-                    lineStatus = dataJson // In real implementation, parse to LineStatus
-                    Log.d("FCM", "Loaded valid line status from storage")
+                    val parsedData = gson.fromJson<Map<String, Any>>(dataJson, object : TypeToken<Map<String, Any>>() {}.type)
+                    lineStatusSeverity = parsedData["statusSeverityDescription"] as? String
+                    lineStatusReason = parsedData["reason"] as? String
+                    Log.d("FCM", "Loaded valid line status from storage: $lineStatusSeverity")
                 } else {
                     Log.d("FCM", "Line status expired, not using")
                 }
@@ -182,21 +191,21 @@ class FcmMessagingService : FirebaseMessagingService() {
             selection.stationName,
             selection.line.replaceFirstChar { it.uppercase() },
             predictions,
-            lineStatus
+            lineStatusSeverity,
+            lineStatusReason
         )
     }
     
-    private fun getPrimarySelection(): UserSelection? {
+    private fun getAllSelections(): List<UserSelection> {
         val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-        val json = prefs.getString("selections", null) ?: return null
+        val json = prefs.getString("selections", null) ?: return emptyList()
         
         return try {
             val type = object : TypeToken<List<UserSelection>>() {}.type
-            val selections: List<UserSelection> = gson.fromJson(json, type)
-            selections.firstOrNull()
+            gson.fromJson(json, type)
         } catch (e: Exception) {
             Log.e("FCM", "Could not parse selections", e)
-            null
+            emptyList()
         }
     }
     
@@ -214,15 +223,6 @@ class FcmMessagingService : FirebaseMessagingService() {
         } catch (e: Exception) {
             "Due"
         }
-    }
-    
-    private fun cleanDestinationName(name: String): String {
-        return name
-            .replace(" Underground Station", "")
-            .replace(" DLR Station", "")
-            .replace(" Rail Station", "")
-            .trim()
-            .take(25)
     }
     
     override fun onNewToken(token: String) {
