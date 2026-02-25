@@ -109,16 +109,24 @@ class FcmMessagingService : FirebaseMessagingService() {
                 
                 Log.d("FCM", "Found ${preds.size} predictions for selection ${selection.stationName} ($lineIdLower - ${selection.direction}).")
                 
-                // Format predictions for widget
+                // Determine a valid platform to fallback to if "Unknown" is encountered
+                val knownPlatform = preds.firstOrNull { 
+                    !it.platform.equals("Unknown", ignoreCase = true) && it.platform.isNotBlank() 
+                }?.platform ?: "Unknown"
+
+                // Format and sort predictions for widget (Earliest ETA first)
                 val formattedPredictions = preds.map { pred ->
                     val etaString = formatETA(pred.eta)
+                    val displayPlatform = if (pred.platform.equals("Unknown", ignoreCase = true) || pred.platform.isBlank()) knownPlatform else pred.platform
+                    
                     com.stationly.core.model.PredictionDisplay(
                         destination = com.stationly.mobile.util.FormatUtils.formatDestination(pred.displayName),
-                        platform = pred.platform,
+                        platform = displayPlatform,
                         eta = etaString,
                         isDue = etaString == "Due"
                     )
-                }
+                }.distinctBy { "${it.destination}_${it.platform}_${it.eta}" }
+                .sortedBy { it.eta.replace(" min", "").replace("Due", "0").toIntOrNull() ?: 999 }
                 
                 // Save predictions with timestamp
                 val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
@@ -151,16 +159,11 @@ class FcmMessagingService : FirebaseMessagingService() {
         if (statusJson != null) {
             try {
                 val statusData = gson.fromJson<Map<String, Any>>(statusJson, object : TypeToken<Map<String, Any>>() {}.type)
-                val timestamp = (statusData["timestamp"] as? Number)?.toLong() ?: 0
-                if (now - timestamp < LINE_STATUS_TTL_MS) {
-                    val dataJson = statusData["data"] as String
-                    val parsedData = gson.fromJson<Map<String, Any>>(dataJson, object : TypeToken<Map<String, Any>>() {}.type)
-                    lineStatusSeverity = parsedData["statusSeverityDescription"] as? String
-                    lineStatusReason = parsedData["reason"] as? String
-                    Log.d("FCM", "Loaded valid line status from storage: $lineStatusSeverity")
-                } else {
-                    Log.d("FCM", "Line status expired, not using")
-                }
+                val dataJson = statusData["data"] as String
+                val parsedData = gson.fromJson<Map<String, Any>>(dataJson, object : TypeToken<Map<String, Any>>() {}.type)
+                lineStatusSeverity = parsedData["statusSeverityDescription"] as? String
+                lineStatusReason = parsedData["reason"] as? String
+                Log.d("FCM", "Loaded valid line status from storage: $lineStatusSeverity")
             } catch (e: Exception) {
                 Log.e("FCM", "Error loading line status from storage", e)
             }
@@ -172,14 +175,9 @@ class FcmMessagingService : FirebaseMessagingService() {
         if (predsJson != null) {
             try {
                 val predsData = gson.fromJson<Map<String, Any>>(predsJson, object : TypeToken<Map<String, Any>>() {}.type)
-                val timestamp = (predsData["timestamp"] as? Number)?.toLong() ?: 0
-                if (now - timestamp < PREDICTIONS_TTL_MS) {
-                    val dataJson = predsData["data"] as String
-                    predictions = gson.fromJson(dataJson, object : TypeToken<List<com.stationly.core.model.PredictionDisplay>>() {}.type)
-                    Log.d("FCM", "Loaded valid predictions from storage")
-                } else {
-                    Log.d("FCM", "Predictions expired, not using")
-                }
+                val dataJson = predsData["data"] as String
+                predictions = gson.fromJson(dataJson, object : TypeToken<List<com.stationly.core.model.PredictionDisplay>>() {}.type)
+                Log.d("FCM", "Loaded valid predictions from storage")
             } catch (e: Exception) {
                 Log.e("FCM", "Error loading predictions from storage", e)
             }

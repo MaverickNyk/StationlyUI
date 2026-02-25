@@ -6,6 +6,7 @@ import io.ktor.client.call.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.serialization.kotlinx.json.*
+import io.ktor.client.plugins.HttpTimeout
 import kotlinx.serialization.json.Json
 
 /**
@@ -38,6 +39,11 @@ class TflApiServiceImpl : TflApiService {
                 prettyPrint = true
                 isLenient = true
             })
+        }
+        install(HttpTimeout) {
+            requestTimeoutMillis = 10000
+            connectTimeoutMillis = 10000
+            socketTimeoutMillis = 10000
         }
     }
     
