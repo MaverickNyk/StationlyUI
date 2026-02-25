@@ -125,7 +125,8 @@ class FcmMessagingService : FirebaseMessagingService() {
                         eta = etaString,
                         isDue = etaString == "Due"
                     )
-                }.sortedBy { it.eta.replace(" min", "").replace("Due", "0").toIntOrNull() ?: 999 }
+                }.distinctBy { "${it.destination}_${it.platform}_${it.eta}" }
+                .sortedBy { it.eta.replace(" min", "").replace("Due", "0").toIntOrNull() ?: 999 }
                 
                 // Save predictions with timestamp
                 val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
