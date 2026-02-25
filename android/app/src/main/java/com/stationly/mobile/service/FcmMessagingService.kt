@@ -109,7 +109,7 @@ class FcmMessagingService : FirebaseMessagingService() {
                 
                 Log.d("FCM", "Found ${preds.size} predictions for selection ${selection.stationName} ($lineIdLower - ${selection.direction}).")
                 
-                // Format predictions for widget
+                // Format and sort predictions for widget (Earliest ETA first)
                 val formattedPredictions = preds.map { pred ->
                     val etaString = formatETA(pred.eta)
                     com.stationly.core.model.PredictionDisplay(
@@ -118,7 +118,7 @@ class FcmMessagingService : FirebaseMessagingService() {
                         eta = etaString,
                         isDue = etaString == "Due"
                     )
-                }
+                }.sortedBy { it.eta.replace(" min", "").replace("Due", "0").toIntOrNull() ?: 999 }
                 
                 // Save predictions with timestamp
                 val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
