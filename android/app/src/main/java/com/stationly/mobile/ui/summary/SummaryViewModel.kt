@@ -153,8 +153,8 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                         val timestamp = (cachedMap["timestamp"] as? Number)?.toLong() ?: 0
                         val dataJson = cachedMap["data"] as? String
                         
-                        // Check if predictions are less than 2 mins old
-                        if (System.currentTimeMillis() - timestamp < 120_000 && dataJson != null) {
+                        // Directly parse whatever was found
+                        if (dataJson != null) {
                             val type = object : TypeToken<List<PredictionDisplay>>() {}.type
                             val cachedPredictions: List<PredictionDisplay> = gson.fromJson(dataJson, type)
                             
@@ -195,8 +195,8 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 val now = System.currentTimeMillis()
                 var validDataJson: String? = null
                 
-                // Keep cache for 1 hour ttl
-                if (statusJson != null && now - timestamp < 3600_000) {
+                // Trust local cache indefinitely since FCM will refresh it!
+                if (statusJson != null) {
                     val statusData = gson.fromJson<Map<String, Any>>(statusJson, object : TypeToken<Map<String, Any>>() {}.type)
                     validDataJson = statusData["data"] as? String
                     if (validDataJson == null || !validDataJson.contains(selection.line, ignoreCase = true)) {

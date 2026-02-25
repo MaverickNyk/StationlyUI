@@ -259,6 +259,7 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         )
         
         viewModelScope.launch {
+            _uiState.value = state.copy(isLoading = true)
             try {
                 // Get existing selections
                 val existing = _savedSelections.value
@@ -292,6 +293,7 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                 _savedSelections.value = listOf(selection)
                 
                 _uiState.value = state.copy(
+                    isLoading = false,
                     success = "Selection saved!",
                     showSuccessDialog = true
                 )
@@ -299,7 +301,7 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                 Log.d("SelectionViewModel", "Saved selection as primary: $selection")
             } catch (e: Exception) {
                 Log.e("SelectionViewModel", "Error saving selection", e)
-                _uiState.value = state.copy(error = "Failed to save: ${e.message}")
+                _uiState.value = state.copy(isLoading = false, error = "Failed to save: ${e.message}")
             }
         }
     }
