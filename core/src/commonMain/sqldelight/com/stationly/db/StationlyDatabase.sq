@@ -1,0 +1,71 @@
+CREATE TABLE UserSelectionEntity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mode TEXT NOT NULL,
+    line TEXT NOT NULL,
+    station TEXT NOT NULL,
+    stationName TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    destinations TEXT NOT NULL, -- JSON or comma-separated
+    destinationIds TEXT NOT NULL -- JSON or comma-separated
+);
+
+CREATE TABLE PredictionEntity (
+    stationId TEXT NOT NULL,
+    lineId TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    eta TEXT NOT NULL,
+    isDue INTEGER NOT NULL DEFAULT 0,
+    stopLetter TEXT,
+    timestamp INTEGER NOT NULL,
+    PRIMARY KEY (stationId, lineId, destination, platform, eta)
+);
+
+CREATE INDEX prediction_lookup ON PredictionEntity(stationId, lineId);
+
+CREATE TABLE LineStatusEntity (
+    mode TEXT NOT NULL,
+    line TEXT NOT NULL,
+    statusSeverityDescription TEXT NOT NULL,
+    reason TEXT,
+    lastUpdatedTime TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    PRIMARY KEY (mode, line)
+);
+
+-- Queries
+insertSelection:
+INSERT INTO UserSelectionEntity(mode, line, station, stationName, direction, destinations, destinationIds)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+selectAllSelections:
+SELECT * FROM UserSelectionEntity;
+
+clearSelections:
+DELETE FROM UserSelectionEntity;
+
+deleteSelection:
+DELETE FROM UserSelectionEntity WHERE station = ? AND line = ?;
+
+insertPrediction:
+INSERT OR REPLACE INTO PredictionEntity(stationId, lineId, destination, platform, eta, isDue, stopLetter, timestamp)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+getPredictionsForStation:
+SELECT * FROM PredictionEntity WHERE stationId = ? AND lineId = ?;
+
+clearPredictionsForStation:
+DELETE FROM PredictionEntity WHERE stationId = ? AND lineId = ?;
+
+clearAllPredictions:
+DELETE FROM PredictionEntity;
+
+insertLineStatus:
+INSERT OR REPLACE INTO LineStatusEntity(mode, line, statusSeverityDescription, reason, lastUpdatedTime, timestamp)
+VALUES (?, ?, ?, ?, ?, ?);
+
+getLineStatus:
+SELECT * FROM LineStatusEntity WHERE mode = ? AND line = ?;
+
+clearLineStatuses:
+DELETE FROM LineStatusEntity;

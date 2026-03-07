@@ -4,6 +4,8 @@ import com.stationly.core.model.UserSelection
 import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.platform.NotificationManager
 import com.stationly.core.platform.WidgetManager
+import com.stationly.core.model.WidgetState
+import com.stationly.core.usecase.FetchInitialDataUseCase
 
 /**
  * Save Selection Use Case
@@ -48,6 +50,17 @@ class SaveSelectionUseCase(
         
         // Step 4: Fetch initial data (line status)
         fetchInitialDataUseCase(newSelection)
+        
+        // Step 5: Trigger widget update after data is fetched to show line status immediately
+        widgetManager.updateWidget(
+            WidgetState(
+                stationName = newSelection.stationName,
+                lineName = newSelection.line,
+                predictions = emptyList(),
+                status = null,
+                lastUpdated = 0 // Will be ignored by storage-based refresh
+            )
+        )
     }
     
     private suspend fun handleSubscriptions(

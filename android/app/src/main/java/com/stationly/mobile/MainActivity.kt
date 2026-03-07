@@ -40,12 +40,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         
         setContent {
-            // Apply theme
             StationlyTheme {
-                Scaffold { innerPadding ->
-                    // Main navigation
-                    AppNavigation(modifier = Modifier.padding(innerPadding))
-                }
+                AppNavigation()
             }
         }
     }

@@ -30,22 +30,7 @@ interface TflApiService {
  * Ktor-based implementation of TflApiService
  * This will be used by all platforms (Android, iOS, Web)
  */
-class TflApiServiceImpl : TflApiService {
-    
-    private val client = HttpClient {
-        install(ContentNegotiation) {
-            json(Json {
-                ignoreUnknownKeys = true
-                prettyPrint = true
-                isLenient = true
-            })
-        }
-        install(HttpTimeout) {
-            requestTimeoutMillis = 10000
-            connectTimeoutMillis = 10000
-            socketTimeoutMillis = 10000
-        }
-    }
+class TflApiServiceImpl(private val client: HttpClient) : TflApiService {
     
     private val baseUrl = "https://api.stationly.co.uk/StationlyBE/api/v1"
     
@@ -74,12 +59,25 @@ class TflApiServiceImpl : TflApiService {
     }
 }
 
-/**
- * Factory for creating TflApiService instances
- * Allows for easy testing and platform-specific implementations
- */
 object TflApiServiceFactory {
+    private val client by lazy {
+        HttpClient {
+            install(ContentNegotiation) {
+                json(Json {
+                    ignoreUnknownKeys = true
+                    prettyPrint = true
+                    isLenient = true
+                })
+            }
+            install(HttpTimeout) {
+                requestTimeoutMillis = 15000
+                connectTimeoutMillis = 10000
+                socketTimeoutMillis = 10000
+            }
+        }
+    }
+
     fun create(): TflApiService {
-        return TflApiServiceImpl()
+        return TflApiServiceImpl(client)
     }
 }

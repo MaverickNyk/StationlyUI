@@ -42,6 +42,7 @@ expect object Platform {
     val widgetManager: WidgetManager
     val notificationManager: NotificationManager
     val storageManager: StorageManager
+    val sqlStorage: com.stationly.core.repository.SqlStorage
     
     fun getPlatformName(): String
 }

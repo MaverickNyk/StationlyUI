@@ -13,6 +13,7 @@ plugins {
     kotlin("multiplatform")
     kotlin("plugin.serialization")
     id("com.android.library")
+    id("app.cash.sqldelight")
 }
 
 kotlin {
@@ -53,6 +54,12 @@ kotlin {
                 
                 // Date/time handling
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
+                
+                // SQLDelight common
+                implementation("app.cash.sqldelight:coroutines-extensions:2.0.2")
+                
+                // Kermit logging
+                implementation("co.touchlab:kermit:2.0.4")
             }
         }
         
@@ -68,6 +75,9 @@ kotlin {
                 // Ktor for Android
                 implementation("io.ktor:ktor-client-android:3.0.0-rc-1")
                 implementation("androidx.core:core-ktx:1.12.0")
+                
+                // SQLDelight Android driver
+                implementation("app.cash.sqldelight:android-driver:2.0.2")
                 
                 // Android-specific dependencies for platform implementations
                 implementation("androidx.work:work-runtime-ktx:2.8.1")
@@ -112,5 +122,13 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+sqldelight {
+    databases {
+        create("StationlyDatabase") {
+            packageName.set("com.stationly.db")
+        }
     }
 }

@@ -16,15 +16,19 @@ class AndroidWidgetManager(
 ) : WidgetManager {
     
     override suspend fun updateWidget(state: WidgetState) {
-        // Trigger widget update through WorkManager
-        // This will call the DepartureWidgetProvider
-        val workManager = WorkManager.getInstance(context)
-        // WorkManager implementation would go here
+        val intent = android.content.Intent("com.stationly.mobile.ACTION_UPDATE_WIDGET")
+        intent.setComponent(android.content.ComponentName(context.packageName, "com.stationly.mobile.widget.DepartureWidgetProvider"))
+        intent.putExtra("ACTION_TYPE", "UPDATE_WIDGET")
+        context.sendBroadcast(intent)
     }
-    
+
     override suspend fun showWaitingState(station: String, line: String) {
-        // Update widget with waiting state
-        // Implementation would update RemoteViews
+        val intent = android.content.Intent("com.stationly.mobile.ACTION_UPDATE_WIDGET")
+        intent.setComponent(android.content.ComponentName(context.packageName, "com.stationly.mobile.widget.DepartureWidgetProvider"))
+        intent.putExtra("ACTION_TYPE", "SHOW_WAITING_STATE")
+        intent.putExtra("stationName", station)
+        intent.putExtra("lineName", line)
+        context.sendBroadcast(intent)
     }
     
     override suspend fun formatForWidget(predictions: List<UserSelection>): WidgetState {
@@ -136,6 +140,12 @@ actual object Platform {
     actual val widgetManager: WidgetManager by lazy { AndroidWidgetManager(appContext) }
     actual val notificationManager: NotificationManager by lazy { AndroidNotificationManager(appContext) }
     actual val storageManager: StorageManager by lazy { AndroidStorageManager(appContext) }
+    
+    actual val sqlStorage: com.stationly.core.repository.SqlStorage by lazy {
+        val driverFactory = DriverFactory(appContext)
+        val database = createDatabase(driverFactory)
+        com.stationly.core.repository.SqlStorage(database)
+    }
     
     actual fun getPlatformName(): String = "Android"
 }
