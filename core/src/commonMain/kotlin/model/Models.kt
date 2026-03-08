@@ -139,7 +139,8 @@ data class PredictionItem(
     val destId: String,
     val displayName: String,
     val platform: String,
-    val eta: String // ISO 8601 timestamp
+    val eta: String, // ISO 8601 timestamp
+    val stopLetter: String? = null
 )
 
 /**
@@ -164,7 +165,8 @@ data class PredictionDisplay(
     val destination: String,
     val platform: String,
     val eta: String, // "Due", "X min", etc.
-    val isDue: Boolean
+    val isDue: Boolean,
+    val stopLetter: String? = null
 )
 
 /**

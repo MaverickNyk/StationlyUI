@@ -18,7 +18,8 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 class DepartureRepository(
     private val apiService: TflApiService,
-    private val storageManager: StorageManager
+    private val storageManager: StorageManager,
+    private val sqlStorage: SqlStorage
 ) {
     
     // In-memory cache for real-time data
@@ -43,7 +44,7 @@ class DepartureRepository(
             val statusList = apiService.getLineStatuses(selection.line)
             statusList.firstOrNull()?.let { status ->
                 _lineStatus.value = status
-                storageManager.saveLineStatus(selection.line, status.toString())
+                sqlStorage.saveLineStatus(status)
             }
             
             // Note: Predictions come from FCM/WebSocket, not API
@@ -51,9 +52,9 @@ class DepartureRepository(
             
         } catch (e: Exception) {
             // Try to load from cache
-            val cachedStatus = storageManager.loadLineStatus(selection.line)
+            val cachedStatus = sqlStorage.getLineStatus(selection.mode, selection.line)
             if (cachedStatus != null) {
-                // Parse and set status (simplified for now)
+                _lineStatus.value = cachedStatus
             }
         } finally {
             _isLoading.value = false
@@ -75,30 +76,8 @@ class DepartureRepository(
         // Update predictions
         _predictions.value = allPredictions
         
-        // Cache for widget updates
-        cachePredictions(allPredictions)
-    }
-    
-    /**
-     * Cache predictions for widget access
-     */
-    private suspend fun cachePredictions(predictions: List<PredictionItem>) {
-        // Convert to JSON string for storage
-        val predictionsJson = predictions.toString() // Simplified
-        storageManager.saveString("cached_predictions", predictionsJson)
-    }
-    
-    /**
-     * Load cached predictions (for widget background updates)
-     */
-    suspend fun loadCachedPredictions(): List<PredictionItem> {
-        val cached = storageManager.loadString("cached_predictions")
-        return if (cached != null) {
-            // Parse and return (simplified)
-            emptyList()
-        } else {
-            emptyList()
-        }
+        // Note: In real app we would map PredictionItem to PredictionDisplay here
+        // For simplicity, we'll implement that mapping when we do the unified formatters
     }
     
     /**
@@ -107,6 +86,7 @@ class DepartureRepository(
     suspend fun clear() {
         _predictions.value = emptyList()
         _lineStatus.value = null
-        storageManager.saveString("cached_predictions", "")
+        sqlStorage.clearAllPredictions()
+        sqlStorage.clearLineStatuses()
     }
 }

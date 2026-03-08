@@ -209,11 +209,37 @@ id_rsa.pub
 *.lck
 
 # ===================================================================
+# ===================================================================
+# MISC / PROJECT SPECIFIC
+# ===================================================================
+# Root-level XML dumps and log files
+/*.xml
+/*.png
+/*.mp4
+/*.jpg
+/*.jpeg
+/view.xml
+/view_active.xml
+/screencap.png
+
+# Android specific additional
+captured_screenshots/
+captures/
+.externalNativeBuild/
+debug/
+release/
+
+# Ensure secrets are ignored
+*.keystore
+*.jks
+google-services.json
+local.properties
+
+# ===================================================================
 # EXCEPTIONS (IMPORTANT - DO NOT IGNORE)
 # ===================================================================
 # Keep these files even if they match patterns above
 !README.md
-!kmp-architecture-plan.md
 !gradle.properties
 !settings.gradle.kts
 !build.gradle.kts
@@ -226,4 +252,3 @@ id_rsa.pub
 !kotlin-js-store/yarn.lock
 !web/src/wasmJsMain/resources/index.html
 !web/build/processedResources/wasmJs/main/index.html
-google-services.json

@@ -15,7 +15,10 @@ import kotlinx.coroutines.flow.asStateFlow
  * Mirrors the functionality of MindTheTimeAndroid's SummaryViewModel
  * but extracted as a reusable repository.
  */
-class SelectionRepository(private val storageManager: StorageManager) {
+class SelectionRepository(
+    private val storageManager: StorageManager,
+    private val sqlStorage: SqlStorage
+) {
     
     // In-memory cache for fast access
     private val _selections = MutableStateFlow<List<UserSelection>>(emptyList())
@@ -25,7 +28,7 @@ class SelectionRepository(private val storageManager: StorageManager) {
      * Initialize repository by loading from storage
      */
     suspend fun initialize() {
-        val savedSelections = storageManager.loadSelections()
+        val savedSelections = sqlStorage.getAllSelections()
         _selections.value = savedSelections
     }
     
@@ -51,7 +54,10 @@ class SelectionRepository(private val storageManager: StorageManager) {
         
         // Update state and persist
         _selections.value = currentSelections
-        storageManager.saveSelections(currentSelections)
+        
+        // Persist to SQL
+        sqlStorage.clearSelections()
+        currentSelections.forEach { sqlStorage.saveSelection(it) }
     }
     
     /**
@@ -64,7 +70,7 @@ class SelectionRepository(private val storageManager: StorageManager) {
         
         if (wasRemoved) {
             _selections.value = currentSelections
-            storageManager.saveSelections(currentSelections)
+            sqlStorage.deleteSelection(selection.station, selection.line)
         }
     }
     
@@ -81,6 +87,7 @@ class SelectionRepository(private val storageManager: StorageManager) {
      */
     suspend fun clearAll() {
         _selections.value = emptyList()
+        sqlStorage.clearSelections()
         storageManager.clearCache()
     }
 }
