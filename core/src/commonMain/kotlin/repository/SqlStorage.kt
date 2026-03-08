@@ -88,6 +88,10 @@ class SqlStorage(private val database: StationlyDatabase) {
         }
     }
 
+    fun hasPredictionsInDatabase(stationId: String, lineId: String): Boolean {
+        return queries.getPredictionsForStation(stationId, lineId).executeAsList().isNotEmpty()
+    }
+
     fun saveLineStatus(status: LineStatus) {
         val timestamp = Clock.System.now().toEpochMilliseconds()
         queries.insertLineStatus(
@@ -123,5 +127,13 @@ class SqlStorage(private val database: StationlyDatabase) {
 
     fun clearLineStatuses() {
         queries.clearLineStatuses()
+    }
+
+    fun clearAllData() {
+        queries.transaction {
+            queries.clearSelections()
+            queries.clearAllPredictions()
+            queries.clearLineStatuses()
+        }
     }
 }

@@ -46,4 +46,22 @@ object SduiThemeManager {
             default
         }
     }
+
+    fun getPrimaryColor(theme: com.stationly.core.model.sdui.SduiAppTheme?): androidx.compose.ui.graphics.Color {
+        val colorHex = theme?.primaryColor ?: "#FFB81C"
+        return try {
+            androidx.compose.ui.graphics.Color(android.graphics.Color.parseColor(colorHex))
+        } catch (e: Exception) {
+            androidx.compose.ui.graphics.Color(0xFFFFB81C)
+        }
+    }
+
+    fun getBackgroundColor(theme: com.stationly.core.model.sdui.SduiAppTheme?): androidx.compose.ui.graphics.Color {
+        val colorHex = theme?.backgroundColor ?: "#000000"
+        return try {
+            androidx.compose.ui.graphics.Color(android.graphics.Color.parseColor(colorHex))
+        } catch (e: Exception) {
+            androidx.compose.ui.graphics.Color.Black
+        }
+    }
 }

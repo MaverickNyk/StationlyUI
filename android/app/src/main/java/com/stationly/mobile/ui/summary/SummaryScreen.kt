@@ -53,6 +53,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun SummaryScreen(
     onNavigateToSelection: () -> Unit,
+    onNavigateToProfile: () -> Unit,
     viewModel: SummaryViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -115,17 +116,8 @@ fun SummaryScreen(
                     }
                 },
                 navigationIcon = {
-                    val rotation by animateFloatAsState(
-                        targetValue = if (uiState.isRefreshing) 360f else 0f,
-                        animationSpec = if (uiState.isRefreshing) {
-                            infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Restart)
-                        } else {
-                            tween(0)
-                        },
-                        label = "refresh_rotation"
-                    )
                     IconButton(
-                        onClick = { viewModel.refreshAll() },
+                        onClick = onNavigateToProfile,
                         modifier = Modifier.padding(start = 8.dp)
                     ) {
                         Surface(
@@ -135,10 +127,10 @@ fun SummaryScreen(
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
-                                    Icons.Default.Refresh, 
-                                    contentDescription = "Refresh", 
+                                    Icons.Default.AccountCircle, 
+                                    contentDescription = "Profile", 
                                     tint = Color.White,
-                                    modifier = Modifier.rotate(rotation)
+                                    modifier = Modifier.size(24.dp)
                                 )
                             }
                         }

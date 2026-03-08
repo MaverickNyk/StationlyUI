@@ -89,9 +89,11 @@ dependencies {
     // Splash Screen
     implementation("androidx.core:core-splashscreen:1.0.1")
     
-    // FCM
+    // FCM and Auth
     implementation(platform("com.google.firebase:firebase-bom:32.3.1"))
     implementation("com.google.firebase:firebase-messaging-ktx")
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.android.gms:play-services-auth:20.7.0")
     
     // WorkManager (for background widget updates)
     implementation("androidx.work:work-runtime-ktx:2.8.1")

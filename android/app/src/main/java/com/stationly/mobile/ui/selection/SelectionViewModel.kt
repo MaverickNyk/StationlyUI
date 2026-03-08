@@ -17,8 +17,6 @@ import kotlinx.serialization.encodeToString
 import com.stationly.core.service.SduiApiServiceFactory
 import com.stationly.core.service.TflApiServiceFactory
 import com.stationly.core.platform.Platform
-import com.stationly.core.usecase.FetchInitialDataUseCase
-import com.stationly.core.usecase.SaveSelectionUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,12 +48,13 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
     private val selectionRepository = SelectionRepository(storageManager, Platform.sqlStorage)
     private val departureRepository = DepartureRepository(apiService, storageManager, Platform.sqlStorage)
     
-    private val fetchInitialDataUseCase = FetchInitialDataUseCase(departureRepository)
-    private val saveSelectionUseCase = SaveSelectionUseCase(
-        selectionRepository,
-        notificationManager,
-        widgetManager,
-        fetchInitialDataUseCase
+    private val stationLifecycleUseCase = com.stationly.core.usecase.StationLifecycleUseCase(
+        selectionRepository = selectionRepository,
+        departureRepository = departureRepository,
+        notificationManager = Platform.notificationManager,
+        widgetManager = Platform.widgetManager,
+        sqlStorage = Platform.sqlStorage,
+        storageManager = Platform.storageManager
     )
     
     private val _uiState = MutableStateFlow(SduiUiState())
@@ -246,17 +245,36 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
             viewModelScope.launch {
                 _uiState.value = state.copy(isLoading = true, isSaving = true)
                 try {
-                    val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-                    val editor = prefs.edit()
-                    editor.remove("line_status_data")
-                    editor.apply()
+                    // 1. Discard ALL current stations first (Requirement: "after calling the removing of station")
+                    val existingSelections = selectionRepository.selections.value
+                    existingSelections.forEach { old ->
+                        Log.d("SDUI", ">>> [SAVE_FLOW] Discarding old station: ${old.stationName}")
+                        stationLifecycleUseCase.discardStation(old, clearSelectionInRepo = true)
+                    }
+
+                    // 2. Setup the NEW station using central logic
+                    Log.d("SDUI", ">>> [SAVE_FLOW] Setting up new station: $stationName")
+                    stationLifecycleUseCase.setupStation(userSelection, isFirstTime = true)
                     
-                    selectionRepository.clearAll()
-                    
-                    // Clear any existing stale predictions for this specific station/line
-                    Platform.sqlStorage.clearPredictions(stationId, line)
-                    
-                    saveSelectionUseCase(userSelection)
+                    // 3. Sync to Firestore if logged in
+                    val currentUser = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+                    if (currentUser != null) {
+                        try {
+                            val stations = listOf(
+                                SubscribedStation(
+                                    id = stationId,
+                                    name = stationName,
+                                    line = line,
+                                    mode = mode,
+                                    direction = direction
+                                )
+                            )
+                            sduiService.syncStations(currentUser.uid, stations)
+                            Log.d("SDUI", "Synced selection to Firestore for ${currentUser.uid}")
+                        } catch (syncEx: Exception) {
+                            Log.e("SDUI", "Failed to sync to Firestore, but local save succeeded", syncEx)
+                        }
+                    }
                     
                     _uiState.value = state.copy(
                         isLoading = false,

@@ -212,6 +212,7 @@ fun SelectionScreen(
                         Log.d("SDUI", "Loaded component: ${component.javaClass.simpleName} with ID: ${
                             when (component) {
                                 is SduiAppComponent.Text -> "N/A"
+                                is SduiAppComponent.Input -> component.id
                                 is SduiAppComponent.Dropdown -> component.id
                                 is SduiAppComponent.Button -> component.id
                                 is SduiAppComponent.Image -> component.id
@@ -275,6 +276,25 @@ fun SelectionScreen(
                                 is SduiAppComponent.Image -> {
                                     // Image rendering with placeholder support or coil (omitted for brevity, just spacer placeholder)
                                     Spacer(modifier = Modifier.height(component.height?.dp ?: 100.dp))
+                                }
+                                is SduiAppComponent.Input -> {
+                                    val currentValue = uiState.selections[component.id] ?: component.text ?: ""
+                                    androidx.compose.material3.OutlinedTextField(
+                                        value = currentValue,
+                                        onValueChange = { newValue ->
+                                            viewModel.onSelectionChanged(component.id, newValue)
+                                        },
+                                        label = { Text(component.label) },
+                                        placeholder = component.placeholder?.let { { Text(it) } },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = dynamicPrimaryColor,
+                                            focusedLabelColor = dynamicPrimaryColor,
+                                            cursorColor = dynamicPrimaryColor
+                                        ),
+                                        shape = RoundedCornerShape(12.dp),
+                                        singleLine = true
+                                    )
                                 }
                                 is SduiAppComponent.Button -> {
                                     // Managed by the bottom bar

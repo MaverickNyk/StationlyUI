@@ -118,27 +118,12 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             }
             
             if (sduiPayload != null && predictions.isNotEmpty()) {
-                 val boundComponents = sduiPayload.components.map { component ->
-                     if (component is com.stationly.core.model.sdui.SduiWidgetComponent.Row) {
-                         val index = component.index.toIntOrNull() ?: 1
-                         val matchingPreds = if (component.destination.isNotBlank() && component.destination != "Any") {
-                             predictions.filter { it.destination.contains(component.destination, true) }
-                         } else {
-                             predictions
-                         }
-                         val actualPred = matchingPreds.getOrNull(index - 1)
-                         if (actualPred != null) {
-                             component.copy(destination = actualPred.destination, eta = actualPred.eta)
-                         } else {
-                             component.copy(destination = "---", eta = "")
-                         }
-                     } else if (component is com.stationly.core.model.sdui.SduiWidgetComponent.Status && lineStatusSeverity != null) {
-                          component.copy(severity = lineStatusSeverity, reason = lineStatusReason ?: "")
-                     } else {
-                         component
-                     }
-                 }
-                 sduiPayload = sduiPayload.copy(components = boundComponents)
+                 sduiPayload = com.stationly.core.util.GlobalBoardProcessor.bindSduiTemplate(
+                     sduiPayload,
+                     predictions,
+                     lineStatusSeverity,
+                     lineStatusReason
+                 )
             }
             
             val hasLoadedData = predictions.isNotEmpty()
@@ -290,10 +275,18 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 views.setViewVisibility(R.id.waiting_container, android.view.View.GONE)
                 
                 val hasSelection = com.stationly.core.platform.Platform.sqlStorage.getAllSelections().isNotEmpty()
+                val isLoggedIn = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser != null
+                val hasEverUpdated = if (hasSelection) {
+                    val selection = com.stationly.core.platform.Platform.sqlStorage.getAllSelections().first()
+                    com.stationly.core.platform.Platform.sqlStorage.hasPredictionsInDatabase(selection.station, selection.line)
+                } else false
+                
                 val legacyRows = com.stationly.core.util.GlobalBoardProcessor.prepareLegacyRows(
                     predictions,
                     lineName,
-                    hasSelection
+                    hasSelection,
+                    isLoggedIn,
+                    hasEverUpdated
                 )
 
                 legacyRows.forEach { row ->

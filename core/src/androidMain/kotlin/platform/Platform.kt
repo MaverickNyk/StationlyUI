@@ -50,11 +50,21 @@ class AndroidNotificationManager(
 ) : NotificationManager {
     
     override suspend fun subscribeToTopics(topics: List<String>) {
+        val fcm = FirebaseMessaging.getInstance()
+        try {
+            val token = fcm.token.await()
+            android.util.Log.d("FCM_SUBS", ">>> Current Device Token: $token")
+        } catch (e: Exception) {
+            android.util.Log.e("FCM_SUBS", "!!! Failed to get token", e)
+        }
+
         topics.forEach { topic ->
             try {
-                FirebaseMessaging.getInstance().subscribeToTopic(topic).await()
+                android.util.Log.d("FCM_SUBS", ">>> Subscribing to topic: $topic")
+                fcm.subscribeToTopic(topic).await()
+                android.util.Log.d("FCM_SUBS", ">>> Successfully subscribed to: $topic")
             } catch (e: Exception) {
-                // Log error but don't crash
+                android.util.Log.e("FCM_SUBS", "!!! Failed to subscribe to $topic", e)
             }
         }
     }

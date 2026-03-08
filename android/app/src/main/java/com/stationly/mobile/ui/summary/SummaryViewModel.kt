@@ -15,8 +15,6 @@ import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.service.TflApiServiceFactory
 import com.stationly.core.usecase.FormatDeparturesUseCase
 import com.stationly.core.usecase.ProcessFcmPayloadUseCase
-import com.stationly.core.usecase.SaveSelectionUseCase
-import com.stationly.core.usecase.FetchInitialDataUseCase
 import com.stationly.core.platform.Platform
 import com.stationly.core.platform.AndroidStorageManager
 import com.stationly.core.platform.AndroidNotificationManager
@@ -25,7 +23,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import com.google.firebase.messaging.FirebaseMessaging
 
 /**
  * SummaryViewModel - Android ViewModel for summary screen
@@ -45,20 +42,37 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     
     // API Service
     private val apiService = TflApiServiceFactory.create()
+    private val sduiService = com.stationly.core.service.SduiApiServiceFactory.create()
     
     // Repositories
     private val selectionRepository = SelectionRepository(storageManager, Platform.sqlStorage)
     private val departureRepository = DepartureRepository(apiService, storageManager, Platform.sqlStorage)
     
+    // Auth Manager
+    private val authManager = com.stationly.mobile.service.FirebaseAuthManager(context)
+    val currentUserEmail = authManager.auth.currentUser?.email
+    
     // KMP Core Use Cases
     private val formatDeparturesUseCase = FormatDeparturesUseCase()
-    private val fetchInitialDataUseCase = FetchInitialDataUseCase(departureRepository)
-    private val saveSelectionUseCase = SaveSelectionUseCase(
-        selectionRepository,
-        notificationManager,
-        widgetManager,
-        fetchInitialDataUseCase
+    private val stationLifecycleUseCase = com.stationly.core.usecase.StationLifecycleUseCase(
+        selectionRepository = selectionRepository,
+        departureRepository = departureRepository,
+        notificationManager = notificationManager,
+        widgetManager = widgetManager,
+        sqlStorage = Platform.sqlStorage,
+        storageManager = Platform.storageManager
     )
+
+    fun logout(onComplete: () -> Unit) {
+        viewModelScope.launch {
+            Log.d("SummaryViewModel", ">>> [LOGOUT] Cleaning up all station data and subscriptions")
+            stationLifecycleUseCase.cleanupAll()
+            authManager.logout()
+            onComplete()
+        }
+    }
+
+
     private val processFcmPayloadUseCase = ProcessFcmPayloadUseCase(
         departureRepository,
         widgetManager,
@@ -119,14 +133,26 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
             selectionRepository.initialize()
             selectionRepository.selections.collect { selections ->
                 _selections.value = selections
-                Log.d("SummaryViewModel", "Repository pushed ${selections.size} selections")
+                Log.d("SummaryViewModel", ">>> [SUMMARY_INIT] Repository pushed ${selections.size} selections. Loading data flows...")
                 
-                val fcm = FirebaseMessaging.getInstance()
                 selections.forEach { selection ->
-                    fcm.subscribeToTopic("Station_${selection.station}")
-                    fcm.subscribeToTopic("LineStatus_${selection.mode}_${selection.line}")
+                    // 1. Load what's in DB (Don't resubscribe here; handled by setup flow in Login/Selection)
                     loadPredictions(selection)
                     loadLineStatus(selection)
+
+                    // 2. Fallback: If DB is empty, fetch initial data via REST (Legacy or First Run)
+                    viewModelScope.launch {
+                        val existingPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line)
+                        val existingStatus = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
+                        
+                        if (existingPreds.isEmpty() || existingStatus == null) {
+                            Log.d("SummaryViewModel", ">>> [SUMMARY_INIT] Data missing for ${selection.stationName}. Triggering initial fetch...")
+                            departureRepository.fetchInitialData(selection)
+                            // Reload after fetch
+                            loadPredictions(selection)
+                            loadLineStatus(selection)
+                        }
+                    }
                 }
             }
         }
@@ -297,13 +323,8 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     fun deleteSelection(selection: UserSelection) {
         viewModelScope.launch {
             try {
-                // Remove from database via repository
-                selectionRepository.deleteSelection(selection)
-                
-                // Unsubscribe from FCM topics
-                val fcm = com.google.firebase.messaging.FirebaseMessaging.getInstance()
-                fcm.unsubscribeFromTopic("Station_${selection.station}")
-                fcm.unsubscribeFromTopic("LineStatus_${selection.mode}_${selection.line}")
+                Log.d("SummaryViewModel", ">>> [DELETE] Discarding station: ${selection.stationName}")
+                stationLifecycleUseCase.discardStation(selection, clearSelectionInRepo = true)
 
                 // Update UI state predictions map
                 val currentMap = _predictions.value.toMutableMap()
@@ -314,20 +335,26 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 currentLineStatuses.remove("${selection.mode}_${selection.line}")
                 _lineStatuses.value = currentLineStatuses
 
-                // Remove SDUI layout from prefs
-                val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-                
-                // Write current selections to SharedPreferences for legacy widget compatibility
-                val remainingSelections = _selections.value.filter { it.station != selection.station }
-                val selectionsJson = gson.toJson(remainingSelections)
-                
-                prefs.edit()
-                    .remove("sdui_layout_${selection.station}")
-                    .putString("selections", selectionsJson)
-                    .apply()
+                // Sync the resulting state to backend to ensure single board is accurate 
+                try {
+                    val authUser = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+                    if (authUser != null) {
+                        val remainingSelections = _selections.value.filter { it.station != selection.station }
+                        val mapped = remainingSelections.map { 
+                            com.stationly.core.model.sdui.SubscribedStation(
+                                id = it.station, 
+                                name = it.stationName, 
+                                line = it.line, 
+                                mode = it.mode, 
+                                direction = it.direction
+                            ) 
+                        }
+                        sduiService.syncStations(authUser.uid, mapped)
+                    }
+                } catch (e: Exception) {
+                    Log.e("SummaryViewModel", "Failed to sync delete to backend", e)
+                }
 
-                com.stationly.mobile.widget.DepartureWidgetProvider.updateFromStorage(context)
-                
                 Log.d("SummaryViewModel", "Deleted selection: ${selection.stationName}")
             } catch (e: Exception) {
                 Log.e("SummaryViewModel", "Error deleting selection", e)

@@ -34,65 +34,80 @@ class FcmMessagingService : FirebaseMessagingService() {
     private val gson = Gson()
     
     // Repositories
-    private val selectionRepository = SelectionRepository(Platform.storageManager, Platform.sqlStorage)
-    private val departureRepository = DepartureRepository(
-        com.stationly.core.service.TflApiServiceFactory.create(), 
-        Platform.storageManager, 
-        Platform.sqlStorage
-    )
-    
-    // Throttle map to prevent excessive widget updates (Station ID -> Last Update Time)
-    private val widgetThrottleMap = mutableMapOf<String, Long>()
-    private val THROTTLE_INTERVAL_MS = 2000L // 2 seconds minimum between updates per station
     
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
-        Log.d("FCM", "Message received from: ${remoteMessage.from}")
+        val from = remoteMessage.from
         
         when {
             remoteMessage.data.containsKey("sdui_payload") -> {
                 handleSduiUpdate(remoteMessage)
             }
-            remoteMessage.from?.startsWith("/topics/LineStatus_") == true -> {
+            from != null && from.contains("LineStatus_") -> {
                 handleLineStatusUpdate(remoteMessage)
             }
-            remoteMessage.from?.startsWith("/topics/Station_") == true -> {
+            from != null && from.contains("Station_") -> {
                 handlePredictionUpdate(remoteMessage)
             }
             else -> {
-                Log.d("FCM", "Message from unknown topic. Ignoring.")
+                Log.d("FCM", ">>> [IGNORED] No matching handler for: $from. Data: ${remoteMessage.data}")
             }
         }
     }
 
     private fun handleSduiUpdate(remoteMessage: RemoteMessage) {
         val sduiJson = remoteMessage.data["sdui_payload"] ?: return
-        Log.d("FCM", "Received SDUI Layout Template: $sduiJson")
 
         try {
-            // Validate the SDUI payload syntax
             val format = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
             val sduiPayload = format.decodeFromString<com.stationly.core.model.sdui.SduiWidgetPayload>(sduiJson)
             
-            // Save the layout template for future predictions to use
             val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
             prefs.edit().putString("sdui_layout_${sduiPayload.id}", sduiJson).apply()
             
-            // Apply it immediately with existing data
-            val selections = getAllSelections()
-            selections.filter { it.station == sduiPayload.id }.forEach { selection ->
-                CoroutineScope(Dispatchers.Main).launch {
-                    updateWidgetFromStorage(this@FcmMessagingService, selection)
+            // Extract predictions from SDUI rows if they contain data
+            // This ensures the App's SQL-based board is in sync with the visual SDUI update
+            val extractedPredictions = mutableListOf<PredictionDisplay>()
+            sduiPayload.components.forEach { component ->
+                if (component is com.stationly.core.model.sdui.SduiWidgetComponent.Row) {
+                    if (component.destination.isNotBlank() && component.destination != "---" && component.eta.isNotBlank()) {
+                         extractedPredictions.add(
+                             PredictionDisplay(
+                                 destination = component.destination,
+                                 platform = "Unknown", // Will be refined by extraction logic if available
+                                 eta = component.eta,
+                                 isDue = component.eta.equals("Due", ignoreCase = true)
+                             )
+                         )
+                    }
                 }
             }
-            Log.d("FCM", "Successfully cached SDUI layout template")
+
+            val selections = getAllSelections()
+            // Match by Station ID (Case Insensitive)
+            val matchingSelections = selections.filter { it.station.equals(sduiPayload.id, ignoreCase = true) }
+            
+            matchingSelections.forEach { selection ->
+                CoroutineScope(Dispatchers.IO).launch {
+                    if (extractedPredictions.isNotEmpty()) {
+                        Platform.sqlStorage.savePredictions(selection.station, selection.line, extractedPredictions)
+                        
+                        // Ping the app to refresh
+                        prefs.edit().putString("predictions_${selection.station}_${selection.line}", System.currentTimeMillis().toString()).apply()
+                    }
+                    
+                    launch(Dispatchers.Main) {
+                        updateWidgetFromStorage(this@FcmMessagingService, selection)
+                    }
+                }
+            }
+            Log.d("FCM", "Successfully processed SDUI layout and synced predictions")
         } catch (e: Exception) {
-            Log.e("FCM", "Error parsing SDUI layout template payload in FCM", e)
+            Log.e("FCM", "Error parsing SDUI layout template", e)
         }
     }
     
     private fun handleLineStatusUpdate(remoteMessage: RemoteMessage) {
         val payloadJson = remoteMessage.data["payload"] ?: return
-        Log.d("FCM", "Received Line Status Payload: $payloadJson")
         
         try {
             val status = gson.fromJson(payloadJson, LineStatus::class.java)
@@ -106,6 +121,7 @@ class FcmMessagingService : FirebaseMessagingService() {
                 // Update widget with current data from storage
                 val selections = getAllSelections()
                 selections.forEach { selection ->
+                    // Match line status by line ID (Case Insensitive)
                     if (status.id.equals(selection.line, ignoreCase = true)) {
                          updateWidgetFromStorage(this@FcmMessagingService, selection)
                     }
@@ -118,9 +134,11 @@ class FcmMessagingService : FirebaseMessagingService() {
     
     private fun handlePredictionUpdate(remoteMessage: RemoteMessage) {
         val payloadJson = remoteMessage.data["payload"] ?: return
-        Log.d("FCM", "Received Prediction Payload: $payloadJson")
         
         try {
+            // Priority 1: Extract station identity from topic name to handle Child Stop ID mismatches
+            val stationIdFromTopic = remoteMessage.from?.replace("/topics/Station_", "") ?: ""
+            
             // Parse FCM payload using KMP model
             val payload = gson.fromJson(payloadJson, FcmPayload::class.java)
             
@@ -128,10 +146,14 @@ class FcmMessagingService : FirebaseMessagingService() {
             val allSelections = getAllSelections()
             if (allSelections.isEmpty()) return
             
-            // Find selections that match this station
-            val matchingSelections = allSelections.filter { it.station == payload.id }
+            // Find selections that match this station (Check Topic First, then Payload ID as fallback)
+            val matchingSelections = allSelections.filter { 
+                it.station.equals(stationIdFromTopic, ignoreCase = true) || 
+                it.station.equals(payload.id, ignoreCase = true)
+            }
+            
             if (matchingSelections.isEmpty()) {
-                Log.d("FCM", "Payload station ID (${payload.id}) does not match any active selection. Ignoring.")
+                Log.d("FCM", "Message for ${stationIdFromTopic ?: payload.id} does not match any active selection. Ignoring.")
                 return
             }
             
@@ -139,16 +161,16 @@ class FcmMessagingService : FirebaseMessagingService() {
                 // Get line data
                 val lineIdLower = selection.line.lowercase()
                 val lineData = payload.lines[lineIdLower]
+                
+                // If lineData is null, we can't show departures for this line
                 if (lineData == null) {
-                    Log.d("FCM", "Payload does not contain line: $lineIdLower for selection ${selection.stationName}. Ignoring.")
+                    Log.d("FCM", "Payload lines [${payload.lines.keys}] missing selection line: $lineIdLower. Ignoring.")
                     return@forEach
                 }
                 
                 // Get predictions for the direction
                 val dirData = lineData.dirs[selection.direction]
                 val preds = dirData?.preds ?: emptyList()
-                
-                Log.d("FCM", "Found ${preds.size} predictions for selection ${selection.stationName} ($lineIdLower - ${selection.direction}).")
                 
                 // Determine a valid platform to fallback to if "Unknown" is encountered
                 val knownPlatform = preds.firstOrNull { 
@@ -175,22 +197,14 @@ class FcmMessagingService : FirebaseMessagingService() {
                 // Save predictions to SQL
                 CoroutineScope(Dispatchers.IO).launch {
                     Platform.sqlStorage.savePredictions(selection.station, selection.line, sortedPredictions)
-                    Log.d("FCM", "Saved predictions for \${selection.station}")
                     
                     // Ping SharedPreferences to trigger UI updates without sending the payload
                     val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-                    prefs.edit().putString("predictions_\${selection.station}_\${selection.line}", System.currentTimeMillis().toString()).apply()
+                    prefs.edit().putString("predictions_${selection.station}_${selection.line}", System.currentTimeMillis().toString()).apply()
                     
-                    // Update widget with current data from storage (with throttling)
+                    // Update widget with current data from storage (immediate)
                     launch(Dispatchers.Main) {
-                        val now = System.currentTimeMillis()
-                        val lastUpdate = widgetThrottleMap[selection.station] ?: 0L
-                        if (now - lastUpdate > THROTTLE_INTERVAL_MS) {
-                            widgetThrottleMap[selection.station] = now
-                            updateWidgetFromStorage(this@FcmMessagingService, selection)
-                        } else {
-                            Log.d("FCM", "Throttling widget update for ${selection.station}")
-                        }
+                        updateWidgetFromStorage(this@FcmMessagingService, selection)
                     }
                 }
             }
@@ -216,7 +230,6 @@ class FcmMessagingService : FirebaseMessagingService() {
         
         // Load predictions from SQL
         val predictions = Platform.sqlStorage.getPredictions(selection.station, selection.line)
-        Log.d("FCM", "Loaded ${predictions.size} predictions from SQL")
         
         // Load SDUI template if it exists for this station
         var sduiPayload: com.stationly.core.model.sdui.SduiWidgetPayload? = null
