@@ -70,11 +70,14 @@ class AndroidNotificationManager(
     }
     
     override suspend fun unsubscribeFromTopics(topics: List<String>) {
+        val fcm = FirebaseMessaging.getInstance()
         topics.forEach { topic ->
             try {
-                FirebaseMessaging.getInstance().unsubscribeFromTopic(topic).await()
+                android.util.Log.d("FCM_SUBS", ">>> Unsubscribing from topic: $topic")
+                fcm.unsubscribeFromTopic(topic).await()
+                android.util.Log.d("FCM_SUBS", ">>> Successfully unsubscribed from: $topic")
             } catch (e: Exception) {
-                // Log error but don't crash
+                android.util.Log.e("FCM_SUBS", "!!! Failed to unsubscribe from $topic", e)
             }
         }
     }

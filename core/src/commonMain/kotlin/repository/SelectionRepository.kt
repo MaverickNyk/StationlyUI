@@ -66,7 +66,9 @@ class SelectionRepository(
      */
     suspend fun deleteSelection(selection: UserSelection) {
         val currentSelections = _selections.value.toMutableList()
-        val wasRemoved = currentSelections.remove(selection)
+        val wasRemoved = currentSelections.removeAll { 
+            it.station == selection.station && it.line == selection.line 
+        }
         
         if (wasRemoved) {
             _selections.value = currentSelections
