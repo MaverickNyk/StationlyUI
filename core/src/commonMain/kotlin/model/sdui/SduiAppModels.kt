@@ -77,7 +77,8 @@ data class SduiAppScreen(
 @Serializable
 data class SduiDropdownOption(
     val id: String,
-    val label: String
+    val label: String,
+    val iconUrl: String? = null
 )
 
 @Serializable

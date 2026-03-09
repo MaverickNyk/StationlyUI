@@ -61,6 +61,12 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
     val uiState: StateFlow<SduiUiState> = _uiState.asStateFlow()
     
     init {
+        // Initialize repositories from SQL
+        viewModelScope.launch {
+            selectionRepository.initialize()
+            Log.d("SDUI", "SelectionRepository initialized with ${selectionRepository.selections.value.size} stations")
+        }
+        
         loadCachedLayout()
         loadServerLayout()
     }

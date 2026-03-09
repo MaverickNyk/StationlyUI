@@ -36,6 +36,7 @@ import com.stationly.core.model.sdui.SduiAppTheme
 import com.stationly.core.model.sdui.SduiDropdownOption
 import com.stationly.mobile.R
 import androidx.compose.foundation.Image
+import coil.compose.AsyncImage
 
 @Composable
 fun SelectionScreen(
@@ -368,7 +369,17 @@ private fun SduiSelectionCard(
                 val selectedOption = options.find { it.id == selectedId }
                 val labelText = selectedOption?.label ?: "Select..."
                 
-                Column(modifier = Modifier.weight(1f)) {
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    if (selectedOption?.iconUrl != null) {
+                        AsyncImage(
+                            model = selectedOption.iconUrl,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(32.dp)
+                                .padding(end = 12.dp)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
                     val lines = labelText.split("\n")
                     lines.forEachIndexed { index, line ->
                         Text(
@@ -389,6 +400,7 @@ private fun SduiSelectionCard(
                         )
                     }
                 }
+            }
                 
                 Box(
                     modifier = Modifier
@@ -619,6 +631,16 @@ private fun SelectionBottomSheet(
                                 .padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (option.iconUrl != null) {
+                                AsyncImage(
+                                    model = option.iconUrl,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .padding(end = 12.dp)
+                                )
+                            }
+                            
                             Column(modifier = Modifier.weight(1f)) {
                                 val lines = option.label.split("\n")
                                 lines.forEachIndexed { index, line ->
