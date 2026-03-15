@@ -15,8 +15,8 @@ import kotlinx.serialization.json.Json
  * This interface defines all the API endpoints needed for the Stationly app.
  * It mirrors the MindTheTimeAndroid TflApiService but is platform-agnostic.
  * 
- * Base URL: https://api.stationly.co.uk/StationlyBE/
- * (Same as MindTheTimeAndroid - no changes needed)
+ * Base URL: https://api.stationly.co.uk/api/v1
+ * (New Unified Backend)
  */
 interface TflApiService {
     suspend fun getModes(): List<TransportMode>
@@ -32,7 +32,7 @@ interface TflApiService {
  */
 class TflApiServiceImpl(private val client: HttpClient) : TflApiService {
     
-    private val baseUrl = "https://api.stationly.co.uk/StationlyBE/api/v1"
+    private val baseUrl = "https://api.stationly.co.uk/api/v1"
     
     override suspend fun getModes(): List<TransportMode> {
         return client.get("$baseUrl/modes").body()
