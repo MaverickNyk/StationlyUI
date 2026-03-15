@@ -11,11 +11,11 @@ class SqlStorage(private val database: StationlyDatabase) {
 
     fun saveSelection(selection: UserSelection) {
         queries.insertSelection(
-            mode = selection.mode,
-            line = selection.line,
+            mode = selection.mode.lowercase(),
+            line = selection.line.lowercase(),
             station = selection.station,
             stationName = selection.stationName,
-            direction = selection.direction,
+            direction = selection.direction.lowercase(),
             destinations = selection.destinations.joinToString(","),
             destinationIds = selection.destinationIds.joinToString(",")
         )
@@ -36,9 +36,10 @@ class SqlStorage(private val database: StationlyDatabase) {
     }
     
     fun deleteSelection(station: String, line: String) {
+        val normalizedLine = line.lowercase()
         queries.transaction {
-            queries.deleteSelection(station, line)
-            queries.clearPredictionsForStation(station, line)
+            queries.deleteSelection(station, normalizedLine)
+            queries.clearPredictionsForStation(station, normalizedLine)
         }
     }
 
@@ -48,12 +49,13 @@ class SqlStorage(private val database: StationlyDatabase) {
 
     fun savePredictions(stationId: String, lineId: String, predictions: List<PredictionDisplay>) {
         val timestamp = Clock.System.now().toEpochMilliseconds()
+        val normalizedLineId = lineId.lowercase()
         queries.transaction {
-            queries.clearPredictionsForStation(stationId, lineId)
+            queries.clearPredictionsForStation(stationId, normalizedLineId)
             predictions.forEach {
                 queries.insertPrediction(
                     stationId = stationId,
-                    lineId = lineId,
+                    lineId = normalizedLineId,
                     destination = it.destination,
                     platform = it.platform,
                     eta = it.eta,
@@ -66,7 +68,7 @@ class SqlStorage(private val database: StationlyDatabase) {
     }
 
     fun getPredictions(stationId: String, lineId: String): List<PredictionDisplay> {
-        val results = queries.getPredictionsForStation(stationId, lineId).executeAsList()
+        val results = queries.getPredictionsForStation(stationId, lineId.lowercase()).executeAsList()
         if (results.isEmpty()) return emptyList()
         
         val now = Clock.System.now().toEpochMilliseconds()
@@ -89,14 +91,14 @@ class SqlStorage(private val database: StationlyDatabase) {
     }
 
     fun hasPredictionsInDatabase(stationId: String, lineId: String): Boolean {
-        return queries.getPredictionsForStation(stationId, lineId).executeAsList().isNotEmpty()
+        return queries.getPredictionsForStation(stationId, lineId.lowercase()).executeAsList().isNotEmpty()
     }
 
     fun saveLineStatus(status: LineStatus) {
         val timestamp = Clock.System.now().toEpochMilliseconds()
         queries.insertLineStatus(
-            mode = status.mode,
-            line = status.id,
+            mode = status.mode.lowercase(),
+            line = status.id.lowercase(),
             statusSeverityDescription = status.statusSeverityDescription,
             reason = status.reason,
             lastUpdatedTime = status.lastUpdatedTime,
@@ -105,7 +107,7 @@ class SqlStorage(private val database: StationlyDatabase) {
     }
 
     fun getLineStatus(mode: String, line: String): LineStatus? {
-        return queries.getLineStatus(mode, line).executeAsOneOrNull()?.let {
+        return queries.getLineStatus(mode.lowercase(), line.lowercase()).executeAsOneOrNull()?.let {
             LineStatus(
                 id = it.line,
                 name = "", // Name is usually not used from status object for display
@@ -122,7 +124,7 @@ class SqlStorage(private val database: StationlyDatabase) {
     }
 
     fun clearPredictions(stationId: String, lineId: String) {
-        queries.clearPredictionsForStation(stationId, lineId)
+        queries.clearPredictionsForStation(stationId, lineId.lowercase())
     }
 
     fun clearLineStatuses() {

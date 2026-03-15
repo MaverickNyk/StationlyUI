@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import android.util.Log
 import androidx.compose.ui.text.font.FontStyle
@@ -440,31 +441,50 @@ private fun SduiSelectionCard(
 
 @Composable
 private fun SavingOverlay(primaryColor: Color, loadingText: String) {
-    val infiniteTransition = rememberInfiniteTransition(label = "train")
+    val infiniteTransition = rememberInfiniteTransition(label = "saving_anim")
+
+    // The original train sliding left-right
     val slide by infiniteTransition.animateFloat(
-        initialValue = -50f,
-        targetValue = 50f,
+        initialValue = -56f,
+        targetValue = 56f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = LinearEasing),
+            animation = tween(1400, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "slide"
     )
-    
-    val scale by infiniteTransition.animateFloat(
+
+    // The original pulsing glow circle
+    val glowScale by infiniteTransition.animateFloat(
         initialValue = 1f,
-        targetValue = 1.5f,
+        targetValue = 1.6f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1000),
+            animation = tween(900, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "pulse"
+        label = "glow"
     )
+
+    // Animated ellipsis for the subtitle
+    val dotPhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 4f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "dots"
+    )
+    val dots = ".".repeat(dotPhase.toInt().coerceIn(0, 3))
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.95f))
+            // Blocks ALL touch events so dropdowns/buttons under this can't be triggered
+            .pointerInput(Unit) {
+                awaitPointerEventScope { while (true) { awaitPointerEvent() } }
+            }
+            .background(Color.Black.copy(alpha = 0.96f))
             .padding(32.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -472,65 +492,82 @@ private fun SavingOverlay(primaryColor: Color, loadingText: String) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
+            // Train animation box
             Box(
                 modifier = Modifier
-                    .size(120.dp)
+                    .size(140.dp)
                     .padding(8.dp),
                 contentAlignment = Alignment.Center
             ) {
+                // Track rail
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(2.dp)
-                        .align(Alignment.BottomCenter)
-                        .background(Color.White.copy(alpha = 0.2f))
+                        .align(Alignment.Center)
+                        .background(
+                            brush = Brush.horizontalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    Color.White.copy(alpha = 0.15f),
+                                    Color.White.copy(alpha = 0.15f),
+                                    Color.Transparent
+                                )
+                            )
+                        )
                 )
-                
+
+                // Pulsing glow ring (behind the icon)
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .graphicsLayer {
+                            scaleX = glowScale
+                            scaleY = glowScale
+                            alpha = (2f - glowScale) * 0.25f
+                        }
+                        .background(primaryColor, CircleShape)
+                )
+
+                // Sliding train icon
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowRight,
                     contentDescription = null,
                     tint = primaryColor,
                     modifier = Modifier
-                        .size(48.dp)
+                        .size(52.dp)
                         .offset(x = slide.dp)
                 )
-                
-                Box(
-                    modifier = Modifier
-                        .size(80.dp)
-                        .graphicsLayer {
-                            scaleX = scale
-                            scaleY = scale
-                            alpha = (2f - scale) * 0.3f
-                        }
-                        .background(primaryColor, CircleShape)
-                )
             }
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            
+
+            Spacer(modifier = Modifier.height(28.dp))
+
             Text(
                 text = loadingText,
                 style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black),
                 color = Color.White,
                 textAlign = TextAlign.Center
             )
-            
+
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             Text(
-                text = "Establishing high-frequency connection...",
+                text = "Establishing live connection$dots",
                 style = MaterialTheme.typography.bodyLarge,
                 color = Color.White.copy(alpha = 0.5f),
                 textAlign = TextAlign.Center
             )
-            
-            Spacer(modifier = Modifier.height(48.dp))
-            
-            CircularProgressIndicator(
+
+            Spacer(modifier = Modifier.height(40.dp))
+
+            // Thin amber rail — looks like a TfL status indicator
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth(0.55f)
+                    .height(2.dp)
+                    .clip(RoundedCornerShape(1.dp)),
                 color = primaryColor,
-                strokeWidth = 3.dp,
-                modifier = Modifier.size(24.dp)
+                trackColor = primaryColor.copy(alpha = 0.12f)
             )
         }
     }

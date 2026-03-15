@@ -45,8 +45,9 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     private val sduiService = com.stationly.core.service.SduiApiServiceFactory.create()
     
     // Repositories
+    private val syncPredictionsUseCase = com.stationly.core.usecase.SyncPredictionsUseCase(Platform.sqlStorage)
     private val selectionRepository = SelectionRepository(storageManager, Platform.sqlStorage)
-    private val departureRepository = DepartureRepository(apiService, storageManager, Platform.sqlStorage)
+    private val departureRepository = DepartureRepository(apiService, storageManager, Platform.sqlStorage, syncPredictionsUseCase)
     
     // Auth Manager
     private val authManager = com.stationly.mobile.service.FirebaseAuthManager(context)
@@ -65,7 +66,6 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
 
     fun logout(onComplete: () -> Unit) {
         viewModelScope.launch {
-            Log.d("SummaryViewModel", ">>> [LOGOUT] Cleaning up all station data and subscriptions")
             stationLifecycleUseCase.cleanupAll()
             authManager.logout()
             onComplete()
@@ -133,26 +133,10 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
             selectionRepository.initialize()
             selectionRepository.selections.collect { selections ->
                 _selections.value = selections
-                Log.d("SummaryViewModel", ">>> [SUMMARY_INIT] Repository pushed ${selections.size} selections. Loading data flows...")
-                
                 selections.forEach { selection ->
-                    // 1. Load what's in DB (Don't resubscribe here; handled by setup flow in Login/Selection)
                     loadPredictions(selection)
                     loadLineStatus(selection)
-
-                    // 2. Fallback: If DB is empty, fetch initial data via REST (Legacy or First Run)
-                    viewModelScope.launch {
-                        val existingPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line)
-                        val existingStatus = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
-                        
-                        if (existingPreds.isEmpty() || existingStatus == null) {
-                            Log.d("SummaryViewModel", ">>> [SUMMARY_INIT] Data missing for ${selection.stationName}. Triggering initial fetch...")
-                            departureRepository.fetchInitialData(selection)
-                            // Reload after fetch
-                            loadPredictions(selection)
-                            loadLineStatus(selection)
-                        }
-                    }
+                    refreshDataIfStale(selection)
                 }
             }
         }
@@ -171,7 +155,6 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     private fun loadPredictions(selection: UserSelection) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                // Use unified processor for identical sorting as the widget
                 val rawPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line)
                 val dbPreds = com.stationly.core.util.GlobalBoardProcessor.processPredictions(rawPreds)
                 
@@ -249,11 +232,34 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                     val formattedStatus = "$severity$cleanReason"
                     
                     val currentMap = _lineStatuses.value.toMutableMap()
-                    currentMap["${selection.mode}_${selection.line}"] = formattedStatus
+                    val key = "${selection.mode}_${selection.line}".lowercase()
+                    currentMap[key] = formattedStatus
                     _lineStatuses.value = currentMap
                 }
             } catch (e: Exception) {
                 Log.e("SummaryViewModel", "Error loading line status", e)
+            }
+        }
+    }
+
+    /**
+     * Eagerly refresh station data if it is missing or older than 60 seconds.
+     * Bridges the gap between app launch and the next FCM update.
+     */
+    private fun refreshDataIfStale(selection: UserSelection) {
+        viewModelScope.launch {
+            val existingPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line)
+            val existingStatus = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
+            
+            val lastUpdatedByStation = _stationUpdates.value[selection.station] ?: 0L
+            val isStale = System.currentTimeMillis() - lastUpdatedByStation > 60_000
+
+            if (existingPreds.isEmpty() || existingStatus == null || isStale) {
+                departureRepository.fetchInitialData(selection)
+                
+                // Refresh local UI state flows from the updated database
+                loadPredictions(selection)
+                loadLineStatus(selection)
             }
         }
     }
@@ -323,7 +329,6 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     fun deleteSelection(selection: UserSelection) {
         viewModelScope.launch {
             try {
-                Log.d("SummaryViewModel", ">>> [DELETE] Discarding station: ${selection.stationName}")
                 stationLifecycleUseCase.discardStation(selection, clearSelectionInRepo = true)
 
                 // Update UI state predictions map
@@ -332,7 +337,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 _predictions.value = currentMap
                 
                 val currentLineStatuses = _lineStatuses.value.toMutableMap()
-                currentLineStatuses.remove("${selection.mode}_${selection.line}")
+                currentLineStatuses.remove("${selection.mode}_${selection.line}".lowercase())
                 _lineStatuses.value = currentLineStatuses
 
                 // Sync the resulting state to backend to ensure single board is accurate 

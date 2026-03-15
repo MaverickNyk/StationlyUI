@@ -23,8 +23,7 @@ class UserSyncRepository(
         provider: String?
     ): List<SubscribedStation> {
         val result = try {
-            // 1. Sync profile to Firestore (updates or creates user)
-            android.util.Log.d("UserSync", ">>> [USER_SYNC] Starting sync for $email (uid: $uid)")
+            // 1. Sync profile to Firestore (creates or updates the user record)
             val profile = apiService.syncProfile(
                 SyncProfileRequest(
                     uid = uid,
@@ -35,15 +34,12 @@ class UserSyncRepository(
                 )
             )
             
-            android.util.Log.d("UserSync", ">>> [USER_SYNC] Sync success. Profile has ${profile.stations.size} saved stations.")
-            
             // 2. Wipe local database and cache to ensure clean state
             sqlStorage.clearAllData()
             storageManager.clearCache()
             
-            // 3. Populate local selections from profile
+            // 3. Restore local selections from the cloud profile
             profile.stations.forEach { station ->
-                android.util.Log.d("UserSync", ">>> [USER_SYNC] Restoring station: ${station.name} (${station.id}) on line ${station.line}")
                 sqlStorage.saveSelection(
                     UserSelection(
                         mode = station.mode,
@@ -59,7 +55,7 @@ class UserSyncRepository(
             
             profile.stations
         } catch (e: Exception) {
-            android.util.Log.e("UserSync", "!!! [USER_SYNC] Profile sync failed", e)
+            android.util.Log.e("UserSyncRepository", "Profile sync failed", e)
             throw e
         }
         

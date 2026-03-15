@@ -197,7 +197,7 @@ fun SummaryScreen(
                                 selection = selection,
                                 predictions = predictions[selection.station] ?: emptyList(),
                                 hasPredictions = predictions[selection.station]?.isNotEmpty() == true,
-                                lineStatus = lineStatuses["${selection.mode}_${selection.line}"],
+                                lineStatus = lineStatuses["${selection.mode}_${selection.line}".lowercase()],
                                 sduiPayload = sduiPayloads[selection.station],
                                 lastUpdated = stationUpdates[selection.station] ?: 0L,
                                 onDelete = { viewModel.deleteSelection(selection) }
