@@ -32,7 +32,7 @@ class StationLifecycleUseCase(
         // 1. Save to local SQL (SelectionRepository handles Flow updates)
         selectionRepository.saveSelection(selection, null)
 
-        // 2. Handle FCM subscriptions (Station and LineStatus)
+        // 2. Subscribe to FCM topics for real-time updates
         val topics = listOf(
             "Station_${selection.station}",
             "LineStatus_${selection.mode}_${selection.line}"
@@ -41,28 +41,29 @@ class StationLifecycleUseCase(
 
         // 3. Clear any stale predictions for this station/line before fetch
         sqlStorage.clearPredictions(selection.station, selection.line)
-        
-        // Trigger UI update to show empty state immediately
         storageManager.saveString("predictions_${selection.station}_${selection.line}", "cleared_${Clock.System.now().toEpochMilliseconds()}")
 
-        // 4. Update widget to 'Waiting' state immediately
+        // 4. Show 'Connecting' widget state immediately
         widgetManager.showWaitingState(selection.stationName, selection.line)
 
-        // 5. Call REST API for immediate Line Status
-        // This populates sqlStorage with the current status
+        // 5. Eagerly fetch Line Status & Predictions via REST
         departureRepository.fetchInitialData(selection)
         
-        // Trigger UI update for line status
-        storageManager.saveString("line_status_data", "updated_${Clock.System.now().toEpochMilliseconds()}")
+        // 6. Notify UI that fresh data is ready
+        val now = Clock.System.now().toEpochMilliseconds()
+        storageManager.saveString("predictions_${selection.station}_${selection.line}", "updated_$now")
+        storageManager.saveString("line_status_data", "updated_$now")
 
-        // 6. Trigger a widget refresh from storage to show the fetched status
+        // 7. Push eagerly fetched data to the widget
+        val refreshedPreds = sqlStorage.getPredictions(selection.station, selection.line)
+        val refreshedStatus = sqlStorage.getLineStatus(selection.mode, selection.line)
         widgetManager.updateWidget(
             WidgetState(
                 stationName = selection.stationName,
                 lineName = selection.line,
-                predictions = emptyList(),
-                status = null,
-                lastUpdated = 0
+                predictions = refreshedPreds,
+                status = refreshedStatus?.statusSeverityDescription,
+                lastUpdated = now
             )
         )
     }
@@ -102,8 +103,6 @@ class StationLifecycleUseCase(
         allSelections.forEach { selection ->
             discardStation(selection, clearSelectionInRepo = false)
         }
-        
-        // Final nuke of storage
         selectionRepository.clearAll()
         sqlStorage.clearAllData()
         storageManager.clearCache()

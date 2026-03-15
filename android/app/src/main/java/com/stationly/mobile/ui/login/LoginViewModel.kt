@@ -36,10 +36,12 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
     private val userSyncRepository = UserSyncRepository(apiService, Platform.sqlStorage, Platform.storageManager)
     private val firebaseAuth = com.google.firebase.auth.FirebaseAuth.getInstance()
     
+    private val syncPredictionsUseCase = com.stationly.core.usecase.SyncPredictionsUseCase(Platform.sqlStorage)
     private val departureRepository = DepartureRepository(
         com.stationly.core.service.TflApiServiceFactory.create(),
         Platform.storageManager,
-        Platform.sqlStorage
+        Platform.sqlStorage,
+        syncPredictionsUseCase
     )
     
     private val selectionRepository = SelectionRepository(Platform.storageManager, Platform.sqlStorage)
@@ -242,15 +244,18 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                     provider = provider
                 )
                 
-                // 1. Process each station using the central lifecycle logic
-                stations.forEachIndexed { index, station ->
-                    Log.d("LoginViewModel", ">>> [LOGIN_SYNC] Refactoring Setup for: ${station.name}")
+                // Clear local data and enforce single-station rule before setting up
+                stationLifecycleUseCase.cleanupAll()
+
+                // Set up the primary (most recent) station from the user's cloud profile
+                val primaryStation = stations.firstOrNull()
+                if (primaryStation != null) {
                     val selection = com.stationly.core.model.UserSelection(
-                        mode = station.mode,
-                        line = station.line,
-                        station = station.id,
-                        stationName = station.name,
-                        direction = station.direction,
+                        mode = primaryStation.mode,
+                        line = primaryStation.line,
+                        station = primaryStation.id,
+                        stationName = primaryStation.name,
+                        direction = primaryStation.direction,
                         destinations = emptyList(),
                         destinationIds = emptyList()
                     )
@@ -260,9 +265,6 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 
                 _uiState.value = _uiState.value.copy(isAuthenticating = false, info = "Welcome back!")
-                
-                Log.d("LoginViewModel", ">>> [LOGIN_SYNC] ALL STEPS COMPLETE. Navigating to Summary.")
-                // Navigate only AFTER everything is finished to avoid coroutine cancellation
                 onAuthSuccess()
             } catch (e: Exception) {
                 Log.e("LoginViewModel", "!!! [LOGIN_SYNC] FATAL SYNC ERROR", e)

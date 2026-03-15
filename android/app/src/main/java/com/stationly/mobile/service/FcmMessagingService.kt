@@ -31,6 +31,7 @@ import java.util.concurrent.TimeUnit
  */
 class FcmMessagingService : FirebaseMessagingService() {
     
+    private val syncPredictionsUseCase = com.stationly.core.usecase.SyncPredictionsUseCase(Platform.sqlStorage)
     private val gson = Gson()
     
     // Repositories
@@ -49,7 +50,7 @@ class FcmMessagingService : FirebaseMessagingService() {
                 handlePredictionUpdate(remoteMessage)
             }
             else -> {
-                Log.d("FCM", ">>> [IGNORED] No matching handler for: $from. Data: ${remoteMessage.data}")
+                // Unrecognised topic — silently ignore
             }
         }
     }
@@ -158,53 +159,20 @@ class FcmMessagingService : FirebaseMessagingService() {
             }
             
             matchingSelections.forEach { selection ->
-                // Get line data
-                val lineIdLower = selection.line.lowercase()
-                val lineData = payload.lines[lineIdLower]
-                
-                // If lineData is null, we can't show departures for this line
-                if (lineData == null) {
-                    Log.d("FCM", "Payload lines [${payload.lines.keys}] missing selection line: $lineIdLower. Ignoring.")
-                    return@forEach
-                }
-                
-                // Get predictions for the direction
-                val dirData = lineData.dirs[selection.direction]
-                val preds = dirData?.preds ?: emptyList()
-                
-                // Determine a valid platform to fallback to if "Unknown" is encountered
-                val knownPlatform = preds.firstOrNull { 
-                    !it.platform.equals("Unknown", ignoreCase = true) && it.platform.isNotBlank() 
-                }?.platform ?: "Unknown"
-
-                // Format and sort predictions for widget (Earliest ETA first)
-                val formattedPredictions = preds.map { pred ->
-                    val etaString = StationlyFormatters.formatETA(pred.eta)
-                    val displayPlatform = if (pred.platform.equals("Unknown", ignoreCase = true) || pred.platform.isBlank()) knownPlatform else pred.platform
-                    
-                    com.stationly.core.model.PredictionDisplay(
-                        destination = StationlyFormatters.formatDestination(pred.displayName),
-                        platform = displayPlatform,
-                        eta = etaString,
-                        isDue = etaString == "Due",
-                        stopLetter = pred.stopLetter
-                    )
-                }.distinctBy { "${it.destination}_${it.platform}_${it.eta}" }
-                
-                // Use unified processor to ensure symmetry between App and Widget
-                val sortedPredictions = com.stationly.core.util.GlobalBoardProcessor.processPredictions(formattedPredictions)
-                
-                // Save predictions to SQL
                 CoroutineScope(Dispatchers.IO).launch {
-                    Platform.sqlStorage.savePredictions(selection.station, selection.line, sortedPredictions)
-                    
-                    // Ping SharedPreferences to trigger UI updates without sending the payload
-                    val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-                    prefs.edit().putString("predictions_${selection.station}_${selection.line}", System.currentTimeMillis().toString()).apply()
-                    
-                    // Update widget with current data from storage (immediate)
-                    launch(Dispatchers.Main) {
-                        updateWidgetFromStorage(this@FcmMessagingService, selection)
+                    try {
+                        val processedPredictions = syncPredictionsUseCase.execute(payload, selection)
+                        
+                        // Ping SharedPreferences to trigger UI updates without sending the payload
+                        val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+                        prefs.edit().putString("predictions_${selection.station}_${selection.line}", System.currentTimeMillis().toString()).apply()
+                        
+                        // Update widget with current data from storage (immediate)
+                        launch(Dispatchers.Main) {
+                            updateWidgetFromStorage(this@FcmMessagingService, selection)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("FCM", "Error syncing predictions for ${selection.stationName}", e)
                     }
                 }
             }

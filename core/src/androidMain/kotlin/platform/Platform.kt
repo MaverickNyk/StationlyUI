@@ -51,20 +51,11 @@ class AndroidNotificationManager(
     
     override suspend fun subscribeToTopics(topics: List<String>) {
         val fcm = FirebaseMessaging.getInstance()
-        try {
-            val token = fcm.token.await()
-            android.util.Log.d("FCM_SUBS", ">>> Current Device Token: $token")
-        } catch (e: Exception) {
-            android.util.Log.e("FCM_SUBS", "!!! Failed to get token", e)
-        }
-
         topics.forEach { topic ->
             try {
-                android.util.Log.d("FCM_SUBS", ">>> Subscribing to topic: $topic")
                 fcm.subscribeToTopic(topic).await()
-                android.util.Log.d("FCM_SUBS", ">>> Successfully subscribed to: $topic")
             } catch (e: Exception) {
-                android.util.Log.e("FCM_SUBS", "!!! Failed to subscribe to $topic", e)
+                android.util.Log.e("NotificationManager", "Failed to subscribe to $topic", e)
             }
         }
     }
@@ -73,11 +64,9 @@ class AndroidNotificationManager(
         val fcm = FirebaseMessaging.getInstance()
         topics.forEach { topic ->
             try {
-                android.util.Log.d("FCM_SUBS", ">>> Unsubscribing from topic: $topic")
                 fcm.unsubscribeFromTopic(topic).await()
-                android.util.Log.d("FCM_SUBS", ">>> Successfully unsubscribed from: $topic")
             } catch (e: Exception) {
-                android.util.Log.e("FCM_SUBS", "!!! Failed to unsubscribe from $topic", e)
+                android.util.Log.e("NotificationManager", "Failed to unsubscribe from $topic", e)
             }
         }
     }

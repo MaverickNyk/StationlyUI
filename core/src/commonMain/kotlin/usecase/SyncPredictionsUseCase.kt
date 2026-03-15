@@ -1,0 +1,68 @@
+package com.stationly.core.usecase
+
+import com.stationly.core.model.*
+import com.stationly.core.repository.SqlStorage
+import com.stationly.core.util.GlobalBoardProcessor
+import com.stationly.core.util.StationlyFormatters
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+
+/**
+ * Sync Predictions Use Case
+ * 
+ * Unifies the logic for processing station predictions from both REST and FCM.
+ * Handles filtering, formatting, sorting, and persistence.
+ */
+class SyncPredictionsUseCase(
+    private val sqlStorage: SqlStorage
+) {
+    /**
+     * Synthesize and save predictions for a specific selection
+     * 
+     * @param payload The raw FCM/REST payload
+     * @param selection The user's specific board selection (Line/Direction)
+     * @return Formatted predictions for display
+     */
+    suspend fun execute(payload: FcmPayload, selection: UserSelection): List<PredictionDisplay> {
+        // 1. Extract line data (Loose matching for casing)
+        val lineIdLower = selection.line.lowercase()
+        val lineData = payload.lines[lineIdLower] 
+            ?: payload.lines.entries.find { it.key.lowercase() == lineIdLower }?.value
+            ?: return emptyList()
+        
+        // 2. Get predictions for the direction (Loose matching for casing)
+        val dirIdLower = selection.direction.lowercase()
+        val dirData = lineData.dirs[selection.direction]
+            ?: lineData.dirs[dirIdLower]
+            ?: lineData.dirs.entries.find { it.key.lowercase() == dirIdLower }?.value
+        
+        val rawPreds = dirData?.preds ?: emptyList()
+        
+        // 3. Determine a valid platform to fallback to if "Unknown" is encountered
+        val knownPlatform = rawPreds.firstOrNull { 
+            !it.platform.equals("Unknown", ignoreCase = true) && it.platform.isNotBlank() 
+        }?.platform ?: "Unknown"
+
+        // 4. Format predictions for display
+        val formattedPredictions = rawPreds.map { pred ->
+            val etaString = StationlyFormatters.formatETA(pred.eta)
+            val displayPlatform = if (pred.platform.equals("Unknown", ignoreCase = true) || pred.platform.isBlank()) knownPlatform else pred.platform
+            
+            PredictionDisplay(
+                destination = StationlyFormatters.formatDestination(pred.displayName),
+                platform = displayPlatform,
+                eta = etaString,
+                isDue = etaString == "Due",
+                stopLetter = pred.stopLetter
+            )
+        }.distinctBy { "${it.destination}_${it.platform}_${it.eta}" }
+        
+        // 5. Use unified processor for sorting and platform grouping
+        val processedPredictions = GlobalBoardProcessor.processPredictions(formattedPredictions)
+        
+        // 6. Save to SQL storage
+        sqlStorage.savePredictions(selection.station, selection.line, processedPredictions)
+        
+        return processedPredictions
+    }
+}

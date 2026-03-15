@@ -3,6 +3,7 @@ package com.stationly.core.repository
 import com.stationly.core.model.*
 import com.stationly.core.service.TflApiService
 import com.stationly.core.platform.StorageManager
+import com.stationly.core.usecase.SyncPredictionsUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,7 +20,8 @@ import kotlinx.coroutines.flow.asStateFlow
 class DepartureRepository(
     private val apiService: TflApiService,
     private val storageManager: StorageManager,
-    private val sqlStorage: SqlStorage
+    private val sqlStorage: SqlStorage,
+    private val syncPredictionsUseCase: SyncPredictionsUseCase
 ) {
     
     // In-memory cache for real-time data
@@ -41,14 +43,20 @@ class DepartureRepository(
         
         try {
             // Fetch line status
-            val statusList = apiService.getLineStatuses(selection.line)
+            val statusList = apiService.getLineStatuses(selection.line.lowercase(), selection.mode.lowercase())
             statusList.firstOrNull()?.let { status ->
                 _lineStatus.value = status
                 sqlStorage.saveLineStatus(status)
             }
             
-            // Note: Predictions come from FCM/WebSocket, not API
-            // We just cache the line status here
+            
+            // Eagerly fetch prediction data
+            try {
+                val fcmPayload = apiService.getPredictions(selection.station)
+                syncPredictionsUseCase.execute(fcmPayload, selection)
+            } catch (e: Exception) {
+                // Prediction fetch failed — FCM will deliver a subsequent update
+            }
             
         } catch (e: Exception) {
             // Try to load from cache
@@ -61,6 +69,14 @@ class DepartureRepository(
         }
     }
     
+    /**
+     * Fetch predictions for a station
+     */
+    suspend fun fetchPredictions(selection: UserSelection): List<PredictionDisplay> {
+        val fcmPayload = apiService.getPredictions(selection.station)
+        return syncPredictionsUseCase.execute(fcmPayload, selection)
+    }
+
     /**
      * Process incoming FCM payload
      * This is called when FCM message arrives

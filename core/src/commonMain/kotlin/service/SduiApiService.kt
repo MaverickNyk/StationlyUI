@@ -27,8 +27,8 @@ interface SduiApiService {
 
 class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
     
-    // Reverted to localhost to work with adb reverse tcp:3000 tcp:3000
-    private val baseUrl = "http://localhost:3000/api/v1"
+    // Unified Production API Gateway
+    private val baseUrl = "https://api.stationly.co.uk/api/v1"
     
     override suspend fun getSelectionLayout(): SduiAppScreen {
         return client.get("$baseUrl/sdui/app/layout").body()
