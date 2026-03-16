@@ -3,21 +3,12 @@ package com.stationly.core.service
 import com.stationly.core.model.*
 import io.ktor.client.*
 import io.ktor.client.call.*
-import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
-import io.ktor.serialization.kotlinx.json.*
-import io.ktor.client.plugins.HttpTimeout
-import kotlinx.serialization.json.Json
-import com.stationly.core.service.StationlyAuth
 
 /**
  * TFL API Service Interface
  * 
- * This interface defines all the API endpoints needed for the Stationly app.
- * It mirrors the MindTheTimeAndroid TflApiService but is platform-agnostic.
- * 
  * Base URL: https://api.stationly.co.uk/api/v1
- * (New Unified Backend)
  */
 interface TflApiService {
     suspend fun getModes(): List<TransportMode>
@@ -30,7 +21,6 @@ interface TflApiService {
 
 /**
  * Ktor-based implementation of TflApiService
- * This will be used by all platforms (Android, iOS, Web)
  */
 class TflApiServiceImpl(private val client: HttpClient) : TflApiService {
     
@@ -60,31 +50,12 @@ class TflApiServiceImpl(private val client: HttpClient) : TflApiService {
             mode?.let { parameter("mode", it) }
         }.body()
     }
+    
     override suspend fun getPredictions(naptanId: String): FcmPayload {
         return client.get("$baseUrl/stations/predictions/$naptanId").body()
     }
 }
 
 object TflApiServiceFactory {
-    private val client by lazy {
-        HttpClient {
-            install(ContentNegotiation) {
-                json(Json {
-                    ignoreUnknownKeys = true
-                    prettyPrint = true
-                    isLenient = true
-                })
-            }
-            install(HttpTimeout) {
-                requestTimeoutMillis = 15000
-                connectTimeoutMillis = 10000
-                socketTimeoutMillis = 10000
-            }
-            install(StationlyAuth.Plugin)
-        }
-    }
-
-    fun create(): TflApiService {
-        return TflApiServiceImpl(client)
-    }
+    fun create(): TflApiService = NetworkModule.tflApi
 }

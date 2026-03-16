@@ -3,21 +3,20 @@ package com.stationly.core.service
 import com.stationly.core.model.sdui.*
 import io.ktor.client.*
 import io.ktor.client.call.*
-import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
-import io.ktor.serialization.kotlinx.json.*
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.http.contentType
 import io.ktor.http.ContentType
-import kotlinx.serialization.json.Json
-import com.stationly.core.service.StationlyAuth
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
 
+/**
+ * SDUI API Service Interface
+ */
 interface SduiApiService {
     suspend fun getSelectionLayout(): SduiAppScreen
     suspend fun getLoginLayout(): SduiAppScreen
     suspend fun getRegisterLayout(): SduiAppScreen
     suspend fun getForgotPasswordLayout(): SduiAppScreen
-    suspend fun getDropdownData(url: String): List<SduiDropdownOption>
+    suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption>
     
     // User Sync & Firestore
     suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse
@@ -26,9 +25,11 @@ interface SduiApiService {
     suspend fun logOut(uid: String): Boolean
 }
 
+/**
+ * Ktor-based implementation of SduiApiService
+ */
 class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
     
-    // Unified Production API Gateway
     private val baseUrl = "https://api.stationly.co.uk/api/v1"
     
     override suspend fun getSelectionLayout(): SduiAppScreen {
@@ -54,21 +55,21 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
 
     override suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse {
         return client.post("$baseUrl/user/sync/profile") {
-            contentType(io.ktor.http.ContentType.Application.Json)
+            contentType(ContentType.Application.Json)
             setBody(request)
         }.body()
     }
 
     override suspend fun syncStations(uid: String, stations: List<SubscribedStation>): Boolean {
         val response = client.post("$baseUrl/user/sync/stations") {
-            contentType(io.ktor.http.ContentType.Application.Json)
+            contentType(ContentType.Application.Json)
             setBody(SyncStationsRequest(uid, stations))
         }
-        return response.status == io.ktor.http.HttpStatusCode.OK
+        return response.status == HttpStatusCode.OK
     }
 
     override suspend fun getUserProfile(uid: String): UserProfileResponse {
-        return client.get("$baseUrl/user/sync/profile?uid=$uid").body() // Simplified, backend might need query or body
+        return client.get("$baseUrl/user/sync/profile?uid=$uid").body()
     }
 
     override suspend fun logOut(uid: String): Boolean {
@@ -76,33 +77,13 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
         data class LogOutRequest(val uid: String)
         
         val response = client.post("$baseUrl/user/logout") {
-            contentType(io.ktor.http.ContentType.Application.Json)
+            contentType(ContentType.Application.Json)
             setBody(LogOutRequest(uid))
         }
-        return response.status == io.ktor.http.HttpStatusCode.OK
+        return response.status == HttpStatusCode.OK
     }
 }
 
 object SduiApiServiceFactory {
-    private val client by lazy {
-        HttpClient {
-            install(ContentNegotiation) {
-                json(Json {
-                    ignoreUnknownKeys = true
-                    prettyPrint = true
-                    isLenient = true
-                })
-            }
-            install(HttpTimeout) {
-                requestTimeoutMillis = 10000
-                connectTimeoutMillis = 10000
-                socketTimeoutMillis = 10000
-            }
-            install(StationlyAuth.Plugin)
-        }
-    }
-
-    fun create(): SduiApiService {
-        return SduiApiServiceImpl(client)
-    }
+    fun create(): SduiApiService = NetworkModule.sduiApi
 }
