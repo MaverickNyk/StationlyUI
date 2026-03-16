@@ -82,6 +82,8 @@ kotlin {
                 // Android-specific dependencies for platform implementations
                 implementation("androidx.work:work-runtime-ktx:2.8.1")
                 implementation("com.google.firebase:firebase-messaging-ktx:23.2.1")
+                implementation("com.google.firebase:firebase-auth-ktx:22.1.1")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
                 implementation("androidx.preference:preference-ktx:1.2.0")
             }
         }

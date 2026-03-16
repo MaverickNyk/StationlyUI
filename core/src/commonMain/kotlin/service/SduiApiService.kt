@@ -10,6 +10,7 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.http.contentType
 import io.ktor.http.ContentType
 import kotlinx.serialization.json.Json
+import com.stationly.core.service.StationlyAuth
 
 interface SduiApiService {
     suspend fun getSelectionLayout(): SduiAppScreen
@@ -97,6 +98,7 @@ object SduiApiServiceFactory {
                 connectTimeoutMillis = 10000
                 socketTimeoutMillis = 10000
             }
+            install(StationlyAuth.Plugin)
         }
     }
 

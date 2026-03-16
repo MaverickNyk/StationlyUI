@@ -8,8 +8,8 @@ class StationlyApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         
-        // Initialize KMP Platform with appContext
-        Platform.initialize(this)
+        // Initialize KMP Platform with appContext and API Key
+        Platform.initialize(this, BuildConfig.STATIONLY_API_KEY)
         
         // Database initialization can also happen here if needed via a singleton
     }

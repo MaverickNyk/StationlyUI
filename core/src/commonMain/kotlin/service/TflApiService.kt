@@ -8,6 +8,7 @@ import io.ktor.client.request.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.client.plugins.HttpTimeout
 import kotlinx.serialization.json.Json
+import com.stationly.core.service.StationlyAuth
 
 /**
  * TFL API Service Interface
@@ -79,6 +80,7 @@ object TflApiServiceFactory {
                 connectTimeoutMillis = 10000
                 socketTimeoutMillis = 10000
             }
+            install(StationlyAuth.Plugin)
         }
     }
 
