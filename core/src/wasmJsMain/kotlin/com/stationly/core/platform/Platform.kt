@@ -26,6 +26,8 @@ actual object Platform {
     actual val storageManager: StorageManager = WebStorageManager()
     
     actual fun getPlatformName(): String = "Web"
+    actual fun getApiKey(): String = ""
+    actual suspend fun getAuthToken(): String? = null
 }
 
 class WebWidgetManager : WidgetManager {

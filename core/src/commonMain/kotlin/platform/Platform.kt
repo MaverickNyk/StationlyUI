@@ -45,4 +45,6 @@ expect object Platform {
     val sqlStorage: com.stationly.core.repository.SqlStorage
     
     fun getPlatformName(): String
+    fun getApiKey(): String
+    suspend fun getAuthToken(): String?
 }

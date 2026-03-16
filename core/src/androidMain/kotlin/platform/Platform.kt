@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.work.WorkManager
 import com.google.firebase.messaging.FirebaseMessaging
+import com.google.firebase.auth.FirebaseAuth
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.WidgetState
 import kotlinx.coroutines.tasks.await
@@ -134,9 +135,11 @@ class AndroidStorageManager(
 // Android Platform implementation
 actual object Platform {
     private lateinit var appContext: Context
+    private var apiKey: String = ""
     
-    fun initialize(context: Context) {
+    fun initialize(context: Context, apiKey: String) {
         appContext = context.applicationContext
+        this.apiKey = apiKey
     }
     
     actual val widgetManager: WidgetManager by lazy { AndroidWidgetManager(appContext) }
@@ -150,4 +153,14 @@ actual object Platform {
     }
     
     actual fun getPlatformName(): String = "Android"
+    actual fun getApiKey(): String = apiKey
+    
+    actual suspend fun getAuthToken(): String? {
+        return try {
+            val user = FirebaseAuth.getInstance().currentUser
+            user?.getIdToken(false)?.await()?.token
+        } catch (e: Exception) {
+            null
+        }
+    }
 }

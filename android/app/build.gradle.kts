@@ -1,3 +1,4 @@
+import java.util.Properties
 /*
  * Stationly Android App
  * 
@@ -35,6 +36,21 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    val properties = Properties()
+    val propertiesFile = project.rootProject.file("local.properties")
+    if (propertiesFile.exists()) {
+        properties.load(propertiesFile.inputStream())
+    }
+
+    defaultConfig {
+        buildConfigField("String", "STATIONLY_API_KEY", "\"${properties.getProperty("STATIONLY_API_KEY") ?: ""}\"")
+    }
     
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -45,9 +61,7 @@ android {
         jvmTarget = "17"
     }
     
-    buildFeatures {
-        compose = true
-    }
+    // buildFeatures block already merged above
     
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.4"
@@ -106,6 +120,9 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    
+    // Play Services Coroutines (for .await() on Firebase tasks)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
     
     // Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
