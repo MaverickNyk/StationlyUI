@@ -1,0 +1,39 @@
+# Gradle
+.gradle/
+build/
+build_log*.txt
+
+# Android
+capture/
+memory_dumps/
+*.apk
+*.ap_
+*.dex
+*.class
+local.properties
+
+# Kotlin
+.kotlin/
+kotlin-js-store/
+
+# IntelliJ / Android Studio
+.idea/
+*.iml
+*.iws
+out/
+
+# VS Code
+.vscode/
+
+# Node / Web
+node_modules/
+package-lock.json
+dist/
+.npm/
+
+# OS X
+.DS_Store
+
+# Temporary / Log files
+*.log
+/tmp/

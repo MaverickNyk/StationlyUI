@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "48865967804",
+    "firebase_url": "https://mindthetimefcm-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "mindthetimefcm",
+    "storage_bucket": "mindthetimefcm.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:48865967804:android:20c9b37c1d9dcfb29e5ab9",
+        "android_client_info": {
+          "package_name": "com.stationly.mobile"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "48865967804-daogo1om8e92inob2lr2481akgvm6a4a.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBhHSfk_kQvxbc1BRnn2UE2G1GadS2ORYY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "48865967804-daogo1om8e92inob2lr2481akgvm6a4a.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
