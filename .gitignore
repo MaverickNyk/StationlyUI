@@ -11,6 +11,7 @@ memory_dumps/
 *.dex
 *.class
 local.properties
+google-services.json
 
 # Kotlin
 .kotlin/
@@ -37,3 +38,35 @@ dist/
 # Temporary / Log files
 *.log
 /tmp/
+*.tmp
+*.swp
+*.bak
+*.orig
+*.rej
+
+# Project Specific
+/*.xml
+/*.png
+/*.mp4
+/*.jpg
+/*.jpeg
+/view.xml
+captured_screenshots/
+captures/
+.externalNativeBuild/
+
+# Secrets
+*.keystore
+*.jks
+
+# Exceptions
+!README.md
+!gradle.properties
+!settings.gradle.kts
+!build.gradle.kts
+!**/build.gradle.kts
+!gradlew
+!gradlew.bat
+!gradle/wrapper/gradle-wrapper.properties
+!gradle/wrapper/gradle-wrapper.jar
+!kotlin-js-store/yarn.lock

@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <solid android:color="#FF1976D2" />
-    <corners android:radius="8dp" />
-</shape>
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/unlit_pixel"
+    android:tileMode="repeat" />

@@ -1,0 +1,18 @@
+:root {
+    --primary: #DD2C33;
+    /* Tube Red */
+    --primary-dark: #B91C22;
+    --secondary: #1A237E;
+    /* Deep Blue */
+    --accent: #5C6BC0;
+    /* Soft Blue */
+    --bg-dark: #0F172A;
+    --bg-darker: #020617;
+    --text-main: #F8FAFC;
+    --text-muted: #94A3B8;
+    --white: #FFFFFF;
+
+    /* Glass Effect Variables */
+    --glass: rgba(255, 255, 255, 0.03);
+    --glass-border: rgba(255, 255, 255, 0.05);
+}

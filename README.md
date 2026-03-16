@@ -1,123 +1,67 @@
-# StationlyUI - Hybrid Multi-Platform Station Departure App
+# StationlyUI
 
 ## Overview
-StationlyUI is the next-generation multi-platform solution for the Stationly ecosystem, providing real-time London Underground departure information across Android, iOS, and Web platforms.
+StationlyUI is the multi-platform frontend application for the Stationly ecosystem. It provides real-time London Underground departure information and status updates across Android and Web.
 
 ## Project Structure
 
 ```
 StationlyUI/
 ├── core/                    # Kotlin Multiplatform shared module
-│   ├── src/commonMain/     # Shared Kotlin code
-│   │   ├── kotlin/         # Business logic, models, API
-│   │   └── resources/      # Common resources
-│   └── build.gradle.kts    # KMP configuration
-├── android/                 # Android native app
-│   ├── app/                # Android application module
-│   └── build.gradle.kts    # Android configuration
-├── ios/                     # iOS native app
-│   └── Stationly/          # iOS project
-├── web/                     # Web application
-│   ├── app/                # Next.js PWA
-│   └── landing/            # Marketing site
-└── build.gradle.kts        # Root build config
+│   ├── src/commonMain/      # Shared business logic, models, and repositories
+│   └── build.gradle.kts     # KMP configuration
+├── android/                 # Native Android application
+│   ├── app/                 # Jetpack Compose application source
+│   └── build.gradle.kts     # Android-specific build configuration
+├── web/                     # Web application (Kotlin/JS)
+│   ├── src/                 # Web application source
+│   └── build.gradle.kts     # Web-specific build configuration
+├── sdui-backend/            # Auxiliary Node.js service for SDUI templates
+└── build.gradle.kts         # Root project build configuration
 ```
 
-## Platforms
-
-### Android
-- **Technology**: Kotlin + Jetpack Compose
-- **Features**: Native widget, FCM notifications
-- **Store**: Google Play Store
-
-### iOS
-- **Technology**: Swift + SwiftUI
-- **Features**: APNs notifications, Siri shortcuts
-- **Store**: Apple App Store
-
-### Web (PWA)
-- **Technology**: Next.js 14+ + TypeScript
-- **Features**: WebSocket real-time, offline support
-- **Deployment**: Vercel/Netlify
-
-### Landing Page
-- **Technology**: Next.js + Tailwind CSS
-- **Purpose**: Marketing, downloads, information
-- **Deployment**: Vercel/Netlify
+## Key Technologies
+- **Mobile**: Android (Kotlin, Jetpack Compose, Material 3)
+- **Web**: Kotlin/JS (Compose HTML/Vite)
+- **Shared Logic**: Kotlin Multiplatform (KMP)
+- **Real-time**: Firebase Cloud Messaging (FCM)
+- **Database**: SQLDelight (Shared cross-platform storage)
+- **Networking**: Ktor Client
 
 ## Architecture
 
 ### Kotlin Multiplatform Core
-- **Models**: Shared data classes (UserSelection, LineStatus, etc.)
-- **API**: Retrofit interfaces for backend communication
-- **Business Logic**: Use cases for selection flow, real-time updates
-- **Platform Abstraction**: Interfaces for platform-specific features
+The `core` module contains all the business logic, data models, and repository implementations shared between Android and Web.
+- **Models**: Unified data structures for stations, departures, and user settings.
+- **Repositories**: Data access layers for API and Local Storage.
+- **Processors**: Unified logic for sorting and grouping departure data (e.g., `GlobalBoardProcessor`).
 
-### Real-time Strategy
-- **Mobile**: Firebase Cloud Messaging (Android) + APNs (iOS)
-- **Web**: WebSocket connections
-- **Backend**: Node.js + Redis for message routing
-
-### Backend API
-- **Base URL**: https://api.stationly.com/
-- **Endpoints**: Modes, lines, stations, real-time, user sync
+### Real-time Updates
+Stationly uses Firebase Cloud Messaging (FCM) to push live departure updates directly to the Android app and widget.
+- **FCM Service**: Handles background prediction updates and triggers widget refreshes.
+- **SDUI**: Server-Driven UI allows for dynamic layout updates without app releases.
 
 ## Getting Started
 
 ### Prerequisites
-- Android Studio (latest version)
-- Xcode (for iOS development)
-- Node.js 18+ (for web development)
+- Android Studio (Ladybug or newer)
 - JDK 17+
+- Node.js (for SDUI backend experiments)
 
 ### Setup
-1. Clone this repository
-2. Run `./gradlew build` in core/ to build shared module
-3. Open android/ in Android Studio
-4. Open ios/ in Xcode
-5. Run `npm install` in web/app and web/landing
+1. Clone the repository.
+2. Open the project in Android Studio.
+3. Sync Gradle projects.
+4. Run the `:android:app` module on a device or emulator.
 
 ## Development Workflow
 
-### Adding Shared Code
-1. Add models to `core/src/commonMain/kotlin/model/`
-2. Add business logic to `core/src/commonMain/kotlin/usecase/`
-3. Implement platform-specific code in respective folders
+### Shared Code Updates
+All shared logic should be added to the `core` module. Use `./gradlew build` to verify cross-platform compatibility.
 
-### Testing
-- **Unit Tests**: core/src/commonTest/
-- **Android Tests**: android/app/src/test/
-- **iOS Tests**: ios/StationlyTests/
-- **Web Tests**: web/app/tests/
-
-## Deployment
-
-### Android
-```bash
-cd android
-./gradlew assembleRelease
-# Upload to Google Play Console
-```
-
-### iOS
-```bash
-cd ios
-# Archive in Xcode
-# Upload to App Store Connect
-```
-
-### Web
-```bash
-cd web/app
-npm run build
-npm run deploy
-```
-
-## Team
-- **Lead Architect**: [Your Name]
-- **Mobile Team**: Android + iOS developers
-- **Web Team**: Frontend developers
-- **Backend Team**: API and infrastructure
+### Building
+- **Android Debug**: `./gradlew installDebug`
+- **Web Build**: `./gradlew :web:jsBrowserProductionLibraryDistribution`
 
 ## License
 Proprietary - Stationly Ltd.

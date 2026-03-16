@@ -67,52 +67,16 @@ class FormatDeparturesUseCase {
     
     /**
      * Format a single prediction for display
-     * This implements the same logic as MindTheTimeAndroid's formatDepartures
      */
     private fun formatPrediction(prediction: PredictionItem): PredictionDisplay {
-        val etaString = formatETA(prediction.eta)
+        val etaString = com.stationly.core.util.StationlyFormatters.formatETA(prediction.eta)
         val isDue = etaString == "Due"
         
         return PredictionDisplay(
-            destination = cleanDestinationName(prediction.displayName),
+            destination = com.stationly.core.util.StationlyFormatters.formatDestination(prediction.displayName),
             platform = prediction.platform,
             eta = etaString,
             isDue = isDue
         )
-    }
-    
-    /**
-     * Format ETA string (mirrors MindTheTimeAndroid logic)
-     * "Due", "1 min", "X min", etc.
-     */
-    private fun formatETA(etaIso: String): String {
-        return try {
-            val etaTime = Instant.parse(etaIso)
-            val now = Clock.System.now()
-            
-            // Calculate difference in seconds
-            val diffSeconds = etaTime.epochSeconds - now.epochSeconds
-            
-            when {
-                diffSeconds < 30 -> "Due"
-                diffSeconds < 60 -> "1 min"
-                else -> "${(diffSeconds + 30) / 60} min"
-            }
-        } catch (e: Exception) {
-            "Due" // Fallback
-        }
-    }
-    
-    /**
-     * Clean destination name for display
-     * Removes "Underground Station", "DLR Station", etc.
-     */
-    private fun cleanDestinationName(name: String): String {
-        return name
-            .replace(" Underground Station", "")
-            .replace(" DLR Station", "")
-            .replace(" Rail Station", "")
-            .trim()
-            .take(25) // Limit length for widget display
     }
 }

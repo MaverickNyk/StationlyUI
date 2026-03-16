@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.work.WorkManager
 import com.google.firebase.messaging.FirebaseMessaging
+import com.google.firebase.auth.FirebaseAuth
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.WidgetState
 import kotlinx.coroutines.tasks.await
@@ -16,15 +17,19 @@ class AndroidWidgetManager(
 ) : WidgetManager {
     
     override suspend fun updateWidget(state: WidgetState) {
-        // Trigger widget update through WorkManager
-        // This will call the DepartureWidgetProvider
-        val workManager = WorkManager.getInstance(context)
-        // WorkManager implementation would go here
+        val intent = android.content.Intent("com.stationly.mobile.ACTION_UPDATE_WIDGET")
+        intent.setComponent(android.content.ComponentName(context.packageName, "com.stationly.mobile.widget.DepartureWidgetProvider"))
+        intent.putExtra("ACTION_TYPE", "UPDATE_WIDGET")
+        context.sendBroadcast(intent)
     }
-    
+
     override suspend fun showWaitingState(station: String, line: String) {
-        // Update widget with waiting state
-        // Implementation would update RemoteViews
+        val intent = android.content.Intent("com.stationly.mobile.ACTION_UPDATE_WIDGET")
+        intent.setComponent(android.content.ComponentName(context.packageName, "com.stationly.mobile.widget.DepartureWidgetProvider"))
+        intent.putExtra("ACTION_TYPE", "SHOW_WAITING_STATE")
+        intent.putExtra("stationName", station)
+        intent.putExtra("lineName", line)
+        context.sendBroadcast(intent)
     }
     
     override suspend fun formatForWidget(predictions: List<UserSelection>): WidgetState {
@@ -46,21 +51,23 @@ class AndroidNotificationManager(
 ) : NotificationManager {
     
     override suspend fun subscribeToTopics(topics: List<String>) {
+        val fcm = FirebaseMessaging.getInstance()
         topics.forEach { topic ->
             try {
-                FirebaseMessaging.getInstance().subscribeToTopic(topic).await()
+                fcm.subscribeToTopic(topic).await()
             } catch (e: Exception) {
-                // Log error but don't crash
+                android.util.Log.e("NotificationManager", "Failed to subscribe to $topic", e)
             }
         }
     }
     
     override suspend fun unsubscribeFromTopics(topics: List<String>) {
+        val fcm = FirebaseMessaging.getInstance()
         topics.forEach { topic ->
             try {
-                FirebaseMessaging.getInstance().unsubscribeFromTopic(topic).await()
+                fcm.unsubscribeFromTopic(topic).await()
             } catch (e: Exception) {
-                // Log error but don't crash
+                android.util.Log.e("NotificationManager", "Failed to unsubscribe from $topic", e)
             }
         }
     }
@@ -128,14 +135,32 @@ class AndroidStorageManager(
 // Android Platform implementation
 actual object Platform {
     private lateinit var appContext: Context
+    private var apiKey: String = ""
     
-    fun initialize(context: Context) {
+    fun initialize(context: Context, apiKey: String) {
         appContext = context.applicationContext
+        this.apiKey = apiKey
     }
     
     actual val widgetManager: WidgetManager by lazy { AndroidWidgetManager(appContext) }
     actual val notificationManager: NotificationManager by lazy { AndroidNotificationManager(appContext) }
     actual val storageManager: StorageManager by lazy { AndroidStorageManager(appContext) }
     
+    actual val sqlStorage: com.stationly.core.repository.SqlStorage by lazy {
+        val driverFactory = DriverFactory(appContext)
+        val database = createDatabase(driverFactory)
+        com.stationly.core.repository.SqlStorage(database)
+    }
+    
     actual fun getPlatformName(): String = "Android"
+    actual fun getApiKey(): String = apiKey
+    
+    actual suspend fun getAuthToken(): String? {
+        return try {
+            val user = FirebaseAuth.getInstance().currentUser
+            user?.getIdToken(false)?.await()?.token
+        } catch (e: Exception) {
+            null
+        }
+    }
 }

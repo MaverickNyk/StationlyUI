@@ -6,11 +6,11 @@ import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import com.stationly.core.model.FcmPayload
-import com.stationly.core.model.UserSelection
-import com.stationly.core.platform.AndroidStorageManager
+import com.stationly.core.model.*
+import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
-import com.stationly.core.usecase.ProcessFcmPayloadUseCase
+import com.stationly.core.repository.SelectionRepository
+import com.stationly.core.util.StationlyFormatters
 import com.stationly.mobile.widget.DepartureWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,102 +31,150 @@ import java.util.concurrent.TimeUnit
  */
 class FcmMessagingService : FirebaseMessagingService() {
     
+    private val syncPredictionsUseCase = com.stationly.core.usecase.SyncPredictionsUseCase(Platform.sqlStorage)
     private val gson = Gson()
     
-    // TTL constants
-    private val PREDICTIONS_TTL_MS = TimeUnit.MINUTES.toMillis(2) // 2 minutes
-    private val LINE_STATUS_TTL_MS = TimeUnit.HOURS.toMillis(1)   // 1 hour
+    // Repositories
     
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
-        Log.d("FCM", "Message received from: ${remoteMessage.from}")
+        val from = remoteMessage.from
         
         when {
-            remoteMessage.from?.startsWith("/topics/LineStatus_") == true -> {
+            remoteMessage.data.containsKey("sdui_payload") -> {
+                handleSduiUpdate(remoteMessage)
+            }
+            from != null && from.contains("LineStatus_") -> {
                 handleLineStatusUpdate(remoteMessage)
             }
-            remoteMessage.from?.startsWith("/topics/Station_") == true -> {
+            from != null && from.contains("Station_") -> {
                 handlePredictionUpdate(remoteMessage)
             }
             else -> {
-                Log.d("FCM", "Message from unknown topic. Ignoring.")
+                // Unrecognised topic — silently ignore
             }
+        }
+    }
+
+    private fun handleSduiUpdate(remoteMessage: RemoteMessage) {
+        val sduiJson = remoteMessage.data["sdui_payload"] ?: return
+
+        try {
+            val format = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+            val sduiPayload = format.decodeFromString<com.stationly.core.model.sdui.SduiWidgetPayload>(sduiJson)
+            
+            val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+            prefs.edit().putString("sdui_layout_${sduiPayload.id}", sduiJson).apply()
+            
+            // Extract predictions from SDUI rows if they contain data
+            // This ensures the App's SQL-based board is in sync with the visual SDUI update
+            val extractedPredictions = mutableListOf<PredictionDisplay>()
+            sduiPayload.components.forEach { component ->
+                if (component is com.stationly.core.model.sdui.SduiWidgetComponent.Row) {
+                    if (component.destination.isNotBlank() && component.destination != "---" && component.eta.isNotBlank()) {
+                         extractedPredictions.add(
+                             PredictionDisplay(
+                                 destination = component.destination,
+                                 platform = "Unknown", // Will be refined by extraction logic if available
+                                 eta = component.eta,
+                                 isDue = component.eta.equals("Due", ignoreCase = true)
+                             )
+                         )
+                    }
+                }
+            }
+
+            val selections = getAllSelections()
+            // Match by Station ID (Case Insensitive)
+            val matchingSelections = selections.filter { it.station.equals(sduiPayload.id, ignoreCase = true) }
+            
+            matchingSelections.forEach { selection ->
+                CoroutineScope(Dispatchers.IO).launch {
+                    if (extractedPredictions.isNotEmpty()) {
+                        Platform.sqlStorage.savePredictions(selection.station, selection.line, extractedPredictions)
+                        
+                        // Ping the app to refresh
+                        prefs.edit().putString("predictions_${selection.station}_${selection.line}", System.currentTimeMillis().toString()).apply()
+                    }
+                    
+                    launch(Dispatchers.Main) {
+                        updateWidgetFromStorage(this@FcmMessagingService, selection)
+                    }
+                }
+            }
+            Log.d("FCM", "Successfully processed SDUI layout and synced predictions")
+        } catch (e: Exception) {
+            Log.e("FCM", "Error parsing SDUI layout template", e)
         }
     }
     
     private fun handleLineStatusUpdate(remoteMessage: RemoteMessage) {
         val payloadJson = remoteMessage.data["payload"] ?: return
-        Log.d("FCM", "Received Line Status Payload: $payloadJson")
         
-        // Save line status with timestamp
-        val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-        val statusData = mapOf(
-            "data" to payloadJson,
-            "timestamp" to System.currentTimeMillis()
-        )
-        prefs.edit().putString("line_status_data", gson.toJson(statusData)).apply()
-        Log.d("FCM", "Saved line status data")
-        
-        // Update widget with current data from storage
-        val primarySelection = getPrimarySelection()
-        if (primarySelection != null) {
-            updateWidgetFromStorage(this, primarySelection)
+        try {
+            val status = gson.fromJson(payloadJson, LineStatus::class.java)
+            CoroutineScope(Dispatchers.IO).launch {
+                Platform.sqlStorage.saveLineStatus(status)
+                
+                // Ping SharedPreferences to trigger UI updates
+                val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+                prefs.edit().putString("line_status_data", System.currentTimeMillis().toString()).apply()
+                
+                // Update widget with current data from storage
+                val selections = getAllSelections()
+                selections.forEach { selection ->
+                    // Match line status by line ID (Case Insensitive)
+                    if (status.id.equals(selection.line, ignoreCase = true)) {
+                         updateWidgetFromStorage(this@FcmMessagingService, selection)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("FCM", "Error processing line status update", e)
         }
     }
     
     private fun handlePredictionUpdate(remoteMessage: RemoteMessage) {
         val payloadJson = remoteMessage.data["payload"] ?: return
-        Log.d("FCM", "Received Prediction Payload: $payloadJson")
         
         try {
+            // Priority 1: Extract station identity from topic name to handle Child Stop ID mismatches
+            val stationIdFromTopic = remoteMessage.from?.replace("/topics/Station_", "") ?: ""
+            
             // Parse FCM payload using KMP model
             val payload = gson.fromJson(payloadJson, FcmPayload::class.java)
             
-            // Get primary selection
-            val primarySelection = getPrimarySelection() ?: return
-            Log.d("FCM", "Active primary selection: Station=${primarySelection.stationName}, Line=${primarySelection.line}")
+            // Get all selections
+            val allSelections = getAllSelections()
+            if (allSelections.isEmpty()) return
             
-            // Validate station ID
-            if (payload.id != primarySelection.station) {
-                Log.d("FCM", "Payload station ID (${payload.id}) does not match primary selection (${primarySelection.station}). Ignoring.")
+            // Find selections that match this station (Check Topic First, then Payload ID as fallback)
+            val matchingSelections = allSelections.filter { 
+                it.station.equals(stationIdFromTopic, ignoreCase = true) || 
+                it.station.equals(payload.id, ignoreCase = true)
+            }
+            
+            if (matchingSelections.isEmpty()) {
+                Log.d("FCM", "Message for ${stationIdFromTopic ?: payload.id} does not match any active selection. Ignoring.")
                 return
             }
             
-            // Get line data
-            val lineData = payload.lines[primarySelection.line]
-            if (lineData == null) {
-                Log.d("FCM", "Payload does not contain line: ${primarySelection.line}. Ignoring.")
-                return
-            }
-            
-            // Get predictions for the direction
-            val dirData = lineData.dirs[primarySelection.direction]
-            val preds = dirData?.preds ?: emptyList()
-            
-            Log.d("FCM", "Found ${preds.size} predictions for primary selection.")
-            
-            // Format predictions for widget
-            val formattedPredictions = preds.map { pred ->
-                val etaString = formatETA(pred.eta)
-                com.stationly.core.model.PredictionDisplay(
-                    destination = cleanDestinationName(pred.displayName),
-                    platform = pred.platform,
-                    eta = etaString,
-                    isDue = etaString == "Due"
-                )
-            }
-            
-            // Save predictions with timestamp
-            val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-            val predictionsData = mapOf(
-                "data" to formattedPredictions,
-                "timestamp" to System.currentTimeMillis()
-            )
-            prefs.edit().putString("predictions_${primarySelection.station}_${primarySelection.line}", gson.toJson(predictionsData)).apply()
-            Log.d("FCM", "Saved predictions for ${primarySelection.station}")
-            
-            // Update widget with current data from storage
-            CoroutineScope(Dispatchers.Main).launch {
-                updateWidgetFromStorage(this@FcmMessagingService, primarySelection)
+            matchingSelections.forEach { selection ->
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val processedPredictions = syncPredictionsUseCase.execute(payload, selection)
+                        
+                        // Ping SharedPreferences to trigger UI updates without sending the payload
+                        val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+                        prefs.edit().putString("predictions_${selection.station}_${selection.line}", System.currentTimeMillis().toString()).apply()
+                        
+                        // Update widget with current data from storage (immediate)
+                        launch(Dispatchers.Main) {
+                            updateWidgetFromStorage(this@FcmMessagingService, selection)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("FCM", "Error syncing predictions for ${selection.stationName}", e)
+                    }
+                }
             }
             
         } catch (e: Exception) {
@@ -138,91 +186,59 @@ class FcmMessagingService : FirebaseMessagingService() {
         val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
         
-        // Load line status with TTL check
-        var lineStatus: String? = null
-        val statusJson = prefs.getString("line_status_data", null)
-        if (statusJson != null) {
+        // Load line status from SQL
+        var lineStatusSeverity: String? = null
+        var lineStatusReason: String? = null
+        
+        val cachedStatus = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
+        if (cachedStatus != null) {
+            lineStatusSeverity = cachedStatus.statusSeverityDescription
+            lineStatusReason = cachedStatus.reason
+        }
+        
+        // Load predictions from SQL
+        val predictions = Platform.sqlStorage.getPredictions(selection.station, selection.line)
+        
+        // Load SDUI template if it exists for this station
+        var sduiPayload: com.stationly.core.model.sdui.SduiWidgetPayload? = null
+        val sduiJson = prefs.getString("sdui_layout_${selection.station}", null)
+        if (sduiJson != null) {
             try {
-                val statusData = gson.fromJson<Map<String, Any>>(statusJson, object : TypeToken<Map<String, Any>>() {}.type)
-                val timestamp = (statusData["timestamp"] as? Number)?.toLong() ?: 0
-                if (now - timestamp < LINE_STATUS_TTL_MS) {
-                    val dataJson = statusData["data"] as String
-                    lineStatus = dataJson // In real implementation, parse to LineStatus
-                    Log.d("FCM", "Loaded valid line status from storage")
-                } else {
-                    Log.d("FCM", "Line status expired, not using")
-                }
+                val format = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+                sduiPayload = format.decodeFromString<com.stationly.core.model.sdui.SduiWidgetPayload>(sduiJson)
+                Log.d("FCM", "Loaded valid SDUI template from storage")
             } catch (e: Exception) {
-                Log.e("FCM", "Error loading line status from storage", e)
+                Log.e("FCM", "Error loading SDUI template from storage", e)
             }
         }
         
-        // Load predictions with TTL check
-        var predictions: List<com.stationly.core.model.PredictionDisplay> = emptyList()
-        val predsJson = prefs.getString("predictions_${selection.station}_${selection.line}", null)
-        if (predsJson != null) {
-            try {
-                val predsData = gson.fromJson<Map<String, Any>>(predsJson, object : TypeToken<Map<String, Any>>() {}.type)
-                val timestamp = (predsData["timestamp"] as? Number)?.toLong() ?: 0
-                if (now - timestamp < PREDICTIONS_TTL_MS) {
-                    val dataJson = predsData["data"] as String
-                    predictions = gson.fromJson(dataJson, object : TypeToken<List<com.stationly.core.model.PredictionDisplay>>() {}.type)
-                    Log.d("FCM", "Loaded valid predictions from storage")
-                } else {
-                    Log.d("FCM", "Predictions expired, not using")
-                }
-            } catch (e: Exception) {
-                Log.e("FCM", "Error loading predictions from storage", e)
-            }
+        // Use unified binding logic to inject live data into the template
+        if (sduiPayload != null && predictions.isNotEmpty()) {
+             sduiPayload = com.stationly.core.util.GlobalBoardProcessor.bindSduiTemplate(
+                 sduiPayload,
+                 predictions,
+                 lineStatusSeverity,
+                 lineStatusReason
+             )
         }
         
+        val hasLoadedData = predictions.isNotEmpty()
+
         // Update widget with whatever data we have
         DepartureWidgetProvider.updateWidgetContent(
             context,
             selection.stationName,
             selection.line.replaceFirstChar { it.uppercase() },
             predictions,
-            lineStatus
+            lineStatusSeverity,
+            lineStatusReason,
+            sduiPayload,
+            hasLoadedData
         )
     }
     
-    private fun getPrimarySelection(): UserSelection? {
-        val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-        val json = prefs.getString("selections", null) ?: return null
-        
-        return try {
-            val type = object : TypeToken<List<UserSelection>>() {}.type
-            val selections: List<UserSelection> = gson.fromJson(json, type)
-            selections.firstOrNull()
-        } catch (e: Exception) {
-            Log.e("FCM", "Could not parse selections", e)
-            null
-        }
-    }
-    
-    private fun formatETA(etaIso: String): String {
-        return try {
-            val etaTime = java.time.Instant.parse(etaIso)
-            val now = java.time.Instant.now()
-            val duration = java.time.Duration.between(now, etaTime)
-            
-            when {
-                duration.seconds < 30 -> "Due"
-                duration.seconds < 60 -> "1 min"
-                else -> "${(duration.seconds + 30) / 60} min"
-            }
-        } catch (e: Exception) {
-            "Due"
-        }
-    }
-    
-    private fun cleanDestinationName(name: String): String {
-        return name
-            .replace(" Underground Station", "")
-            .replace(" DLR Station", "")
-            .replace(" Rail Station", "")
-            .trim()
-            .take(25)
+    private fun getAllSelections(): List<UserSelection> {
+        return Platform.sqlStorage.getAllSelections()
     }
     
     override fun onNewToken(token: String) {

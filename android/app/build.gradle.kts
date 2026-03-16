@@ -1,3 +1,4 @@
+import java.util.Properties
 /*
  * Stationly Android App
  * 
@@ -8,6 +9,8 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -33,6 +36,21 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    val properties = Properties()
+    val propertiesFile = project.rootProject.file("local.properties")
+    if (propertiesFile.exists()) {
+        properties.load(propertiesFile.inputStream())
+    }
+
+    defaultConfig {
+        buildConfigField("String", "STATIONLY_API_KEY", "\"${properties.getProperty("STATIONLY_API_KEY") ?: ""}\"")
+    }
     
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -43,9 +61,7 @@ android {
         jvmTarget = "17"
     }
     
-    buildFeatures {
-        compose = true
-    }
+    // buildFeatures block already merged above
     
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.4"
@@ -87,9 +103,11 @@ dependencies {
     // Splash Screen
     implementation("androidx.core:core-splashscreen:1.0.1")
     
-    // FCM
+    // FCM and Auth
     implementation(platform("com.google.firebase:firebase-bom:32.3.1"))
     implementation("com.google.firebase:firebase-messaging-ktx")
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.android.gms:play-services-auth:20.7.0")
     
     // WorkManager (for background widget updates)
     implementation("androidx.work:work-runtime-ktx:2.8.1")
@@ -102,4 +120,11 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    
+    // Play Services Coroutines (for .await() on Firebase tasks)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
+    
+    // Serialization
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    implementation("io.coil-kt:coil-compose:2.5.0")
 }

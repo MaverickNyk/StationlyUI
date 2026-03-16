@@ -17,7 +17,7 @@
     <string name="last_updated">Last Updated: %s</string>
     
     <!-- Widget Strings -->
-    <string name="widget_line_name">MindTheTime</string>
+    <string name="widget_line_name">Stationly</string>
     <string name="widget_platform">Platform</string>
     <string name="widget_destination">Destination</string>
     <string name="widget_eta">ETA</string>

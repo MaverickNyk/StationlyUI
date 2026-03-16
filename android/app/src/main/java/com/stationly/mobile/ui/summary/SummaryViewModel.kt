@@ -2,6 +2,7 @@ package com.stationly.mobile.ui.summary
 
 import android.app.Application
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -14,8 +15,7 @@ import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.service.TflApiServiceFactory
 import com.stationly.core.usecase.FormatDeparturesUseCase
 import com.stationly.core.usecase.ProcessFcmPayloadUseCase
-import com.stationly.core.usecase.SaveSelectionUseCase
-import com.stationly.core.usecase.FetchInitialDataUseCase
+import com.stationly.core.platform.Platform
 import com.stationly.core.platform.AndroidStorageManager
 import com.stationly.core.platform.AndroidNotificationManager
 import com.stationly.core.platform.AndroidWidgetManager
@@ -42,20 +42,37 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     
     // API Service
     private val apiService = TflApiServiceFactory.create()
+    private val sduiService = com.stationly.core.service.SduiApiServiceFactory.create()
     
     // Repositories
-    private val selectionRepository = SelectionRepository(storageManager)
-    private val departureRepository = DepartureRepository(apiService, storageManager)
+    private val syncPredictionsUseCase = com.stationly.core.usecase.SyncPredictionsUseCase(Platform.sqlStorage)
+    private val selectionRepository = SelectionRepository(storageManager, Platform.sqlStorage)
+    private val departureRepository = DepartureRepository(apiService, storageManager, Platform.sqlStorage, syncPredictionsUseCase)
+    
+    // Auth Manager
+    private val authManager = com.stationly.mobile.service.FirebaseAuthManager(context)
+    val currentUserEmail = authManager.auth.currentUser?.email
     
     // KMP Core Use Cases
     private val formatDeparturesUseCase = FormatDeparturesUseCase()
-    private val fetchInitialDataUseCase = FetchInitialDataUseCase(departureRepository)
-    private val saveSelectionUseCase = SaveSelectionUseCase(
-        selectionRepository,
-        notificationManager,
-        widgetManager,
-        fetchInitialDataUseCase
+    private val stationLifecycleUseCase = com.stationly.core.usecase.StationLifecycleUseCase(
+        selectionRepository = selectionRepository,
+        departureRepository = departureRepository,
+        notificationManager = notificationManager,
+        widgetManager = widgetManager,
+        sqlStorage = Platform.sqlStorage,
+        storageManager = Platform.storageManager
     )
+
+    fun logout(onComplete: () -> Unit) {
+        viewModelScope.launch {
+            stationLifecycleUseCase.cleanupAll()
+            authManager.logout()
+            onComplete()
+        }
+    }
+
+
     private val processFcmPayloadUseCase = ProcessFcmPayloadUseCase(
         departureRepository,
         widgetManager,
@@ -75,64 +92,178 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     private val _predictions = MutableStateFlow<Map<String, List<PredictionDisplay>>>(emptyMap())
     val predictions: StateFlow<Map<String, List<PredictionDisplay>>> = _predictions.asStateFlow()
     
-    init {
-        loadSavedSelections()
+    // Line Statuses (Key: mode_line)
+    private val _lineStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
+    val lineStatuses: StateFlow<Map<String, String>> = _lineStatuses.asStateFlow()
+    
+    // Per-station last updated timestamps
+    private val _stationUpdates = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val stationUpdates: StateFlow<Map<String, Long>> = _stationUpdates.asStateFlow()
+    
+    // Per-station bound SDUI payloads (Perfectly synced with Widget)
+    private val _sduiPayloads = MutableStateFlow<Map<String, com.stationly.core.model.sdui.SduiWidgetPayload?>>(emptyMap())
+    val sduiPayloads: StateFlow<Map<String, com.stationly.core.model.sdui.SduiWidgetPayload?>> = _sduiPayloads.asStateFlow()
+    
+    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key != null && key.startsWith("predictions_")) {
+            // predictions_{stationId}_{lineId}
+            val parts = key.split("_")
+            if (parts.size >= 3) {
+                val stationId = parts[1]
+                val lineId = parts[2]
+                viewModelScope.launch {
+                    val selection = _selections.value.find { it.station == stationId && it.line == lineId }
+                    selection?.let { loadPredictions(it) }
+                }
+            }
+        } else if (key == "line_status_data") {
+            viewModelScope.launch {
+                _selections.value.forEach { loadLineStatus(it) }
+            }
+        } else if (key == "selections") {
+            // Handled by repository flow
+        }
     }
     
-    private fun loadSavedSelections() {
+    init {
+        context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(prefsListener)
+        
         viewModelScope.launch {
-            try {
-                val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-                val json = prefs.getString("selections", "[]")
-                val type = object : TypeToken<List<UserSelection>>() {}.type
-                val selections: List<UserSelection> = gson.fromJson(json, type)
-                
+            selectionRepository.initialize()
+            selectionRepository.selections.collect { selections ->
                 _selections.value = selections
-                Log.d("SummaryViewModel", "Loaded ${selections.size} saved selections")
-                
-                // Load predictions for each selection
                 selections.forEach { selection ->
                     loadPredictions(selection)
+                    loadLineStatus(selection)
+                    refreshDataIfStale(selection)
                 }
-            } catch (e: Exception) {
-                Log.e("SummaryViewModel", "Error loading saved selections", e)
-                _uiState.value = _uiState.value.copy(error = "Failed to load selections: ${e.message}")
             }
         }
+    }
+    
+    override fun onCleared() {
+        super.onCleared()
+        context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+            .unregisterOnSharedPreferenceChangeListener(prefsListener)
+    }
+
+    private fun loadSavedSelections() {
+        // Now handled by reactive stream in init
     }
     
     private fun loadPredictions(selection: UserSelection) {
-        viewModelScope.launch {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                // In real implementation, would fetch from API
-                // For now, simulate with empty data or cached data
+                val rawPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line)
+                val dbPreds = com.stationly.core.util.GlobalBoardProcessor.processPredictions(rawPreds)
                 
-                // Check if we have cached predictions
-                val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-                val cacheKey = "predictions_${selection.station}_${selection.line}"
-                val cachedJson = prefs.getString(cacheKey, null)
+                // Also get when it was updated if we had a generic timestamp method, 
+                // but since it's not exposed easily, we'll just check if there's any prediction.
+                val predsTimestamp = if (dbPreds.isNotEmpty()) System.currentTimeMillis() else 0L
+                val currentMap = _predictions.value.toMutableMap()
+                currentMap[selection.station] = dbPreds
+                _predictions.value = currentMap
                 
-                if (cachedJson != null) {
-                    val type = object : TypeToken<List<PredictionDisplay>>() {}.type
-                    val cachedPredictions: List<PredictionDisplay> = gson.fromJson(cachedJson, type)
+                // Load and bind SDUI template if it exists
+                loadSduiTemplateForSelection(selection, dbPreds)
+                
+                if (predsTimestamp > 0) {
+                    val updates = _stationUpdates.value.toMutableMap()
+                    updates[selection.station] = predsTimestamp
+                    _stationUpdates.value = updates
                     
-                    // Update predictions map
-                    val currentMap = _predictions.value.toMutableMap()
-                    currentMap[selection.station] = cachedPredictions
-                    _predictions.value = currentMap
-                    
-                    Log.d("SummaryViewModel", "Loaded cached predictions for ${selection.stationName}")
-                } else {
-                    // Show waiting state
-                    val currentMap = _predictions.value.toMutableMap()
-                    currentMap[selection.station] = emptyList()
-                    _predictions.value = currentMap
+                    if (predsTimestamp > _uiState.value.lastUpdated) {
+                        _uiState.value = _uiState.value.copy(lastUpdated = predsTimestamp)
+                    }
                 }
             } catch (e: Exception) {
-                Log.e("SummaryViewModel", "Error loading predictions for ${selection.station}", e)
+                Log.e("SummaryViewModel", "Error loading predictions for \${selection.station}", e)
             }
         }
     }
+
+    private fun loadSduiTemplateForSelection(selection: UserSelection, predictions: List<PredictionDisplay>) {
+        val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+        val sduiJson = prefs.getString("sdui_layout_${selection.station}", null)
+        
+        if (sduiJson != null) {
+            try {
+                val format = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+                val template = format.decodeFromString<com.stationly.core.model.sdui.SduiWidgetPayload>(sduiJson)
+                
+                // Get line status for binding
+                val status = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
+                
+                // Use unified binder
+                val boundPayload = com.stationly.core.util.GlobalBoardProcessor.bindSduiTemplate(
+                    template,
+                    predictions,
+                    status?.statusSeverityDescription,
+                    status?.reason
+                )
+                
+                val currentSdui = _sduiPayloads.value.toMutableMap()
+                currentSdui[selection.station] = boundPayload
+                _sduiPayloads.value = currentSdui
+            } catch (e: Exception) {
+                Log.e("SummaryViewModel", "Error binding SDUI for inside-app board", e)
+            }
+        } else {
+             val currentSdui = _sduiPayloads.value.toMutableMap()
+             currentSdui.remove(selection.station)
+             _sduiPayloads.value = currentSdui
+        }
+    }
+    
+    private fun loadLineStatus(selection: UserSelection) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val dbStatus = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
+                
+                if (dbStatus != null) {
+                    val severity = dbStatus.statusSeverityDescription
+                    val reason = dbStatus.reason
+                    
+                    var cleanReason = com.stationly.core.util.StationlyFormatters.formatStatusReason(reason ?: "").trim()
+                    if (cleanReason.isNotEmpty()) {
+                        cleanReason = ": $cleanReason"
+                    }
+                    val formattedStatus = "$severity$cleanReason"
+                    
+                    val currentMap = _lineStatuses.value.toMutableMap()
+                    val key = "${selection.mode}_${selection.line}".lowercase()
+                    currentMap[key] = formattedStatus
+                    _lineStatuses.value = currentMap
+                }
+            } catch (e: Exception) {
+                Log.e("SummaryViewModel", "Error loading line status", e)
+            }
+        }
+    }
+
+    /**
+     * Eagerly refresh station data if it is missing or older than 60 seconds.
+     * Bridges the gap between app launch and the next FCM update.
+     */
+    private fun refreshDataIfStale(selection: UserSelection) {
+        viewModelScope.launch {
+            val existingPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line)
+            val existingStatus = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
+            
+            val lastUpdatedByStation = _stationUpdates.value[selection.station] ?: 0L
+            val isStale = System.currentTimeMillis() - lastUpdatedByStation > 60_000
+
+            if (existingPreds.isEmpty() || existingStatus == null || isStale) {
+                departureRepository.fetchInitialData(selection)
+                
+                // Refresh local UI state flows from the updated database
+                loadPredictions(selection)
+                loadLineStatus(selection)
+            }
+        }
+    }
+
     
     /**
      * Update predictions from FCM payload
@@ -171,26 +302,17 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         
         viewModelScope.launch {
             try {
-                // In real implementation, would fetch from API
-                // For now, just simulate delay
-                kotlinx.coroutines.delay(1000)
+                // Simulate refresh delay for UX
+                kotlinx.coroutines.delay(800)
                 
-                _selections.value.forEach { selection ->
-                    // Would call API here
-                    // For demo, just clear cache to show waiting state
-                    val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-                    val cacheKey = "predictions_${selection.station}_${selection.line}"
-                    prefs.edit().remove(cacheKey).apply()
-                    
-                    loadPredictions(selection)
-                }
+                loadSavedSelections()
                 
                 _uiState.value = _uiState.value.copy(
                     isRefreshing = false,
                     lastUpdated = System.currentTimeMillis()
                 )
                 
-                Log.d("SummaryViewModel", "Refreshed all predictions")
+                Log.d("SummaryViewModel", "Refreshed from internal storage")
             } catch (e: Exception) {
                 Log.e("SummaryViewModel", "Error refreshing", e)
                 _uiState.value = _uiState.value.copy(
@@ -207,28 +329,37 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     fun deleteSelection(selection: UserSelection) {
         viewModelScope.launch {
             try {
-                // Remove from saved selections
-                val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-                val json = prefs.getString("selections", "[]")
-                val type = object : TypeToken<List<UserSelection>>() {}.type
-                val existing: List<UserSelection> = gson.fromJson(json, type)
-                
-                val updated = existing.filter { it != selection }
-                val updatedJson = gson.toJson(updated)
-                prefs.edit().putString("selections", updatedJson).apply()
-                
-                // Update UI
-                _selections.value = updated
-                
-                // Remove from predictions
+                stationLifecycleUseCase.discardStation(selection, clearSelectionInRepo = true)
+
+                // Update UI state predictions map
                 val currentMap = _predictions.value.toMutableMap()
                 currentMap.remove(selection.station)
                 _predictions.value = currentMap
                 
-                // Clear cache
-                val cacheKey = "predictions_${selection.station}_${selection.line}"
-                prefs.edit().remove(cacheKey).apply()
-                
+                val currentLineStatuses = _lineStatuses.value.toMutableMap()
+                currentLineStatuses.remove("${selection.mode}_${selection.line}".lowercase())
+                _lineStatuses.value = currentLineStatuses
+
+                // Sync the resulting state to backend to ensure single board is accurate 
+                try {
+                    val authUser = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+                    if (authUser != null) {
+                        val remainingSelections = _selections.value.filter { it.station != selection.station }
+                        val mapped = remainingSelections.map { 
+                            com.stationly.core.model.sdui.SubscribedStation(
+                                id = it.station, 
+                                name = it.stationName, 
+                                line = it.line, 
+                                mode = it.mode, 
+                                direction = it.direction
+                            ) 
+                        }
+                        sduiService.syncStations(authUser.uid, mapped)
+                    }
+                } catch (e: Exception) {
+                    Log.e("SummaryViewModel", "Failed to sync delete to backend", e)
+                }
+
                 Log.d("SummaryViewModel", "Deleted selection: ${selection.stationName}")
             } catch (e: Exception) {
                 Log.e("SummaryViewModel", "Error deleting selection", e)
@@ -252,6 +383,14 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         return !preds.isNullOrEmpty()
     }
     
+    fun getLineStatusForSelection(selection: UserSelection): String? {
+        return _lineStatuses.value["${selection.mode}_${selection.line}"]
+    }
+    
+    fun getLastUpdatedForStation(station: String): Long {
+        return _stationUpdates.value[station] ?: 0L
+    }
+    
     /**
      * Clear error state
      */
@@ -263,17 +402,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
      * Get last updated time as string
      */
     fun getLastUpdatedString(): String {
-        val lastUpdated = _uiState.value.lastUpdated
-        if (lastUpdated == 0L) return "Never"
-        
-        val diff = System.currentTimeMillis() - lastUpdated
-        val seconds = diff / 1000
-        
-        return when {
-            seconds < 60 -> "Just now"
-            seconds < 3600 -> "${seconds / 60} min ago"
-            else -> "${seconds / 3600} hr ago"
-        }
+        return com.stationly.core.util.StationlyFormatters.formatLastUpdated(_uiState.value.lastUpdated)
     }
 }
 

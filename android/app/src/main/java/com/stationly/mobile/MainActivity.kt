@@ -40,12 +40,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         
         setContent {
-            // Apply theme
             StationlyTheme {
-                Scaffold { innerPadding ->
-                    // Main navigation
-                    AppNavigation(modifier = Modifier.padding(innerPadding))
-                }
+                AppNavigation()
             }
         }
     }
@@ -61,17 +57,81 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppNavigation(modifier: Modifier = Modifier) {
     val navController = rememberNavController()
+    // Simplified initial auth check
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val authManager = remember { com.stationly.mobile.service.FirebaseAuthManager(context) }
+    val isUserLoggedIn = authManager.currentUser != null
     
     NavHost(
         navController = navController,
-        startDestination = "summary",
+        startDestination = if (isUserLoggedIn) "summary" else "auth/login",
         modifier = modifier
     ) {
+        // --- Authentication Flow ---
+        
+        // Sign In Screen
+        composable("auth/login") {
+            com.stationly.mobile.ui.login.LoginScreen(
+                screenType = "login",
+                onNavigateToSummary = {
+                    navController.navigate("summary") {
+                        popUpTo("auth/login") { inclusive = true }
+                    }
+                },
+                onNavigateToRegister = { navController.navigate("auth/register") },
+                onNavigateToForgotPassword = { navController.navigate("auth/forgot-password") }
+            )
+        }
+        
+        // Sign Up Screen
+        composable("auth/register") {
+            com.stationly.mobile.ui.login.LoginScreen(
+                screenType = "register",
+                onNavigateToSummary = {
+                    navController.navigate("summary") {
+                        popUpTo("auth/login") { inclusive = true }
+                    }
+                },
+                onNavigateToLogin = { navController.popBackStack() }, // Standard back
+                onNavigateToRegister = {}, // Already here
+                onNavigateToForgotPassword = { navController.navigate("auth/forgot-password") }
+            )
+        }
+        
+        // Forgot Password Screen
+        composable("auth/forgot-password") {
+            com.stationly.mobile.ui.login.LoginScreen(
+                screenType = "forgot-password",
+                onNavigateToSummary = {}, // Not applicable directly
+                onNavigateToLogin = { navController.popBackStack() }, // Standard back
+                onNavigateToRegister = { navController.navigate("auth/register") },
+                onNavigateToForgotPassword = {} // Already here
+            )
+        }
+
+        // --- Main App Logic ---
+        
+        // Profile Screen
+        composable("profile") {
+            com.stationly.mobile.ui.profile.ProfileScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onLoggedOut = {
+                    navController.navigate("auth/login") {
+                        popUpTo("summary") { inclusive = true }
+                    }
+                },
+                authManager = authManager
+            )
+        }
+
         // Summary Screen - Main Dashboard
         composable("summary") {
             SummaryScreen(
                 onNavigateToSelection = {
                     navController.navigate("selection")
+                },
+                onNavigateToProfile = {
+                    navController.navigate("profile")
                 }
             )
         }
