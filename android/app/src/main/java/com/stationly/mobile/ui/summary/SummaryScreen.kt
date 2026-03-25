@@ -110,6 +110,20 @@ fun SummaryScreen(
                 }
             }
             
+            // ── Service Unavailable Overlay (rendered above content) ──
+            androidx.compose.animation.AnimatedVisibility(
+                visible = uiState.isBackendOffline,
+                enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(400)),
+                exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(300))
+            ) {
+                com.stationly.mobile.ui.common.ServiceUnavailableScreen(
+                    context = "board",
+                    overridingErrorMessage = uiState.error,
+                    onRetry = { viewModel.retryLoad() },
+                    onDismiss = { viewModel.clearError() }
+                )
+            }
+
             // Bottom decorative glow
             Box(
                 modifier = Modifier

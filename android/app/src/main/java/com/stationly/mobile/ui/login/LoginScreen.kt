@@ -188,13 +188,25 @@ fun LoginScreen(
                                     )
                                 }
                                 is SduiAppComponent.Button -> {
+                                    val isGoogleAction = component.action == "GOOGLE_LOGIN_ACTION"
                                     val isTransparent = component.color == "transparent"
-                                    val isWhite = component.color == "#FFFFFF"
                                     
-                                    val buttonColor = if (isTransparent) {
+                                    val buttonBackgroundColor = if (isGoogleAction) {
+                                        Color.White
+                                    } else if (isTransparent) {
                                         Color.Transparent
                                     } else {
                                         try { Color(android.graphics.Color.parseColor(component.color)) } catch (e: Exception) { dynamicPrimaryColor }
+                                    }
+
+                                    val buttonContentColor = if (isGoogleAction) {
+                                        Color(0xFF1F1F1F) // Google Sign-In Typography Gray
+                                    } else if (component.color == "#FFFFFF") {
+                                        Color.Black
+                                    } else if (isTransparent) {
+                                        Color.White.copy(alpha = 0.7f)
+                                    } else {
+                                        Color.Black
                                     }
                                     
                                     Button(
@@ -215,23 +227,23 @@ fun LoginScreen(
                                             .fillMaxWidth()
                                             .height(if (isTransparent) 48.dp else 54.dp),
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = buttonColor,
-                                            contentColor = if (isWhite) Color.Black else if (isTransparent) Color.White.copy(alpha = 0.7f) else Color.Black
+                                            containerColor = buttonBackgroundColor,
+                                            contentColor = buttonContentColor
                                         ),
                                         shape = CircleShape,
-                                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
-                                        border = if (isWhite) androidx.compose.foundation.BorderStroke(1.dp, Color.Black.copy(alpha = 0.1f)) else null
+                                        elevation = ButtonDefaults.buttonElevation(defaultElevation = if (isGoogleAction) 2.dp else 0.dp),
+                                        border = if (isGoogleAction) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF747775).copy(alpha = 0.3f)) else null
                                     ) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.Center,
                                             modifier = Modifier.fillMaxWidth()
                                         ) {
-                                            if (component.action == "GOOGLE_LOGIN_ACTION") {
+                                            if (isGoogleAction) {
                                                 Image(
-                                                    painter = painterResource(id = com.stationly.mobile.R.drawable.ic_google),
+                                                    painter = painterResource(id = com.stationly.mobile.R.drawable.ic_google_standard),
                                                     contentDescription = null,
-                                                    modifier = Modifier.size(24.dp) // Increased size for better visibility
+                                                    modifier = Modifier.size(24.dp)
                                                 )
                                                 Spacer(modifier = Modifier.width(12.dp))
                                             }
@@ -251,7 +263,7 @@ fun LoginScreen(
                     
                     item {
                         AnimatedVisibility(
-                            visible = uiState.error != null,
+                            visible = uiState.error != null && !uiState.isBackendOffline,
                             enter = fadeIn() + expandVertically(),
                             exit = fadeOut() + shrinkVertically()
                         ) {
@@ -273,28 +285,6 @@ fun LoginScreen(
                         }
                     }
 
-                    item {
-                        AnimatedVisibility(
-                            visible = uiState.info != null,
-                            enter = fadeIn() + expandVertically(),
-                            exit = fadeOut() + shrinkVertically()
-                        ) {
-                            Surface(
-                                color = Color(0xFF4CAF50).copy(alpha = 0.15f),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF4CAF50).copy(alpha = 0.3f))
-                            ) {
-                                Text(
-                                    text = uiState.info ?: "",
-                                    color = Color(0xFF81C784),
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.fillMaxWidth().padding(16.dp)
-                                )
-                            }
-                        }
-                    }
 
                     item { Spacer(modifier = Modifier.height(24.dp)) }
 
@@ -365,5 +355,20 @@ fun LoginScreen(
                 }
             }
         }
+
+        // ── Service Unavailable Overlay (Must be at the very end to render on top) ──
+        androidx.compose.animation.AnimatedVisibility(
+            visible = uiState.isBackendOffline,
+            enter = fadeIn(tween(400)),
+            exit = fadeOut(tween(300))
+        ) {
+            com.stationly.mobile.ui.common.ServiceUnavailableScreen(
+                context = "login_sync",
+                overridingErrorMessage = uiState.error,
+                onRetry = { viewModel.setScreenType(screenType) },
+                onDismiss = { viewModel.clearOfflineState() }
+            )
+        }
     }
 }
+

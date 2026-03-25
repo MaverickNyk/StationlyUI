@@ -37,6 +37,7 @@ class StationLifecycleUseCase(
             "Station_${selection.station}",
             "LineStatus_${selection.mode}_${selection.line}"
         )
+        println("STATION: 📡 Subscribing to topics: $topics")
         notificationManager.subscribeToTopics(topics)
 
         // 3. Clear any stale predictions for this station/line before fetch

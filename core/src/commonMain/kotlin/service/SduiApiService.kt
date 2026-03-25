@@ -12,11 +12,12 @@ import io.ktor.http.contentType
  * SDUI API Service Interface
  */
 interface SduiApiService {
-    suspend fun getSelectionLayout(): SduiAppScreen
+    suspend fun getSelectionLayout(track: String? = null): SduiAppScreen
     suspend fun getLoginLayout(): SduiAppScreen
     suspend fun getRegisterLayout(): SduiAppScreen
     suspend fun getForgotPasswordLayout(): SduiAppScreen
     suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption>
+    suspend fun getNearbyStations(lat: Double, lon: Double, mode: String? = null): List<SduiDropdownOption>
     
     // User Sync & Firestore
     suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse
@@ -30,10 +31,11 @@ interface SduiApiService {
  */
 class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
     
-    private val baseUrl = "https://api.stationly.co.uk/api/v1"
+    private val baseUrl = "http://localhost:3000/api/v1"
     
-    override suspend fun getSelectionLayout(): SduiAppScreen {
-        return client.get("$baseUrl/sdui/app/layout").body()
+    override suspend fun getSelectionLayout(track: String?): SduiAppScreen {
+        val url = if (track != null) "$baseUrl/sdui/app/layout?track=$track" else "$baseUrl/sdui/app/layout"
+        return client.get(url).body()
     }
     
     override suspend fun getLoginLayout(): SduiAppScreen {
@@ -51,6 +53,11 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
     override suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption> {
         val fullUrl = if (urlPath.startsWith("http")) urlPath else "$baseUrl$urlPath"
         return client.get(fullUrl).body()
+    }
+
+    override suspend fun getNearbyStations(lat: Double, lon: Double, mode: String?): List<SduiDropdownOption> {
+        val url = "$baseUrl/stations/nearby?lat=$lat&lon=$lon" + if (mode != null) "&mode=$mode" else ""
+        return client.get(url).body()
     }
 
     override suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse {

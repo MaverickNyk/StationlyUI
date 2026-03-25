@@ -156,7 +156,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             sduiPayload: com.stationly.core.model.sdui.SduiWidgetPayload? = null,
             hasLoadedData: Boolean = true
         ) {
-            android.util.Log.d("Widget", "Updating widget $appWidgetId for $stationName")
+            android.util.Log.d("Widget", "Updating widget $appWidgetId for $stationName with ${predictions.size} departures")
             
             val views = RemoteViews(context.packageName, R.layout.widget_departure_board)
             val hasSelection = com.stationly.core.platform.Platform.sqlStorage.getAllSelections().isNotEmpty()
@@ -343,7 +343,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 views.setTextViewText(R.id.line_name, stationName)
                 val rowViews = mutableListOf<RemoteViews>()
                 val header = RemoteViews(context.packageName, R.layout.widget_platform_header)
-                header.setTextViewText(R.id.platform_name, "🚇 Fetching live signals...")
+                header.setTextViewText(R.id.platform_name, "🛰️ Syncing live signals...")
                 rowViews.add(header)
                 
                 for (i in 0 until 3) {
@@ -411,20 +411,12 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         }
 
         private fun applyRowsToWidget(views: RemoteViews, rowViews: List<RemoteViews>) {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                views.setViewVisibility(R.id.rows_container, android.view.View.GONE)
-                views.setViewVisibility(R.id.rows_list, android.view.View.VISIBLE)
-                val builder = RemoteViews.RemoteCollectionItems.Builder()
-                rowViews.forEachIndexed { index, rv ->
-                    builder.addItem(index.toLong(), rv)
-                }
-                views.setRemoteAdapter(R.id.rows_list, builder.setHasStableIds(false).build())
-            } else {
-                views.setViewVisibility(R.id.rows_list, android.view.View.GONE)
-                views.setViewVisibility(R.id.rows_container, android.view.View.VISIBLE)
-                views.removeAllViews(R.id.rows_container)
-                rowViews.forEach { views.addView(R.id.rows_container, it) }
-            }
+            // Using the LinearLayout path for maximum reliability across all Android versions
+            // This avoids issues with RemoteCollectionItems on some launchers.
+            views.setViewVisibility(R.id.rows_list, android.view.View.GONE)
+            views.setViewVisibility(R.id.rows_container, android.view.View.VISIBLE)
+            views.removeAllViews(R.id.rows_container)
+            rowViews.forEach { views.addView(R.id.rows_container, it) }
         }
     }
 }

@@ -55,6 +55,7 @@ class AndroidNotificationManager(
         topics.forEach { topic ->
             try {
                 fcm.subscribeToTopic(topic).await()
+                android.util.Log.d("NotificationManager", "Successfully subscribed to $topic")
             } catch (e: Exception) {
                 android.util.Log.e("NotificationManager", "Failed to subscribe to $topic", e)
             }

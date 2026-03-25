@@ -1,0 +1,140 @@
+package com.stationly.mobile.ui.common
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.stationly.mobile.ui.theme.TflAmber
+
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.clickable
+
+import androidx.compose.material.icons.filled.Close
+
+/**
+ * ServiceUnavailableScreen – Premium empty state for connection errors.
+ */
+@Composable
+fun ServiceUnavailableScreen(
+    context: String = "service",
+    overridingErrorMessage: String? = null,
+    onRetry: () -> Unit = {},
+    onDismiss: (() -> Unit)? = null
+) {
+    // Elegant error state: Minimalistic, clean typography, soft colors
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF121212))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
+        contentAlignment = Alignment.Center
+    ) {
+        if (onDismiss != null) {
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp)
+                    .padding(top = 24.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = Color.White.copy(alpha = 0.05f),
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Close, 
+                            contentDescription = "Close", 
+                            tint = Color.White.copy(alpha = 0.6f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            
+            // Soft, non-aggressive icon
+            Surface(
+                shape = CircleShape,
+                color = Color.White.copy(alpha = 0.03f),
+                modifier = Modifier.size(96.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Outlined.CloudOff,
+                        contentDescription = "Offline",
+                        tint = Color(0xFFB3B3B3), // Premium gray
+                        modifier = Modifier.size(42.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(32.dp))
+
+            Text(
+                "Something went wrong",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 24.sp,
+                textAlign = TextAlign.Center
+            )
+            
+            Spacer(Modifier.height(16.dp))
+
+            Text(
+                overridingErrorMessage ?: messageForContext(context),
+                color = Color(0xFFA0A0A0),
+                fontSize = 15.sp,
+                textAlign = TextAlign.Center,
+                lineHeight = 22.sp,
+                modifier = Modifier.padding(horizontal = 32.dp)
+            )
+
+            Spacer(Modifier.height(48.dp))
+
+            Button(
+                onClick = onRetry,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White,
+                    contentColor = Color.Black
+                ),
+                shape = RoundedCornerShape(32.dp),
+                modifier = Modifier.height(52.dp).padding(horizontal = 32.dp),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+                contentPadding = PaddingValues(horizontal = 32.dp)
+            ) {
+                Text(
+                    "Try again",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+            }
+        }
+    }
+}
+
+private fun messageForContext(context: String) = when(context) {
+    "selection" -> "The Stationly backend is temporarily unreachable.\nPlease check your connection."
+    "board" -> "Your live board couldn't connect to the backend.\nSignals might not be real-time."
+    else -> "We're having trouble reaching our servers.\nPlease check your connection and try again."
+}
+

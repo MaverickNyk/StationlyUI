@@ -24,7 +24,7 @@ interface TflApiService {
  */
 class TflApiServiceImpl(private val client: HttpClient) : TflApiService {
     
-    private val baseUrl = "https://api.stationly.co.uk/api/v1"
+    private val baseUrl = "http://localhost:3000/api/v1"
     
     override suspend fun getModes(): List<TransportMode> {
         return client.get("$baseUrl/modes").body()
