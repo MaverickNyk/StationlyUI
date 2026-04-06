@@ -128,16 +128,36 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     init {
         context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
             .registerOnSharedPreferenceChangeListener(prefsListener)
-        
+
         viewModelScope.launch {
+            // Initial sync from SQL
             selectionRepository.initialize()
-            selectionRepository.selections.collect { selections ->
-                _selections.value = selections
-                selections.forEach { selection ->
-                    loadPredictions(selection)
-                    loadLineStatus(selection)
-                    refreshDataIfStale(selection)
+            
+            // Collect selections for UI update
+            viewModelScope.launch {
+                selectionRepository.selections.collect { selections ->
+                    _selections.value = selections
+                    
+                    // Initial load into StateFlows
+                    selections.forEach { selection ->
+                        loadPredictions(selection)
+                        loadLineStatus(selection)
+                    }
+
+                    // On first data ready, ensure active board is set for widget
+                    if (selections.isNotEmpty() && _uiState.value.activeStationId == null) {
+                        val primary = selections.first()
+                        _uiState.value = _uiState.value.copy(
+                            activeStationId = primary.station,
+                            activeLineId = primary.line
+                        )
+                    }
                 }
+            }
+            
+            // Trigger background staleness check for primary board only to avoid spamming local backend
+            selectionRepository.selections.value.firstOrNull()?.let { 
+                refreshDataIfStale(it)
             }
         }
     }
@@ -164,6 +184,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 val currentMap = _predictions.value.toMutableMap()
                 currentMap[selection.station] = dbPreds
                 _predictions.value = currentMap
+                android.util.Log.d("SummaryViewModel", "Loaded ${dbPreds.size} departures for ${selection.station}")
                 
                 // Load and bind SDUI template if it exists
                 loadSduiTemplateForSelection(selection, dbPreds)
@@ -176,6 +197,17 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                     if (predsTimestamp > _uiState.value.lastUpdated) {
                         _uiState.value = _uiState.value.copy(lastUpdated = predsTimestamp)
                     }
+
+                    // Proactively update widget with what we just loaded
+                    widgetManager.updateWidget(
+                        com.stationly.core.model.WidgetState(
+                            stationName = selection.stationName,
+                            lineName = selection.line,
+                            predictions = dbPreds,
+                            status = null, // Will be updated by loadLineStatus
+                            lastUpdated = predsTimestamp / 1000
+                        )
+                    )
                 }
             } catch (e: Exception) {
                 Log.e("SummaryViewModel", "Error loading predictions for \${selection.station}", e)
@@ -235,6 +267,17 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                     val key = "${selection.mode}_${selection.line}".lowercase()
                     currentMap[key] = formattedStatus
                     _lineStatuses.value = currentMap
+
+                    // Update widget with new status
+                    widgetManager.updateWidget(
+                         com.stationly.core.model.WidgetState(
+                             stationName = selection.stationName,
+                             lineName = selection.line,
+                             predictions = _predictions.value[selection.station] ?: emptyList(),
+                             status = formattedStatus,
+                             lastUpdated = System.currentTimeMillis() / 1000
+                         )
+                    )
                 }
             } catch (e: Exception) {
                 Log.e("SummaryViewModel", "Error loading line status", e)
@@ -285,7 +328,18 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                     val json = gson.toJson(predictions)
                     prefs.edit().putString(cacheKey, json).apply()
                     
-                    Log.d("SummaryViewModel", "Updated predictions for ${selection.stationName}")
+                    Log.d("SummaryViewModel", "FCM: Updated predictions for ${selection.stationName}")
+                    
+                    // Propagate to Home Screen Widget
+                    widgetManager.updateWidget(
+                         com.stationly.core.model.WidgetState(
+                             stationName = selection.stationName,
+                             lineName = selection.line,
+                             predictions = predictions,
+                             status = _lineStatuses.value["${selection.mode}_${selection.line}".lowercase()],
+                             lastUpdated = System.currentTimeMillis() / 1000
+                         )
+                    )
                 }
             } catch (e: Exception) {
                 Log.e("SummaryViewModel", "Error updating predictions", e)
@@ -317,7 +371,8 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 Log.e("SummaryViewModel", "Error refreshing", e)
                 _uiState.value = _uiState.value.copy(
                     isRefreshing = false,
-                    error = "Failed to refresh: ${e.message}"
+                    error = com.stationly.mobile.util.BackendErrorUtil.getFriendlyMessage(e),
+                    isBackendOffline = true // Refresh failed - show professional error
                 )
             }
         }
@@ -395,7 +450,13 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
      * Clear error state
      */
     fun clearError() {
-        _uiState.value = _uiState.value.copy(error = null)
+        _uiState.value = _uiState.value.copy(error = null, isBackendOffline = false)
+    }
+
+    /** Called by NoConnectionScreen retry button on the board */
+    fun retryLoad() {
+        _uiState.value = _uiState.value.copy(error = null, isBackendOffline = false)
+        refreshAll()
     }
     
     /**
@@ -409,5 +470,9 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
 data class SummaryUiState(
     val isRefreshing: Boolean = false,
     val error: String? = null,
-    val lastUpdated: Long = 0L
+    val isBackendOffline: Boolean = false,
+    val lastUpdated: Long = 0L,
+    val activeStationId: String? = null,
+    val activeLineId: String? = null,
+    val sduiLayout: com.stationly.core.model.sdui.SduiAppScreen? = null
 )

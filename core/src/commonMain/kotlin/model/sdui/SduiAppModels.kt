@@ -13,7 +13,8 @@ sealed class SduiAppComponent {
         override val id: String,
         val label: String,
         val dependsOn: String? = null,
-        val dataSourceUrl: String
+        val dataSourceUrl: String,
+        val style: String? = null
     ) : SduiAppComponent()
 
     @Serializable
@@ -56,6 +57,31 @@ sealed class SduiAppComponent {
         val text: String? = null,
         val style: String = "text"
     ) : SduiAppComponent()
+
+    @Serializable
+    @SerialName("location")
+    data class Location(
+        override val id: String,
+        val label: String,
+        val icon: String? = null,
+        val action: String? = null
+    ) : SduiAppComponent()
+    @Serializable
+    @SerialName("flow_picker")
+    data class FlowPicker(
+        override val id: String,
+        val label: String? = null,
+        val dependsOn: String? = null,
+        val options: List<FlowOption>
+    ) : SduiAppComponent()
+
+    @Serializable
+    data class FlowOption(
+        val id: String,
+        val label: String,
+        val icon: String? = null,
+        val description: String? = null
+    )
 }
 
 @Serializable
@@ -78,7 +104,8 @@ data class SduiAppScreen(
 data class SduiDropdownOption(
     val id: String,
     val label: String,
-    val iconUrl: String? = null
+    val iconUrl: String? = null,
+    val secondaryLabel: String? = null
 )
 
 @Serializable

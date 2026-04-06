@@ -22,8 +22,8 @@ data class LoginUiState(
     val layout: SduiAppScreen? = null,
     val isLoading: Boolean = true,
     val isAuthenticating: Boolean = false,
+    val isBackendOffline: Boolean = false,
     val error: String? = null,
-    val info: String? = null,
     val inputs: Map<String, String> = emptyMap()
 )
 
@@ -70,7 +70,6 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = true, 
                     error = null, 
-                    info = null, 
                     inputs = emptyMap()
                 )
                 val layout = when (type) {
@@ -85,7 +84,8 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                 Log.e("LoginViewModel", "Failed to load $type screen.", e)
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    error = "Check your connection and try again."
+                    isBackendOffline = true, // Treat as service unavailable
+                    error = com.stationly.mobile.util.BackendErrorUtil.getFriendlyMessage(e)
                 )
             }
         }
@@ -218,7 +218,6 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d("LoginViewModel", "Reset link sent successfully")
                 _uiState.value = _uiState.value.copy(
                     isAuthenticating = false, 
-                    info = "Great! A recovery link has been sent to $email", 
                     error = null
                 )
             } catch (e: Exception) {
@@ -233,7 +232,7 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
     private fun syncUserAndSyncData(user: com.google.firebase.auth.FirebaseUser, onAuthSuccess: () -> Unit) {
         viewModelScope.launch {
             try {
-                _uiState.value = _uiState.value.copy(isAuthenticating = true, info = "Syncing your boards...")
+                _uiState.value = _uiState.value.copy(isAuthenticating = true)
                 
                 val provider = user.providerData.getOrNull(1)?.providerId ?: "email"
                 val stations = userSyncRepository.syncUserAndGetSavedStations(
@@ -264,16 +263,24 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                     stationLifecycleUseCase.setupStation(selection, isFirstTime = true)
                 }
                 
-                _uiState.value = _uiState.value.copy(isAuthenticating = false, info = "Welcome back!")
+                _uiState.value = _uiState.value.copy(isAuthenticating = false)
                 onAuthSuccess()
             } catch (e: Exception) {
                 Log.e("LoginViewModel", "!!! [LOGIN_SYNC] FATAL SYNC ERROR", e)
                 authManager.logout() // Revert login locally if backend sync fails
                 _uiState.value = _uiState.value.copy(
                     isAuthenticating = false,
-                    error = "Failed to sync your profile: ${e.message}"
+                    isBackendOffline = true, // Force the professional overlay on any fatal sync error
+                    error = com.stationly.mobile.util.BackendErrorUtil.getFriendlyMessage(e)
                 )
             }
         }
+    }
+
+    fun clearOfflineState() {
+        _uiState.value = _uiState.value.copy(
+            isBackendOffline = false,
+            error = null
+        )
     }
 }
