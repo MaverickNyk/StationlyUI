@@ -61,8 +61,12 @@ fun SelectionScreen(
     val uiState by viewModel.uiState.collectAsState()
     
     // Handle back button to pop last selection instead of exiting immediately
-    androidx.activity.compose.BackHandler(enabled = uiState.selections.isNotEmpty()) {
-        viewModel.popLastSelection()
+    androidx.activity.compose.BackHandler(enabled = true) {
+        if (uiState.selections.containsKey("mode")) {
+            viewModel.popLastSelection()
+        } else {
+            onNavigateToSummary()
+        }
     }
 
     // Base Colors
@@ -130,7 +134,7 @@ fun SelectionScreen(
                     ) {
                         IconButton(
                             onClick = { 
-                                if (uiState.selections.isNotEmpty()) viewModel.popLastSelection() 
+                                if (uiState.selections.containsKey("mode")) viewModel.popLastSelection() 
                                 else onNavigateToSummary() 
                             },
                             modifier = Modifier
@@ -144,58 +148,23 @@ fun SelectionScreen(
                             )
                         }
                         
-                        // Breadcrumb Trail (Icons only for a clean, premium look)
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            val stages = listOf("mode", "tracking_flow", "station", "line", "direction")
-                            stages.forEach { stageKey ->
-                                if (uiState.selections.containsKey(stageKey)) {
-                                    val icon = when (stageKey) {
-                                        "mode" -> Icons.Default.DirectionsTransit
-                                        "tracking_flow" -> if (uiState.currentTrack == "discovery") Icons.Default.GpsFixed else Icons.Default.Search
-                                        "station" -> Icons.Default.Place
-                                        "line" -> Icons.Default.Timeline
-                                        "direction" -> Icons.Default.TripOrigin
-                                        else -> Icons.Default.Circle
-                                    }
-                                    
-                                    Box(
-                                        modifier = Modifier
-                                            .size(36.dp)
-                                            .clip(CircleShape)
-                                            .background(dynamicPrimaryColor.copy(alpha = 0.15f))
-                                            .border(1.dp, dynamicPrimaryColor.copy(alpha = 0.4f), CircleShape)
-                                            .clickable { viewModel.resetToStage(stageKey) },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = icon,
-                                            contentDescription = null,
-                                            tint = dynamicPrimaryColor,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                }
-                            }
-                            
-                            if (uiState.selections.isEmpty()) {
-                                Surface(
-                                    color = Color.White.copy(alpha = 0.05f),
-                                    shape = RoundedCornerShape(20.dp),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
-                                ) {
-                                    Text(
-                                        text = "New Board",
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = Color.White.copy(alpha = 0.6f),
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
+                        // Premium Static Header
+                        val headerText = if (uiState.selections.containsKey("mode")) {
+                            val modeId = uiState.selections["mode"]
+                            val modeName = uiState.modes.find { it.id == modeId }?.label ?: "Board"
+                            "New $modeName Board"
+                        } else {
+                            "New Board"
                         }
+
+                        Text(
+                            text = headerText,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
+                            textAlign = TextAlign.End
+                        )
                     }
                 }
             },

@@ -305,8 +305,69 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
     
-    // 3. Handle Form Changes
+    // Cleanly removes a selection and cascades downwards
+    fun removeSelection(componentId: String) {
+        val uiState = _uiState.value
+        val newSelections = uiState.selections.toMutableMap()
+        val currentDropdownData = uiState.dropdownData.toMutableMap()
+        
+        if (!newSelections.containsKey(componentId)) return
+        
+        Log.d("SDUI", "Removing selection: $componentId")
+        newSelections.remove(componentId)
+        
+        val layout = uiState.layout
+        val components = layout?.components ?: emptyList()
+        
+        fun recursiveClear(parentId: String) {
+            components.forEach { comp ->
+                val compId = comp.id
+                if (compId != null) {
+                    val dependsOn = when(comp) {
+                        is SduiAppComponent.Dropdown -> comp.dependsOn
+                        is SduiAppComponent.FlowPicker -> comp.dependsOn
+                        else -> null
+                    }
+                    if (dependsOn == parentId) {
+                        newSelections.remove(compId)
+                        currentDropdownData.remove(compId)
+                        recursiveClear(compId)
+                    }
+                }
+            }
+        }
+        
+        if (componentId == "tracking_flow") {
+            _uiState.value = uiState.copy(
+                selections = newSelections,
+                currentTrack = null,
+                dropdownData = currentDropdownData
+            )
+            loadServerLayout(null)
+        } else {
+            if (uiState.currentTrack == "discovery") {
+                if (componentId == "station") {
+                    newSelections.remove("line")
+                    newSelections.remove("direction")
+                    currentDropdownData.remove("line")
+                    currentDropdownData.remove("direction")
+                } else if (componentId == "line") {
+                    newSelections.remove("direction")
+                    currentDropdownData.remove("direction")
+                }
+            } else {
+                recursiveClear(componentId)
+            }
+            _uiState.value = uiState.copy(selections = newSelections, dropdownData = currentDropdownData)
+        }
+    }
+
     fun onSelectionChanged(componentId: String, selectedValue: String) {
+        if (selectedValue.isBlank()) {
+            removeSelection(componentId)
+            return
+        }
+        
         val uiState = _uiState.value
         val newSelections = uiState.selections.toMutableMap()
         val currentDropdownData = uiState.dropdownData.toMutableMap()
@@ -318,7 +379,6 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         val layout = uiState.layout
         val components = layout?.components ?: emptyList()
         
-        // Find all dependencies and clear them recursively from the selection and data map
         fun recursiveClear(parentId: String) {
             components.forEach { comp: SduiAppComponent ->
                 val compId = comp.id
@@ -340,10 +400,19 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         
         // Update internal track state if tracking_flow component is set
         if (componentId == "tracking_flow") {
+            val keysToKeep = listOf("mode", "tracking_flow")
+            val keysToRemove = newSelections.keys.filter { !keysToKeep.contains(it) }
+            keysToRemove.forEach { key ->
+                newSelections.remove(key)
+                currentDropdownData.remove(key)
+            }
+
             _uiState.value = uiState.copy(
                 selections = newSelections,
                 dropdownData = currentDropdownData,
-                currentTrack = selectedValue
+                currentTrack = selectedValue,
+                isLocating = false,
+                noNearbyStationsFound = false
             )
             // ACTION: Re-fetch layout from server specifically for this track
             loadServerLayout(selectedValue)
@@ -373,7 +442,6 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         if (componentId == "station") {
              val lineComponent = components.find { it is SduiAppComponent.Dropdown && it.id == "line" } as? SduiAppComponent.Dropdown
              if (lineComponent != null) {
-                 // Fetch data for the 'line' dropdown based on the newly selected station
                  fetchDropdownData(lineComponent, newSelections)
              }
         }
@@ -388,21 +456,30 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         Log.d("SDUI", "State updated. Selections: $newSelections, Data keys: ${currentDropdownData.keys}")
     }
 
+    private val selectionHierarchy = listOf("mode", "tracking_flow", "station", "line", "direction")
+
     fun popLastSelection() {
-        val currentSelections = _uiState.value.selections.toMutableMap()
+        val currentSelections = _uiState.value.selections
         if (currentSelections.isEmpty()) return
         
-        // Get the last key (most recently added selection)
-        val lastKey = currentSelections.keys.lastOrNull()
+        val lastKey = selectionHierarchy.lastOrNull { currentSelections.containsKey(it) }
         if (lastKey != null) {
-            onSelectionChanged(lastKey, "") // Cascading clear
+            removeSelection(lastKey)
         }
     }
 
     fun resetToStage(stageKey: String) {
-        val currentSelections = _uiState.value.selections.toMutableMap()
+        val currentSelections = _uiState.value.selections
         if (!currentSelections.containsKey(stageKey)) return
-        onSelectionChanged(stageKey, "")
+        
+        val stageIndex = selectionHierarchy.indexOf(stageKey)
+        if (stageIndex >= 0) {
+            // Remove the stage immediately following this one to keep this stage selected
+            val nextStage = selectionHierarchy.getOrNull(stageIndex + 1)
+            if (nextStage != null && currentSelections.containsKey(nextStage)) {
+                removeSelection(nextStage)
+            }
+        }
     }
 
     fun onActionTriggered(action: String) {
@@ -476,24 +553,10 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
     }
     
     fun setCurrentTrack(track: String?) {
-        _uiState.value = _uiState.value.copy(currentTrack = track, noNearbyStationsFound = false)
         if (track == null) {
-            val mode = _uiState.value.selections["mode"]
-            if (mode != null) {
-                // Clear everything else including the tracking_flow decision
-                val newSelections = mutableMapOf("mode" to mode)
-                // Filter dropdown data to only keep 'mode'
-                val newDropdowns = _uiState.value.dropdownData.filterKeys { it == "mode" || it == "station" }.toMutableMap()
-                if (_uiState.value.dropdownData["line"] != null) newDropdowns.remove("line")
-                if (_uiState.value.dropdownData["direction"] != null) newDropdowns.remove("direction")
-                if (_uiState.value.dropdownData["station"] != null && track == null) newDropdowns.remove("station")
-
-                _uiState.value = _uiState.value.copy(
-                    selections = newSelections,
-                    dropdownData = newDropdowns,
-                    error = null
-                )
-            }
+            removeSelection("tracking_flow")
+        } else {
+            _uiState.value = _uiState.value.copy(currentTrack = track, noNearbyStationsFound = false)
         }
     }
 

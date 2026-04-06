@@ -31,7 +31,7 @@ interface SduiApiService {
  */
 class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
     
-    private val baseUrl = "http://localhost:3000/api/v1"
+    private val baseUrl = "https://api.stationly.co.uk/api/v1"
     
     override suspend fun getSelectionLayout(track: String?): SduiAppScreen {
         val url = if (track != null) "$baseUrl/sdui/app/layout?track=$track" else "$baseUrl/sdui/app/layout"
