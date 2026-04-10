@@ -28,38 +28,38 @@ import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import com.google.android.gms.tasks.CancellationTokenSource
 
-// Dynamic State UI Class for Jetpack Compose
 data class SduiUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val isBackendOffline: Boolean = false,
     val layout: SduiAppScreen? = null,
-    // Store simple values selected by users keyed by component ID
     val selections: Map<String, String> = emptyMap(),
-    // Data sources fetched for dropdowns keyed by component ID
     val dropdownData: Map<String, List<SduiDropdownOption>> = emptyMap(),
     val modes: List<SduiDropdownOption> = emptyList(),
     val showSuccessDialog: Boolean = false,
     val isSaving: Boolean = false,
     val isLocating: Boolean = false,
     val currentTrack: String? = null,
-    val noNearbyStationsFound: Boolean = false
+    val noNearbyStationsFound: Boolean = false,
+    val failedFetches: Set<String> = emptySet(),
+    val userLat: Double? = null,
+    val userLon: Double? = null
 )
 
 class SelectionViewModel(application: Application) : AndroidViewModel(application) {
-    
+
     private val sduiService = SduiApiServiceFactory.create()
-    
+
     private val context = application.applicationContext
     private val storageManager = AndroidStorageManager(context)
     private val notificationManager = AndroidNotificationManager(context)
     private val widgetManager = AndroidWidgetManager(context)
-    
+
     private val apiService = TflApiServiceFactory.create()
     private val syncPredictionsUseCase = com.stationly.core.usecase.SyncPredictionsUseCase(Platform.sqlStorage)
     private val selectionRepository = SelectionRepository(storageManager, Platform.sqlStorage)
     private val departureRepository = DepartureRepository(apiService, storageManager, Platform.sqlStorage, syncPredictionsUseCase)
-    
+
     private val stationLifecycleUseCase = com.stationly.core.usecase.StationLifecycleUseCase(
         selectionRepository = selectionRepository,
         departureRepository = departureRepository,
@@ -70,27 +70,51 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
     )
 
     private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(application)
-    
+
     private val _uiState = MutableStateFlow(SduiUiState())
     val uiState: StateFlow<SduiUiState> = _uiState.asStateFlow()
-    
+
     init {
-        // Initialize repositories from SQL
         viewModelScope.launch {
             selectionRepository.initialize()
             Log.d("SDUI", "SelectionRepository initialized with ${selectionRepository.selections.value.size} stations")
         }
-        
         loadCachedLayout()
+        loadServerLayout()
+        loadModes()
+        silentlyFetchLocation()
+    }
+
+    /** Grab user location quietly on startup so we can show distance in manual mode */
+    private fun silentlyFetchLocation() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED) return
+        try {
+            fusedLocationClient.getCurrentLocation(
+                Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+                CancellationTokenSource().token
+            ).addOnSuccessListener { loc ->
+                if (loc != null) {
+                    _uiState.value = _uiState.value.copy(userLat = loc.latitude, userLon = loc.longitude)
+                    Log.d("SDUI", "Silent location acquired: ${loc.latitude}, ${loc.longitude}")
+                }
+            }
+        } catch (_: SecurityException) {}
+    }
+
+    fun retryLoad() {
+        _uiState.value = _uiState.value.copy(error = null, failedFetches = emptySet())
         loadServerLayout()
         loadModes()
     }
 
-    /** Called by the NoConnectionScreen retry button */
-    fun retryLoad() {
-        _uiState.value = _uiState.value.copy(error = null)
-        loadServerLayout()
-        loadModes()
+    fun retryDropdown(componentId: String) {
+        val state = _uiState.value
+        val layout = state.layout ?: return
+        val component = layout.components.find { it is SduiAppComponent.Dropdown && it.id == componentId }
+            as? SduiAppComponent.Dropdown ?: return
+        _uiState.value = state.copy(failedFetches = state.failedFetches - componentId)
+        fetchDropdownData(component, state.selections)
     }
 
     private fun loadModes() {
@@ -99,9 +123,13 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                 val modes = sduiService.getDropdownData("/modes")
                 val updatedData = _uiState.value.dropdownData.toMutableMap()
                 updatedData["mode"] = modes
-                _uiState.value = _uiState.value.copy(modes = modes, dropdownData = updatedData)
+                _uiState.value = _uiState.value.copy(
+                    modes = modes, dropdownData = updatedData,
+                    failedFetches = _uiState.value.failedFetches - "mode"
+                )
             } catch (e: Exception) {
                 Log.e("SDUI", "Failed to fetch modes", e)
+                _uiState.value = _uiState.value.copy(failedFetches = _uiState.value.failedFetches + "mode")
             }
         }
     }
@@ -109,19 +137,13 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
     private fun loadCachedLayout() {
         val cachedLayoutJson = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
             .getString("cached_app_layout", null)
-        
         if (cachedLayoutJson != null) {
             try {
                 val format = Json { ignoreUnknownKeys = true }
                 val cachedLayout = format.decodeFromString<SduiAppScreen>(cachedLayoutJson)
                 _uiState.value = _uiState.value.copy(layout = cachedLayout)
-                Log.d("SDUI", "Loaded cached app layout")
-                
-                // Trigger dropdowns from cache if bootstrap
                 bootstrapDropdowns(cachedLayout)
-            } catch (e: Exception) {
-                Log.e("SDUI", "Failed to parse cached layout", e)
-            }
+            } catch (e: Exception) { Log.e("SDUI", "Failed to parse cached layout", e) }
         }
     }
 
@@ -130,93 +152,57 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
             if (component is SduiAppComponent.Dropdown) {
                 val isBootstrap = component.dependsOn == null
                 val isSatisfied = component.dependsOn != null && _uiState.value.selections.containsKey(component.dependsOn)
-                
-                if (isBootstrap || isSatisfied) {
-                    fetchDropdownData(component)
-                }
+                if (isBootstrap || isSatisfied) fetchDropdownData(component)
             }
         }
     }
-    
-    // 1. Fetch Blueprint Layout
+
     private fun loadServerLayout(track: String? = null) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true)
             try {
                 val screenLayout = sduiService.getSelectionLayout(track)
-                
-                // Cache it for offline use before applying
                 val jsonStr = Json.encodeToString(screenLayout)
                 context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-                    .edit()
-                    .putString("cached_app_layout", jsonStr)
-                    .apply()
-
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    layout = screenLayout
-                )
-                // Populating currently valid dropdowns (Bootstrap + existing selections)
+                    .edit().putString("cached_app_layout", jsonStr).apply()
+                _uiState.value = _uiState.value.copy(isLoading = false, layout = screenLayout)
                 bootstrapDropdowns(screenLayout)
             } catch (e: Exception) {
                 Log.e("SDUI", "Failed to fetch Server Layout", e)
-                val isBackendError = com.stationly.mobile.util.BackendErrorUtil.isBackendConnectionError(e)
                 if (_uiState.value.layout == null) {
-                    // No cached layout — show the service unavailable screen
                     _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        isBackendOffline = true, // Treat as service unavailable
+                        isLoading = false, isBackendOffline = true,
                         error = com.stationly.mobile.util.BackendErrorUtil.getFriendlyMessage(e)
                     )
                 } else {
                     _uiState.value = _uiState.value.copy(isLoading = false)
-                    Log.i("SDUI", "Fetch failed, but using cached layout instead of showing error.")
                 }
             }
         }
     }
-    
-    // 3. Fetch Nearby Stations using Lat/Lon
-    fun fetchNearbyStations(lat: Double? = null, lon: Double? = null, modeId: String? = null) {
-        Log.d("SDUI", "fetchNearbyStations called for lat=$lat lon=$lon mode=$modeId")
-        
-        if (lat == null || lon == null) {
-            fetchActualLocation(modeId)
-            return
-        }
 
+    fun fetchNearbyStations(lat: Double? = null, lon: Double? = null, modeId: String? = null) {
+        if (lat == null || lon == null) { fetchActualLocation(modeId); return }
         viewModelScope.launch {
             try {
                 _uiState.value = _uiState.value.copy(isLocating = true)
                 val nearbyStations = sduiService.getNearbyStations(lat, lon, modeId)
-                Log.d("SDUI", "sduiService.getNearbyStations returned ${nearbyStations.size} stations")
-                
-                // Populate the 'station' dropdown with nearby candidates
                 if (nearbyStations.isNotEmpty()) {
                     val updatedDropdownData = _uiState.value.dropdownData.toMutableMap()
                     updatedDropdownData["station"] = nearbyStations
-                    
                     _uiState.value = _uiState.value.copy(
-                        isLocating = false,
-                        dropdownData = updatedDropdownData
+                        isLocating = false, dropdownData = updatedDropdownData,
+                        userLat = lat, userLon = lon
                     )
-                    Log.d("SDUI", "Fetched ${nearbyStations.size} nearby stations for lat=$lat lon=$lon")
-
-                    // If there's exactly one very close station, we could auto-select it
-                    val autoSelect = if (nearbyStations.size == 1) nearbyStations.first().id else null
-                    if (autoSelect != null) {
-                        onSelectionChanged("station", autoSelect)
-                    }
+                    if (nearbyStations.size == 1) onSelectionChanged("station", nearbyStations.first().id)
                 } else {
                     _uiState.value = _uiState.value.copy(isLocating = false, noNearbyStationsFound = true)
-                    Log.w("SDUI", "Zero nearby stations found for lat=$lat lon=$lon")
                 }
             } catch (e: Exception) {
                 Log.e("SDUI", "Failed to fetch nearby stations", e)
-                val isBackendError = com.stationly.mobile.util.BackendErrorUtil.isBackendConnectionError(e)
                 _uiState.value = _uiState.value.copy(
                     isLocating = false,
-                    isBackendOffline = isBackendError,
+                    isBackendOffline = com.stationly.mobile.util.BackendErrorUtil.isBackendConnectionError(e),
                     error = "Location search failed: ${e.message}"
                 )
             }
@@ -224,57 +210,56 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun fetchActualLocation(modeId: String? = null) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            Log.e("SDUI", "Location permission not granted in ViewModel")
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED) {
             _uiState.value = _uiState.value.copy(error = "Location permission missing", isLocating = false)
             return
         }
-
         _uiState.value = _uiState.value.copy(isLocating = true)
-        
         try {
-            fusedLocationClient.getCurrentLocation(
-                Priority.PRIORITY_HIGH_ACCURACY,
-                CancellationTokenSource().token
-            ).addOnSuccessListener { location ->
-                if (location != null) {
-                    Log.d("SDUI", "Real location found: ${location.latitude}, ${location.longitude}")
-                    val updatedSelections = _uiState.value.selections.toMutableMap()
-                    updatedSelections["lat"] = location.latitude.toString()
-                    updatedSelections["lon"] = location.longitude.toString()
-                    _uiState.value = _uiState.value.copy(selections = updatedSelections)
-                    fetchNearbyStations(location.latitude, location.longitude, modeId)
-                } else {
-                    Log.e("SDUI", "Location is null, falling back to default")
-                    // Fallback to London Central if GPS fails but permission is there
-                    fetchNearbyStations(51.5226, -0.1085, modeId)
+            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
+                .addOnSuccessListener { location ->
+                    if (location != null) {
+                        val s = _uiState.value.selections.toMutableMap()
+                        s["lat"] = location.latitude.toString()
+                        s["lon"] = location.longitude.toString()
+                        _uiState.value = _uiState.value.copy(selections = s)
+                        fetchNearbyStations(location.latitude, location.longitude, modeId)
+                    } else fetchNearbyStations(51.5226, -0.1085, modeId)
                 }
-            }.addOnFailureListener { e ->
-                Log.e("SDUI", "Failed to get location", e)
-                fetchNearbyStations(51.5226, -0.1085, modeId) // Fallback
-            }
-        } catch (e: SecurityException) {
-            Log.e("SDUI", "SecurityException fetching location", e)
+                .addOnFailureListener { fetchNearbyStations(51.5226, -0.1085, modeId) }
+        } catch (_: SecurityException) {
             _uiState.value = _uiState.value.copy(isLocating = false)
         }
     }
 
-    // 4. Fetch Option Data dynamically via the Server API Route
     private fun fetchDropdownData(dropdown: SduiAppComponent.Dropdown, selections: Map<String, String>? = null) {
         viewModelScope.launch {
             var finalUrl = dropdown.dataSourceUrl
             try {
-                // Parse dependency values into the URL: e.g. "?mode={mode}"
                 val dependencies = selections ?: _uiState.value.selections
-                
-                // Replace {key} with the actual selected value so the server knows what to return
-                dependencies.forEach { (key, value) ->
-                    finalUrl = finalUrl.replace("{$key}", value)
+                dependencies.forEach { (key, value) -> finalUrl = finalUrl.replace("{$key}", value) }
+
+                // For station dropdown in manual flow, append lat/lon so backend sorts by distance.
+                // Skip if the URL already contains lat= (discovery flow already has them as template params).
+                if (dropdown.id == "station" && !finalUrl.contains("lat=")) {
+                    val lat = _uiState.value.userLat
+                    val lon = _uiState.value.userLon
+                    if (lat != null && lon != null) {
+                        val sep = if ("?" in finalUrl) "&" else "?"
+                        finalUrl = "${finalUrl}${sep}lat=$lat&lon=$lon"
+                    }
                 }
-                
+
+                // If the URL still has unresolved template params (e.g. {lat} before location is ready),
+                // skip this fetch — it will be retried once the dependency value is available.
+                if (finalUrl.contains("{")) {
+                    Log.d("SDUI", "Skipping fetch — unresolved params in URL: $finalUrl")
+                    return@launch
+                }
+
                 Log.d("SDUI", "Fetching dropdown data from: $finalUrl")
-                
-                // Try to load from cache first for immediate feel
+
                 val cacheKey = "cached_dropdown_$finalUrl"
                 val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
                 val cachedOptionsJson = prefs.getString(cacheKey, null)
@@ -285,293 +270,200 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                         val currentData = _uiState.value.dropdownData.toMutableMap()
                         currentData[dropdown.id] = cachedOptions
                         _uiState.value = _uiState.value.copy(dropdownData = currentData)
-                        Log.d("SDUI", "Loaded from cache for ${dropdown.id}")
-                    } catch (e: Exception) {}
+                    } catch (_: Exception) {}
                 }
 
                 val options = sduiService.getDropdownData(finalUrl)
-                Log.d("SDUI", "Fetched ${options.size} options for ${dropdown.id}")
-                
-                // Save to cache
                 prefs.edit().putString(cacheKey, Json.encodeToString(options)).apply()
 
                 val currentData = _uiState.value.dropdownData.toMutableMap()
                 currentData[dropdown.id] = options
-                
-                _uiState.value = _uiState.value.copy(dropdownData = currentData)
+                _uiState.value = _uiState.value.copy(
+                    dropdownData = currentData,
+                    failedFetches = _uiState.value.failedFetches - dropdown.id
+                )
             } catch (e: Exception) {
                 Log.e("SDUI", "Failed to fetch options for ${dropdown.id} from $finalUrl", e)
+                _uiState.value = _uiState.value.copy(failedFetches = _uiState.value.failedFetches + dropdown.id)
             }
         }
     }
-    
-    // Cleanly removes a selection and cascades downwards
+
     fun removeSelection(componentId: String) {
         val uiState = _uiState.value
         val newSelections = uiState.selections.toMutableMap()
         val currentDropdownData = uiState.dropdownData.toMutableMap()
-        
         if (!newSelections.containsKey(componentId)) return
-        
-        Log.d("SDUI", "Removing selection: $componentId")
         newSelections.remove(componentId)
-        
-        val layout = uiState.layout
-        val components = layout?.components ?: emptyList()
-        
+
+        val components = uiState.layout?.components ?: emptyList()
         fun recursiveClear(parentId: String) {
             components.forEach { comp ->
                 val compId = comp.id
                 if (compId != null) {
-                    val dependsOn = when(comp) {
+                    val dep = when (comp) {
                         is SduiAppComponent.Dropdown -> comp.dependsOn
                         is SduiAppComponent.FlowPicker -> comp.dependsOn
                         else -> null
                     }
-                    if (dependsOn == parentId) {
-                        newSelections.remove(compId)
-                        currentDropdownData.remove(compId)
-                        recursiveClear(compId)
+                    if (dep == parentId) {
+                        newSelections.remove(compId); currentDropdownData.remove(compId); recursiveClear(compId)
                     }
                 }
             }
         }
-        
+
         if (componentId == "tracking_flow") {
-            _uiState.value = uiState.copy(
-                selections = newSelections,
-                currentTrack = null,
-                dropdownData = currentDropdownData
-            )
+            _uiState.value = uiState.copy(selections = newSelections, currentTrack = null, dropdownData = currentDropdownData)
             loadServerLayout(null)
         } else {
             if (uiState.currentTrack == "discovery") {
-                if (componentId == "station") {
-                    newSelections.remove("line")
-                    newSelections.remove("direction")
-                    currentDropdownData.remove("line")
-                    currentDropdownData.remove("direction")
-                } else if (componentId == "line") {
-                    newSelections.remove("direction")
-                    currentDropdownData.remove("direction")
+                when (componentId) {
+                    "station" -> { newSelections.remove("line"); newSelections.remove("direction"); currentDropdownData.remove("line"); currentDropdownData.remove("direction") }
+                    "line"    -> { newSelections.remove("direction"); currentDropdownData.remove("direction") }
                 }
-            } else {
-                recursiveClear(componentId)
-            }
+            } else recursiveClear(componentId)
             _uiState.value = uiState.copy(selections = newSelections, dropdownData = currentDropdownData)
         }
     }
 
     fun onSelectionChanged(componentId: String, selectedValue: String) {
-        if (selectedValue.isBlank()) {
-            removeSelection(componentId)
-            return
-        }
-        
+        if (selectedValue.isBlank()) { removeSelection(componentId); return }
+
         val uiState = _uiState.value
         val newSelections = uiState.selections.toMutableMap()
         val currentDropdownData = uiState.dropdownData.toMutableMap()
-        
-        newSelections[componentId] = selectedValue
-        Log.d("SDUI", "Selection changed: $componentId -> $selectedValue")
 
-        // Cascading Clear: If a parent changes, we must wipe its children, grandchildren, etc.
-        val layout = uiState.layout
-        val components = layout?.components ?: emptyList()
-        
+        if (componentId == "direction" && uiState.currentTrack == "manual") {
+            newSelections.remove("station"); currentDropdownData.remove("station")
+        }
+
+        newSelections[componentId] = selectedValue
+
+        val components = uiState.layout?.components ?: emptyList()
         fun recursiveClear(parentId: String) {
-            components.forEach { comp: SduiAppComponent ->
+            components.forEach { comp ->
                 val compId = comp.id
                 if (compId != null) {
-                    val dependsOn = when(comp) {
+                    val dep = when (comp) {
                         is SduiAppComponent.Dropdown -> comp.dependsOn
                         is SduiAppComponent.FlowPicker -> comp.dependsOn
                         else -> null
                     }
-                    if (dependsOn == parentId) {
-                        Log.d("SDUI", "Cascading clear for child: $compId (depends on $parentId)")
-                        newSelections.remove(compId)
-                        currentDropdownData.remove(compId)
-                        recursiveClear(compId)
-                    }
+                    if (dep == parentId) { newSelections.remove(compId); currentDropdownData.remove(compId); recursiveClear(compId) }
                 }
             }
         }
-        
-        // Update internal track state if tracking_flow component is set
-        if (componentId == "tracking_flow") {
-            val keysToKeep = listOf("mode", "tracking_flow")
-            val keysToRemove = newSelections.keys.filter { !keysToKeep.contains(it) }
-            keysToRemove.forEach { key ->
-                newSelections.remove(key)
-                currentDropdownData.remove(key)
-            }
 
+        if (componentId == "tracking_flow") {
+            newSelections.keys.filter { it !in listOf("mode", "tracking_flow") }.forEach { newSelections.remove(it); currentDropdownData.remove(it) }
             _uiState.value = uiState.copy(
-                selections = newSelections,
-                dropdownData = currentDropdownData,
-                currentTrack = selectedValue,
-                isLocating = false,
-                noNearbyStationsFound = false
+                selections = newSelections, dropdownData = currentDropdownData,
+                currentTrack = selectedValue, isLocating = false, noNearbyStationsFound = false
             )
-            // ACTION: Re-fetch layout from server specifically for this track
             loadServerLayout(selectedValue)
         } else {
-            // Reverse dependencies for discovery track (special UX logic)
             if (uiState.currentTrack == "discovery") {
-                if (componentId == "station") {
-                    newSelections.remove("line")
-                    newSelections.remove("direction")
-                    currentDropdownData.remove("line")
-                    currentDropdownData.remove("direction")
-                } else if (componentId == "line") {
-                    newSelections.remove("direction")
-                    currentDropdownData.remove("direction")
+                when (componentId) {
+                    "station" -> { newSelections.remove("line"); newSelections.remove("direction"); currentDropdownData.remove("line"); currentDropdownData.remove("direction") }
+                    "line"    -> { newSelections.remove("direction"); currentDropdownData.remove("direction") }
                 }
-            } else {
-                recursiveClear(componentId)
-            }
-            
-            _uiState.value = uiState.copy(
-                selections = newSelections,
-                dropdownData = currentDropdownData
-            )
-        }
-        
-        // Special Cascade: When Station is selected (manually or via location), fetch lines for it
-        if (componentId == "station") {
-             val lineComponent = components.find { it is SduiAppComponent.Dropdown && it.id == "line" } as? SduiAppComponent.Dropdown
-             if (lineComponent != null) {
-                 fetchDropdownData(lineComponent, newSelections)
-             }
+            } else recursiveClear(componentId)
+            _uiState.value = uiState.copy(selections = newSelections, dropdownData = currentDropdownData)
         }
 
-        // Standard Cascade: Fetch components that depend on this selection
-        components.forEach { component ->
-            if (component is SduiAppComponent.Dropdown && component.dependsOn == componentId) {
-                fetchDropdownData(component, newSelections)
-            }
+        if (componentId == "station") {
+            (components.find { it is SduiAppComponent.Dropdown && it.id == "line" } as? SduiAppComponent.Dropdown)
+                ?.let { fetchDropdownData(it, newSelections) }
         }
-        
-        Log.d("SDUI", "State updated. Selections: $newSelections, Data keys: ${currentDropdownData.keys}")
+        components.forEach { if (it is SduiAppComponent.Dropdown && it.dependsOn == componentId) fetchDropdownData(it, newSelections) }
+
+        if (componentId == "direction" && uiState.currentTrack == "manual") {
+            (components.find { it is SduiAppComponent.Dropdown && it.id == "station" } as? SduiAppComponent.Dropdown)
+                ?.let { fetchDropdownData(it, newSelections) }
+        }
     }
 
-    private val selectionHierarchy = listOf("mode", "tracking_flow", "station", "line", "direction")
-
     fun popLastSelection() {
-        val currentSelections = _uiState.value.selections
-        if (currentSelections.isEmpty()) return
-        
-        val lastKey = selectionHierarchy.lastOrNull { currentSelections.containsKey(it) }
-        if (lastKey != null) {
-            removeSelection(lastKey)
+        val state = _uiState.value
+        val track = state.currentTrack
+        val selections = state.selections
+        if (selections.isEmpty() && track == null) return
+        if (track == null) { clearSelections(); return }
+
+        val flowKeys = when (track) {
+            "manual" -> listOf("line", "direction", "station")
+            else     -> listOf("station", "line", "direction")
+        }
+        val lastFlowKey = flowKeys.lastOrNull { selections.containsKey(it) }
+        if (lastFlowKey != null) removeSelection(lastFlowKey)
+        else {
+            val newSel = selections.toMutableMap().apply { remove("tracking_flow") }
+            _uiState.value = state.copy(
+                selections = newSel, currentTrack = null,
+                dropdownData = state.dropdownData.toMutableMap().apply { remove("line"); remove("direction"); remove("station") }
+            )
         }
     }
 
     fun resetToStage(stageKey: String) {
-        val currentSelections = _uiState.value.selections
-        if (!currentSelections.containsKey(stageKey)) return
-        
-        val stageIndex = selectionHierarchy.indexOf(stageKey)
-        if (stageIndex >= 0) {
-            // Remove the stage immediately following this one to keep this stage selected
-            val nextStage = selectionHierarchy.getOrNull(stageIndex + 1)
-            if (nextStage != null && currentSelections.containsKey(nextStage)) {
-                removeSelection(nextStage)
-            }
+        val state = _uiState.value
+        if (!state.selections.containsKey(stageKey)) return
+        val flowKeys = when (state.currentTrack) {
+            "manual" -> listOf("line", "direction", "station")
+            else     -> listOf("station", "line", "direction")
         }
+        val full = listOf("mode", "tracking_flow") + flowKeys
+        val idx = full.indexOf(stageKey)
+        if (idx >= 0) full.getOrNull(idx + 1)?.takeIf { state.selections.containsKey(it) }?.let { removeSelection(it) }
     }
 
     fun onActionTriggered(action: String) {
-        if (action == "SAVE_SELECTION_ACTION") {
-            Log.d("SDUI", "Server-Driven Saving Sequence: ${_uiState.value.selections}")
-            
-            val state = _uiState.value
-            val mode = state.selections["mode"]
-            val line = state.selections["line"]
-            val direction = state.selections["direction"]
-            val stationId = state.selections["station"]
-            
-            if (mode == null || line == null || direction == null || stationId == null) {
-                _uiState.value = state.copy(error = "Please complete all selections")
-                return
-            }
-            
-            val stationName = state.dropdownData["station"]?.find { it.id == stationId }?.label ?: stationId
-            
-            val userSelection = UserSelection(
-                mode = mode,
-                line = line,
-                station = stationId,
-                stationName = stationName,
-                direction = direction,
-                destinations = emptyList(),
-                destinationIds = emptyList()
-            )
-            
-            viewModelScope.launch {
-                _uiState.value = state.copy(isLoading = true, isSaving = true)
+        if (action != "SAVE_SELECTION_ACTION") return
+        val state = _uiState.value
+        val mode = state.selections["mode"]; val line = state.selections["line"]
+        val direction = state.selections["direction"]; val stationId = state.selections["station"]
+        if (mode == null || line == null || direction == null || stationId == null) {
+            _uiState.value = state.copy(error = "Please complete all selections"); return
+        }
+        val stationName = state.dropdownData["station"]?.find { it.id == stationId }?.label ?: stationId
+        val userSelection = UserSelection(mode = mode, line = line, station = stationId,
+            stationName = stationName, direction = direction, destinations = emptyList(), destinationIds = emptyList())
+
+        viewModelScope.launch {
+            _uiState.value = state.copy(isLoading = true, isSaving = true)
+            try {
+                stationLifecycleUseCase.cleanupAll()
+                stationLifecycleUseCase.setupStation(userSelection, isFirstTime = true)
                 try {
-                    // 1. Enforce Single Station Rule: purge all existing data before saving
-                    stationLifecycleUseCase.cleanupAll()
-
-                    // 2. Set up the new station (FCM subscription + eager data fetch)
-                    stationLifecycleUseCase.setupStation(userSelection, isFirstTime = true)
-
-                    // 3. Sync selection to cloud profile (best-effort)
-                    try {
-                        val authUser = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
-                        if (authUser != null) {
-                            val mapped = listOf(com.stationly.core.model.sdui.SubscribedStation(
-                                id = userSelection.station,
-                                name = userSelection.stationName,
-                                line = userSelection.line,
-                                mode = userSelection.mode,
-                                direction = userSelection.direction
-                            ))
-                            sduiService.syncStations(authUser.uid, mapped)
-                        }
-                    } catch (e: Exception) {
-                        Log.e("SelectionViewModel", "Cloud sync failed (non-fatal)", e)
+                    com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.let { user ->
+                        sduiService.syncStations(user.uid, listOf(SubscribedStation(
+                            id = userSelection.station, name = userSelection.stationName,
+                            line = userSelection.line, mode = userSelection.mode, direction = userSelection.direction
+                        )))
                     }
-
-                    _uiState.value = state.copy(
-                        isLoading = false,
-                        isSaving = false,
-                        showSuccessDialog = true
-                    )
-                } catch (e: Exception) {
-                    Log.e("SelectionViewModel", "Failed to save station selection", e)
-                    _uiState.value = state.copy(isLoading = false, isSaving = false, error = "Failed to save: ${e.message}")
-                }
+                } catch (_: Exception) {}
+                _uiState.value = state.copy(isLoading = false, isSaving = false, showSuccessDialog = true)
+            } catch (e: Exception) {
+                _uiState.value = state.copy(isLoading = false, isSaving = false, error = "Failed to save: ${e.message}")
             }
         }
     }
 
-    fun dismissSuccessDialog() {
-        _uiState.value = _uiState.value.copy(showSuccessDialog = false)
-    }
-    
+    fun dismissSuccessDialog() { _uiState.value = _uiState.value.copy(showSuccessDialog = false) }
+
     fun setCurrentTrack(track: String?) {
-        if (track == null) {
-            removeSelection("tracking_flow")
-        } else {
-            _uiState.value = _uiState.value.copy(currentTrack = track, noNearbyStationsFound = false)
-        }
+        if (track == null) removeSelection("tracking_flow")
+        else _uiState.value = _uiState.value.copy(currentTrack = track, noNearbyStationsFound = false)
     }
 
     fun clearSelections() {
         _uiState.value = _uiState.value.copy(
-            selections = emptyMap(),
-            dropdownData = emptyMap(),
-            currentTrack = null,
-            error = null
+            selections = emptyMap(), dropdownData = emptyMap(),
+            currentTrack = null, error = null, failedFetches = emptySet()
         )
-        // Refresh the layout to trigger fresh bootstrap dropdowns if needed
         loadServerLayout()
     }
-    
-    fun clearError() {
-        _uiState.value = _uiState.value.copy(error = null)
-    }
+
+    fun clearError() { _uiState.value = _uiState.value.copy(error = null) }
 }
