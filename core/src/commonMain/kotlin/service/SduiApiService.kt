@@ -24,6 +24,7 @@ interface SduiApiService {
     suspend fun syncStations(uid: String, stations: List<SubscribedStation>): Boolean
     suspend fun getUserProfile(uid: String): UserProfileResponse
     suspend fun logOut(uid: String): Boolean
+    suspend fun deleteAccount(uid: String): Boolean
 }
 
 /**
@@ -82,10 +83,21 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
     override suspend fun logOut(uid: String): Boolean {
         @kotlinx.serialization.Serializable
         data class LogOutRequest(val uid: String)
-        
+
         val response = client.post("$baseUrl/user/logout") {
             contentType(ContentType.Application.Json)
             setBody(LogOutRequest(uid))
+        }
+        return response.status == HttpStatusCode.OK
+    }
+
+    override suspend fun deleteAccount(uid: String): Boolean {
+        @kotlinx.serialization.Serializable
+        data class DeleteAccountRequest(val uid: String)
+
+        val response = client.post("$baseUrl/user/delete-account") {
+            contentType(ContentType.Application.Json)
+            setBody(DeleteAccountRequest(uid))
         }
         return response.status == HttpStatusCode.OK
     }
