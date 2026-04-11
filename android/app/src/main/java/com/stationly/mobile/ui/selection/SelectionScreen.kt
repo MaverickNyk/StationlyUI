@@ -27,6 +27,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -211,23 +213,11 @@ fun SelectionScreen(
                         .padding(horizontal = 20.dp)
                         .padding(top = 16.dp, bottom = 20.dp)
                 ) {
-                    Button(
-                        onClick = { ctaBtn?.let { viewModel.onActionTriggered(it.action) } },
-                        colors = ButtonDefaults.buttonColors(containerColor = primary),
-                        shape = RoundedCornerShape(20.dp),
-                        modifier = Modifier.fillMaxWidth().height(64.dp),
-                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp, pressedElevation = 2.dp)
-                    ) {
-                        Icon(Icons.Rounded.Train, null, tint = Color.Black, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            ctaBtn?.label ?: "Set Up My Board",
-                            color = Color.Black, fontWeight = FontWeight.ExtraBold,
-                            fontSize = 17.sp, letterSpacing = 0.3.sp
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Icon(Icons.Filled.ArrowForward, null, tint = Color.Black.copy(0.6f), modifier = Modifier.size(18.dp))
-                    }
+                    ModernCtaButton(
+                        label = ctaBtn?.label ?: "Set Up My Board",
+                        primary = primary,
+                        onClick = { ctaBtn?.let { viewModel.onActionTriggered(it.action) } }
+                    )
                 }
             }
         }
@@ -791,6 +781,74 @@ private fun Err(msg: String, primary: Color, onRetry: () -> Unit) {
                 Icon(Icons.Rounded.Refresh, null, tint = Color.Black, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Retry", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Modern CTA — gradient shimmer + pulse glow
+   ═══════════════════════════════════════════════════════════════ */
+@Composable
+private fun ModernCtaButton(label: String, primary: Color, onClick: () -> Unit) {
+    val inf = rememberInfiniteTransition("cta")
+    val shimmerX by inf.animateFloat(
+        -1f, 2f,
+        infiniteRepeatable(tween(2500, easing = LinearEasing), RepeatMode.Restart), "shim"
+    )
+    val glowAlpha by inf.animateFloat(
+        0.0f, 0.35f,
+        infiniteRepeatable(tween(1800, easing = FastOutSlowInEasing), RepeatMode.Reverse), "glow"
+    )
+    val darkerPrimary = Color(
+        (primary.red * 0.75f).coerceIn(0f, 1f),
+        (primary.green * 0.65f).coerceIn(0f, 1f),
+        (primary.blue * 0.3f).coerceIn(0f, 1f)
+    )
+    Box(modifier = Modifier.fillMaxWidth()) {
+        // Glow behind the button
+        Box(
+            Modifier
+                .fillMaxWidth(0.85f)
+                .height(64.dp)
+                .align(Alignment.Center)
+                .graphicsLayer { alpha = glowAlpha; scaleX = 1.05f; scaleY = 1.3f }
+                .background(primary.copy(alpha = 0.5f), RoundedCornerShape(24.dp))
+        )
+        Button(
+            onClick = onClick,
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+            shape = RoundedCornerShape(22.dp),
+            contentPadding = PaddingValues(0.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .drawWithContent {
+                    // Gradient background
+                    drawRect(
+                        Brush.linearGradient(
+                            colors = listOf(primary, darkerPrimary, primary),
+                            start = Offset(size.width * shimmerX, 0f),
+                            end = Offset(size.width * (shimmerX + 0.6f), size.height)
+                        )
+                    )
+                    drawContent()
+                },
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 12.dp, pressedElevation = 4.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Rounded.RocketLaunch, null, tint = Color.Black, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    label, color = Color.Black,
+                    fontWeight = FontWeight.Black, fontSize = 17.sp, letterSpacing = 0.5.sp
+                )
+                Spacer(Modifier.width(10.dp))
+                Icon(Icons.Rounded.ArrowForward, null, tint = Color.Black.copy(0.5f), modifier = Modifier.size(18.dp))
             }
         }
     }
