@@ -27,7 +27,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -44,6 +43,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.stationly.core.model.sdui.SduiAppComponent
+import com.stationly.core.model.sdui.SduiAppScreen
 import com.stationly.core.model.sdui.SduiDropdownOption
 
 /* ═══════════════════════════════════════════════════════════════
@@ -57,6 +57,12 @@ private val White90   = Color.White.copy(alpha = 0.90f)
 private val White55   = Color.White.copy(alpha = 0.55f)
 private val White25   = Color.White.copy(alpha = 0.25f)
 private val White08   = Color.White.copy(alpha = 0.08f)
+
+/* ═══════════════════════════════════════════════════════════════
+   SDUI helpers — look up Text components from the server layout
+   ═══════════════════════════════════════════════════════════════ */
+private fun SduiAppScreen.sdText(id: String): String? =
+    components.filterIsInstance<SduiAppComponent.Text>().find { comp -> comp.id == id }?.text
 
 /* ═══════════════════════════════════════════════════════════════
    Step helpers
@@ -139,10 +145,10 @@ fun SelectionScreen(
                 modifier = Modifier.weight(1f)
             ) { (i, flow) ->
                 when {
-                    i == 0 -> ModeScreen(st.modes, "mode" in st.failedFetches, primary,
+                    i == 0 -> ModeScreen(st.layout, st.modes, "mode" in st.failedFetches, primary,
                         { viewModel.onSelectionChanged("mode", it.id) }, { viewModel.retryLoad() })
 
-                    i == 1 -> FlowScreen(mode, primary,
+                    i == 1 -> FlowScreen(st.layout, mode, primary,
                         onNear = {
                             if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
                                 viewModel.onSelectionChanged("tracking_flow", "discovery"); viewModel.setCurrentTrack("discovery")
@@ -152,28 +158,34 @@ fun SelectionScreen(
                         onBrowse = { viewModel.onSelectionChanged("tracking_flow", "manual"); viewModel.setCurrentTrack("manual") })
 
                     // Manual: Line → Direction → Station
-                    i == 2 && flow == "manual" -> ListScreen("Select Line", "Which line do you cling to daily?",
+                    i == 2 && flow == "manual" -> ListScreen(
+                        st.layout?.sdText("screen_line_title") ?: "Which line?",
+                        st.layout?.sdText("screen_line_subtitle") ?: "Which line do you cling to daily?",
                         st.dropdownData["line"] ?: emptyList(), st.selections["line"],
                         st.dropdownData["line"] == null && "line" !in st.failedFetches, "line" in st.failedFetches,
                         primary, null, st.selections["mode"], { viewModel.onSelectionChanged("line", it.id) }, { viewModel.retryDropdown("line") })
-                    i == 3 && flow == "manual" -> DirScreen(st.dropdownData["direction"] ?: emptyList(), st.selections["direction"],
+                    i == 3 && flow == "manual" -> DirScreen(st.layout, st.dropdownData["direction"] ?: emptyList(), st.selections["direction"],
                         st.dropdownData["direction"] == null && "direction" !in st.failedFetches, primary,
                         { viewModel.onSelectionChanged("direction", it.id) })
-                    i == 4 && flow == "manual" -> ListScreen("Pick Your Stop", "Closest escape routes first",
+                    i == 4 && flow == "manual" -> ListScreen(
+                        st.layout?.sdText("screen_station_title") ?: "Pick your stop.",
+                        st.layout?.sdText("screen_station_subtitle") ?: "Your daily departure point awaits.",
                         st.dropdownData["station"] ?: emptyList(), st.selections["station"],
                         st.dropdownData["station"] == null && "station" !in st.failedFetches, "station" in st.failedFetches,
                         primary, mode?.iconUrl, st.selections["mode"], { viewModel.onSelectionChanged("station", it.id) }, { viewModel.retryDropdown("station") })
 
                     // Near-me: Station → Line → Direction
-                    i == 2 && flow != "manual" -> NearScreen(st.dropdownData["station"] ?: emptyList(), st.selections["station"],
+                    i == 2 && flow != "manual" -> NearScreen(st.layout, st.dropdownData["station"] ?: emptyList(), st.selections["station"],
                         st.isLocating, st.noNearbyStationsFound, primary, mode?.iconUrl,
                         { viewModel.onSelectionChanged("station", it.id) },
                         { viewModel.onSelectionChanged("tracking_flow", "manual"); viewModel.setCurrentTrack("manual") })
-                    i == 3 && flow != "manual" -> ListScreen("Select Line", "Lines stopping here",
+                    i == 3 && flow != "manual" -> ListScreen(
+                        st.layout?.sdText("screen_line_title") ?: "Select Line",
+                        st.layout?.sdText("screen_line_subtitle") ?: "Lines stopping here.",
                         st.dropdownData["line"] ?: emptyList(), st.selections["line"],
                         st.dropdownData["line"] == null && "line" !in st.failedFetches, "line" in st.failedFetches,
                         primary, null, st.selections["mode"], { viewModel.onSelectionChanged("line", it.id) }, { viewModel.retryDropdown("line") })
-                    i == 4 && flow != "manual" -> DirScreen(st.dropdownData["direction"] ?: emptyList(), st.selections["direction"],
+                    i == 4 && flow != "manual" -> DirScreen(st.layout, st.dropdownData["direction"] ?: emptyList(), st.selections["direction"],
                         st.dropdownData["direction"] == null && "direction" !in st.failedFetches, primary,
                         { viewModel.onSelectionChanged("direction", it.id) })
 
@@ -181,18 +193,41 @@ fun SelectionScreen(
                 }
             }
 
-            // ── CTA ──
-            AnimatedVisibility(done, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
-                Button(
-                    onClick = { st.layout?.components?.filterIsInstance<SduiAppComponent.Button>()?.firstOrNull()?.let { viewModel.onActionTriggered(it.action) } },
-                    colors = ButtonDefaults.buttonColors(containerColor = primary),
-                    shape = RoundedCornerShape(18.dp),
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 10.dp, bottom = 14.dp).height(60.dp).navigationBarsPadding(),
-                    elevation = ButtonDefaults.buttonElevation(6.dp)
+            // ── CTA — label driven by SDUI Button component ──
+            val ctaBtn = st.layout?.components?.filterIsInstance<SduiAppComponent.Button>()?.firstOrNull()
+            AnimatedVisibility(
+                done,
+                enter = slideInVertically { it } + fadeIn(tween(300)),
+                exit = slideOutVertically { it } + fadeOut(tween(200)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.95f), Color.Black))
+                        )
+                        .navigationBarsPadding()
+                        .padding(horizontal = 20.dp)
+                        .padding(top = 16.dp, bottom = 20.dp)
                 ) {
-                    Icon(Icons.Rounded.Train, null, tint = Color.Black, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Text("Set Up My Board", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 16.sp, letterSpacing = 0.3.sp)
+                    Button(
+                        onClick = { ctaBtn?.let { viewModel.onActionTriggered(it.action) } },
+                        colors = ButtonDefaults.buttonColors(containerColor = primary),
+                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier.fillMaxWidth().height(64.dp),
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp, pressedElevation = 2.dp)
+                    ) {
+                        Icon(Icons.Rounded.Train, null, tint = Color.Black, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            ctaBtn?.label ?: "Set Up My Board",
+                            color = Color.Black, fontWeight = FontWeight.ExtraBold,
+                            fontSize = 17.sp, letterSpacing = 0.3.sp
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Icon(Icons.Filled.ArrowForward, null, tint = Color.Black.copy(0.6f), modifier = Modifier.size(18.dp))
+                    }
                 }
             }
         }
@@ -248,7 +283,7 @@ private fun MinimalTopBar(modeName: String?, step: Int, showProgress: Boolean, p
    ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun ModeScreen(
-    modes: List<SduiDropdownOption>, err: Boolean, primary: Color,
+    layout: SduiAppScreen?, modes: List<SduiDropdownOption>, err: Boolean, primary: Color,
     onSelect: (SduiDropdownOption) -> Unit, onRetry: () -> Unit
 ) {
     when {
@@ -256,11 +291,12 @@ private fun ModeScreen(
         modes.isEmpty() -> Loader(primary)
         else -> Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.height(24.dp))
-            Text("Pick your\nchariot.", color = White90, fontWeight = FontWeight.Bold, fontSize = 24.sp,
+            Text(layout?.sdText("screen_mode_title") ?: "Pick your\nchariot.",
+                color = White90, fontWeight = FontWeight.Bold, fontSize = 24.sp,
                 lineHeight = 30.sp, modifier = Modifier.padding(horizontal = 24.dp))
             Spacer(Modifier.height(6.dp))
-            Text("Bus, tube, or DLR — we're not judging.", color = White55, fontSize = 13.sp,
-                modifier = Modifier.padding(horizontal = 24.dp))
+            Text(layout?.sdText("screen_mode_subtitle") ?: "Bus, tube, or DLR — we're not judging.",
+                color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp))
             Spacer(Modifier.height(20.dp))
 
             LazyVerticalGrid(
@@ -314,12 +350,16 @@ private fun ModeCard(mode: SduiDropdownOption, primary: Color, onClick: () -> Un
    Screen 1 — Flow choice (hero layout)
    ═══════════════════════════════════════════════════════════════ */
 @Composable
-private fun FlowScreen(mode: SduiDropdownOption?, primary: Color, onNear: () -> Unit, onBrowse: () -> Unit) {
+private fun FlowScreen(layout: SduiAppScreen?, mode: SduiDropdownOption?, primary: Color, onNear: () -> Unit, onBrowse: () -> Unit) {
+    // Read flow picker options from SDUI layout
+    val flowPicker = layout?.components?.filterIsInstance<SduiAppComponent.FlowPicker>()?.firstOrNull()
+    val nearOpt   = flowPicker?.options?.find { it.id == "discovery" }
+    val browseOpt = flowPicker?.options?.find { it.id == "manual" }
+
     Column(
         Modifier.fillMaxSize().padding(horizontal = 28.dp).padding(top = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // hero icon — slightly smaller top offset
         Box(contentAlignment = Alignment.Center) {
             val pulse by rememberInfiniteTransition("hero").animateFloat(
                 0.95f, 1.08f, infiniteRepeatable(tween(2200, easing = FastOutSlowInEasing), RepeatMode.Reverse), "hp")
@@ -341,15 +381,15 @@ private fun FlowScreen(mode: SduiDropdownOption?, primary: Color, onNear: () -> 
         Text(mode?.label ?: "", color = primary, fontWeight = FontWeight.Bold, fontSize = 20.sp)
 
         Spacer(Modifier.height(36.dp))
-        Text("Where's your usual haunt?", color = White90, fontSize = 17.sp,
-            fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+        Text(layout?.sdText("screen_flow_title") ?: "Where's your usual haunt?",
+            color = White90, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
         Spacer(Modifier.height(6.dp))
-        Text("Pick how you'd like to find your stop", color = White55, fontSize = 13.sp,
-            textAlign = TextAlign.Center)
+        Text(layout?.sdText("screen_flow_subtitle") ?: "Pick how you'd like to find your stop.",
+            color = White55, fontSize = 13.sp, textAlign = TextAlign.Center)
 
         Spacer(Modifier.height(28.dp))
 
-        // Near Me — amber outline (not filled, so it doesn't look pre-selected)
+        // Near Me — labels from SDUI FlowPicker options
         OutlinedButton(
             onClick = onNear, shape = RoundedCornerShape(16.dp),
             border = BorderStroke(1.5.dp, primary.copy(0.75f)),
@@ -359,15 +399,15 @@ private fun FlowScreen(mode: SduiDropdownOption?, primary: Color, onNear: () -> 
             Icon(Icons.Rounded.MyLocation, null, tint = primary, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text("Near Me", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Text("GPS'll sort it", color = primary.copy(0.6f), fontSize = 12.sp)
+                Text(nearOpt?.label ?: "Near Me", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(nearOpt?.description ?: "GPS'll sort it", color = primary.copy(0.6f), fontSize = 12.sp)
             }
             Icon(Icons.Rounded.ChevronRight, null, tint = primary.copy(0.4f), modifier = Modifier.size(18.dp))
         }
 
         Spacer(Modifier.height(10.dp))
 
-        // Browse — glass
+        // Browse — labels from SDUI FlowPicker options
         OutlinedButton(
             onClick = onBrowse, shape = RoundedCornerShape(16.dp),
             border = BorderStroke(1.dp, White25),
@@ -377,8 +417,8 @@ private fun FlowScreen(mode: SduiDropdownOption?, primary: Color, onNear: () -> 
             Icon(Icons.Rounded.Search, null, tint = White55, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text("Browse Network", color = White90, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Text("I'll find my own way, cheers", color = White55, fontSize = 12.sp)
+                Text(browseOpt?.label ?: "Browse Network", color = White90, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(browseOpt?.description ?: "I'll find my own way, cheers", color = White55, fontSize = 12.sp)
             }
             Icon(Icons.Rounded.ChevronRight, null, tint = White25, modifier = Modifier.size(18.dp))
         }
@@ -459,11 +499,16 @@ private fun ListScreen(
 
 @Composable
 private fun OptRow(opt: SduiDropdownOption, sel: Boolean, primary: Color, modeIcon: String?, mode: String? = null, onClick: () -> Unit) {
-    // For bus lines, format bare numbers as "Bus 108" etc.
     val displayLabel = remember(opt.label, mode) {
         if (mode == "bus" && opt.label.all { it.isDigit() || it == ' ' } && opt.label.trim().isNotEmpty())
             "Bus ${opt.label.trim()}"
         else opt.label
+    }
+    // Parse hex color from backend — only shown for non-bus lines
+    val lineColor = remember(opt.color, mode) {
+        if (mode != "bus" && opt.color != null)
+            runCatching { Color(android.graphics.Color.parseColor(opt.color)) }.getOrNull()
+        else null
     }
 
     Surface(
@@ -473,7 +518,20 @@ private fun OptRow(opt: SduiDropdownOption, sel: Boolean, primary: Color, modeIc
         border = BorderStroke(1.dp, if (sel) primary.copy(0.5f) else White08),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(Modifier.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(end = 14.dp, top = 14.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            // TfL line color stripe (non-bus lines only)
+            if (lineColor != null) {
+                Box(
+                    Modifier
+                        .width(5.dp)
+                        .height(32.dp)
+                        .background(lineColor, RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
+                )
+                Spacer(Modifier.width(12.dp))
+            } else {
+                Spacer(Modifier.width(14.dp))
+            }
+
             // Mode icon or option icon
             if (modeIcon != null) {
                 Box(
@@ -489,14 +547,14 @@ private fun OptRow(opt: SduiDropdownOption, sel: Boolean, primary: Color, modeIc
 
             Column(Modifier.weight(1f)) {
                 Text(displayLabel, color = if (sel) primary else White90, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (opt.secondaryLabel != null) {
+                opt.secondaryLabel?.let { secondary ->
                     Spacer(Modifier.height(3.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (opt.secondaryLabel!!.contains("km", true) || opt.secondaryLabel!!.contains("mi", true) || opt.secondaryLabel!!.contains("m ", true)) {
+                        if (secondary.contains("km", true) || secondary.contains("mi", true) || secondary.contains("m ", true)) {
                             Icon(Icons.Rounded.NearMe, null, tint = primary.copy(0.6f), modifier = Modifier.size(11.dp))
                             Spacer(Modifier.width(4.dp))
                         }
-                        Text(opt.secondaryLabel!!, color = primary.copy(0.6f), fontSize = 12.sp)
+                        Text(secondary, color = primary.copy(0.6f), fontSize = 12.sp)
                     }
                 }
             }
@@ -516,20 +574,31 @@ private fun OptRow(opt: SduiDropdownOption, sel: Boolean, primary: Color, modeIc
    ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun DirScreen(
+    layout: SduiAppScreen?,
     options: List<SduiDropdownOption>, selectedId: String?,
     loading: Boolean, primary: Color, onSelect: (SduiDropdownOption) -> Unit
 ) {
+    val funFactTitle = layout?.sdText("screen_direction_funfact_title")
+    val funFactText  = layout?.sdText("screen_direction_funfact")
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp)) {
         Spacer(Modifier.height(16.dp))
-        Text("Which direction?", color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+        Text(layout?.sdText("screen_direction_title") ?: "Which direction?",
+            color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp)
         Spacer(Modifier.height(4.dp))
-        Text("Which way are you fleeing today?", color = White55, fontSize = 13.sp)
+        Text(layout?.sdText("screen_direction_subtitle") ?: "Which way are you fleeing today?",
+            color = White55, fontSize = 13.sp)
         Spacer(Modifier.height(20.dp))
 
         if (loading) Loader(primary)
         else LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(options, key = { it.id }) { opt -> DirCard(opt, opt.id == selectedId, primary) { onSelect(opt) } }
-            item { Spacer(Modifier.height(20.dp)) }
+            if (funFactText != null) {
+                item {
+                    Spacer(Modifier.height(8.dp))
+                    DirFunFact(primary, funFactTitle, funFactText)
+                    Spacer(Modifier.height(20.dp))
+                }
+            }
         }
     }
 }
@@ -612,17 +681,19 @@ private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, onCli
    ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun NearScreen(
+    layout: SduiAppScreen?,
     stations: List<SduiDropdownOption>, selectedId: String?,
     locating: Boolean, noNearby: Boolean, primary: Color, modeIcon: String?,
     onSelect: (SduiDropdownOption) -> Unit, onManual: () -> Unit
 ) {
     Column(Modifier.fillMaxSize()) {
         Spacer(Modifier.height(16.dp))
-        Text("Nearby Stations", color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp,
+        Text(layout?.sdText("screen_station_title") ?: "Nearby Stations",
+            color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp,
             modifier = Modifier.padding(horizontal = 24.dp))
         Spacer(Modifier.height(4.dp))
-        Text("Closest escape routes first", color = White55, fontSize = 13.sp,
-            modifier = Modifier.padding(horizontal = 24.dp))
+        Text(layout?.sdText("screen_station_subtitle") ?: "Closest escape routes first.",
+            color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp))
         Spacer(Modifier.height(14.dp))
 
         when {
@@ -669,6 +740,32 @@ private fun NearScreen(
                     OptRow(st, st.id == selectedId, primary, modeIcon) { onSelect(st) }
                 }
                 item { Spacer(Modifier.height(20.dp)) }
+            }
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Direction fun-fact card — explains Inbound/Outbound to newcomers
+   ═══════════════════════════════════════════════════════════════ */
+@Composable
+private fun DirFunFact(primary: Color, title: String?, body: String) {
+    Surface(
+        color = primary.copy(alpha = 0.07f),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, primary.copy(alpha = 0.18f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
+            Icon(Icons.Rounded.Info, null, tint = primary.copy(0.8f),
+                modifier = Modifier.size(18.dp).padding(top = 1.dp))
+            Spacer(Modifier.width(10.dp))
+            Column {
+                if (title != null) {
+                    Text(title, color = primary.copy(0.9f), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                    Spacer(Modifier.height(5.dp))
+                }
+                Text(body, color = White55, fontSize = 11.5.sp, lineHeight = 16.sp)
             }
         }
     }
