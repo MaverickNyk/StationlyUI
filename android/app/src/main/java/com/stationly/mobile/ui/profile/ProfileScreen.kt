@@ -172,36 +172,6 @@ fun ProfileScreen(
                 }
             }
 
-            // ── Preferences Section ──
-            item {
-                Spacer(Modifier.height(4.dp))
-                SectionHeader("Preferences", Icons.Rounded.Tune)
-            }
-
-            item {
-                Surface(
-                    color = Surface1,
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, White08)
-                ) {
-                    Column {
-                        ProfileActionRow(
-                            icon = Icons.Outlined.DarkMode,
-                            title = "Appearance",
-                            subtitle = "Dark mode",
-                            trailing = "Always on"
-                        )
-                        RowDivider()
-                        ProfileActionRow(
-                            icon = Icons.Outlined.Language,
-                            title = "Language",
-                            subtitle = "Display language",
-                            trailing = "English"
-                        )
-                    }
-                }
-            }
-
             // ── About Stationly Section ──
             item {
                 Spacer(Modifier.height(4.dp))
