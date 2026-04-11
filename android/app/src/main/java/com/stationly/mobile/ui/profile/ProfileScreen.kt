@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.stationly.core.model.sdui.SubscribedStation
+import com.stationly.core.platform.Platform
 import com.stationly.core.service.SduiApiServiceFactory
 import com.stationly.mobile.service.FirebaseAuthManager
 import kotlinx.coroutines.launch
@@ -84,21 +85,25 @@ fun ProfileScreen(
         } catch (_: PackageManager.NameNotFoundException) { "1.0" }
     }
 
-    // Fetch user profile (stations) from backend
+    // Load stations from local SQLite — always accurate, works offline
     var stations by remember { mutableStateOf<List<SubscribedStation>>(emptyList()) }
     var isLoadingProfile by remember { mutableStateOf(true) }
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
     var showDeleteStationDialog by remember { mutableStateOf<SubscribedStation?>(null) }
     var isDeletingAccount by remember { mutableStateOf(false) }
 
-    LaunchedEffect(user?.uid) {
-        if (user != null) {
-            try {
-                val profile = SduiApiServiceFactory.create().getUserProfile(user.uid)
-                stations = profile.stations
-            } catch (_: Exception) { }
-            isLoadingProfile = false
+    LaunchedEffect(Unit) {
+        val local = Platform.sqlStorage.getAllSelections()
+        stations = local.map { sel ->
+            SubscribedStation(
+                id = sel.station,
+                name = sel.stationName,
+                line = sel.line,
+                mode = sel.mode,
+                direction = sel.direction
+            )
         }
+        isLoadingProfile = false
     }
 
     Scaffold(
@@ -367,12 +372,16 @@ fun ProfileScreen(
                         showDeleteStationDialog = null
                         coroutineScope.launch {
                             try {
-                                val uid = user?.uid ?: return@launch
+                                // Delete from local SQLite
+                                Platform.sqlStorage.deleteSelection(stationToDelete.id, stationToDelete.line)
                                 val updated = stations.filter {
                                     !(it.id == stationToDelete.id && it.line == stationToDelete.line)
                                 }
-                                SduiApiServiceFactory.create().syncStations(uid, updated)
                                 stations = updated
+                                // Sync to backend best-effort
+                                user?.uid?.let { uid ->
+                                    try { SduiApiServiceFactory.create().syncStations(uid, updated) } catch (_: Exception) {}
+                                }
                             } catch (_: Exception) { }
                         }
                     },
