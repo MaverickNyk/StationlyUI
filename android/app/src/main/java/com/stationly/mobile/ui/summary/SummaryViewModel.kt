@@ -447,6 +447,16 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     }
     
     /**
+     * Re-read selections from SQLite and refresh UI.
+     * Called when the screen resumes after another screen (e.g. profile) may have mutated storage.
+     */
+    fun reloadSelectionsFromDb() {
+        viewModelScope.launch {
+            selectionRepository.initialize()
+        }
+    }
+
+    /**
      * Clear error state
      */
     fun clearError() {
