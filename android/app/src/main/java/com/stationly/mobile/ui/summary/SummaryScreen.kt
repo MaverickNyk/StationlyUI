@@ -18,11 +18,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
+import com.google.firebase.auth.FirebaseAuth
 import com.stationly.mobile.R
 import com.stationly.mobile.ui.summary.components.*
 import com.stationly.mobile.ui.theme.TflAmber
@@ -39,6 +45,20 @@ fun SummaryScreen(
     val lineStatuses by viewModel.lineStatuses.collectAsState()
     val stationUpdates by viewModel.stationUpdates.collectAsState()
     val sduiPayloads by viewModel.sduiPayloads.collectAsState()
+
+    // Reload selections from SQLite whenever this screen resumes.
+    // Handles the case where ProfileScreen (or any other screen) deleted a station
+    // from SQLite while SummaryViewModel's in-memory cache was stale.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.reloadSelectionsFromDb()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseAlpha by infiniteTransition.animateFloat(
@@ -186,22 +206,38 @@ private fun SummaryTopBar(
             }
         },
         navigationIcon = {
+            val firebaseUser = FirebaseAuth.getInstance().currentUser
+            val photoUrl = firebaseUser?.photoUrl?.toString()
             IconButton(
                 onClick = onNavigateToProfile,
                 modifier = Modifier.padding(start = 8.dp)
             ) {
-                Surface(
-                    shape = CircleShape,
-                    color = Color.White.copy(alpha = 0.05f),
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Default.AccountCircle, 
-                            contentDescription = "Profile", 
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
+                if (photoUrl != null) {
+                    AsyncImage(
+                        model = photoUrl,
+                        contentDescription = "Profile",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.05f), CircleShape)
+                    )
+                } else {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.White.copy(alpha = 0.05f),
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            val initial = (firebaseUser?.displayName
+                                ?: firebaseUser?.email ?: "U").take(1).uppercase()
+                            Text(
+                                initial,
+                                color = TflAmber,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
                     }
                 }
             }

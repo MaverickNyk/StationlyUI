@@ -105,7 +105,8 @@ data class SduiDropdownOption(
     val id: String,
     val label: String,
     val iconUrl: String? = null,
-    val secondaryLabel: String? = null
+    val secondaryLabel: String? = null,
+    val color: String? = null  // hex brand color, e.g. "#E32017" for Central line
 )
 
 @Serializable

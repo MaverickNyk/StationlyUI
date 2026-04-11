@@ -66,14 +66,13 @@ class SelectionRepository(
      */
     suspend fun deleteSelection(selection: UserSelection) {
         val currentSelections = _selections.value.toMutableList()
-        val wasRemoved = currentSelections.removeAll { 
-            it.station == selection.station && it.line == selection.line 
+        currentSelections.removeAll {
+            it.station == selection.station && it.line == selection.line
         }
-        
-        if (wasRemoved) {
-            _selections.value = currentSelections
-            sqlStorage.deleteSelection(selection.station, selection.line)
-        }
+        _selections.value = currentSelections
+        // Always delete from SQLite — in-memory cache may not be initialized
+        // (e.g. ProfileViewModel never calls initialize()), but SQLite is always authoritative.
+        sqlStorage.deleteSelection(selection.station, selection.line)
     }
     
     /**
