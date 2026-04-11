@@ -266,13 +266,11 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = _uiState.value.copy(isAuthenticating = false)
                 onAuthSuccess()
             } catch (e: Exception) {
-                Log.e("LoginViewModel", "!!! [LOGIN_SYNC] FATAL SYNC ERROR", e)
-                authManager.logout() // Revert login locally if backend sync fails
-                _uiState.value = _uiState.value.copy(
-                    isAuthenticating = false,
-                    isBackendOffline = true, // Force the professional overlay on any fatal sync error
-                    error = com.stationly.mobile.util.BackendErrorUtil.getFriendlyMessage(e)
-                )
+                Log.e("LoginViewModel", "Backend sync failed, logging in anyway: ${e.message}")
+                // Do NOT log the user out — Firebase auth succeeded, backend sync is optional.
+                // User lands on the home screen; stations will be empty until backend recovers.
+                _uiState.value = _uiState.value.copy(isAuthenticating = false)
+                onAuthSuccess()
             }
         }
     }
