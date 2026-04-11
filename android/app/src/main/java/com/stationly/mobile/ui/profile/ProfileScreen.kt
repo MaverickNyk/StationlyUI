@@ -1,8 +1,8 @@
 package com.stationly.mobile.ui.profile
 
+import android.content.Intent
 import android.content.pm.PackageManager
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
+import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -49,7 +49,6 @@ private val White55 = Color.White.copy(alpha = 0.55f)
 private val White25 = Color.White.copy(alpha = 0.25f)
 private val White08 = Color.White.copy(alpha = 0.08f)
 private val DangerRed = Color(0xFFFF4444)
-private val DangerRedDim = Color(0xFF3D1515)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,6 +68,12 @@ fun ProfileScreen(
         "apple.com" -> "Apple"
         "password" -> "Email"
         else -> "Stationly"
+    }
+    val memberSince = remember {
+        user?.metadata?.creationTimestamp?.let { ts ->
+            val date = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.UK).format(java.util.Date(ts))
+            date
+        } ?: "Recently"
     }
 
     val coroutineScope = rememberCoroutineScope()
@@ -134,15 +139,16 @@ fun ProfileScreen(
                 .fillMaxSize()
                 .padding(padding),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // ── Profile Header Card ──
             item {
-                ProfileHeaderCard(userName, userEmail, photoUrl, providerLabel)
+                ProfileHeaderCard(userName, userEmail, photoUrl, providerLabel, memberSince)
             }
 
             // ── My Stations Section ──
             item {
+                Spacer(Modifier.height(4.dp))
                 SectionHeader("My Stations", Icons.Rounded.Train)
             }
 
@@ -166,10 +172,10 @@ fun ProfileScreen(
                 }
             }
 
-            // ── Quick Actions Section ──
+            // ── Preferences Section ──
             item {
-                Spacer(Modifier.height(8.dp))
-                SectionHeader("Settings", Icons.Rounded.Settings)
+                Spacer(Modifier.height(4.dp))
+                SectionHeader("Preferences", Icons.Rounded.Tune)
             }
 
             item {
@@ -180,16 +186,145 @@ fun ProfileScreen(
                 ) {
                     Column {
                         ProfileActionRow(
-                            icon = Icons.Outlined.Notifications,
-                            title = "Notifications",
-                            subtitle = "Delay alerts & service updates",
-                            showDivider = true
+                            icon = Icons.Outlined.DarkMode,
+                            title = "Appearance",
+                            subtitle = "Dark mode",
+                            trailing = "Always on"
                         )
+                        RowDivider()
                         ProfileActionRow(
-                            icon = Icons.Outlined.Info,
-                            title = "About Stationly",
-                            subtitle = "Version $appVersion",
-                            showDivider = false
+                            icon = Icons.Outlined.Language,
+                            title = "Language",
+                            subtitle = "Display language",
+                            trailing = "English"
+                        )
+                    }
+                }
+            }
+
+            // ── About Stationly Section ──
+            item {
+                Spacer(Modifier.height(4.dp))
+                SectionHeader("About Stationly", Icons.Rounded.Info)
+            }
+
+            item {
+                // About banner
+                Surface(
+                    color = Surface1,
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, White08)
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(20.dp)) {
+                        Text(
+                            "Stationly",
+                            color = Amber,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 20.sp,
+                            letterSpacing = 0.5.sp
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Real-time London transport departures at your fingertips. " +
+                            "Track buses, tubes, DLR, and Overground — all from one board.",
+                            color = White55,
+                            fontSize = 13.sp,
+                            lineHeight = 19.sp
+                        )
+                        Spacer(Modifier.height(14.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            InfoChip("v$appVersion")
+                            InfoChip("TfL Powered")
+                            InfoChip("Made in London")
+                        }
+                    }
+                }
+            }
+
+            item {
+                Surface(
+                    color = Surface1,
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, White08)
+                ) {
+                    Column {
+                        ProfileActionRow(
+                            icon = Icons.Outlined.Public,
+                            title = "Visit Website",
+                            subtitle = "stationly.co.uk",
+                            onClick = {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://stationly.co.uk")))
+                            }
+                        )
+                        RowDivider()
+                        ProfileActionRow(
+                            icon = Icons.Outlined.PrivacyTip,
+                            title = "Privacy Policy",
+                            subtitle = "How we handle your data",
+                            onClick = {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://stationly.co.uk/privacy")))
+                            }
+                        )
+                        RowDivider()
+                        ProfileActionRow(
+                            icon = Icons.Outlined.Description,
+                            title = "Terms of Service",
+                            subtitle = "Usage terms and conditions",
+                            onClick = {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://stationly.co.uk/terms")))
+                            }
+                        )
+                        RowDivider()
+                        ProfileActionRow(
+                            icon = Icons.Outlined.Email,
+                            title = "Contact Us",
+                            subtitle = "Questions or feedback",
+                            onClick = {
+                                val intent = Intent(Intent.ACTION_SENDTO).apply {
+                                    data = Uri.parse("mailto:hello@stationly.co.uk")
+                                    putExtra(Intent.EXTRA_SUBJECT, "Stationly App Feedback")
+                                }
+                                context.startActivity(intent)
+                            }
+                        )
+                        RowDivider()
+                        ProfileActionRow(
+                            icon = Icons.Outlined.Star,
+                            title = "Rate Stationly",
+                            subtitle = "Love the app? Let us know",
+                            onClick = {
+                                try {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=${context.packageName}")))
+                                } catch (_: Exception) {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=${context.packageName}")))
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+
+            // ── Acknowledgements ──
+            item {
+                Surface(
+                    color = Surface1,
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, White08)
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                        Text(
+                            "Powered by TfL Open Data",
+                            color = White55,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Contains OS data \u00a9 Crown copyright and database rights 2025. " +
+                            "Powered by TfL Open Data. Neither TfL nor the UK Government endorse this app.",
+                            color = White25,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp
                         )
                     }
                 }
@@ -197,7 +332,7 @@ fun ProfileScreen(
 
             // ── Sign Out ──
             item {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(4.dp))
                 Button(
                     onClick = {
                         coroutineScope.launch {
@@ -224,7 +359,7 @@ fun ProfileScreen(
 
             // ── Delete Account (hidden at bottom, subtle) ──
             item {
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(16.dp))
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text(
                         "Delete Account",
@@ -235,7 +370,7 @@ fun ProfileScreen(
                             .padding(vertical = 8.dp, horizontal = 16.dp)
                     )
                 }
-                Spacer(Modifier.height(32.dp))
+                Spacer(Modifier.height(40.dp))
             }
         }
     }
@@ -354,10 +489,13 @@ fun ProfileScreen(
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Profile Header Card — avatar, name, email, provider badge
+   Profile Header Card — avatar, name, email, provider, member since
    ═══════════════════════════════════════════════════════════════ */
 @Composable
-private fun ProfileHeaderCard(name: String, email: String, photoUrl: String?, provider: String) {
+private fun ProfileHeaderCard(
+    name: String, email: String, photoUrl: String?,
+    provider: String, memberSince: String
+) {
     Surface(
         color = Surface1,
         shape = RoundedCornerShape(20.dp),
@@ -367,13 +505,12 @@ private fun ProfileHeaderCard(name: String, email: String, photoUrl: String?, pr
             modifier = Modifier.fillMaxWidth().padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Avatar
+            // Avatar with amber ring
             Box(contentAlignment = Alignment.Center) {
-                // Amber ring
                 Box(
                     Modifier
-                        .size(92.dp)
-                        .border(2.dp, Brush.linearGradient(listOf(Amber, Amber.copy(0.4f))), CircleShape)
+                        .size(96.dp)
+                        .border(2.5.dp, Brush.linearGradient(listOf(Amber, Amber.copy(0.3f))), CircleShape)
                 )
                 if (photoUrl != null) {
                     AsyncImage(
@@ -381,19 +518,19 @@ private fun ProfileHeaderCard(name: String, email: String, photoUrl: String?, pr
                         contentDescription = "Profile photo",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .size(84.dp)
+                            .size(86.dp)
                             .clip(CircleShape)
                             .background(Surface2, CircleShape)
                     )
                 } else {
                     Box(
-                        Modifier.size(84.dp).background(Surface2, CircleShape),
+                        Modifier.size(86.dp).background(Surface2, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             name.take(1).uppercase(),
                             color = Amber,
-                            fontSize = 32.sp,
+                            fontSize = 34.sp,
                             fontWeight = FontWeight.Black
                         )
                     }
@@ -409,29 +546,40 @@ private fun ProfileHeaderCard(name: String, email: String, photoUrl: String?, pr
             Spacer(Modifier.height(4.dp))
             Text(email, color = White55, fontSize = 14.sp)
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(14.dp))
 
-            // Provider badge
-            Surface(
-                color = White08,
-                shape = RoundedCornerShape(20.dp)
+            // Provider + member since badges
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        when (provider) {
-                            "Google" -> Icons.Rounded.AlternateEmail
-                            else -> Icons.Rounded.Email
-                        },
-                        null, tint = Amber, modifier = Modifier.size(14.dp)
-                    )
-                    Text(
-                        "Signed in with $provider",
-                        color = White55, fontSize = 12.sp
-                    )
+                // Provider badge
+                Surface(color = White08, shape = RoundedCornerShape(20.dp)) {
+                    Row(
+                        Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            if (provider == "Google") Icons.Rounded.AlternateEmail else Icons.Rounded.Email,
+                            null, tint = Amber, modifier = Modifier.size(13.dp)
+                        )
+                        Text(provider, color = White55, fontSize = 11.sp)
+                    }
+                }
+                // Member since badge
+                Surface(color = White08, shape = RoundedCornerShape(20.dp)) {
+                    Row(
+                        Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.CalendarMonth,
+                            null, tint = Amber, modifier = Modifier.size(13.dp)
+                        )
+                        Text("Since $memberSince", color = White55, fontSize = 11.sp)
+                    }
                 }
             }
         }
@@ -444,21 +592,21 @@ private fun ProfileHeaderCard(name: String, email: String, photoUrl: String?, pr
 @Composable
 private fun SectionHeader(title: String, icon: ImageVector) {
     Row(
-        modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 4.dp),
+        modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, null, tint = Amber, modifier = Modifier.size(18.dp))
+        Icon(icon, null, tint = Amber, modifier = Modifier.size(17.dp))
         Spacer(Modifier.width(8.dp))
         Text(
             title.uppercase(), color = White55,
-            fontSize = 12.sp, fontWeight = FontWeight.Bold,
+            fontSize = 11.sp, fontWeight = FontWeight.Bold,
             letterSpacing = 1.5.sp
         )
     }
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Station Card — shows subscribed station with delete option
+   Station Card
    ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun StationCard(station: SubscribedStation, onDelete: () -> Unit) {
@@ -476,12 +624,9 @@ private fun StationCard(station: SubscribedStation, onDelete: () -> Unit) {
         border = BorderStroke(1.dp, White08)
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Mode icon
             Box(
                 Modifier
                     .size(42.dp)
@@ -493,7 +638,6 @@ private fun StationCard(station: SubscribedStation, onDelete: () -> Unit) {
 
             Spacer(Modifier.width(14.dp))
 
-            // Station details
             Column(Modifier.weight(1f)) {
                 Text(
                     station.name,
@@ -502,36 +646,15 @@ private fun StationCard(station: SubscribedStation, onDelete: () -> Unit) {
                 )
                 Spacer(Modifier.height(3.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    StationChip(station.line.replaceFirstChar { it.uppercase() })
-                    StationChip(station.direction.replaceFirstChar { it.uppercase() })
+                    InfoChip(station.line.replaceFirstChar { it.uppercase() })
+                    InfoChip(station.direction.replaceFirstChar { it.uppercase() })
                 }
             }
 
-            // Delete button
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.size(36.dp)
-            ) {
-                Icon(
-                    Icons.Rounded.Close, "Remove",
-                    tint = White25, modifier = Modifier.size(18.dp)
-                )
+            IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Rounded.Close, "Remove", tint = White25, modifier = Modifier.size(18.dp))
             }
         }
-    }
-}
-
-@Composable
-private fun StationChip(text: String) {
-    Surface(
-        color = White08,
-        shape = RoundedCornerShape(6.dp)
-    ) {
-        Text(
-            text,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-            color = White55, fontSize = 11.sp
-        )
     }
 }
 
@@ -549,15 +672,9 @@ private fun EmptyStationsCard() {
             modifier = Modifier.fillMaxWidth().padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Icon(
-                Icons.Outlined.Train, null,
-                tint = White25, modifier = Modifier.size(40.dp)
-            )
+            Icon(Icons.Outlined.Train, null, tint = White25, modifier = Modifier.size(40.dp))
             Spacer(Modifier.height(12.dp))
-            Text(
-                "No stations yet",
-                color = White55, fontWeight = FontWeight.SemiBold, fontSize = 15.sp
-            )
+            Text("No stations yet", color = White55, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
             Spacer(Modifier.height(4.dp))
             Text(
                 "Set up a board to start tracking departures",
@@ -568,43 +685,63 @@ private fun EmptyStationsCard() {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Settings Row
+   Action Row — clickable setting item
    ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun ProfileActionRow(
     icon: ImageVector,
     title: String,
     subtitle: String,
-    showDivider: Boolean = false
+    trailing: String? = null,
+    onClick: (() -> Unit)? = null
 ) {
-    Column {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(36.dp)
+                .background(White08, RoundedCornerShape(10.dp)),
+            contentAlignment = Alignment.Center
         ) {
-            Box(
-                Modifier
-                    .size(38.dp)
-                    .background(White08, RoundedCornerShape(10.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(icon, null, tint = White55, modifier = Modifier.size(20.dp))
-            }
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, color = White90, fontWeight = FontWeight.Medium, fontSize = 15.sp)
-                Text(subtitle, color = White25, fontSize = 12.sp)
-            }
-            Icon(Icons.Rounded.ChevronRight, null, tint = White25, modifier = Modifier.size(20.dp))
+            Icon(icon, null, tint = White55, modifier = Modifier.size(18.dp))
         }
-        if (showDivider) {
-            Divider(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                thickness = 0.5.dp, color = White08
-            )
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, color = White90, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+            Text(subtitle, color = White25, fontSize = 12.sp)
         }
+        if (trailing != null) {
+            Text(trailing, color = White25, fontSize = 12.sp)
+            Spacer(Modifier.width(4.dp))
+        }
+        Icon(Icons.Rounded.ChevronRight, null, tint = White25, modifier = Modifier.size(18.dp))
+    }
+}
+
+@Composable
+private fun RowDivider() {
+    Divider(
+        modifier = Modifier.padding(horizontal = 16.dp),
+        thickness = 0.5.dp, color = White08
+    )
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Info Chip — small tag-style label
+   ═══════════════════════════════════════════════════════════════ */
+@Composable
+private fun InfoChip(text: String) {
+    Surface(color = White08, shape = RoundedCornerShape(6.dp)) {
+        Text(
+            text,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            color = White55, fontSize = 11.sp
+        )
     }
 }
 
