@@ -103,6 +103,14 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     // Per-station bound SDUI payloads (Perfectly synced with Widget)
     private val _sduiPayloads = MutableStateFlow<Map<String, com.stationly.core.model.sdui.SduiWidgetPayload?>>(emptyMap())
     val sduiPayloads: StateFlow<Map<String, com.stationly.core.model.sdui.SduiWidgetPayload?>> = _sduiPayloads.asStateFlow()
+
+    // Home screen announcement from SDUI
+    private val _announcement = MutableStateFlow<com.stationly.core.model.sdui.SduiAppComponent.Announcement?>(null)
+    val announcement: StateFlow<com.stationly.core.model.sdui.SduiAppComponent.Announcement?> = _announcement.asStateFlow()
+
+    // Server-controlled UI strings (labels, empty state text, explore labels, greetings)
+    private val _homeConfig = MutableStateFlow<Map<String, String>>(emptyMap())
+    val homeConfig: StateFlow<Map<String, String>> = _homeConfig.asStateFlow()
     
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key != null && key.startsWith("predictions_")) {
@@ -128,6 +136,9 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     init {
         context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
             .registerOnSharedPreferenceChangeListener(prefsListener)
+
+        viewModelScope.launch { fetchAnnouncement() }
+        viewModelScope.launch { fetchHomeConfig() }
 
         viewModelScope.launch {
             // Initial sync from SQL
@@ -353,27 +364,21 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
      */
     fun refreshAll() {
         _uiState.value = _uiState.value.copy(isRefreshing = true)
-        
         viewModelScope.launch {
             try {
-                // Simulate refresh delay for UX
-                kotlinx.coroutines.delay(800)
-                
-                loadSavedSelections()
-                
+                _selections.value.forEach { selection ->
+                    departureRepository.fetchInitialData(selection)
+                    loadPredictions(selection)
+                    loadLineStatus(selection)
+                }
                 _uiState.value = _uiState.value.copy(
                     isRefreshing = false,
                     lastUpdated = System.currentTimeMillis()
                 )
-                
-                Log.d("SummaryViewModel", "Refreshed from internal storage")
+                Log.d("SummaryViewModel", "Manual refresh complete for ${_selections.value.size} board(s)")
             } catch (e: Exception) {
                 Log.e("SummaryViewModel", "Error refreshing", e)
-                _uiState.value = _uiState.value.copy(
-                    isRefreshing = false,
-                    error = com.stationly.mobile.util.BackendErrorUtil.getFriendlyMessage(e),
-                    isBackendOffline = true // Refresh failed - show professional error
-                )
+                _uiState.value = _uiState.value.copy(isRefreshing = false)
             }
         }
     }
@@ -446,6 +451,34 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         return _stationUpdates.value[station] ?: 0L
     }
     
+    private suspend fun fetchAnnouncement() {
+        try {
+            val screen = sduiService.getHomeAnnouncement()
+            val component = screen.components.filterIsInstance<com.stationly.core.model.sdui.SduiAppComponent.Announcement>().firstOrNull()
+            if (component != null) {
+                // Check if user already dismissed this specific announcement
+                val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+                val key = component.dismissKey ?: component.id
+                val dismissed = prefs.getBoolean("dismissed_announcement_$key", false)
+                if (!dismissed) _announcement.value = component
+            }
+        } catch (_: Exception) {}
+    }
+
+    private suspend fun fetchHomeConfig() {
+        try {
+            _homeConfig.value = sduiService.getHomeConfig().strings
+        } catch (_: Exception) {}
+    }
+
+    fun dismissAnnouncement() {
+        val current = _announcement.value ?: return
+        val key = current.dismissKey ?: current.id
+        context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("dismissed_announcement_$key", true).apply()
+        _announcement.value = null
+    }
+
     /**
      * Re-read selections from SQLite and refresh UI.
      * Called when the screen resumes after another screen (e.g. profile) may have mutated storage.

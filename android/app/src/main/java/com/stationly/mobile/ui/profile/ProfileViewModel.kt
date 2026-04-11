@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.stationly.core.model.UserSelection
+import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.model.sdui.SubscribedStation
 import com.stationly.core.platform.Platform
 import com.stationly.core.platform.AndroidNotificationManager
@@ -49,8 +50,23 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    private val _aboutComponents = MutableStateFlow<List<SduiAppComponent>>(emptyList())
+    val aboutComponents: StateFlow<List<SduiAppComponent>> = _aboutComponents.asStateFlow()
+
     init {
         loadStations()
+        loadAboutLayout()
+    }
+
+    private fun loadAboutLayout() {
+        viewModelScope.launch {
+            try {
+                val screen = sduiService.getAboutLayout()
+                _aboutComponents.value = screen.components
+            } catch (_: Exception) {
+                // Keep empty — ProfileScreen falls back to hardcoded content
+            }
+        }
     }
 
     fun loadStations() {
