@@ -10,6 +10,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -27,8 +28,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -787,69 +786,55 @@ private fun Err(msg: String, primary: Color, onRetry: () -> Unit) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Modern CTA — gradient shimmer + pulse glow
+   Modern CTA — clean gradient, no flicker
    ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun ModernCtaButton(label: String, primary: Color, onClick: () -> Unit) {
-    val inf = rememberInfiniteTransition("cta")
-    val shimmerX by inf.animateFloat(
-        -1f, 2f,
-        infiniteRepeatable(tween(2500, easing = LinearEasing), RepeatMode.Restart), "shim"
+    val shape = RoundedCornerShape(20.dp)
+    val gradient = Brush.horizontalGradient(
+        colors = listOf(primary, Color(0xFFFFD96A), primary)
     )
-    val glowAlpha by inf.animateFloat(
-        0.0f, 0.35f,
-        infiniteRepeatable(tween(1800, easing = FastOutSlowInEasing), RepeatMode.Reverse), "glow"
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.97f else 1f,
+        animationSpec = tween(100),
+        label = "cta_scale"
     )
-    val darkerPrimary = Color(
-        (primary.red * 0.75f).coerceIn(0f, 1f),
-        (primary.green * 0.65f).coerceIn(0f, 1f),
-        (primary.blue * 0.3f).coerceIn(0f, 1f)
-    )
-    Box(modifier = Modifier.fillMaxWidth()) {
-        // Glow behind the button
-        Box(
-            Modifier
-                .fillMaxWidth(0.85f)
-                .height(64.dp)
-                .align(Alignment.Center)
-                .graphicsLayer { alpha = glowAlpha; scaleX = 1.05f; scaleY = 1.3f }
-                .background(primary.copy(alpha = 0.5f), RoundedCornerShape(24.dp))
-        )
-        Button(
-            onClick = onClick,
-            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
-            shape = RoundedCornerShape(22.dp),
-            contentPadding = PaddingValues(0.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(64.dp)
-                .drawWithContent {
-                    // Gradient background
-                    drawRect(
-                        Brush.linearGradient(
-                            colors = listOf(primary, darkerPrimary, primary),
-                            start = Offset(size.width * shimmerX, 0f),
-                            end = Offset(size.width * (shimmerX + 0.6f), size.height)
-                        )
-                    )
-                    drawContent()
-                },
-            elevation = ButtonDefaults.buttonElevation(defaultElevation = 12.dp, pressedElevation = 4.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Rounded.RocketLaunch, null, tint = Color.Black, modifier = Modifier.size(22.dp))
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    label, color = Color.Black,
-                    fontWeight = FontWeight.Black, fontSize = 17.sp, letterSpacing = 0.5.sp
-                )
-                Spacer(Modifier.width(10.dp))
-                Icon(Icons.Rounded.ArrowForward, null, tint = Color.Black.copy(0.5f), modifier = Modifier.size(18.dp))
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(60.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(shape)
+            .background(gradient)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        pressed = event.changes.any { it.pressed }
+                    }
+                }
             }
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                Icons.Rounded.RocketLaunch, null,
+                tint = Color.Black, modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                label,
+                color = Color.Black,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 16.sp,
+                letterSpacing = 0.3.sp
+            )
         }
     }
 }
