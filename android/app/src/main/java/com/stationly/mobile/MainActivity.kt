@@ -128,10 +128,14 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         composable("summary") {
             SummaryScreen(
                 onNavigateToSelection = {
-                    navController.navigate("selection")
+                    navController.navigate("selection") {
+                        launchSingleTop = true
+                    }
                 },
                 onNavigateToProfile = {
-                    navController.navigate("profile")
+                    navController.navigate("profile") {
+                        launchSingleTop = true
+                    }
                 }
             )
         }
