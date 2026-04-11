@@ -31,9 +31,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.stationly.core.model.sdui.SubscribedStation
-import com.stationly.core.platform.Platform
 import com.stationly.core.service.SduiApiServiceFactory
 import com.stationly.mobile.service.FirebaseAuthManager
 import kotlinx.coroutines.launch
@@ -56,7 +56,8 @@ private val DangerRed = Color(0xFFFF4444)
 fun ProfileScreen(
     onNavigateBack: () -> Unit,
     onLoggedOut: () -> Unit,
-    authManager: FirebaseAuthManager
+    authManager: FirebaseAuthManager,
+    profileViewModel: ProfileViewModel = viewModel()
 ) {
     val user = authManager.currentUser
     val userEmail = user?.email ?: "Stationly User"
@@ -85,26 +86,11 @@ fun ProfileScreen(
         } catch (_: PackageManager.NameNotFoundException) { "1.0" }
     }
 
-    // Load stations from local SQLite — always accurate, works offline
-    var stations by remember { mutableStateOf<List<SubscribedStation>>(emptyList()) }
-    var isLoadingProfile by remember { mutableStateOf(true) }
+    val stations by profileViewModel.stations.collectAsState()
+    val isLoadingProfile by profileViewModel.isLoading.collectAsState()
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
     var showDeleteStationDialog by remember { mutableStateOf<SubscribedStation?>(null) }
     var isDeletingAccount by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        val local = Platform.sqlStorage.getAllSelections()
-        stations = local.map { sel ->
-            SubscribedStation(
-                id = sel.station,
-                name = sel.stationName,
-                line = sel.line,
-                mode = sel.mode,
-                direction = sel.direction
-            )
-        }
-        isLoadingProfile = false
-    }
 
     Scaffold(
         containerColor = Surface0,
@@ -358,41 +344,38 @@ fun ProfileScreen(
             titleContentColor = White90,
             textContentColor = White55,
             icon = { Icon(Icons.Rounded.DeleteOutline, null, tint = DangerRed, modifier = Modifier.size(28.dp)) },
-            title = { Text("Remove Station", fontWeight = FontWeight.Bold) },
+            title = { Text("Delete This Board?", fontWeight = FontWeight.Bold) },
             text = {
-                Text(
-                    "Remove ${station.name} (${station.line}) from your saved stations? " +
-                    "You can always add it back later."
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "You're about to remove your ${station.name} board.",
+                        fontWeight = FontWeight.Medium
+                    )
+                    WarningBullet("Live departure tracking will stop")
+                    WarningBullet("Departure notifications will be unsubscribed")
+                    WarningBullet("Widget will be cleared")
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "You can always set up a new board from the home screen.",
+                        color = White25, fontSize = 12.sp
+                    )
+                }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
                         val stationToDelete = station
                         showDeleteStationDialog = null
-                        coroutineScope.launch {
-                            try {
-                                // Delete from local SQLite
-                                Platform.sqlStorage.deleteSelection(stationToDelete.id, stationToDelete.line)
-                                val updated = stations.filter {
-                                    !(it.id == stationToDelete.id && it.line == stationToDelete.line)
-                                }
-                                stations = updated
-                                // Sync to backend best-effort
-                                user?.uid?.let { uid ->
-                                    try { SduiApiServiceFactory.create().syncStations(uid, updated) } catch (_: Exception) {}
-                                }
-                            } catch (_: Exception) { }
-                        }
+                        profileViewModel.deleteStation(stationToDelete)
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = DangerRed)
-                ) { Text("Remove", fontWeight = FontWeight.Bold) }
+                ) { Text("Delete Board", fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
                 TextButton(
                     onClick = { showDeleteStationDialog = null },
                     colors = ButtonDefaults.textButtonColors(contentColor = White55)
-                ) { Text("Cancel") }
+                ) { Text("Keep It") }
             }
         )
     }
