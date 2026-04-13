@@ -16,9 +16,12 @@ interface SduiApiService {
     suspend fun getLoginLayout(): SduiAppScreen
     suspend fun getRegisterLayout(): SduiAppScreen
     suspend fun getForgotPasswordLayout(): SduiAppScreen
+    suspend fun getAboutLayout(): SduiAppScreen
+    suspend fun getHomeAnnouncement(): SduiAppScreen
+    suspend fun getHomeConfig(): SduiStrings
     suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption>
     suspend fun getNearbyStations(lat: Double, lon: Double, mode: String? = null): List<SduiDropdownOption>
-    
+
     // User Sync & Firestore
     suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse
     suspend fun syncStations(uid: String, stations: List<SubscribedStation>): Boolean
@@ -50,7 +53,19 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
     override suspend fun getForgotPasswordLayout(): SduiAppScreen {
         return client.get("$baseUrl/sdui/app/forgot-password").body()
     }
-    
+
+    override suspend fun getAboutLayout(): SduiAppScreen {
+        return client.get("$baseUrl/sdui/app/about").body()
+    }
+
+    override suspend fun getHomeAnnouncement(): SduiAppScreen {
+        return client.get("$baseUrl/sdui/app/home-announcement").body()
+    }
+
+    override suspend fun getHomeConfig(): SduiStrings {
+        return client.get("$baseUrl/sdui/app/home-config").body()
+    }
+
     override suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption> {
         val fullUrl = if (urlPath.startsWith("http")) urlPath else "$baseUrl$urlPath"
         return client.get(fullUrl).body()

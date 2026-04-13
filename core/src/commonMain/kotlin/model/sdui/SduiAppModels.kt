@@ -82,7 +82,73 @@ sealed class SduiAppComponent {
         val icon: String? = null,
         val description: String? = null
     )
+
+    /** A card surface wrapping child components */
+    @Serializable
+    @SerialName("card")
+    data class Card(
+        override val id: String,
+        val title: String? = null,
+        val body: String? = null,
+        val style: String? = null,
+        val components: List<SduiAppComponent> = emptyList()
+    ) : SduiAppComponent()
+
+    /** A named section grouping child components */
+    @Serializable
+    @SerialName("section")
+    data class Section(
+        override val id: String,
+        val title: String? = null,
+        val components: List<SduiAppComponent> = emptyList()
+    ) : SduiAppComponent()
+
+    /** A tappable row that opens a URL */
+    @Serializable
+    @SerialName("link_row")
+    data class LinkRow(
+        override val id: String,
+        val title: String,
+        val subtitle: String? = null,
+        val url: String,
+        val icon: String? = null
+    ) : SduiAppComponent()
+
+    @Serializable
+    @SerialName("divider")
+    data class Divider(
+        override val id: String? = null
+    ) : SduiAppComponent()
+
+    @Serializable
+    @SerialName("spacer")
+    data class Spacer(
+        override val id: String? = null,
+        val size: Int = 8
+    ) : SduiAppComponent()
+
+    /** A dismissible announcement banner shown on the home screen */
+    @Serializable
+    @SerialName("announcement")
+    data class Announcement(
+        override val id: String,
+        val title: String,
+        val body: String,
+        val variant: String = "info",   // info | warning | tip
+        val dismissKey: String? = null,
+        val url: String? = null
+    ) : SduiAppComponent()
 }
+
+/**
+ * Flat string-map returned by /sdui/app/home-config.
+ * Lets the server override any hardcoded label in the home / explore / empty-state UI.
+ */
+@Serializable
+data class SduiStrings(
+    val id: String,
+    val strings: Map<String, String> = emptyMap()
+)
 
 @Serializable
 data class SduiAppTheme(

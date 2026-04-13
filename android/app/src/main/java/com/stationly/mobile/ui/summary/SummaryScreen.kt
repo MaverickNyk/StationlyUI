@@ -4,6 +4,8 @@ package com.stationly.mobile.ui.summary
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -30,9 +32,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.google.firebase.auth.FirebaseAuth
 import com.stationly.mobile.R
+import com.stationly.mobile.ui.common.AnnouncementBanner
 import com.stationly.mobile.ui.summary.components.*
 import com.stationly.mobile.ui.theme.TflAmber
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SummaryScreen(
     onNavigateToSelection: () -> Unit,
@@ -45,6 +49,15 @@ fun SummaryScreen(
     val lineStatuses by viewModel.lineStatuses.collectAsState()
     val stationUpdates by viewModel.stationUpdates.collectAsState()
     val sduiPayloads by viewModel.sduiPayloads.collectAsState()
+    val announcement by viewModel.announcement.collectAsState()
+    val homeConfig by viewModel.homeConfig.collectAsState()
+    val isDeletingBoard by viewModel.isDeletingBoard.collectAsState()
+
+    val firebaseUser = remember { FirebaseAuth.getInstance().currentUser }
+    val userName = remember(firebaseUser) {
+        firebaseUser?.displayName?.split(" ")?.firstOrNull()
+            ?: firebaseUser?.email?.split("@")?.firstOrNull()
+    }
 
     // Reload selections from SQLite whenever this screen resumes.
     // Handles the case where ProfileScreen (or any other screen) deleted a station
@@ -78,7 +91,8 @@ fun SummaryScreen(
                 onNavigateToProfile = onNavigateToProfile,
                 onNavigateToSelection = onNavigateToSelection,
                 selectionsEmpty = selections.isEmpty(),
-                pulseAlpha = pulseAlpha
+                pulseAlpha = pulseAlpha,
+                liveLabel = homeConfig["topbar.live_label"] ?: "Live Network"
             )
         }
     ) { padding ->
@@ -100,31 +114,58 @@ fun SummaryScreen(
                 label = "selections_content"
             ) { currentSelections ->
                 if (currentSelections.isEmpty()) {
-                    EmptyStationsState(onNavigateToSelection)
+                    EmptyStationsState(onNavigateToSelection, strings = homeConfig)
                 } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
-                        verticalArrangement = Arrangement.spacedBy(32.dp)
+                    PullToRefreshBox(
+                        isRefreshing = uiState.isRefreshing,
+                        onRefresh = { viewModel.refreshAll() },
+                        modifier = Modifier.fillMaxSize()
                     ) {
-                        item {
-                            SummaryHeader(currentSelections.size, uiState.lastUpdated)
-                        }
-                        
-                        items(currentSelections, key = { "${it.station}_${it.line}" }) { selection ->
-                            Board(
-                                selection = selection,
-                                predictions = predictions[selection.station] ?: emptyList(),
-                                hasPredictions = predictions[selection.station]?.isNotEmpty() == true,
-                                lineStatus = lineStatuses["${selection.mode}_${selection.line}".lowercase()],
-                                sduiPayload = sduiPayloads[selection.station],
-                                lastUpdated = stationUpdates[selection.station] ?: 0L,
-                                onDelete = { viewModel.deleteSelection(selection) }
-                            )
-                        }
-                        
-                        item {
-                            StationExploreSection()
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
+                            verticalArrangement = Arrangement.spacedBy(20.dp)
+                        ) {
+                            item {
+                                SummaryHeader(
+                                    count = currentSelections.size,
+                                    lastUpdated = uiState.lastUpdated,
+                                    userName = userName,
+                                    strings = homeConfig
+                                )
+                            }
+
+                            announcement?.let { banner ->
+                                item(key = "announcement_${banner.id}") {
+                                    AnnouncementBanner(
+                                        announcement = banner,
+                                        onDismiss = { viewModel.dismissAnnouncement() }
+                                    )
+                                }
+                            }
+
+                            items(currentSelections, key = { "${it.station}_${it.line}" }) { selection ->
+                                val selectionPredictions = predictions[selection.station] ?: emptyList()
+
+                                Box(modifier = Modifier.animateItem()) {
+                                    Board(
+                                        selection = selection,
+                                        predictions = selectionPredictions,
+                                        hasPredictions = selectionPredictions.isNotEmpty(),
+                                        lineStatus = lineStatuses["${selection.mode}_${selection.line}".lowercase()],
+                                        sduiPayload = sduiPayloads[selection.station],
+                                        lastUpdated = stationUpdates[selection.station] ?: 0L,
+                                        onDelete = { viewModel.deleteSelection(selection) },
+                                        nextPrediction = selectionPredictions.firstOrNull(),
+                                        homeConfig = homeConfig,
+                                        isDeleting = isDeletingBoard
+                                    )
+                                }
+                            }
+
+                            item {
+                                StationExploreSection(lineStatuses = lineStatuses, strings = homeConfig)
+                            }
                         }
                     }
                 }
@@ -165,7 +206,8 @@ private fun SummaryTopBar(
     onNavigateToProfile: () -> Unit,
     onNavigateToSelection: () -> Unit,
     selectionsEmpty: Boolean,
-    pulseAlpha: Float
+    pulseAlpha: Float,
+    liveLabel: String = "Live Network"
 ) {
     CenterAlignedTopAppBar(
         title = {
@@ -195,9 +237,9 @@ private fun SummaryTopBar(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Live Network", 
-                            color = Color.Gray, 
-                            fontSize = 10.sp, 
+                            text = liveLabel,
+                            color = Color.Gray,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.5.sp
                         )

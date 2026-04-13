@@ -33,9 +33,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.model.sdui.SubscribedStation
 import com.stationly.core.service.SduiApiServiceFactory
 import com.stationly.mobile.service.FirebaseAuthManager
+import com.stationly.mobile.ui.common.SduiCard
+import com.stationly.mobile.ui.common.SduiSection
 import kotlinx.coroutines.launch
 
 /* ═══════════════════════════════════════════════════════════════
@@ -88,6 +91,7 @@ fun ProfileScreen(
 
     val stations by profileViewModel.stations.collectAsState()
     val isLoadingProfile by profileViewModel.isLoading.collectAsState()
+    val aboutComponents by profileViewModel.aboutComponents.collectAsState()
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
     var showDeleteStationDialog by remember { mutableStateOf<SubscribedStation?>(null) }
     var isDeletingAccount by remember { mutableStateOf(false) }
@@ -163,130 +167,81 @@ fun ProfileScreen(
                 }
             }
 
-            // ── About Stationly Section ──
+            // ── About Stationly Section (SDUI-driven) ──
             item {
                 Spacer(Modifier.height(4.dp))
                 SectionHeader("About Stationly", Icons.Rounded.Info)
             }
 
-            item {
-                // About banner
-                Surface(
-                    color = Surface1,
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, White08)
-                ) {
-                    Column(Modifier.fillMaxWidth().padding(20.dp)) {
-                        Text(
-                            "Stationly",
-                            color = Amber,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 20.sp,
-                            letterSpacing = 0.5.sp
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "Real-time London transport departures at your fingertips. " +
-                            "Track buses, tubes, DLR, and Overground — all from one board.",
-                            color = White55,
-                            fontSize = 13.sp,
-                            lineHeight = 19.sp
-                        )
-                        Spacer(Modifier.height(14.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            InfoChip("v$appVersion")
-                            InfoChip("TfL Powered")
-                            InfoChip("Made in London")
+            if (aboutComponents.isEmpty()) {
+                // Fallback while loading or if server unreachable
+                item {
+                    Surface(
+                        color = Surface1,
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, White08)
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(20.dp)) {
+                            Text("Stationly", color = Amber, fontWeight = FontWeight.Black, fontSize = 20.sp)
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "Real-time London transport departures at your fingertips.",
+                                color = White55, fontSize = 13.sp, lineHeight = 19.sp
+                            )
+                            Spacer(Modifier.height(14.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                InfoChip("v$appVersion")
+                                InfoChip("TfL Powered")
+                                InfoChip("Made in London")
+                            }
                         }
                     }
                 }
-            }
-
-            item {
-                Surface(
-                    color = Surface1,
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, White08)
-                ) {
-                    Column {
-                        ProfileActionRow(
-                            icon = Icons.Outlined.Public,
-                            title = "Visit Website",
-                            subtitle = "stationly.co.uk",
-                            onClick = {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://stationly.co.uk")))
-                            }
-                        )
-                        RowDivider()
-                        ProfileActionRow(
-                            icon = Icons.Outlined.PrivacyTip,
-                            title = "Privacy Policy",
-                            subtitle = "How we handle your data",
-                            onClick = {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://stationly.co.uk/privacy")))
-                            }
-                        )
-                        RowDivider()
-                        ProfileActionRow(
-                            icon = Icons.Outlined.Description,
-                            title = "Terms of Service",
-                            subtitle = "Usage terms and conditions",
-                            onClick = {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://stationly.co.uk/terms")))
-                            }
-                        )
-                        RowDivider()
-                        ProfileActionRow(
-                            icon = Icons.Outlined.Email,
-                            title = "Contact Us",
-                            subtitle = "Questions or feedback",
-                            onClick = {
-                                val intent = Intent(Intent.ACTION_SENDTO).apply {
-                                    data = Uri.parse("mailto:hello@stationly.co.uk")
-                                    putExtra(Intent.EXTRA_SUBJECT, "Stationly App Feedback")
-                                }
-                                context.startActivity(intent)
-                            }
-                        )
-                        RowDivider()
-                        ProfileActionRow(
-                            icon = Icons.Outlined.Star,
-                            title = "Rate Stationly",
-                            subtitle = "Love the app? Let us know",
-                            onClick = {
-                                try {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=${context.packageName}")))
-                                } catch (_: Exception) {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=${context.packageName}")))
+            } else {
+                // SDUI-rendered About content
+                aboutComponents.forEach { component ->
+                    item(key = "sdui_${component.id}") {
+                        when (component) {
+                            is SduiAppComponent.Card -> {
+                                // Inject local app version chip into the brand card
+                                if (component.style == "brand") {
+                                    Surface(
+                                        color = Surface1,
+                                        shape = RoundedCornerShape(16.dp),
+                                        border = BorderStroke(1.dp, White08)
+                                    ) {
+                                        Column(Modifier.fillMaxWidth().padding(20.dp)) {
+                                            Text(
+                                                component.title ?: "Stationly",
+                                                color = Amber,
+                                                fontWeight = FontWeight.Black,
+                                                fontSize = 20.sp,
+                                                letterSpacing = 0.5.sp
+                                            )
+                                            Spacer(Modifier.height(6.dp))
+                                            Text(
+                                                component.body ?: "",
+                                                color = White55,
+                                                fontSize = 13.sp,
+                                                lineHeight = 19.sp
+                                            )
+                                            Spacer(Modifier.height(14.dp))
+                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                InfoChip("v$appVersion")
+                                                InfoChip("TfL Powered")
+                                                InfoChip("Made in London")
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    SduiCard(component)
                                 }
                             }
-                        )
-                    }
-                }
-            }
-
-            // ── Acknowledgements ──
-            item {
-                Surface(
-                    color = Surface1,
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, White08)
-                ) {
-                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                        Text(
-                            "Powered by TfL Open Data",
-                            color = White55,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "Contains OS data \u00a9 Crown copyright and database rights 2025. " +
-                            "Powered by TfL Open Data. Neither TfL nor the UK Government endorse this app.",
-                            color = White25,
-                            fontSize = 11.sp,
-                            lineHeight = 15.sp
-                        )
+                            is SduiAppComponent.Section -> SduiSection(component, Amber) { url ->
+                                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                            }
+                            else -> {}
+                        }
                     }
                 }
             }
@@ -644,53 +599,6 @@ private fun EmptyStationsCard() {
             )
         }
     }
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   Action Row — clickable setting item
-   ═══════════════════════════════════════════════════════════════ */
-@Composable
-private fun ProfileActionRow(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    trailing: String? = null,
-    onClick: (() -> Unit)? = null
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            Modifier
-                .size(36.dp)
-                .background(White08, RoundedCornerShape(10.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, null, tint = White55, modifier = Modifier.size(18.dp))
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, color = White90, fontWeight = FontWeight.Medium, fontSize = 14.sp)
-            Text(subtitle, color = White25, fontSize = 12.sp)
-        }
-        if (trailing != null) {
-            Text(trailing, color = White25, fontSize = 12.sp)
-            Spacer(Modifier.width(4.dp))
-        }
-        Icon(Icons.Rounded.ChevronRight, null, tint = White25, modifier = Modifier.size(18.dp))
-    }
-}
-
-@Composable
-private fun RowDivider() {
-    Divider(
-        modifier = Modifier.padding(horizontal = 16.dp),
-        thickness = 0.5.dp, color = White08
-    )
 }
 
 /* ═══════════════════════════════════════════════════════════════
