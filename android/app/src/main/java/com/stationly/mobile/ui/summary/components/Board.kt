@@ -82,7 +82,8 @@ fun Board(
     lastUpdated: Long,
     onDelete: () -> Unit,
     nextPrediction: PredictionDisplay? = null,
-    homeConfig: Map<String, String> = emptyMap()
+    homeConfig: Map<String, String> = emptyMap(),
+    isDeleting: Boolean = false
 ) {
     val lineColor = TFL_LINE_COLORS[selection.line.lowercase()] ?: TflAmber
 
@@ -127,9 +128,14 @@ fun Board(
 
         val chrono = view.findViewById<Chronometer>(R.id.last_updated_timer)
         chrono.visibility = View.VISIBLE
-        chrono.base = SystemClock.elapsedRealtime()
         chrono.format = "%s ago"
-        chrono.start()
+        // Defer start until the view is attached to the window; Chronometer.start() checks
+        // isShown() internally and silently no-ops if the view has no window token yet.
+        chrono.post {
+            chrono.stop()
+            chrono.base = SystemClock.elapsedRealtime()
+            chrono.start()
+        }
 
         val statusContainer = view.findViewById<View>(R.id.status_container)
         val severityText = view.findViewById<TextView>(R.id.status_severity)
@@ -140,10 +146,14 @@ fun Board(
             val reason = if (lineStatus.contains(":")) lineStatus.substringAfter(":") else ""
             severityText.text = severity
             reasonText.text = reason
-            reasonText.isSelected = true
         } else {
             severityText.text = homeConfig["board.status_label"] ?: "Status"
             reasonText.text = homeConfig["board.connecting_label"] ?: "Connecting to TfL signals..."
+        }
+        // Always post marquee activation — isSelected needs the view attached and measured.
+        reasonText.post {
+            reasonText.isSelected = true
+            reasonText.requestFocus()
         }
 
         val rowsContainer = view.findViewById<LinearLayout>(R.id.rows_container)
@@ -461,14 +471,27 @@ fun Board(
             confirmButton = {
                 TextButton(
                     onClick = { showDeleteDialog = false; onDelete() },
+                    enabled = !isDeleting,
                     colors = ButtonDefaults.textButtonColors(contentColor = dangerRed)
-                ) { Text("Delete Board", fontWeight = FontWeight.Bold) }
+                ) {
+                    if (isDeleting) {
+                        CircularProgressIndicator(
+                            color = dangerRed,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    } else {
+                        Text("Delete Board", fontWeight = FontWeight.Bold)
+                    }
+                }
             },
             dismissButton = {
-                TextButton(
-                    onClick = { showDeleteDialog = false },
-                    colors = ButtonDefaults.textButtonColors(contentColor = white55)
-                ) { Text("Keep It") }
+                if (!isDeleting) {
+                    TextButton(
+                        onClick = { showDeleteDialog = false },
+                        colors = ButtonDefaults.textButtonColors(contentColor = white55)
+                    ) { Text("Keep It") }
+                }
             }
         )
     }

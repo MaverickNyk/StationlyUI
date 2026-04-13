@@ -19,6 +19,7 @@ import com.stationly.core.platform.Platform
 import com.stationly.core.platform.AndroidStorageManager
 import com.stationly.core.platform.AndroidNotificationManager
 import com.stationly.core.platform.AndroidWidgetManager
+import com.stationly.mobile.util.PREFS_NAME
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -111,6 +112,10 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     // Server-controlled UI strings (labels, empty state text, explore labels, greetings)
     private val _homeConfig = MutableStateFlow<Map<String, String>>(emptyMap())
     val homeConfig: StateFlow<Map<String, String>> = _homeConfig.asStateFlow()
+
+    // True while a board delete is in flight
+    private val _isDeletingBoard = MutableStateFlow(false)
+    val isDeletingBoard: StateFlow<Boolean> = _isDeletingBoard.asStateFlow()
     
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key != null && key.startsWith("predictions_")) {
@@ -134,7 +139,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     }
     
     init {
-        context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .registerOnSharedPreferenceChangeListener(prefsListener)
 
         viewModelScope.launch { fetchAnnouncement() }
@@ -175,14 +180,10 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     
     override fun onCleared() {
         super.onCleared()
-        context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .unregisterOnSharedPreferenceChangeListener(prefsListener)
     }
 
-    private fun loadSavedSelections() {
-        // Now handled by reactive stream in init
-    }
-    
     private fun loadPredictions(selection: UserSelection) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
@@ -227,7 +228,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun loadSduiTemplateForSelection(selection: UserSelection, predictions: List<PredictionDisplay>) {
-        val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val sduiJson = prefs.getString("sdui_layout_${selection.station}", null)
         
         if (sduiJson != null) {
@@ -332,7 +333,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 _predictions.value = currentMap
                 
                 // Cache the predictions
-                val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val selection = _selections.value.find { it.station == stationId }
                 if (selection != null) {
                     val cacheKey = "predictions_${selection.station}_${selection.line}"
@@ -392,6 +393,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
      */
     fun deleteSelection(selection: UserSelection) {
         viewModelScope.launch {
+            _isDeletingBoard.value = true
             try {
                 stationLifecycleUseCase.discardStation(selection, clearSelectionInRepo = true)
 
@@ -428,31 +430,10 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
             } catch (e: Exception) {
                 Log.e("SummaryViewModel", "Error deleting selection", e)
                 _uiState.value = _uiState.value.copy(error = "Failed to delete: ${e.message}")
+            } finally {
+                _isDeletingBoard.value = false
             }
         }
-    }
-    
-    /**
-     * Get predictions for a specific selection
-     */
-    fun getPredictionsForSelection(selection: UserSelection): List<PredictionDisplay> {
-        return _predictions.value[selection.station] ?: emptyList()
-    }
-    
-    /**
-     * Check if selection has predictions
-     */
-    fun hasPredictions(selection: UserSelection): Boolean {
-        val preds = _predictions.value[selection.station]
-        return !preds.isNullOrEmpty()
-    }
-    
-    fun getLineStatusForSelection(selection: UserSelection): String? {
-        return _lineStatuses.value["${selection.mode}_${selection.line}"]
-    }
-    
-    fun getLastUpdatedForStation(station: String): Long {
-        return _stationUpdates.value[station] ?: 0L
     }
     
     private suspend fun fetchAnnouncement() {
@@ -460,7 +441,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
             val screen = sduiService.getHomeAnnouncement()
             val component = screen.components.filterIsInstance<com.stationly.core.model.sdui.SduiAppComponent.Announcement>().firstOrNull()
             if (component != null) {
-                val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val key = component.dismissKey ?: component.id
                 val dismissed = prefs.getBoolean("dismissed_announcement_$key", false)
                 if (!dismissed) _announcement.value = component
@@ -481,7 +462,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     fun dismissAnnouncement() {
         val current = _announcement.value ?: return
         val key = current.dismissKey ?: current.id
-        context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putBoolean("dismissed_announcement_$key", true).apply()
         _announcement.value = null
     }
@@ -509,12 +490,6 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         refreshAll()
     }
     
-    /**
-     * Get last updated time as string
-     */
-    fun getLastUpdatedString(): String {
-        return com.stationly.core.util.StationlyFormatters.formatLastUpdated(_uiState.value.lastUpdated)
-    }
 }
 
 data class SummaryUiState(
@@ -523,6 +498,5 @@ data class SummaryUiState(
     val isBackendOffline: Boolean = false,
     val lastUpdated: Long = 0L,
     val activeStationId: String? = null,
-    val activeLineId: String? = null,
-    val sduiLayout: com.stationly.core.model.sdui.SduiAppScreen? = null
+    val activeLineId: String? = null
 )
