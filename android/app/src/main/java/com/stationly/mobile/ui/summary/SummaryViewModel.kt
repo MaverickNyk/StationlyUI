@@ -195,7 +195,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 val currentMap = _predictions.value.toMutableMap()
                 currentMap[selection.station] = dbPreds
                 _predictions.value = currentMap
-                android.util.Log.d("SummaryViewModel", "Loaded ${dbPreds.size} departures for ${selection.station}")
+                if (com.stationly.mobile.BuildConfig.DEBUG) Log.d("SummaryViewModel", "Loaded ${dbPreds.size} departures for ${selection.station}")
                 
                 // Load and bind SDUI template if it exists
                 loadSduiTemplateForSelection(selection, dbPreds)
@@ -221,7 +221,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
             } catch (e: Exception) {
-                Log.e("SummaryViewModel", "Error loading predictions for \${selection.station}", e)
+                Log.e("SummaryViewModel", "Error loading predictions for ${selection.station}", e)
             }
         }
     }
@@ -339,7 +339,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                     val json = gson.toJson(predictions)
                     prefs.edit().putString(cacheKey, json).apply()
                     
-                    Log.d("SummaryViewModel", "FCM: Updated predictions for ${selection.stationName}")
+                    if (com.stationly.mobile.BuildConfig.DEBUG) Log.d("SummaryViewModel", "FCM: Updated predictions for ${selection.stationName}")
                     
                     // Propagate to Home Screen Widget
                     widgetManager.updateWidget(
@@ -375,10 +375,14 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                     isRefreshing = false,
                     lastUpdated = System.currentTimeMillis()
                 )
-                Log.d("SummaryViewModel", "Manual refresh complete for ${_selections.value.size} board(s)")
+                if (com.stationly.mobile.BuildConfig.DEBUG) Log.d("SummaryViewModel", "Manual refresh complete for ${_selections.value.size} board(s)")
             } catch (e: Exception) {
                 Log.e("SummaryViewModel", "Error refreshing", e)
-                _uiState.value = _uiState.value.copy(isRefreshing = false)
+                _uiState.value = _uiState.value.copy(
+                    isRefreshing = false,
+                    isBackendOffline = true,
+                    error = "Unable to reach Stationly servers. Check your connection."
+                )
             }
         }
     }
@@ -420,7 +424,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                     Log.e("SummaryViewModel", "Failed to sync delete to backend", e)
                 }
 
-                Log.d("SummaryViewModel", "Deleted selection: ${selection.stationName}")
+                if (com.stationly.mobile.BuildConfig.DEBUG) Log.d("SummaryViewModel", "Deleted selection: ${selection.stationName}")
             } catch (e: Exception) {
                 Log.e("SummaryViewModel", "Error deleting selection", e)
                 _uiState.value = _uiState.value.copy(error = "Failed to delete: ${e.message}")
@@ -456,19 +460,22 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
             val screen = sduiService.getHomeAnnouncement()
             val component = screen.components.filterIsInstance<com.stationly.core.model.sdui.SduiAppComponent.Announcement>().firstOrNull()
             if (component != null) {
-                // Check if user already dismissed this specific announcement
                 val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
                 val key = component.dismissKey ?: component.id
                 val dismissed = prefs.getBoolean("dismissed_announcement_$key", false)
                 if (!dismissed) _announcement.value = component
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.w("SummaryViewModel", "Could not fetch home announcement — using no banner", e)
+        }
     }
 
     private suspend fun fetchHomeConfig() {
         try {
             _homeConfig.value = sduiService.getHomeConfig().strings
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.w("SummaryViewModel", "Could not fetch home config — falling back to hardcoded strings", e)
+        }
     }
 
     fun dismissAnnouncement() {

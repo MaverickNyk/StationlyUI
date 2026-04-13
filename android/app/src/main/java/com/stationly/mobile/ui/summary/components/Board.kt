@@ -81,15 +81,16 @@ fun Board(
     sduiPayload: SduiWidgetPayload? = null,
     lastUpdated: Long,
     onDelete: () -> Unit,
-    nextPrediction: PredictionDisplay? = null
+    nextPrediction: PredictionDisplay? = null,
+    homeConfig: Map<String, String> = emptyMap()
 ) {
     val lineColor = TFL_LINE_COLORS[selection.line.lowercase()] ?: TflAmber
 
     val isDisrupted = lineStatus != null &&
         !lineStatus.trim().lowercase().startsWith("good service")
-    val disruptionSeverity = if (isDisrupted && lineStatus!!.contains(":"))
+    val disruptionSeverity = if (isDisrupted && lineStatus?.contains(":") == true)
         lineStatus.substringBefore(":").trim() else lineStatus?.trim() ?: ""
-    val disruptionReason = if (isDisrupted && lineStatus!!.contains(":"))
+    val disruptionReason = if (isDisrupted && lineStatus?.contains(":") == true)
         lineStatus.substringAfter(":").trim() else ""
 
     var showFullReason by remember { mutableStateOf(false) }
@@ -111,13 +112,154 @@ fun Board(
         label = "glow"
     )
 
-    // Border urgency pulse (fast when urgent, invisible otherwise)
+    // Border urgency pulse (fast when urgent)
     val borderPulse by infiniteTransition.animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(700, easing = EaseInOut), RepeatMode.Reverse),
         label = "border_pulse"
     )
     val borderAlpha = if (isUrgent) 0.35f + borderPulse * 0.55f else 0.22f
+
+    // ── Shared board update logic (used by card + fullscreen) ──
+    val boardUpdate: (View) -> Unit = { view ->
+        val context = view.context
+        view.findViewById<View>(R.id.btn_settings).visibility = View.GONE
+
+        val chrono = view.findViewById<Chronometer>(R.id.last_updated_timer)
+        chrono.visibility = View.VISIBLE
+        chrono.base = SystemClock.elapsedRealtime()
+        chrono.format = "%s ago"
+        chrono.start()
+
+        val statusContainer = view.findViewById<View>(R.id.status_container)
+        val severityText = view.findViewById<TextView>(R.id.status_severity)
+        val reasonText = view.findViewById<TextView>(R.id.status_reason)
+        statusContainer.visibility = View.VISIBLE
+        if (lineStatus != null) {
+            val severity = if (lineStatus.contains(":")) lineStatus.substringBefore(":") else lineStatus
+            val reason = if (lineStatus.contains(":")) lineStatus.substringAfter(":") else ""
+            severityText.text = severity
+            reasonText.text = reason
+            reasonText.isSelected = true
+        } else {
+            severityText.text = homeConfig["board.status_label"] ?: "Status"
+            reasonText.text = homeConfig["board.connecting_label"] ?: "Connecting to TfL signals..."
+        }
+
+        val rowsContainer = view.findViewById<LinearLayout>(R.id.rows_container)
+        val waitingContainer = view.findViewById<LinearLayout>(R.id.waiting_container)
+        rowsContainer.removeAllViews()
+        var dynTextColor = context.getColor(R.color.tfl_amber)
+
+        // Hide header row — shown in Compose header above
+        (view.findViewById<TextView>(R.id.line_name).parent as? View)?.visibility = View.GONE
+
+        if (sduiPayload != null) {
+            val theme = sduiPayload.theme
+            theme?.primaryColor?.let {
+                dynTextColor = SduiThemeManager.parseColor(it, dynTextColor)
+                view.findViewById<TextView>(R.id.line_name).setTextColor(dynTextColor)
+                chrono.setTextColor(dynTextColor)
+            }
+            theme?.backgroundColor?.let {
+                val dynBgColor = SduiThemeManager.parseColor(it, android.graphics.Color.BLACK)
+                view.findViewById<LinearLayout>(R.id.departure_board).setBackgroundColor(dynBgColor)
+            }
+            waitingContainer.visibility = View.GONE
+
+            sduiPayload.components.forEach { component ->
+                when (component) {
+                    is SduiWidgetComponent.Header -> {
+                        val header = LayoutInflater.from(context).inflate(
+                            R.layout.widget_platform_header, rowsContainer, false
+                        )
+                        val pTv = header.findViewById<TextView>(R.id.platform_name)
+                        pTv.text = component.title
+                        pTv.setTextColor(SduiThemeManager.parseColor(component.color, dynTextColor))
+                        rowsContainer.addView(header)
+                    }
+                    is SduiWidgetComponent.Row -> {
+                        val row = LayoutInflater.from(context).inflate(
+                            R.layout.widget_departure_row, rowsContainer, false
+                        )
+                        val nTv = row.findViewById<TextView>(R.id.departure_number)
+                        val dTv = row.findViewById<TextView>(R.id.destination_text)
+                        val eTv = row.findViewById<TextView>(R.id.eta_text)
+                        nTv.text = component.index
+                        dTv.text = component.destination
+                        eTv.text = component.eta
+                        nTv.setTextColor(dynTextColor)
+                        dTv.setTextColor(dynTextColor)
+                        eTv.setTextColor(SduiThemeManager.parseColor(component.etaColor, dynTextColor))
+                        if (component.animation == "pulse" && component.eta == "Due") {
+                            val anim = android.view.animation.AlphaAnimation(1f, 0.4f).apply {
+                                duration = 1000
+                                repeatMode = android.view.animation.Animation.REVERSE
+                                repeatCount = android.view.animation.Animation.INFINITE
+                            }
+                            row.startAnimation(anim)
+                        } else {
+                            row.clearAnimation()
+                        }
+                        rowsContainer.addView(row)
+                    }
+                    is SduiWidgetComponent.Message -> {
+                        val row = LayoutInflater.from(context).inflate(
+                            R.layout.widget_departure_row, rowsContainer, false
+                        )
+                        row.findViewById<TextView>(R.id.departure_number).apply {
+                            text = "-"; setTextColor(dynTextColor)
+                        }
+                        val dTv = row.findViewById<TextView>(R.id.destination_text)
+                        dTv.text = component.text
+                        dTv.setTextColor(SduiThemeManager.parseColor(component.color, dynTextColor))
+                        row.findViewById<TextView>(R.id.eta_text).text = ""
+                        rowsContainer.addView(row)
+                    }
+                    else -> {}
+                }
+            }
+        } else {
+            waitingContainer.visibility = View.GONE
+            val legacyRows = com.stationly.core.util.GlobalBoardProcessor.prepareLegacyRows(
+                predictions, selection.line, true
+            )
+            legacyRows.forEach { row ->
+                when (row) {
+                    is com.stationly.core.util.LegacyRow.Header -> {
+                        val header = LayoutInflater.from(context).inflate(
+                            R.layout.widget_platform_header, rowsContainer, false
+                        )
+                        header.findViewById<TextView>(R.id.platform_name).text = row.title
+                        rowsContainer.addView(header)
+                    }
+                    is com.stationly.core.util.LegacyRow.Departure -> {
+                        val dep = LayoutInflater.from(context).inflate(
+                            R.layout.widget_departure_row, rowsContainer, false
+                        )
+                        dep.findViewById<TextView>(R.id.departure_number).apply {
+                            text = if (row.index > 0) row.index.toString() else ""
+                            setTextColor(dynTextColor)
+                        }
+                        dep.findViewById<TextView>(R.id.destination_text).apply {
+                            text = row.destination; setTextColor(dynTextColor)
+                        }
+                        dep.findViewById<TextView>(R.id.eta_text).apply {
+                            text = row.eta; setTextColor(dynTextColor)
+                        }
+                        rowsContainer.addView(dep)
+                    }
+                    is com.stationly.core.util.LegacyRow.Message -> {
+                        val header = LayoutInflater.from(context).inflate(
+                            R.layout.widget_platform_header, rowsContainer, false
+                        )
+                        header.findViewById<TextView>(R.id.platform_name).text = row.text
+                        rowsContainer.addView(header)
+                    }
+                }
+            }
+        }
+    }
 
     // ── Outer card ──
     Box(modifier = Modifier.fillMaxWidth()) {
@@ -132,311 +274,160 @@ fun Board(
                     alpha = glowAlpha
                 }
                 .background(
-                    Brush.radialGradient(
-                        listOf(lineColor.copy(alpha = 0.55f), Color.Transparent)
-                    ),
+                    Brush.radialGradient(listOf(lineColor.copy(alpha = 0.55f), Color.Transparent)),
                     RoundedCornerShape(20.dp)
                 )
         )
 
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = Color(0xFF0C0C0C),
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(
-            width = if (isUrgent) 1.5.dp else 1.dp,
-            color = lineColor.copy(alpha = borderAlpha)
-        )
-    ) {
-        Column {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = Color(0xFF0C0C0C),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(
+                width = if (isUrgent) 1.5.dp else 1.dp,
+                color = lineColor.copy(alpha = borderAlpha)
+            )
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
 
-            // ── Header: line badge + station name + delete ──
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 14.dp, end = 10.dp, top = 13.dp, bottom = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    // Line colour pill
-                    Surface(
-                        color = lineColor.copy(alpha = 0.15f),
-                        shape = RoundedCornerShape(5.dp)
-                    ) {
-                        Row(
-                            Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                Modifier
-                                    .size(7.dp)
-                                    .background(lineColor, CircleShape)
-                            )
-                            Spacer(Modifier.width(5.dp))
-                            Text(
-                                text = selection.line.replaceFirstChar { it.uppercase() } + " Line",
-                                color = lineColor,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 0.5.sp
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = selection.stationName,
-                        color = Color.White,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 19.sp,
-                        letterSpacing = (-0.3).sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                // Very subtle delete — barely visible, shows dialog on tap
-                IconButton(
-                    onClick = { showDeleteDialog = true },
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        Icons.Rounded.Close,
-                        contentDescription = "Remove board",
-                        tint = Color.White.copy(alpha = 0.15f),
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
-            }
-
-            // ── Next departure row (integrated, compact) ──
-            if (nextPrediction != null) {
-                HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
-                NextDepartureRow(nextPrediction, lineColor)
-                HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
-            }
-
-            // ── Disruption banner ──
-            if (isDisrupted) {
-                Surface(
-                    color = Color(0xFF1A0E00),
-                    shape = RoundedCornerShape(0.dp),
-                    border = BorderStroke(width = 0.dp, color = Color.Transparent),
+                // ── Header: line badge + station name + delete ──
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(0.dp))
-                        .clickable { showFullReason = !showFullReason }
+                        .padding(start = 14.dp, end = 10.dp, top = 13.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
+                    Column(modifier = Modifier.weight(1f)) {
+                        // Line colour pill
+                        Surface(
+                            color = lineColor.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(5.dp)
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Outlined.Warning,
-                                    contentDescription = null,
-                                    tint = TflAmber,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Spacer(Modifier.width(6.dp))
+                            Row(
+                                Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(Modifier.size(7.dp).background(lineColor, CircleShape))
+                                Spacer(Modifier.width(5.dp))
                                 Text(
-                                    text = disruptionSeverity,
-                                    color = TflAmber,
+                                    text = selection.line.replaceFirstChar { it.uppercase() } + " Line",
+                                    color = lineColor,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp
-                                )
-                            }
-                            if (disruptionReason.isNotEmpty()) {
-                                Icon(
-                                    if (showFullReason) Icons.Outlined.ExpandLess
-                                    else Icons.Outlined.ExpandMore,
-                                    contentDescription = null,
-                                    tint = Color.Gray,
-                                    modifier = Modifier.size(15.dp)
+                                    letterSpacing = 0.5.sp
                                 )
                             }
                         }
-                        AnimatedVisibility(
-                            visible = showFullReason && disruptionReason.isNotEmpty(),
-                            enter = expandVertically(tween(220)) + fadeIn(tween(220)),
-                            exit = shrinkVertically(tween(180)) + fadeOut(tween(120))
-                        ) {
-                            Text(
-                                text = disruptionReason,
-                                color = Color.Gray,
-                                fontSize = 12.sp,
-                                lineHeight = 17.sp,
-                                modifier = Modifier.padding(top = 6.dp)
-                            )
-                        }
-                    }
-                }
-                HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
-            }
-
-            // ── Departure Board — untouched ──
-            AndroidView(
-                modifier = Modifier.fillMaxWidth(),
-                factory = { context ->
-                    LayoutInflater.from(context).inflate(
-                        R.layout.widget_departure_board, null, false
-                    ) as LinearLayout
-                },
-                update = { view ->
-                    val context = view.context
-
-                    view.findViewById<View>(R.id.btn_settings).visibility = View.GONE
-
-                    val chrono = view.findViewById<Chronometer>(R.id.last_updated_timer)
-                    chrono.visibility = View.VISIBLE
-                    chrono.base = SystemClock.elapsedRealtime()
-                    chrono.format = "%s ago"
-                    chrono.start()
-
-                    val statusContainer = view.findViewById<View>(R.id.status_container)
-                    val severityText = view.findViewById<TextView>(R.id.status_severity)
-                    val reasonText = view.findViewById<TextView>(R.id.status_reason)
-
-                    statusContainer.visibility = View.VISIBLE
-                    if (lineStatus != null) {
-                        val severity = if (lineStatus.contains(":"))
-                            lineStatus.substringBefore(":") else lineStatus
-                        val reason = if (lineStatus.contains(":"))
-                            lineStatus.substringAfter(":") else ""
-                        severityText.text = severity
-                        reasonText.text = reason
-                        reasonText.isSelected = true
-                    } else {
-                        severityText.text = "Status"
-                        reasonText.text = "Connecting to TfL signals..."
-                    }
-
-                    val rowsContainer = view.findViewById<LinearLayout>(R.id.rows_container)
-                    val waitingContainer = view.findViewById<LinearLayout>(R.id.waiting_container)
-                    rowsContainer.removeAllViews()
-
-                    var dynTextColor = context.getColor(R.color.tfl_amber)
-
-                    if (sduiPayload != null) {
-                        val theme = sduiPayload.theme
-                        theme?.primaryColor?.let {
-                            dynTextColor = SduiThemeManager.parseColor(it, dynTextColor)
-                            view.findViewById<TextView>(R.id.line_name).setTextColor(dynTextColor)
-                            chrono.setTextColor(dynTextColor)
-                        }
-                        theme?.backgroundColor?.let {
-                            val dynBgColor = SduiThemeManager.parseColor(it, android.graphics.Color.BLACK)
-                            view.findViewById<LinearLayout>(R.id.departure_board).setBackgroundColor(dynBgColor)
-                        }
-
-                        // Hide entire header row (logo + station name) — shown in card header above
-                        (view.findViewById<TextView>(R.id.line_name).parent as? View)?.visibility = View.GONE
-                        waitingContainer.visibility = View.GONE
-
-                        sduiPayload.components.forEach { component ->
-                            when (component) {
-                                is SduiWidgetComponent.Header -> {
-                                    val header = LayoutInflater.from(context).inflate(
-                                        R.layout.widget_platform_header, rowsContainer, false
-                                    )
-                                    val pTv = header.findViewById<TextView>(R.id.platform_name)
-                                    pTv.text = component.title
-                                    val headerColor = SduiThemeManager.parseColor(component.color, dynTextColor)
-                                    pTv.setTextColor(headerColor)
-                                    rowsContainer.addView(header)
-                                }
-                                is SduiWidgetComponent.Row -> {
-                                    val row = LayoutInflater.from(context).inflate(
-                                        R.layout.widget_departure_row, rowsContainer, false
-                                    )
-                                    val nTv = row.findViewById<TextView>(R.id.departure_number)
-                                    val dTv = row.findViewById<TextView>(R.id.destination_text)
-                                    val eTv = row.findViewById<TextView>(R.id.eta_text)
-                                    nTv.text = component.index
-                                    dTv.text = component.destination
-                                    eTv.text = component.eta
-                                    nTv.setTextColor(dynTextColor)
-                                    dTv.setTextColor(dynTextColor)
-                                    val etaColor = SduiThemeManager.parseColor(component.etaColor, dynTextColor)
-                                    eTv.setTextColor(etaColor)
-                                    if (component.animation == "pulse" && component.eta == "Due") {
-                                        val anim = android.view.animation.AlphaAnimation(1f, 0.4f).apply {
-                                            duration = 1000
-                                            repeatMode = android.view.animation.Animation.REVERSE
-                                            repeatCount = android.view.animation.Animation.INFINITE
-                                        }
-                                        row.startAnimation(anim)
-                                    } else {
-                                        row.clearAnimation()
-                                    }
-                                    rowsContainer.addView(row)
-                                }
-                                is SduiWidgetComponent.Message -> {
-                                    val row = LayoutInflater.from(context).inflate(
-                                        R.layout.widget_departure_row, rowsContainer, false
-                                    )
-                                    val nTv = row.findViewById<TextView>(R.id.departure_number)
-                                    val dTv = row.findViewById<TextView>(R.id.destination_text)
-                                    row.findViewById<TextView>(R.id.eta_text).text = ""
-                                    nTv.text = "-"
-                                    dTv.text = component.text
-                                    val msgColor = SduiThemeManager.parseColor(component.color, dynTextColor)
-                                    nTv.setTextColor(dynTextColor)
-                                    dTv.setTextColor(msgColor)
-                                    rowsContainer.addView(row)
-                                }
-                                else -> {}
-                            }
-                        }
-                    } else {
-                        // Hide entire header row (logo + station name) — shown in card header above
-                        (view.findViewById<TextView>(R.id.line_name).parent as? View)?.visibility = View.GONE
-                        waitingContainer.visibility = View.GONE
-
-                        val legacyRows = com.stationly.core.util.GlobalBoardProcessor.prepareLegacyRows(
-                            predictions, selection.line, true
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = selection.stationName,
+                            color = Color.White,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 19.sp,
+                            letterSpacing = (-0.3).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                        legacyRows.forEach { row ->
-                            when (row) {
-                                is com.stationly.core.util.LegacyRow.Header -> {
-                                    val header = LayoutInflater.from(context).inflate(
-                                        R.layout.widget_platform_header, rowsContainer, false
+                    }
+
+                    // Subtle delete button
+                    IconButton(
+                        onClick = { showDeleteDialog = true },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.Close,
+                            contentDescription = "Remove board",
+                            tint = Color.White.copy(alpha = 0.15f),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+
+                // ── Next departure strip ──
+                if (nextPrediction != null) {
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+                    NextDepartureRow(nextPrediction, lineColor)
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+                }
+
+                // ── Disruption banner ──
+                if (isDisrupted) {
+                    Surface(
+                        color = Color(0xFF1A0E00),
+                        shape = RoundedCornerShape(0.dp),
+                        border = BorderStroke(0.dp, Color.Transparent),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(0.dp))
+                            .clickable { showFullReason = !showFullReason }
+                    ) {
+                        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Outlined.Warning,
+                                        contentDescription = null,
+                                        tint = TflAmber,
+                                        modifier = Modifier.size(13.dp)
                                     )
-                                    header.findViewById<TextView>(R.id.platform_name).text = row.title
-                                    rowsContainer.addView(header)
-                                }
-                                is com.stationly.core.util.LegacyRow.Departure -> {
-                                    val dep = LayoutInflater.from(context).inflate(
-                                        R.layout.widget_departure_row, rowsContainer, false
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = disruptionSeverity,
+                                        color = TflAmber,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp
                                     )
-                                    dep.findViewById<TextView>(R.id.departure_number).text =
-                                        if (row.index > 0) row.index.toString() else ""
-                                    dep.findViewById<TextView>(R.id.destination_text).text = row.destination
-                                    dep.findViewById<TextView>(R.id.eta_text).text = row.eta
-                                    dep.findViewById<TextView>(R.id.departure_number).setTextColor(dynTextColor)
-                                    dep.findViewById<TextView>(R.id.destination_text).setTextColor(dynTextColor)
-                                    dep.findViewById<TextView>(R.id.eta_text).setTextColor(dynTextColor)
-                                    rowsContainer.addView(dep)
                                 }
-                                is com.stationly.core.util.LegacyRow.Message -> {
-                                    val header = LayoutInflater.from(context).inflate(
-                                        R.layout.widget_platform_header, rowsContainer, false
+                                if (disruptionReason.isNotEmpty()) {
+                                    Icon(
+                                        if (showFullReason) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                                        contentDescription = null,
+                                        tint = Color.Gray,
+                                        modifier = Modifier.size(15.dp)
                                     )
-                                    header.findViewById<TextView>(R.id.platform_name).text = row.text
-                                    rowsContainer.addView(header)
                                 }
+                            }
+                            AnimatedVisibility(
+                                visible = showFullReason && disruptionReason.isNotEmpty(),
+                                enter = expandVertically(tween(220)) + fadeIn(tween(220)),
+                                exit = shrinkVertically(tween(180)) + fadeOut(tween(120))
+                            ) {
+                                Text(
+                                    text = disruptionReason,
+                                    color = Color.Gray,
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.sp,
+                                    modifier = Modifier.padding(top = 6.dp)
+                                )
                             }
                         }
                     }
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
                 }
-            )
+
+                // ── Departure Board ──
+                AndroidView(
+                    modifier = Modifier.fillMaxWidth(),
+                    factory = { context ->
+                        LayoutInflater.from(context)
+                            .inflate(R.layout.widget_departure_board, null, false) as LinearLayout
+                    },
+                    update = boardUpdate,
+                    onRelease = { view ->
+                        view.findViewById<Chronometer>(R.id.last_updated_timer)?.stop()
+                    }
+                )
+            }
         }
-    }
     } // end ambient glow Box
 
-    // ── Delete board confirmation dialog — matches ProfileScreen style ──
+    // ── Delete board confirmation dialog ──
     if (showDeleteDialog) {
         val dangerRed = Color(0xFFFF4444)
         val white90 = Color.White.copy(alpha = 0.90f)
@@ -448,12 +439,7 @@ fun Board(
             titleContentColor = white90,
             textContentColor = white55,
             icon = {
-                Icon(
-                    Icons.Rounded.DeleteOutline,
-                    contentDescription = null,
-                    tint = dangerRed,
-                    modifier = Modifier.size(28.dp)
-                )
+                Icon(Icons.Rounded.DeleteOutline, null, tint = dangerRed, modifier = Modifier.size(28.dp))
             },
             title = { Text("Delete This Board?", fontWeight = FontWeight.Bold) },
             text = {
@@ -468,8 +454,7 @@ fun Board(
                     Spacer(Modifier.height(2.dp))
                     Text(
                         "You can always set up a new board from the home screen.",
-                        color = white25,
-                        fontSize = 12.sp
+                        color = white25, fontSize = 12.sp
                     )
                 }
             },
@@ -512,81 +497,113 @@ private fun NextDepartureRow(prediction: PredictionDisplay, lineColor: Color) {
         label = "due_alpha"
     )
     val etaColor = when {
-        isDue -> Color(0xFFFF5252)
+        isDue        -> Color(0xFFFF5252)
         countdown == 1 -> TflAmber
-        else -> Color.White
+        else         -> Color.White
     }
 
-    Row(
+    // ETA depletion progress (0 = empty/due, 1 = 10+ min)
+    val etaProgress by animateFloatAsState(
+        targetValue = (countdown / 10f).coerceIn(0f, 1f),
+        animationSpec = tween(800),
+        label = "eta_progress"
+    )
+
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .background(lineColor.copy(alpha = 0.06f))
-            .padding(horizontal = 14.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
     ) {
-        // Left: label + destination + platform stacked
-        Column(modifier = Modifier.weight(1f)) {
-            // Pulsing live indicator + label
-            val livePulse by rememberInfiniteTransition(label = "live_dot").animateFloat(
-                initialValue = 0.4f, targetValue = 1f,
-                animationSpec = infiniteRepeatable(tween(900, easing = EaseInOut), RepeatMode.Reverse),
-                label = "live_dot_alpha"
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(5.dp)
-                        .graphicsLayer { alpha = livePulse }
-                        .background(lineColor, CircleShape)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Left: label + destination + platform
+            Column(modifier = Modifier.weight(1f)) {
+                val livePulse by rememberInfiniteTransition(label = "live_dot").animateFloat(
+                    initialValue = 0.4f, targetValue = 1f,
+                    animationSpec = infiniteRepeatable(tween(900, easing = EaseInOut), RepeatMode.Reverse),
+                    label = "live_dot_alpha"
                 )
-                Spacer(Modifier.width(5.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .size(5.dp)
+                            .graphicsLayer { alpha = livePulse }
+                            .background(lineColor, CircleShape)
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        "NEXT DEPARTURE",
+                        color = Color.Gray.copy(alpha = 0.6f),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.2.sp
+                    )
+                }
+                Spacer(Modifier.height(3.dp))
                 Text(
-                    "NEXT DEPARTURE",
-                    color = Color.Gray.copy(alpha = 0.6f),
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.2.sp
+                    "→ ${prediction.destination}",
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
+                if (prediction.platform.isNotBlank() && prediction.platform != "null") {
+                    Spacer(Modifier.height(4.dp))
+                    // Platform styled as a station sign badge
+                    Surface(
+                        color = Color.White.copy(alpha = 0.08f),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = prediction.platform,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            color = Color.White.copy(alpha = 0.75f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.3.sp
+                        )
+                    }
+                }
             }
-            Spacer(Modifier.height(3.dp))
-            Text(
-                "→ ${prediction.destination}",
-                color = Color.White.copy(alpha = 0.9f),
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (prediction.platform.isNotBlank() && prediction.platform != "null") {
-                Spacer(Modifier.height(2.dp))
+
+            // Right: ETA large and prominent
+            Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    prediction.platform,
-                    color = Color.Gray.copy(alpha = 0.7f),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium
+                    if (isDue) "Due" else "$countdown",
+                    color = etaColor.copy(alpha = if (isDue) pulseAlpha else 1f),
+                    fontWeight = FontWeight.Black,
+                    fontSize = 22.sp,
+                    fontFamily = FontFamily.Monospace
                 )
+                if (!isDue) {
+                    Text(
+                        "min",
+                        color = etaColor.copy(alpha = 0.6f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
+                }
             }
         }
 
-        // Right: ETA large and prominent
-        Column(horizontalAlignment = Alignment.End) {
-            Text(
-                if (isDue) "Due" else "$countdown",
-                color = etaColor.copy(alpha = if (isDue) pulseAlpha else 1f),
-                fontWeight = FontWeight.Black,
-                fontSize = 22.sp,
-                fontFamily = FontFamily.Monospace
-            )
-            if (!isDue) {
-                Text(
-                    "min",
-                    color = etaColor.copy(alpha = 0.6f),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.5.sp
+        // ETA depletion bar — runs left-to-right, empties as train approaches
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(etaProgress)
+                .height(2.dp)
+                .align(Alignment.BottomStart)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(etaColor.copy(alpha = 0.9f), etaColor.copy(alpha = 0.2f))
+                    )
                 )
-            }
-        }
+        )
     }
 }
 

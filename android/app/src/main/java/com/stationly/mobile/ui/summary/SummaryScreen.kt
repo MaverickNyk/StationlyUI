@@ -90,7 +90,8 @@ fun SummaryScreen(
                 onNavigateToProfile = onNavigateToProfile,
                 onNavigateToSelection = onNavigateToSelection,
                 selectionsEmpty = selections.isEmpty(),
-                pulseAlpha = pulseAlpha
+                pulseAlpha = pulseAlpha,
+                liveLabel = homeConfig["topbar.live_label"] ?: "Live Network"
             )
         }
     ) { padding ->
@@ -154,7 +155,8 @@ fun SummaryScreen(
                                         sduiPayload = sduiPayloads[selection.station],
                                         lastUpdated = stationUpdates[selection.station] ?: 0L,
                                         onDelete = { viewModel.deleteSelection(selection) },
-                                        nextPrediction = selectionPredictions.firstOrNull()
+                                        nextPrediction = selectionPredictions.firstOrNull(),
+                                        homeConfig = homeConfig
                                     )
                                 }
                             }
@@ -202,7 +204,8 @@ private fun SummaryTopBar(
     onNavigateToProfile: () -> Unit,
     onNavigateToSelection: () -> Unit,
     selectionsEmpty: Boolean,
-    pulseAlpha: Float
+    pulseAlpha: Float,
+    liveLabel: String = "Live Network"
 ) {
     CenterAlignedTopAppBar(
         title = {
@@ -232,9 +235,9 @@ private fun SummaryTopBar(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Live Network", 
-                            color = Color.Gray, 
-                            fontSize = 10.sp, 
+                            text = liveLabel,
+                            color = Color.Gray,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.5.sp
                         )
