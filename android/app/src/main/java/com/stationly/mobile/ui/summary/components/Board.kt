@@ -129,9 +129,9 @@ fun Board(
         val chrono = view.findViewById<Chronometer>(R.id.last_updated_timer)
         chrono.visibility = View.VISIBLE
         chrono.format = "%s ago"
-        // Defer start until the view is attached to the window; Chronometer.start() checks
-        // isShown() internally and silently no-ops if the view has no window token yet.
-        chrono.post {
+        // Reset the timer on each data refresh. factory's attach-listener handles the
+        // initial start; here we only act when the view is already attached.
+        if (view.isAttachedToWindow) {
             chrono.stop()
             chrono.base = SystemClock.elapsedRealtime()
             chrono.start()
@@ -150,10 +150,9 @@ fun Board(
             severityText.text = homeConfig["board.status_label"] ?: "Status"
             reasonText.text = homeConfig["board.connecting_label"] ?: "Connecting to TfL signals..."
         }
-        // Always post marquee activation — isSelected needs the view attached and measured.
-        reasonText.post {
+        // Re-arm marquee after every text change (isSelected resets when text is set).
+        if (view.isAttachedToWindow) {
             reasonText.isSelected = true
-            reasonText.requestFocus()
         }
 
         val rowsContainer = view.findViewById<LinearLayout>(R.id.rows_container)
@@ -425,8 +424,25 @@ fun Board(
                 AndroidView(
                     modifier = Modifier.fillMaxWidth(),
                     factory = { context ->
-                        LayoutInflater.from(context)
+                        val view = LayoutInflater.from(context)
                             .inflate(R.layout.widget_departure_board, null, false) as LinearLayout
+                        // addOnAttachStateChangeListener is the only reliable hook inside
+                        // Compose's AndroidView — post{} is not guaranteed because Compose
+                        // may call update before the view has a window token.
+                        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                            override fun onViewAttachedToWindow(v: View) {
+                                v.findViewById<Chronometer>(R.id.last_updated_timer)?.apply {
+                                    stop()
+                                    base = SystemClock.elapsedRealtime()
+                                    start()
+                                }
+                                v.findViewById<TextView>(R.id.status_reason)?.isSelected = true
+                            }
+                            override fun onViewDetachedFromWindow(v: View) {
+                                v.findViewById<Chronometer>(R.id.last_updated_timer)?.stop()
+                            }
+                        })
+                        view
                     },
                     update = boardUpdate,
                     onRelease = { view ->
