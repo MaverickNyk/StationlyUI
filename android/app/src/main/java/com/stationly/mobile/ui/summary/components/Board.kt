@@ -121,7 +121,6 @@ fun Board(
     )
     val borderAlpha = if (isUrgent) 0.35f + borderPulse * 0.55f else 0.22f
 
-    // ── Shared board update logic (used by card + fullscreen) ──
     val boardUpdate: (View) -> Unit = { view ->
         val context = view.context
         view.findViewById<View>(R.id.btn_settings).visibility = View.GONE
