@@ -15,6 +15,13 @@ import androidx.compose.ui.unit.sp
 import com.stationly.mobile.ui.theme.TflAmber
 import kotlinx.coroutines.delay
 
+private fun clockHM(): Pair<String, String> {
+    val cal = java.util.Calendar.getInstance()
+    val h = cal.get(java.util.Calendar.HOUR_OF_DAY).toString().padStart(2, '0')
+    val m = cal.get(java.util.Calendar.MINUTE).toString().padStart(2, '0')
+    return h to m
+}
+
 @Composable
 fun SummaryHeader(
     count: Int,
@@ -32,11 +39,12 @@ fun SummaryHeader(
         }
     }
 
-    var currentTime by remember { mutableStateOf(clockString()) }
+    // Clock updates every minute
+    var clockParts by remember { mutableStateOf(clockHM()) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(30_000L)
-            currentTime = clockString()
+            clockParts = clockHM()
         }
     }
 
@@ -74,8 +82,9 @@ fun SummaryHeader(
 
         // Right — station clock
         Column(horizontalAlignment = Alignment.End) {
+            val (h, m) = clockParts
             Text(
-                text = currentTime,
+                text = "$h:$m",
                 color = TflAmber,
                 fontWeight = FontWeight.Black,
                 fontSize = 30.sp,
@@ -90,11 +99,4 @@ fun SummaryHeader(
             )
         }
     }
-}
-
-private fun clockString(): String {
-    val cal = java.util.Calendar.getInstance()
-    val h = cal.get(java.util.Calendar.HOUR_OF_DAY).toString().padStart(2, '0')
-    val m = cal.get(java.util.Calendar.MINUTE).toString().padStart(2, '0')
-    return "$h:$m"
 }

@@ -122,7 +122,7 @@ fun SummaryScreen(
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
-                            verticalArrangement = Arrangement.spacedBy(28.dp)
+                            verticalArrangement = Arrangement.spacedBy(20.dp)
                         ) {
                             item {
                                 SummaryHeader(
@@ -144,20 +144,8 @@ fun SummaryScreen(
 
                             items(currentSelections, key = { "${it.station}_${it.line}" }) { selection ->
                                 val selectionPredictions = predictions[selection.station] ?: emptyList()
-                                val lineColor = TFL_LINE_COLORS[selection.line.lowercase()] ?: TflAmber
 
-                                Column(
-                                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                                    modifier = Modifier.animateItem()
-                                ) {
-                                    val nextDeparture = selectionPredictions.firstOrNull()
-                                    if (nextDeparture != null) {
-                                        NextDepartureCard(
-                                            prediction = nextDeparture,
-                                            lineColor = lineColor
-                                        )
-                                    }
-
+                                Box(modifier = Modifier.animateItem()) {
                                     Board(
                                         selection = selection,
                                         predictions = selectionPredictions,
@@ -165,7 +153,8 @@ fun SummaryScreen(
                                         lineStatus = lineStatuses["${selection.mode}_${selection.line}".lowercase()],
                                         sduiPayload = sduiPayloads[selection.station],
                                         lastUpdated = stationUpdates[selection.station] ?: 0L,
-                                        onDelete = { viewModel.deleteSelection(selection) }
+                                        onDelete = { viewModel.deleteSelection(selection) },
+                                        nextPrediction = selectionPredictions.firstOrNull()
                                     )
                                 }
                             }

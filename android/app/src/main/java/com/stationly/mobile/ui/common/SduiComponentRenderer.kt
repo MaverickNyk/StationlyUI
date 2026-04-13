@@ -67,33 +67,35 @@ fun SduiComponentRenderer(
 fun SduiCard(component: SduiAppComponent.Card, primaryColor: Color = TflAmber) {
     val isSubtle = component.style == "subtle"
     val isBrand = component.style == "brand"
+    val title = component.title
+    val body = component.body
     Surface(
         color = Surface1,
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(1.dp, White08)
     ) {
         Column(Modifier.fillMaxWidth().padding(20.dp)) {
-            if (isBrand && component.title != null) {
+            if (isBrand && title != null) {
                 Text(
-                    component.title,
+                    title,
                     color = primaryColor,
                     fontWeight = FontWeight.Black,
                     fontSize = 20.sp,
                     letterSpacing = 0.5.sp
                 )
                 Spacer(Modifier.height(6.dp))
-            } else if (component.title != null) {
+            } else if (title != null) {
                 Text(
-                    component.title,
+                    title,
                     color = White90,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 15.sp
                 )
                 Spacer(Modifier.height(6.dp))
             }
-            if (component.body != null) {
+            if (body != null) {
                 Text(
-                    component.body,
+                    body,
                     color = if (isSubtle) White25 else White55,
                     fontSize = if (isSubtle) 11.sp else 13.sp,
                     lineHeight = if (isSubtle) 15.sp else 19.sp
@@ -151,6 +153,7 @@ fun SduiSection(
 @Composable
 fun SduiLinkRow(component: SduiAppComponent.LinkRow, onOpenUrl: (String) -> Unit) {
     val icon = iconFromString(component.icon)
+    val subtitle = component.subtitle
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -171,8 +174,8 @@ fun SduiLinkRow(component: SduiAppComponent.LinkRow, onOpenUrl: (String) -> Unit
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(component.title, color = White90, fontWeight = FontWeight.Medium, fontSize = 14.sp)
-            if (component.subtitle != null) {
-                Text(component.subtitle, color = White25, fontSize = 12.sp)
+            if (subtitle != null) {
+                Text(subtitle, color = White25, fontSize = 12.sp)
             }
         }
         Icon(Icons.Outlined.ChevronRight, null, tint = White25, modifier = Modifier.size(18.dp))
