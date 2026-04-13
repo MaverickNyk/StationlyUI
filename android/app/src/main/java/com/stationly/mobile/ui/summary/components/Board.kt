@@ -129,13 +129,12 @@ fun Board(
         val chrono = view.findViewById<Chronometer>(R.id.last_updated_timer)
         chrono.visibility = View.VISIBLE
         chrono.format = "%s ago"
-        // Reset the timer on each data refresh. factory's attach-listener handles the
-        // initial start; here we only act when the view is already attached.
-        if (view.isAttachedToWindow) {
-            chrono.stop()
-            chrono.base = SystemClock.elapsedRealtime()
-            chrono.start()
-        }
+        // Call stop/base/start unconditionally. If the view isn't attached yet,
+        // mStarted is set to true; Chronometer.onWindowVisibilityChanged(VISIBLE)
+        // will call updateRunning() automatically once the window becomes visible.
+        chrono.stop()
+        chrono.base = SystemClock.elapsedRealtime()
+        chrono.start()
 
         val statusContainer = view.findViewById<View>(R.id.status_container)
         val severityText = view.findViewById<TextView>(R.id.status_severity)
@@ -150,12 +149,11 @@ fun Board(
             severityText.text = homeConfig["board.status_label"] ?: "Status"
             reasonText.text = homeConfig["board.connecting_label"] ?: "Connecting to TfL signals..."
         }
-        // Re-arm marquee after every text change. Toggle false→true so setSelected()
-        // triggers startMarquee() (it only acts when the value actually changes).
-        if (view.isAttachedToWindow) {
-            reasonText.isSelected = false
-            reasonText.isSelected = true
-        }
+        // Reset then post the marquee re-arm so it runs after the layout pass.
+        // isSelected=true needs getWidth()>0 (canMarquee), which is only true after
+        // the view has been measured. post() defers to after the current frame.
+        reasonText.isSelected = false
+        reasonText.post { reasonText.isSelected = true }
 
         val rowsContainer = view.findViewById<LinearLayout>(R.id.rows_container)
         val waitingContainer = view.findViewById<LinearLayout>(R.id.waiting_container)
@@ -426,38 +424,8 @@ fun Board(
                 AndroidView(
                     modifier = Modifier.fillMaxWidth(),
                     factory = { context ->
-                        val view = LayoutInflater.from(context)
+                        LayoutInflater.from(context)
                             .inflate(R.layout.widget_departure_board, null, false) as LinearLayout
-                        // addOnAttachStateChangeListener is the only reliable hook inside
-                        // Compose's AndroidView — post{} is not guaranteed because Compose
-                        // may call update before the view has a window token.
-                        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-                        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-                            override fun onViewAttachedToWindow(v: View) {
-                                // Delay 200 ms so that onWindowVisibilityChanged(VISIBLE) has
-                                // already fired (sets Chronometer.mVisible=true) and the view
-                                // has been measured (getWidth()>0 for marquee canMarquee()).
-                                // Calling start() before mVisible=true silently no-ops the tick.
-                                mainHandler.postDelayed({
-                                    if (v.isAttachedToWindow) {
-                                        v.findViewById<Chronometer>(R.id.last_updated_timer)?.apply {
-                                            stop()
-                                            base = SystemClock.elapsedRealtime()
-                                            start()
-                                        }
-                                        v.findViewById<TextView>(R.id.status_reason)?.apply {
-                                            isSelected = false
-                                            isSelected = true
-                                        }
-                                    }
-                                }, 200L)
-                            }
-                            override fun onViewDetachedFromWindow(v: View) {
-                                mainHandler.removeCallbacksAndMessages(null)
-                                v.findViewById<Chronometer>(R.id.last_updated_timer)?.stop()
-                            }
-                        })
-                        view
                     },
                     update = boardUpdate,
                     onRelease = { view ->
