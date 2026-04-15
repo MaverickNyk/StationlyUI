@@ -73,3 +73,4 @@ captures/
 !gradle/wrapper/gradle-wrapper.properties
 !gradle/wrapper/gradle-wrapper.jar
 !kotlin-js-store/yarn.lock
+graphify-out/
