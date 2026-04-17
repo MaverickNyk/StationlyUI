@@ -32,6 +32,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -79,8 +81,7 @@ private fun computeStep(s: Map<String, String>): Int = when {
 private fun screenIdx(s: Map<String, String>): Int = when {
     "mode"    !in s -> 0
     "station" !in s -> 1
-    "line"    !in s -> 2
-    else            -> 3
+    else            -> 2  // merged line + direction screen
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -172,41 +173,34 @@ fun SelectionScreen(
 
                     // Screen 1 — Station (nearby + search combined)
                     1 -> StationScreen(
-                        layout        = st.layout,
-                        stations      = st.dropdownData["station"] ?: emptyList(),
-                        selectedId    = st.selections["station"],
-                        locating      = st.isLocating,
-                        noNearby      = st.noNearbyStationsFound,
-                        primary       = primary,
-                        modeIcon      = mode?.iconUrl,
-                        mode          = st.selections["mode"],
-                        onSelect      = { viewModel.onSelectionChanged("station", it.id) },
-                        onSearch      = { viewModel.searchStations(it) }
+                        layout          = st.layout,
+                        stations        = st.dropdownData["station"] ?: emptyList(),
+                        recentStations  = st.recentStations,
+                        selectedId      = st.selections["station"],
+                        locating        = st.isLocating,
+                        noNearby        = st.noNearbyStationsFound,
+                        primary         = primary,
+                        modeIcon        = mode?.iconUrl,
+                        mode            = st.selections["mode"],
+                        onSelect        = { viewModel.onSelectionChanged("station", it.id) },
+                        onSearch        = { viewModel.searchStations(it) }
                     )
 
-                    // Screen 2 — Line
-                    2 -> ListScreen(
-                        title   = st.layout?.sdText("screen_line_title")    ?: "Select Line",
-                        sub     = st.layout?.sdText("screen_line_subtitle")  ?: "Lines stopping here.",
-                        options = st.dropdownData["line"] ?: emptyList(),
-                        selectedId = st.selections["line"],
-                        loading = st.dropdownData["line"] == null && "line" !in st.failedFetches,
-                        err     = "line" in st.failedFetches,
-                        primary = primary,
-                        modeIcon = null,
-                        mode    = st.selections["mode"],
-                        onSelect  = { viewModel.onSelectionChanged("line", it.id) },
-                        onRetry   = { viewModel.retryDropdown("line") }
-                    )
-
-                    // Screen 3 — Direction
-                    3 -> DirScreen(
-                        layout    = st.layout,
-                        options   = st.dropdownData["direction"] ?: emptyList(),
-                        selectedId = st.selections["direction"],
-                        loading   = st.dropdownData["direction"] == null && "direction" !in st.failedFetches,
-                        primary   = primary,
-                        onSelect  = { viewModel.onSelectionChanged("direction", it.id) }
+                    // Screen 2 — Line + Direction (merged)
+                    2 -> LineDirectionScreen(
+                        layout          = st.layout,
+                        lines           = st.dropdownData["line"] ?: emptyList(),
+                        selectedLineId  = st.selections["line"],
+                        directions      = st.dropdownData["direction"] ?: emptyList(),
+                        selectedDirId   = st.selections["direction"],
+                        loadingLines    = st.dropdownData["line"] == null && "line" !in st.failedFetches,
+                        loadingDirs     = st.dropdownData["direction"] == null && "direction" !in st.failedFetches,
+                        errLines        = "line" in st.failedFetches,
+                        primary         = primary,
+                        mode            = st.selections["mode"],
+                        onSelectLine    = { viewModel.onSelectionChanged("line", it.id) },
+                        onSelectDir     = { viewModel.onSelectionChanged("direction", it.id) },
+                        onRetry         = { viewModel.retryDropdown("line") }
                     )
 
                     else -> Box(Modifier.fillMaxSize())
@@ -356,19 +350,21 @@ private fun ModeCard(mode: SduiDropdownOption, primary: Color, onClick: () -> Un
 @Composable
 private fun StationScreen(
     layout: SduiAppScreen?,
-    stations: List<SduiDropdownOption>, selectedId: String?,
+    stations: List<SduiDropdownOption>,
+    recentStations: List<SduiDropdownOption>,
+    selectedId: String?,
     locating: Boolean, noNearby: Boolean,
     primary: Color, modeIcon: String?, mode: String?,
     onSelect: (SduiDropdownOption) -> Unit,
     onSearch: (String) -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    val focusRequester = remember { FocusRequester() }
 
-    // Debounce search by 300 ms
-    LaunchedEffect(searchQuery) {
-        delay(300)
-        onSearch(searchQuery)
-    }
+    LaunchedEffect(searchQuery) { delay(300); onSearch(searchQuery) }
+
+    // Auto-focus search when location is unavailable
+    LaunchedEffect(noNearby) { if (noNearby && stations.isEmpty()) focusRequester.requestFocus() }
 
     Column(Modifier.fillMaxSize()) {
         Spacer(Modifier.height(16.dp))
@@ -384,21 +380,19 @@ private fun StationScreen(
         )
         Spacer(Modifier.height(12.dp))
 
-        // ── Search bar (always visible) ──
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 10.dp),
+                .padding(bottom = 10.dp)
+                .focusRequester(focusRequester),
             placeholder = { Text("Search stations…", color = White25, fontSize = 15.sp) },
             leadingIcon  = { Icon(Icons.Rounded.Search, null, tint = primary.copy(0.6f), modifier = Modifier.size(20.dp)) },
             trailingIcon = {
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { searchQuery = "" }) {
-                        Icon(Icons.Rounded.Clear, null, tint = White25, modifier = Modifier.size(18.dp))
-                    }
+                if (searchQuery.isNotEmpty()) IconButton({ searchQuery = "" }) {
+                    Icon(Icons.Rounded.Clear, null, tint = White25, modifier = Modifier.size(18.dp))
                 }
             },
             singleLine = true,
@@ -406,13 +400,12 @@ private fun StationScreen(
             shape = RoundedCornerShape(12.dp),
             textStyle = LocalTextStyle.current.copy(fontSize = 15.sp),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor   = primary.copy(0.5f), unfocusedBorderColor = White08,
-                focusedContainerColor   = Surface2, unfocusedContainerColor = Surface1,
+                focusedBorderColor = primary.copy(0.5f), unfocusedBorderColor = White08,
+                focusedContainerColor = Surface2, unfocusedContainerColor = Surface1,
                 focusedTextColor = White90, unfocusedTextColor = White90
             )
         )
 
-        // ── List ──
         when {
             locating -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 val p by rememberInfiniteTransition("loc").animateFloat(
@@ -429,39 +422,28 @@ private fun StationScreen(
                 }
             }
 
-            noNearby && stations.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
-                    Icon(Icons.Rounded.SearchOff, null, tint = White25, modifier = Modifier.size(44.dp))
-                    Spacer(Modifier.height(14.dp))
-                    Text(
-                        if (searchQuery.isBlank()) "No nearby stops found" else "No results for \"$searchQuery\"",
-                        color = White90, fontWeight = FontWeight.SemiBold, fontSize = 16.sp,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        if (searchQuery.isBlank()) "Try typing a station name above" else "Check spelling or try a nearby stop",
-                        color = White55, fontSize = 12.sp, textAlign = TextAlign.Center
-                    )
-                }
-            }
-
             stations.isEmpty() -> Loader(primary)
 
             else -> {
+                val showRecent = searchQuery.isBlank() && recentStations.isNotEmpty()
                 val sectionLabel = if (searchQuery.isBlank()) "Nearby" else "Results"
                 LazyColumn(
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 2.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    item {
-                        Text(sectionLabel, color = White25, fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
-                            modifier = Modifier.padding(bottom = 4.dp))
+                    if (showRecent) {
+                        item {
+                            SectionHeader("Recent")
+                        }
+                        items(recentStations, key = { "r_${it.id}" }) { s ->
+                            OptRow(s, s.id == selectedId, primary, modeIcon, mode) { onSelect(s) }
+                        }
+                        item { Spacer(Modifier.height(4.dp)) }
                     }
-                    items(stations, key = { it.id }) { st ->
-                        OptRow(st, st.id == selectedId, primary, modeIcon, mode) { onSelect(st) }
+                    item { SectionHeader(sectionLabel) }
+                    items(stations, key = { it.id }) { s ->
+                        OptRow(s, s.id == selectedId, primary, modeIcon, mode) { onSelect(s) }
                     }
                     item { Spacer(Modifier.height(20.dp)) }
                 }
@@ -471,70 +453,85 @@ private fun StationScreen(
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Generic list screen (Lines / Manual Stations)
+   Screen 2 — Line + Direction (merged)
    ═══════════════════════════════════════════════════════════════ */
 @Composable
-private fun ListScreen(
-    title: String, sub: String,
-    options: List<SduiDropdownOption>, selectedId: String?,
-    loading: Boolean, err: Boolean, primary: Color,
-    modeIcon: String? = null,
-    mode: String? = null,
-    onSelect: (SduiDropdownOption) -> Unit, onRetry: () -> Unit
+private fun LineDirectionScreen(
+    layout: SduiAppScreen?,
+    lines: List<SduiDropdownOption>,
+    selectedLineId: String?,
+    directions: List<SduiDropdownOption>,
+    selectedDirId: String?,
+    loadingLines: Boolean,
+    loadingDirs: Boolean,
+    errLines: Boolean,
+    primary: Color,
+    mode: String?,
+    onSelectLine: (SduiDropdownOption) -> Unit,
+    onSelectDir: (SduiDropdownOption) -> Unit,
+    onRetry: () -> Unit
 ) {
-    var q by remember(options) { mutableStateOf("") }
-    val showSearch = options.size > 10
-    val list = remember(options, q) {
-        if (q.isBlank() || !showSearch) options
-        else options.filter { it.label.contains(q, true) }
-    }
+    val lineSelected = selectedLineId != null
+    val funFactTitle = layout?.sdText("screen_direction_funfact_title")
+    val funFactText  = layout?.sdText("screen_direction_funfact")
 
     Column(Modifier.fillMaxSize()) {
         Spacer(Modifier.height(16.dp))
-        Text(title, color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp,
-            modifier = Modifier.padding(horizontal = 24.dp))
+        Text(
+            if (!lineSelected) layout?.sdText("screen_line_title") ?: "Select Line"
+            else layout?.sdText("screen_direction_title") ?: "Which direction?",
+            color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp,
+            modifier = Modifier.padding(horizontal = 24.dp)
+        )
         Spacer(Modifier.height(4.dp))
-        Text(sub, color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp))
+        Text(
+            if (!lineSelected) layout?.sdText("screen_line_subtitle") ?: "Lines stopping here."
+            else layout?.sdText("screen_direction_subtitle") ?: "Which way are you going?",
+            color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp)
+        )
         Spacer(Modifier.height(14.dp))
 
         when {
-            err     -> Err("Couldn't load data", primary, onRetry)
-            loading -> Loader(primary)
-            else -> {
-                if (showSearch) {
-                    OutlinedTextField(
-                        value = q, onValueChange = { q = it },
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 10.dp),
-                        placeholder = { Text("Search…", color = White25, fontSize = 15.sp) },
-                        leadingIcon  = { Icon(Icons.Rounded.Search, null, tint = primary.copy(0.6f), modifier = Modifier.size(20.dp)) },
-                        trailingIcon = { if (q.isNotEmpty()) IconButton({ q = "" }) { Icon(Icons.Rounded.Clear, null, tint = White25, modifier = Modifier.size(18.dp)) } },
-                        singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        shape = RoundedCornerShape(12.dp),
-                        textStyle = LocalTextStyle.current.copy(fontSize = 15.sp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = primary.copy(0.5f), unfocusedBorderColor = White08,
-                            focusedContainerColor = Surface2, unfocusedContainerColor = Surface1,
-                            focusedTextColor = White90, unfocusedTextColor = White90
-                        )
-                    )
+            errLines -> Err("Couldn't load lines", primary, onRetry)
+            loadingLines -> Loader(primary)
+            else -> LazyColumn(
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                item { SectionHeader("Lines") }
+
+                items(lines, key = { it.id }) { line ->
+                    OptRow(line, line.id == selectedLineId, primary, null, mode) { onSelectLine(line) }
+
+                    // Inline direction picker expands below the selected line
+                    AnimatedVisibility(
+                        visible = line.id == selectedLineId,
+                        enter = expandVertically(tween(280)) + fadeIn(tween(220)),
+                        exit  = shrinkVertically(tween(200)) + fadeOut(tween(150))
+                    ) {
+                        Column(Modifier.padding(start = 8.dp, top = 10.dp)) {
+                            SectionHeader("Direction")
+                            Spacer(Modifier.height(8.dp))
+                            if (loadingDirs) {
+                                Box(Modifier.fillMaxWidth().height(56.dp), Alignment.Center) {
+                                    CircularProgressIndicator(color = primary, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
+                                }
+                            } else {
+                                directions.forEach { dir ->
+                                    DirCard(dir, dir.id == selectedDirId, primary) { onSelectDir(dir) }
+                                    Spacer(Modifier.height(8.dp))
+                                }
+                                if (funFactText != null && selectedDirId != null) {
+                                    Spacer(Modifier.height(4.dp))
+                                    DirFunFact(primary, funFactTitle, funFactText)
+                                }
+                            }
+                        }
+                    }
                 }
 
-                if (list.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), Alignment.Center) {
-                        Text(if (q.isBlank()) "Nothing here yet" else "No results", color = White25, fontSize = 13.sp)
-                    }
-                } else {
-                    LazyColumn(
-                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 2.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        items(list, key = { it.id }) { opt ->
-                            OptRow(opt, opt.id == selectedId, primary, modeIcon, mode) { onSelect(opt) }
-                        }
-                        item { Spacer(Modifier.height(20.dp)) }
-                    }
-                }
+                item { Spacer(Modifier.height(20.dp)) }
             }
         }
     }
@@ -580,14 +577,27 @@ private fun OptRow(opt: SduiDropdownOption, sel: Boolean, primary: Color, modeIc
             Column(Modifier.weight(1f)) {
                 Text(displayLabel, color = if (sel) primary else White90, fontWeight = FontWeight.Medium,
                     fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                opt.secondaryLabel?.let { secondary ->
-                    Spacer(Modifier.height(3.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (secondary.contains("km", true) || secondary.contains("mi", true) || secondary.contains("m ", true) || secondary.endsWith("m")) {
-                            Icon(Icons.Rounded.NearMe, null, tint = primary.copy(0.6f), modifier = Modifier.size(11.dp))
-                            Spacer(Modifier.width(4.dp))
+                val hasDistance = opt.secondaryLabel != null
+                val hasTags = !opt.tags.isNullOrEmpty()
+                if (hasDistance || hasTags) {
+                    Spacer(Modifier.height(5.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        opt.secondaryLabel?.let { secondary ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Rounded.NearMe, null, tint = primary.copy(0.6f), modifier = Modifier.size(11.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(secondary, color = primary.copy(0.6f), fontSize = 12.sp)
+                            }
                         }
-                        Text(secondary, color = primary.copy(0.6f), fontSize = 12.sp)
+                        opt.tags?.forEach { hex ->
+                            val dotColor = remember(hex) {
+                                runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrNull()
+                            }
+                            if (dotColor != null) {
+                                Box(Modifier.size(8.dp).background(dotColor, CircleShape)
+                                    .border(0.5.dp, Color.White.copy(0.15f), CircleShape))
+                            }
+                        }
                     }
                 }
             }
@@ -603,37 +613,13 @@ private fun OptRow(opt: SduiDropdownOption, sel: Boolean, primary: Color, modeIc
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Direction step — grouped cards with destination bullets
+   Small section header
    ═══════════════════════════════════════════════════════════════ */
 @Composable
-private fun DirScreen(
-    layout: SduiAppScreen?,
-    options: List<SduiDropdownOption>, selectedId: String?,
-    loading: Boolean, primary: Color, onSelect: (SduiDropdownOption) -> Unit
-) {
-    val funFactTitle = layout?.sdText("screen_direction_funfact_title")
-    val funFactText  = layout?.sdText("screen_direction_funfact")
-    Column(Modifier.fillMaxSize().padding(horizontal = 24.dp)) {
-        Spacer(Modifier.height(16.dp))
-        Text(layout?.sdText("screen_direction_title") ?: "Which direction?",
-            color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp)
-        Spacer(Modifier.height(4.dp))
-        Text(layout?.sdText("screen_direction_subtitle") ?: "Which way are you fleeing today?",
-            color = White55, fontSize = 13.sp)
-        Spacer(Modifier.height(20.dp))
-
-        if (loading) Loader(primary)
-        else LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(options, key = { it.id }) { opt -> DirCard(opt, opt.id == selectedId, primary) { onSelect(opt) } }
-            if (funFactText != null) {
-                item {
-                    Spacer(Modifier.height(8.dp))
-                    DirFunFact(primary, funFactTitle, funFactText)
-                    Spacer(Modifier.height(20.dp))
-                }
-            }
-        }
-    }
+private fun SectionHeader(label: String) {
+    Text(label.uppercase(), color = White25, fontSize = 11.sp,
+        fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
+        modifier = Modifier.padding(bottom = 4.dp))
 }
 
 @Composable

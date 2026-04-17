@@ -36,6 +36,7 @@ data class SduiUiState(
     val selections: Map<String, String> = emptyMap(),
     val dropdownData: Map<String, List<SduiDropdownOption>> = emptyMap(),
     val modes: List<SduiDropdownOption> = emptyList(),
+    val recentStations: List<SduiDropdownOption> = emptyList(),
     val showSuccessDialog: Boolean = false,
     val isSaving: Boolean = false,
     val isLocating: Boolean = false,
@@ -81,7 +82,27 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         loadCachedLayout()
         loadServerLayout()
         loadModes()
+        loadRecentStations()
         silentlyFetchLocation()
+    }
+
+    private fun loadRecentStations() {
+        val json = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+            .getString("recent_stations", null) ?: return
+        try {
+            val stations = Json { ignoreUnknownKeys = true }.decodeFromString<List<SduiDropdownOption>>(json)
+            _uiState.value = _uiState.value.copy(recentStations = stations)
+        } catch (_: Exception) {}
+    }
+
+    private fun saveRecentStation(station: SduiDropdownOption) {
+        val updated = (_uiState.value.recentStations.filterNot { it.id == station.id } + station)
+            .takeLast(3).reversed().take(3)
+        _uiState.value = _uiState.value.copy(recentStations = updated)
+        try {
+            context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+                .edit().putString("recent_stations", Json.encodeToString(updated)).apply()
+        } catch (_: Exception) {}
     }
 
     /** Quietly grab user location on startup so it's ready when Mode is selected. */
@@ -297,6 +318,9 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         newSelections[componentId] = selectedValue
+        if (componentId == "station") {
+            state.dropdownData["station"]?.find { it.id == selectedValue }?.let { saveRecentStation(it) }
+        }
         _uiState.value = state.copy(selections = newSelections, dropdownData = newDropdownData)
 
         val components = state.layout?.components ?: emptyList()
@@ -446,6 +470,15 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                     dropdownData = cur,
                     failedFetches = _uiState.value.failedFetches - dropdown.id
                 )
+
+                // Auto-skip single-option steps — brief pause so the screen renders first
+                if (options.size == 1 && dropdown.id in listOf("line", "direction")
+                    && dropdown.id !in _uiState.value.selections) {
+                    kotlinx.coroutines.delay(500)
+                    if (dropdown.id !in _uiState.value.selections) {
+                        onSelectionChanged(dropdown.id, options[0].id)
+                    }
+                }
             } catch (e: Exception) {
                 Log.e("SDUI", "Failed to fetch options for ${dropdown.id} from $finalUrl", e)
                 _uiState.value = _uiState.value.copy(failedFetches = _uiState.value.failedFetches + dropdown.id)

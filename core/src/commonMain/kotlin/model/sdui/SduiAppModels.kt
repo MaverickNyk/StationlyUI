@@ -172,7 +172,8 @@ data class SduiDropdownOption(
     val label: String,
     val iconUrl: String? = null,
     val secondaryLabel: String? = null,
-    val color: String? = null  // hex brand color, e.g. "#E32017" for Central line
+    val color: String? = null,
+    val tags: List<String>? = null  // TfL line brand colors (hex) for the lines serving this station
 )
 
 @Serializable
