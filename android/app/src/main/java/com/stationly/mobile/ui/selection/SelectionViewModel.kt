@@ -40,9 +40,8 @@ data class SduiUiState(
     val showSuccessDialog: Boolean = false,
     val isSaving: Boolean = false,
     val isLocating: Boolean = false,
-    val isGpsUnavailable: Boolean = false,   // GPS gave no result / permission denied
-    val isSearchEmpty: Boolean = false,       // last text search returned zero results
-    @Deprecated("Use isGpsUnavailable or isSearchEmpty") val noNearbyStationsFound: Boolean = false,
+    val isGpsUnavailable: Boolean = false,
+    val isSearchEmpty: Boolean = false,
     val failedFetches: Set<String> = emptySet(),
     val userLat: Double? = null,
     val userLon: Double? = null

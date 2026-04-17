@@ -11,7 +11,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -663,55 +665,133 @@ private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, onCli
     if (tIdx > 0) {
         dirName  = lbl.substring(0, tIdx).trim()
         rawDests = lbl.substring(tIdx + 8).trim()
-            .split("\n", ",", " and ", " & ").map { it.trim() }.filter { it.isNotBlank() }
-    } else { dirName = lbl.trim(); rawDests = emptyList() }
+            .split("\n").map { it.trim() }.filter { it.isNotBlank() }
+    } else {
+        dirName  = lbl.trim()
+        rawDests = emptyList()
+    }
 
-    val fromSecondary = opt.secondaryLabel
-        ?.let { it.removePrefix("towards ").removePrefix("Towards ")
-            .split("\n", ",", " and ", " & ").map { s -> s.trim() }.filter { s -> s.isNotBlank() } }
-        ?: emptyList()
-    val dests = (rawDests + fromSecondary).distinct().take(6)
-
-    val icon: ImageVector = when {
+    val dirIcon: ImageVector = when {
         opt.id.contains("inbound",  true) || lbl.contains("inbound",  true) -> Icons.Filled.CallReceived
         opt.id.contains("outbound", true) || lbl.contains("outbound", true) -> Icons.Filled.CallMade
         lbl.contains("north", true) -> Icons.Filled.North
         lbl.contains("south", true) -> Icons.Filled.South
         lbl.contains("east",  true) -> Icons.Filled.East
         lbl.contains("west",  true) -> Icons.Filled.West
-        else -> Icons.Filled.Explore
+        else                        -> Icons.Filled.Explore
     }
 
+    val primaryDest = rawDests.firstOrNull() ?: dirName
+    val branchDests = rawDests.drop(1)
+    val nextStops   = opt.secondaryLabel
+
     Surface(
-        onClick = onClick, color = if (sel) primary.copy(0.08f) else Surface1,
+        onClick = onClick,
+        color = if (sel) primary.copy(0.07f) else Surface1,
         shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(if (sel) 1.5.dp else 1.dp, if (sel) primary.copy(0.6f) else White08),
+        border = BorderStroke(if (sel) 1.5.dp else 1.dp, if (sel) primary.copy(0.55f) else White08),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(Modifier.padding(18.dp)) {
-            Box(Modifier.size(42.dp).background(if (sel) primary.copy(0.15f) else White08, CircleShape), Alignment.Center) {
-                Icon(icon, null, tint = if (sel) primary else White55, modifier = Modifier.size(20.dp))
-            }
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text("DIRECTION", color = White25, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-                Spacer(Modifier.height(2.dp))
+        Row(Modifier.fillMaxWidth()) {
+            Box(
+                Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(
+                        if (sel) primary else primary.copy(0.25f),
+                        RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp)
+                    )
+            )
+            Column(Modifier.weight(1f).padding(start = 14.dp, end = 16.dp, top = 16.dp, bottom = 16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(dirName, color = if (sel) primary else White90, fontWeight = FontWeight.Bold,
-                        fontSize = 19.sp, modifier = Modifier.weight(1f))
-                    if (sel) Box(Modifier.size(22.dp).background(primary, CircleShape), Alignment.Center) {
-                        Icon(Icons.Rounded.Check, null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                    Box(
+                        Modifier
+                            .background(
+                                if (sel) primary.copy(0.20f) else primary.copy(0.10f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Icon(dirIcon, null, tint = if (sel) primary else primary.copy(0.7f), modifier = Modifier.size(12.dp))
+                            Text(
+                                dirName.uppercase(),
+                                color = if (sel) primary else primary.copy(0.7f),
+                                fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp
+                            )
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    if (sel) {
+                        Box(Modifier.size(24.dp).background(primary, CircleShape), Alignment.Center) {
+                            Icon(Icons.Rounded.Check, null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                        }
                     }
                 }
-                if (dests.isNotEmpty()) {
-                    Spacer(Modifier.height(10.dp))
-                    Text("towards", color = White55, fontSize = 11.sp, letterSpacing = 0.2.sp)
-                    Spacer(Modifier.height(5.dp))
-                    dests.forEach { d ->
-                        Row(Modifier.padding(top = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(3.5.dp).background(primary.copy(0.4f), CircleShape))
-                            Spacer(Modifier.width(8.dp))
-                            Text(d, color = White55, fontSize = 13.sp)
+
+                Spacer(Modifier.height(12.dp))
+
+                Text("towards", color = White25, fontSize = 11.sp, letterSpacing = 0.5.sp)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    primaryDest,
+                    color = primary,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 21.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                if (branchDests.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        branchDests.take(3).forEach { dest ->
+                            Box(
+                                Modifier
+                                    .background(White08, RoundedCornerShape(6.dp))
+                                    .border(0.5.dp, White25, RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Text(dest, color = White55, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+
+                if (!nextStops.isNullOrBlank()) {
+                    val stops = remember(nextStops) {
+                        nextStops.split(" · ").map { it.trim() }.filter { it.isNotBlank() }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(White08, RoundedCornerShape(10.dp))
+                            .padding(horizontal = 10.dp, vertical = 7.dp)
+                    ) {
+                        Column {
+                            Text(
+                                "NEXT STATIONS",
+                                color = White25,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.8.sp,
+                                modifier = Modifier.padding(bottom = 5.dp)
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.horizontalScroll(rememberScrollState())
+                            ) {
+                                stops.forEachIndexed { i, stop ->
+                                    if (i > 0) {
+                                        Text("  →  ", color = primary.copy(0.55f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Box(Modifier.size(5.dp).background(primary.copy(0.6f), CircleShape))
+                                        Text(stop, color = White90, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
