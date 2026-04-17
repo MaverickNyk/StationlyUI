@@ -40,7 +40,9 @@ data class SduiUiState(
     val showSuccessDialog: Boolean = false,
     val isSaving: Boolean = false,
     val isLocating: Boolean = false,
-    val noNearbyStationsFound: Boolean = false,
+    val isGpsUnavailable: Boolean = false,   // GPS gave no result / permission denied
+    val isSearchEmpty: Boolean = false,       // last text search returned zero results
+    @Deprecated("Use isGpsUnavailable or isSearchEmpty") val noNearbyStationsFound: Boolean = false,
     val failedFetches: Set<String> = emptySet(),
     val userLat: Double? = null,
     val userLon: Double? = null
@@ -218,10 +220,10 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                     updatedDropdownData["station"] = nearbyStations
                     _uiState.value = _uiState.value.copy(
                         isLocating = false, dropdownData = updatedDropdownData,
-                        noNearbyStationsFound = false, userLat = lat, userLon = lon
+                        isGpsUnavailable = false, isSearchEmpty = false, userLat = lat, userLon = lon
                     )
                 } else {
-                    _uiState.value = _uiState.value.copy(isLocating = false, noNearbyStationsFound = true)
+                    _uiState.value = _uiState.value.copy(isLocating = false, isGpsUnavailable = true)
                 }
             } catch (e: Exception) {
                 Log.e("SDUI", "Failed to fetch nearby stations", e)
@@ -248,11 +250,11 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                         _uiState.value = _uiState.value.copy(userLat = location.latitude, userLon = location.longitude)
                         fetchNearbyStations(location.latitude, location.longitude, modeId)
                     } else {
-                        _uiState.value = _uiState.value.copy(isLocating = false, noNearbyStationsFound = true)
+                        _uiState.value = _uiState.value.copy(isLocating = false, isGpsUnavailable = true)
                     }
                 }
                 .addOnFailureListener {
-                    _uiState.value = _uiState.value.copy(isLocating = false, noNearbyStationsFound = true)
+                    _uiState.value = _uiState.value.copy(isLocating = false, isGpsUnavailable = true)
                 }
         } catch (_: SecurityException) {
             _uiState.value = _uiState.value.copy(isLocating = false)
@@ -269,7 +271,7 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
             val lat = state.userLat
             val lon = state.userLon
             if (lat != null && lon != null) fetchNearbyStations(lat, lon, mode.ifBlank { null })
-            else _uiState.value = state.copy(noNearbyStationsFound = state.userLat == null)
+            else _uiState.value = state.copy(isGpsUnavailable = state.userLat == null, isSearchEmpty = false)
             return
         }
 
@@ -284,7 +286,7 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                 val updatedData = state.dropdownData.toMutableMap()
                 updatedData["station"] = results
                 _uiState.value = _uiState.value.copy(
-                    dropdownData = updatedData, noNearbyStationsFound = results.isEmpty()
+                    dropdownData = updatedData, isSearchEmpty = results.isEmpty(), isGpsUnavailable = false
                 )
             } catch (e: Exception) {
                 Log.e("SDUI", "Station search failed", e)
@@ -371,7 +373,7 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
             // "direction" has no downstream
         }
 
-        _uiState.value = state.copy(selections = newSel, dropdownData = newData, noNearbyStationsFound = false)
+        _uiState.value = state.copy(selections = newSel, dropdownData = newData, isGpsUnavailable = false, isSearchEmpty = false)
     }
 
     fun popLastSelection() {
@@ -449,12 +451,16 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                 Log.d("SDUI", "Fetching dropdown data from: $finalUrl")
 
                 val cacheKey = "cached_dropdown_$finalUrl"
+                val tsKey = "${cacheKey}_ts"
                 val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
                 val cachedJson = prefs.getString(cacheKey, null)
-                if (cachedJson != null) {
+                val cachedTs = prefs.getLong(tsKey, 0L)
+                val cacheAgeMs = System.currentTimeMillis() - cachedTs
+                val cacheValid = cachedJson != null && cacheAgeMs < 24 * 60 * 60 * 1000L
+                if (cacheValid) {
                     try {
                         val format = Json { ignoreUnknownKeys = true }
-                        val cached = format.decodeFromString<List<SduiDropdownOption>>(cachedJson)
+                        val cached = format.decodeFromString<List<SduiDropdownOption>>(cachedJson!!)
                         val cur = _uiState.value.dropdownData.toMutableMap()
                         cur[dropdown.id] = cached
                         _uiState.value = _uiState.value.copy(dropdownData = cur)
@@ -462,7 +468,7 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 val options = sduiService.getDropdownData(finalUrl)
-                prefs.edit().putString(cacheKey, Json.encodeToString(options)).apply()
+                prefs.edit().putString(cacheKey, Json.encodeToString(options)).putLong(tsKey, System.currentTimeMillis()).apply()
 
                 val cur = _uiState.value.dropdownData.toMutableMap()
                 cur[dropdown.id] = options
@@ -491,7 +497,7 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
     fun clearSelections() {
         _uiState.value = _uiState.value.copy(
             selections = emptyMap(), dropdownData = emptyMap(),
-            error = null, failedFetches = emptySet(), noNearbyStationsFound = false
+            error = null, failedFetches = emptySet(), isGpsUnavailable = false, isSearchEmpty = false
         )
     }
 

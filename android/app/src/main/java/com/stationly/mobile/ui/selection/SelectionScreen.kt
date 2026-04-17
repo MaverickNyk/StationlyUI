@@ -127,15 +127,21 @@ fun SelectionScreen(
 
     // When station screen is shown, auto-load nearby stations (if not already loaded)
     LaunchedEffect(idx) {
-        if (idx == 1 && !st.isLocating && st.dropdownData["station"].isNullOrEmpty() && !st.noNearbyStationsFound) {
+        if (idx == 1 && !st.isLocating && st.dropdownData["station"].isNullOrEmpty() && !st.isGpsUnavailable) {
             if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED) {
-                val lat = st.userLat
-                val lon = st.userLon
-                viewModel.fetchNearbyStations(lat, lon, st.selections["mode"])
+                viewModel.fetchNearbyStations(st.userLat, st.userLon, st.selections["mode"])
             } else {
                 locationLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
             }
+        }
+    }
+
+    // If location resolved after station screen was already shown, re-trigger nearby fetch
+    LaunchedEffect(st.userLat, st.userLon) {
+        if (idx == 1 && !st.isLocating && st.dropdownData["station"].isNullOrEmpty()
+            && !st.isGpsUnavailable && st.userLat != null && st.userLon != null) {
+            viewModel.fetchNearbyStations(st.userLat, st.userLon, st.selections["mode"])
         }
     }
 
@@ -181,7 +187,8 @@ fun SelectionScreen(
                         },
                         selectedId      = st.selections["station"],
                         locating        = st.isLocating,
-                        noNearby        = st.noNearbyStationsFound,
+                        noNearby        = st.isGpsUnavailable,
+                        searchEmpty     = st.isSearchEmpty,
                         primary         = primary,
                         modeIcon        = mode?.iconUrl,
                         mode            = st.selections["mode"],
@@ -356,7 +363,7 @@ private fun StationScreen(
     stations: List<SduiDropdownOption>,
     recentStations: List<SduiDropdownOption>,
     selectedId: String?,
-    locating: Boolean, noNearby: Boolean,
+    locating: Boolean, noNearby: Boolean, searchEmpty: Boolean,
     primary: Color, modeIcon: String?, mode: String?,
     onSelect: (SduiDropdownOption) -> Unit,
     onSearch: (String) -> Unit
@@ -366,7 +373,7 @@ private fun StationScreen(
 
     LaunchedEffect(searchQuery) { delay(300); onSearch(searchQuery) }
 
-    // Auto-focus search when location is unavailable
+    // Auto-focus search when GPS is unavailable
     LaunchedEffect(noNearby) { if (noNearby && stations.isEmpty()) focusRequester.requestFocus() }
 
     Column(Modifier.fillMaxSize()) {
@@ -425,14 +432,25 @@ private fun StationScreen(
                 }
             }
 
-            // noNearby=true means we already got a response (empty) — don't spin forever
-            stations.isEmpty() && noNearby -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+            // Search returned zero results — don't spin
+            searchEmpty -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
                     Icon(Icons.Rounded.SearchOff, null, tint = White25, modifier = Modifier.size(40.dp))
                     Spacer(Modifier.height(12.dp))
                     Text("No stations found", color = White55, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
                     Text("Try a different search term", color = White25, fontSize = 12.sp)
+                }
+            }
+
+            // GPS unavailable but no search active — prompt to search
+            stations.isEmpty() && noNearby -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
+                    Icon(Icons.Rounded.Search, null, tint = White25, modifier = Modifier.size(40.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Text("Search for a station", color = White55, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Location unavailable — type to find stops", color = White25, fontSize = 12.sp)
                 }
             }
 
