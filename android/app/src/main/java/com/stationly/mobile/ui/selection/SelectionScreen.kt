@@ -175,7 +175,10 @@ fun SelectionScreen(
                     1 -> StationScreen(
                         layout          = st.layout,
                         stations        = st.dropdownData["station"] ?: emptyList(),
-                        recentStations  = st.recentStations,
+                        recentStations  = run {
+                            val currentIds = st.dropdownData["station"]?.map { it.id }?.toSet() ?: emptySet()
+                            st.recentStations.filter { it.id in currentIds }
+                        },
                         selectedId      = st.selections["station"],
                         locating        = st.isLocating,
                         noNearby        = st.noNearbyStationsFound,
@@ -419,6 +422,17 @@ private fun StationScreen(
                     Spacer(Modifier.height(18.dp))
                     Text("Searching nearby…", color = White90, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
                     Text("Letting GPS do the legwork", color = White25, fontSize = 12.sp)
+                }
+            }
+
+            // noNearby=true means we already got a response (empty) — don't spin forever
+            stations.isEmpty() && noNearby -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
+                    Icon(Icons.Rounded.SearchOff, null, tint = White25, modifier = Modifier.size(40.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Text("No stations found", color = White55, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Try a different search term", color = White25, fontSize = 12.sp)
                 }
             }
 
