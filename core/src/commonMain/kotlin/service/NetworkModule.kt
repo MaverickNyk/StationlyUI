@@ -18,6 +18,7 @@ object NetworkModule {
         ignoreUnknownKeys = true
         prettyPrint = true
         isLenient = true
+        coerceInputValues = true
     }
 
     val httpClient: HttpClient by lazy {

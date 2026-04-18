@@ -136,10 +136,10 @@ data class DirectionPredictions(
  */
 @Serializable
 data class PredictionItem(
-    val destId: String,
-    val displayName: String,
-    val platform: String,
-    val eta: String, // ISO 8601 timestamp
+    val destId: String = "",
+    val displayName: String = "",
+    val platform: String = "",
+    val eta: String = "",
     val stopLetter: String? = null
 )
 

@@ -55,7 +55,7 @@ class DepartureRepository(
                 val fcmPayload = apiService.getPredictions(selection.station)
                 syncPredictionsUseCase.execute(fcmPayload, selection)
             } catch (e: Exception) {
-                // Prediction fetch failed — FCM will deliver a subsequent update
+                println("DepartureRepository: prediction fetch failed for ${selection.station} — ${e::class.simpleName}: ${e.message}")
             }
             
         } catch (e: Exception) {
