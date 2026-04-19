@@ -22,6 +22,12 @@ interface SduiApiService {
     suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption>
     suspend fun getNearbyStations(lat: Double, lon: Double, mode: String? = null): List<SduiDropdownOption>
 
+    /**
+     * Resolves the exact physical stop (naptanId) for a grouped station + mode + line + direction.
+     * Returns the original [stationId] if no better match is found.
+     */
+    suspend fun resolveStation(stationId: String, mode: String, line: String, direction: String): String
+
     // User Sync & Firestore
     suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse
     suspend fun syncStations(uid: String, stations: List<SubscribedStation>): Boolean
@@ -74,6 +80,20 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
     override suspend fun getNearbyStations(lat: Double, lon: Double, mode: String?): List<SduiDropdownOption> {
         val url = "$baseUrl/stations/nearby?lat=$lat&lon=$lon" + if (mode != null) "&mode=$mode" else ""
         return client.get(url).body()
+    }
+
+    override suspend fun resolveStation(stationId: String, mode: String, line: String, direction: String): String {
+        return try {
+            val response: kotlinx.serialization.json.JsonObject = client.get("$baseUrl/stations/resolve") {
+                url {
+                    parameters.append("station", stationId)
+                    parameters.append("mode", mode)
+                    parameters.append("line", line)
+                    parameters.append("direction", direction)
+                }
+            }.body()
+            (response["naptanId"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: stationId
+        } catch (_: Exception) { stationId }
     }
 
     override suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse {
