@@ -92,9 +92,11 @@ fun ProfileScreen(
     val stations by profileViewModel.stations.collectAsState()
     val isLoadingProfile by profileViewModel.isLoading.collectAsState()
     val aboutComponents by profileViewModel.aboutComponents.collectAsState()
+    val deletingStationId by profileViewModel.deletingStationId.collectAsState()
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
     var showDeleteStationDialog by remember { mutableStateOf<SubscribedStation?>(null) }
     var isDeletingAccount by remember { mutableStateOf(false) }
+    var isSigningOut by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = Surface0,
@@ -162,7 +164,8 @@ fun ProfileScreen(
                 items(stations, key = { "${it.id}_${it.line}" }) { station ->
                     StationCard(
                         station = station,
-                        onDelete = { showDeleteStationDialog = station }
+                        isDeleting = deletingStationId == station.id,
+                        onDelete = { if (deletingStationId == null) showDeleteStationDialog = station }
                     )
                 }
             }
@@ -251,25 +254,37 @@ fun ProfileScreen(
                 Spacer(Modifier.height(4.dp))
                 Button(
                     onClick = {
-                        coroutineScope.launch {
-                            authManager.logout()
-                            onLoggedOut()
+                        if (!isSigningOut) {
+                            isSigningOut = true
+                            coroutineScope.launch {
+                                authManager.logout()
+                                onLoggedOut()
+                            }
                         }
                     },
+                    enabled = !isSigningOut,
                     modifier = Modifier.fillMaxWidth().height(54.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Surface1,
-                        contentColor = White90
+                        contentColor = White90,
+                        disabledContainerColor = Surface1,
+                        disabledContentColor = White90.copy(alpha = 0.5f)
                     ),
                     shape = RoundedCornerShape(16.dp),
                     border = BorderStroke(1.dp, White08)
                 ) {
-                    Icon(Icons.Rounded.Logout, null, tint = DangerRed, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        "Sign Out", fontWeight = FontWeight.SemiBold,
-                        fontSize = 15.sp, color = White90
-                    )
+                    if (isSigningOut) {
+                        CircularProgressIndicator(
+                            color = DangerRed, strokeWidth = 2.dp,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text("Signing out…", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                    } else {
+                        Icon(Icons.Rounded.Logout, null, tint = DangerRed, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text("Sign Out", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = White90)
+                    }
                 }
             }
 
@@ -526,7 +541,7 @@ private fun SectionHeader(title: String, icon: ImageVector) {
    Station Card
    ═══════════════════════════════════════════════════════════════ */
 @Composable
-private fun StationCard(station: SubscribedStation, onDelete: () -> Unit) {
+private fun StationCard(station: SubscribedStation, isDeleting: Boolean = false, onDelete: () -> Unit) {
     val modeIcon = when (station.mode.lowercase()) {
         "tube" -> Icons.Filled.Subway
         "bus" -> Icons.Filled.DirectionsBus
@@ -568,8 +583,15 @@ private fun StationCard(station: SubscribedStation, onDelete: () -> Unit) {
                 }
             }
 
-            IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Rounded.Close, "Remove", tint = White25, modifier = Modifier.size(18.dp))
+            if (isDeleting) {
+                CircularProgressIndicator(
+                    color = DangerRed, strokeWidth = 2.dp,
+                    modifier = Modifier.size(18.dp).padding(0.dp)
+                )
+            } else {
+                IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Rounded.Close, "Remove", tint = White25, modifier = Modifier.size(18.dp))
+                }
             }
         }
     }

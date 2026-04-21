@@ -51,7 +51,7 @@ fun SummaryScreen(
     val sduiPayloads by viewModel.sduiPayloads.collectAsState()
     val announcement by viewModel.announcement.collectAsState()
     val homeConfig by viewModel.homeConfig.collectAsState()
-    val isDeletingBoard by viewModel.isDeletingBoard.collectAsState()
+    val deletingBoardId by viewModel.isDeletingBoard.collectAsState()
 
     val firebaseUser = remember { FirebaseAuth.getInstance().currentUser }
     val userName = remember(firebaseUser) {
@@ -155,10 +155,10 @@ fun SummaryScreen(
                                         lineStatus = lineStatuses["${selection.mode}_${selection.line}".lowercase()],
                                         sduiPayload = sduiPayloads[selection.station],
                                         lastUpdated = stationUpdates[selection.station] ?: 0L,
-                                        onDelete = { viewModel.deleteSelection(selection) },
+                                        onDelete = { if (deletingBoardId == null) viewModel.deleteSelection(selection) },
                                         nextPrediction = selectionPredictions.firstOrNull(),
                                         homeConfig = homeConfig,
-                                        isDeleting = isDeletingBoard
+                                        isDeleting = deletingBoardId == selection.station
                                     )
                                 }
                             }
