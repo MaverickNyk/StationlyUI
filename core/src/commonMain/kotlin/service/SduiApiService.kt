@@ -28,6 +28,9 @@ interface SduiApiService {
      */
     suspend fun resolveStation(stationId: String, mode: String, line: String, direction: String): String
 
+    // Auth
+    suspend fun sendPasswordResetEmail(email: String): Boolean
+
     // User Sync & Firestore
     suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse
     suspend fun syncStations(uid: String, stations: List<SubscribedStation>): Boolean
@@ -94,6 +97,17 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
             }.body()
             (response["naptanId"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: stationId
         } catch (_: Exception) { stationId }
+    }
+
+    override suspend fun sendPasswordResetEmail(email: String): Boolean {
+        @kotlinx.serialization.Serializable
+        data class ResetRequest(val email: String)
+
+        val response = client.post("$baseUrl/auth/forgot-password") {
+            contentType(ContentType.Application.Json)
+            setBody(ResetRequest(email))
+        }
+        return response.status == HttpStatusCode.OK
     }
 
     override suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse {

@@ -50,6 +50,10 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    // ID of the station currently being deleted, null when idle
+    private val _deletingStationId = MutableStateFlow<String?>(null)
+    val deletingStationId: StateFlow<String?> = _deletingStationId.asStateFlow()
+
     private val _aboutComponents = MutableStateFlow<List<SduiAppComponent>>(emptyList())
     val aboutComponents: StateFlow<List<SduiAppComponent>> = _aboutComponents.asStateFlow()
 
@@ -85,6 +89,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
 
     fun deleteStation(station: SubscribedStation) {
         viewModelScope.launch {
+            _deletingStationId.value = station.id
             // Full teardown — same as the main board delete
             val selection = UserSelection(
                 mode = station.mode,
@@ -104,8 +109,11 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             loadStations()
 
             // Sync to backend best-effort
-            val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return@launch
-            try { sduiService.syncStations(uid, _stations.value) } catch (_: Exception) {}
+            val uid = FirebaseAuth.getInstance().currentUser?.uid
+            if (uid != null) {
+                try { sduiService.syncStations(uid, _stations.value) } catch (_: Exception) {}
+            }
+            _deletingStationId.value = null
         }
     }
 }

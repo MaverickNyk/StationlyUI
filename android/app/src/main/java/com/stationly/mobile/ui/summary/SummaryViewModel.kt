@@ -50,10 +50,6 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     private val selectionRepository = SelectionRepository(storageManager, Platform.sqlStorage)
     private val departureRepository = DepartureRepository(apiService, storageManager, Platform.sqlStorage, syncPredictionsUseCase)
     
-    // Auth Manager
-    private val authManager = com.stationly.mobile.service.FirebaseAuthManager(context)
-    val currentUserEmail = authManager.auth.currentUser?.email
-    
     // KMP Core Use Cases
     private val formatDeparturesUseCase = FormatDeparturesUseCase()
     private val stationLifecycleUseCase = com.stationly.core.usecase.StationLifecycleUseCase(
@@ -64,15 +60,6 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         sqlStorage = Platform.sqlStorage,
         storageManager = Platform.storageManager
     )
-
-    fun logout(onComplete: () -> Unit) {
-        viewModelScope.launch {
-            stationLifecycleUseCase.cleanupAll()
-            authManager.logout()
-            onComplete()
-        }
-    }
-
 
     private val processFcmPayloadUseCase = ProcessFcmPayloadUseCase(
         departureRepository,
@@ -113,9 +100,9 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     private val _homeConfig = MutableStateFlow<Map<String, String>>(emptyMap())
     val homeConfig: StateFlow<Map<String, String>> = _homeConfig.asStateFlow()
 
-    // True while a board delete is in flight
-    private val _isDeletingBoard = MutableStateFlow(false)
-    val isDeletingBoard: StateFlow<Boolean> = _isDeletingBoard.asStateFlow()
+    // Station ID currently being deleted, null when idle
+    private val _isDeletingBoard = MutableStateFlow<String?>(null)
+    val isDeletingBoard: StateFlow<String?> = _isDeletingBoard.asStateFlow()
     
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key != null && key.startsWith("predictions_")) {
@@ -146,34 +133,24 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { fetchHomeConfig() }
 
         viewModelScope.launch {
-            // Initial sync from SQL
             selectionRepository.initialize()
-            
-            // Collect selections for UI update
-            viewModelScope.launch {
-                selectionRepository.selections.collect { selections ->
-                    _selections.value = selections
-                    
-                    // Initial load into StateFlows
-                    selections.forEach { selection ->
-                        loadPredictions(selection)
-                        loadLineStatus(selection)
-                    }
+            selectionRepository.selections.value.firstOrNull()?.let { refreshDataIfStale(it) }
+        }
 
-                    // On first data ready, ensure active board is set for widget
-                    if (selections.isNotEmpty() && _uiState.value.activeStationId == null) {
-                        val primary = selections.first()
-                        _uiState.value = _uiState.value.copy(
-                            activeStationId = primary.station,
-                            activeLineId = primary.line
-                        )
-                    }
+        viewModelScope.launch {
+            selectionRepository.selections.collect { selections ->
+                _selections.value = selections
+                selections.forEach { selection ->
+                    loadPredictions(selection)
+                    loadLineStatus(selection)
                 }
-            }
-            
-            // Trigger background staleness check for primary board only to avoid spamming local backend
-            selectionRepository.selections.value.firstOrNull()?.let { 
-                refreshDataIfStale(it)
+                if (selections.isNotEmpty() && _uiState.value.activeStationId == null) {
+                    val primary = selections.first()
+                    _uiState.value = _uiState.value.copy(
+                        activeStationId = primary.station,
+                        activeLineId = primary.line
+                    )
+                }
             }
         }
     }
@@ -393,7 +370,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
      */
     fun deleteSelection(selection: UserSelection) {
         viewModelScope.launch {
-            _isDeletingBoard.value = true
+            _isDeletingBoard.value = selection.station
             try {
                 stationLifecycleUseCase.discardStation(selection, clearSelectionInRepo = true)
 
@@ -431,7 +408,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 Log.e("SummaryViewModel", "Error deleting selection", e)
                 _uiState.value = _uiState.value.copy(error = "Failed to delete: ${e.message}")
             } finally {
-                _isDeletingBoard.value = false
+                _isDeletingBoard.value = null
             }
         }
     }
