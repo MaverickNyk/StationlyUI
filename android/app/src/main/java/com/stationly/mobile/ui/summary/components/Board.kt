@@ -124,6 +124,7 @@ fun Board(
     val boardUpdate: (View) -> Unit = { view ->
         val context = view.context
         view.findViewById<View>(R.id.btn_settings).visibility = View.GONE
+        view.findViewById<View>(R.id.btn_refresh).visibility = View.GONE
 
         val chrono = view.findViewById<Chronometer>(R.id.last_updated_timer)
         chrono.visibility = View.VISIBLE

@@ -116,9 +116,12 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                     selection?.let { loadPredictions(it) }
                 }
             }
-        } else if (key == "line_status_data") {
+        } else if (key == "line_status_data" || key == "last_background_refresh") {
             viewModelScope.launch {
-                _selections.value.forEach { loadLineStatus(it) }
+                _selections.value.forEach { 
+                    loadPredictions(it)
+                    loadLineStatus(it) 
+                }
             }
         } else if (key == "selections") {
             // Handled by repository flow

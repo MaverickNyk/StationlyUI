@@ -54,20 +54,26 @@ class DepartureWidgetProvider : AppWidgetProvider() {
     
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
-        
-        // Handle custom actions if needed
-        when (intent.action) {
-            ACTION_UPDATE_WIDGET -> {
-                android.util.Log.d("Widget", "Broadcast received: ACTION_UPDATE_WIDGET")
-                val pendingResult = goAsync()
-                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                    try {
-                        updateFromStorage(context)
-                    } catch (e: Exception) {
-                        android.util.Log.e("Widget", "Error updating from storage", e)
-                    } finally {
-                        pendingResult.finish()
+        val actions = listOf(ACTION_UPDATE_WIDGET, ACTION_MANUAL_REFRESH)
+        if (intent.action in actions) {
+            val pendingResult = goAsync()
+            kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    if (intent.action != ACTION_UPDATE_WIDGET) {
+                        val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
+                        val repo = com.stationly.core.repository.DepartureRepository(
+                            com.stationly.core.service.TflApiServiceFactory.create(),
+                            com.stationly.core.platform.Platform.storageManager,
+                            com.stationly.core.platform.Platform.sqlStorage,
+                            com.stationly.core.usecase.SyncPredictionsUseCase(com.stationly.core.platform.Platform.sqlStorage)
+                        )
+                        selections.forEach { repo.fetchInitialData(it) }
                     }
+                    updateFromStorage(context)
+                } catch (e: Exception) {
+                    android.util.Log.e("Widget", "Error during refresh", e)
+                } finally {
+                    pendingResult.finish()
                 }
             }
         }
@@ -75,6 +81,17 @@ class DepartureWidgetProvider : AppWidgetProvider() {
     
     companion object {
         const val ACTION_UPDATE_WIDGET = "com.stationly.mobile.ACTION_UPDATE_WIDGET"
+        const val ACTION_MANUAL_REFRESH = "com.stationly.mobile.ACTION_MANUAL_REFRESH"
+
+        fun triggerRefresh(context: Context) {
+            val prefs = context.getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
+            val lastRefresh = prefs.getLong("last_refresh_ms", 0L)
+            if (System.currentTimeMillis() - lastRefresh < 60_000L) return
+            prefs.edit().putLong("last_refresh_ms", System.currentTimeMillis()).apply()
+            context.sendBroadcast(Intent(context, DepartureWidgetProvider::class.java).apply {
+                action = ACTION_MANUAL_REFRESH
+            })
+        }
         
         fun updateFromStorage(context: Context) {
             android.util.Log.d("Widget", "Force updating from storage...")
@@ -198,6 +215,16 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
             views.setOnClickPendingIntent(R.id.btn_settings, pendingIntent)
+
+            // Set up manual refresh intent
+            val refreshIntent = Intent(context, DepartureWidgetProvider::class.java).apply {
+                action = ACTION_MANUAL_REFRESH
+            }
+            val refreshPendingIntent = android.app.PendingIntent.getBroadcast(
+                context, 1, refreshIntent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            views.setOnClickPendingIntent(R.id.btn_refresh, refreshPendingIntent)
             
             // Clear existing rows setup
             val rowViews = mutableListOf<RemoteViews>()
@@ -370,6 +397,15 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
                 views.setOnClickPendingIntent(R.id.btn_settings, pendingIntent)
+
+                val refreshIntent = Intent(context, DepartureWidgetProvider::class.java).apply {
+                    action = ACTION_MANUAL_REFRESH
+                }
+                val refreshPendingIntent = android.app.PendingIntent.getBroadcast(
+                    context, 1, refreshIntent,
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                )
+                views.setOnClickPendingIntent(R.id.btn_refresh, refreshPendingIntent)
                 
                 appWidgetManager.updateAppWidget(appWidgetId, views)
             }
