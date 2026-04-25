@@ -8,9 +8,10 @@ import android.os.SystemClock
 import android.widget.RemoteViews
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.util.StationlyFormatters
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import com.stationly.mobile.R
 
 /**
@@ -35,7 +36,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         appWidgetIds: IntArray
     ) {
         val pendingResult = goAsync()
-        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
                 updateFromStorage(context)
             } finally {
@@ -53,7 +54,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         val actions = listOf(ACTION_UPDATE_WIDGET, ACTION_MANUAL_REFRESH)
         if (intent.action in actions) {
             val pendingResult = goAsync()
-            kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                 try {
                     if (intent.action != ACTION_UPDATE_WIDGET) {
                         showRefreshSpinner(context)

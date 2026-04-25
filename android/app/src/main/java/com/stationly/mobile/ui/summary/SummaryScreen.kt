@@ -47,6 +47,7 @@ fun SummaryScreen(
     val selections by viewModel.selections.collectAsState()
     val predictions by viewModel.predictions.collectAsState()
     val lineStatuses by viewModel.lineStatuses.collectAsState()
+    val failedLineStatusKeys by viewModel.failedLineStatusKeys.collectAsState()
     val stationUpdates by viewModel.stationUpdates.collectAsState()
     val sduiPayloads by viewModel.sduiPayloads.collectAsState()
     val announcement by viewModel.announcement.collectAsState()
@@ -146,13 +147,15 @@ fun SummaryScreen(
 
                             items(currentSelections, key = { "${it.station}_${it.line}" }) { selection ->
                                 val selectionPredictions = predictions[selection.station] ?: emptyList()
+                                val statusKey = "${selection.mode}_${selection.line}".lowercase()
 
                                 Box(modifier = Modifier.animateItem()) {
                                     Board(
                                         selection = selection,
                                         predictions = selectionPredictions,
                                         hasPredictions = selectionPredictions.isNotEmpty(),
-                                        lineStatus = lineStatuses["${selection.mode}_${selection.line}".lowercase()],
+                                        lineStatus = lineStatuses[statusKey],
+                                        lineStatusFailed = failedLineStatusKeys.contains(statusKey),
                                         sduiPayload = sduiPayloads[selection.station],
                                         lastUpdated = stationUpdates[selection.station] ?: 0L,
                                         onDelete = { if (deletingBoardId == null) viewModel.deleteSelection(selection) },
