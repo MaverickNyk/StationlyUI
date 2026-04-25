@@ -60,6 +60,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 try {
                     if (intent.action != ACTION_UPDATE_WIDGET) {
+                        showRefreshSpinner(context)
                         val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
                         val repo = com.stationly.core.repository.DepartureRepository(
                             com.stationly.core.service.TflApiServiceFactory.create(),
@@ -72,6 +73,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     updateFromStorage(context)
                 } catch (e: Exception) {
                     android.util.Log.e("Widget", "Error during refresh", e)
+                    updateFromStorage(context)
                 } finally {
                     pendingResult.finish()
                 }
@@ -93,6 +95,17 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             })
         }
         
+        fun showRefreshSpinner(context: Context) {
+            val appWidgetManager = AppWidgetManager.getInstance(context)
+            val ids = appWidgetManager.getAppWidgetIds(
+                android.content.ComponentName(context, DepartureWidgetProvider::class.java)
+            )
+            val views = RemoteViews(context.packageName, com.stationly.mobile.R.layout.widget_departure_board)
+            views.setViewVisibility(com.stationly.mobile.R.id.btn_refresh, android.view.View.GONE)
+            views.setViewVisibility(com.stationly.mobile.R.id.progress_refresh, android.view.View.VISIBLE)
+            for (id in ids) appWidgetManager.partiallyUpdateAppWidget(id, views)
+        }
+
         fun updateFromStorage(context: Context) {
             android.util.Log.d("Widget", "Force updating from storage...")
             val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
@@ -225,7 +238,9 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
             views.setOnClickPendingIntent(R.id.btn_refresh, refreshPendingIntent)
-            
+            views.setViewVisibility(R.id.btn_refresh, android.view.View.VISIBLE)
+            views.setViewVisibility(R.id.progress_refresh, android.view.View.GONE)
+
             // Clear existing rows setup
             val rowViews = mutableListOf<RemoteViews>()
             
@@ -406,7 +421,9 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
                 views.setOnClickPendingIntent(R.id.btn_refresh, refreshPendingIntent)
-                
+                views.setViewVisibility(R.id.btn_refresh, android.view.View.VISIBLE)
+                views.setViewVisibility(R.id.progress_refresh, android.view.View.GONE)
+
                 appWidgetManager.updateAppWidget(appWidgetId, views)
             }
         }
@@ -447,12 +464,18 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         }
 
         private fun applyRowsToWidget(views: RemoteViews, rowViews: List<RemoteViews>) {
-            // Using the LinearLayout path for maximum reliability across all Android versions
-            // This avoids issues with RemoteCollectionItems on some launchers.
-            views.setViewVisibility(R.id.rows_list, android.view.View.GONE)
-            views.setViewVisibility(R.id.rows_container, android.view.View.VISIBLE)
-            views.removeAllViews(R.id.rows_container)
-            rowViews.forEach { views.addView(R.id.rows_container, it) }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                views.setViewVisibility(R.id.rows_container, android.view.View.GONE)
+                views.setViewVisibility(R.id.rows_list, android.view.View.VISIBLE)
+                val builder = RemoteViews.RemoteCollectionItems.Builder()
+                rowViews.forEachIndexed { index, rv -> builder.addItem(index.toLong(), rv) }
+                views.setRemoteAdapter(R.id.rows_list, builder.setHasStableIds(false).build())
+            } else {
+                views.setViewVisibility(R.id.rows_list, android.view.View.GONE)
+                views.setViewVisibility(R.id.rows_container, android.view.View.VISIBLE)
+                views.removeAllViews(R.id.rows_container)
+                rowViews.forEach { views.addView(R.id.rows_container, it) }
+            }
         }
     }
 }

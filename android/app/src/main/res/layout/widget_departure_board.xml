@@ -58,6 +58,15 @@
                 android:padding="2dp"
                 android:src="@drawable/ic_refresh" />
 
+            <ProgressBar
+                android:id="@+id/progress_refresh"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="8dp"
+                android:visibility="gone"
+                android:indeterminate="true"
+                android:indeterminateTint="#FFB900" />
+
             <ImageView
                 android:id="@+id/btn_settings"
                 android:layout_width="24dp"
@@ -118,7 +127,13 @@
         android:layout_weight="1"
         android:divider="@null"
         android:dividerHeight="0dp"
-        android:visibility="gone" />
+        android:visibility="gone"
+        android:scrollbars="vertical"
+        android:scrollbarThumbVertical="@drawable/scrollbar_thumb"
+        android:scrollbarSize="3dp"
+        android:fadeScrollbars="true"
+        android:scrollbarFadeDuration="1500"
+        android:scrollbarDefaultDelayBeforeFade="600" />
 
     <!-- Line Status Row -->
     <LinearLayout
