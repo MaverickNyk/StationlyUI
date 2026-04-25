@@ -3,6 +3,31 @@ package com.stationly.core.model.sdui
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+/**
+ * Field-level validation rules carried in the SDUI model.
+ * Clients evaluate these on submit — no platform-specific validation logic needed.
+ */
+@Serializable
+data class SduiValidation(
+    val required: Boolean = false,
+    val minLength: Int? = null,
+    val maxLength: Int? = null,
+    val pattern: String? = null,     // regex — clients apply via their platform regex engine
+    val errorMessage: String? = null // shown to the user when the rule fails
+)
+
+/**
+ * Conditional visibility rule.
+ * A component with a condition is hidden until the condition is satisfied.
+ * operator: "not_empty" | "equals" | "empty"
+ */
+@Serializable
+data class SduiCondition(
+    val dependsOn: String,
+    val operator: String = "not_empty",
+    val value: String? = null
+)
+
 @Serializable
 sealed class SduiAppComponent {
     abstract val id: String?
@@ -14,7 +39,8 @@ sealed class SduiAppComponent {
         val label: String,
         val dependsOn: String? = null,
         val dataSourceUrl: String,
-        val style: String? = null
+        val style: String? = null,
+        val condition: SduiCondition? = null
     ) : SduiAppComponent()
 
     @Serializable
@@ -24,7 +50,9 @@ sealed class SduiAppComponent {
         val label: String,
         val action: String,
         val color: String? = null,
-        val enabled: Boolean = true
+        val enabled: Boolean = true,
+        val variant: String = "primary",  // primary | secondary | ghost | danger
+        val condition: SduiCondition? = null
     ) : SduiAppComponent()
 
     @Serializable
@@ -55,7 +83,10 @@ sealed class SduiAppComponent {
         val label: String,
         val placeholder: String? = null,
         val text: String? = null,
-        val style: String = "text"
+        val style: String = "text",
+        val helpText: String? = null,
+        val validation: SduiValidation? = null,
+        val condition: SduiCondition? = null
     ) : SduiAppComponent()
 
     @Serializable

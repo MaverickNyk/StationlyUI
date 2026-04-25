@@ -104,6 +104,10 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     private val _homeConfig = MutableStateFlow<Map<String, String>>(emptyMap())
     val homeConfig: StateFlow<Map<String, String>> = _homeConfig.asStateFlow()
 
+    // True when the installed version is below app.minVersion
+    private val _forceUpdate = MutableStateFlow(false)
+    val forceUpdate: StateFlow<Boolean> = _forceUpdate.asStateFlow()
+
     // Station ID currently being deleted, null when idle
     private val _isDeletingBoard = MutableStateFlow<String?>(null)
     val isDeletingBoard: StateFlow<String?> = _isDeletingBoard.asStateFlow()
@@ -431,10 +435,27 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
 
     private suspend fun fetchHomeConfig() {
         try {
-            _homeConfig.value = sduiService.getHomeConfig().strings
+            val config = sduiService.getHomeConfig().strings
+            _homeConfig.value = config
+            config["app.minVersion"]?.let { minVer ->
+                _forceUpdate.value = isVersionBelow(com.stationly.mobile.BuildConfig.VERSION_NAME, minVer)
+            }
         } catch (e: Exception) {
             Log.w("SummaryViewModel", "Could not fetch home config — falling back to hardcoded strings", e)
         }
+    }
+
+    private fun isVersionBelow(installed: String, minimum: String): Boolean {
+        fun parse(v: String) = v.trim().split(".").mapNotNull { it.toIntOrNull() }
+        val ins = parse(installed)
+        val min = parse(minimum)
+        for (i in 0 until maxOf(ins.size, min.size)) {
+            val a = ins.getOrElse(i) { 0 }
+            val b = min.getOrElse(i) { 0 }
+            if (a < b) return true
+            if (a > b) return false
+        }
+        return false
     }
 
     fun dismissAnnouncement() {

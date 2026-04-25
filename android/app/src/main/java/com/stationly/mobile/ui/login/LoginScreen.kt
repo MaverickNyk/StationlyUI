@@ -50,7 +50,18 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.stationly.core.model.sdui.SduiAppComponent
+import com.stationly.core.model.sdui.SduiCondition
 import kotlinx.coroutines.delay
+
+private fun SduiCondition.isSatisfied(inputs: Map<String, String>): Boolean {
+    val v = inputs[dependsOn]?.trim() ?: ""
+    return when (operator) {
+        "not_empty" -> v.isNotEmpty()
+        "empty"     -> v.isEmpty()
+        "equals"    -> v == value
+        else        -> true
+    }
+}
 
 // ── Palette ────────────────────────────────────────────────────────────────────
 private val Amber     = Color(0xFFFFC819)
@@ -154,7 +165,8 @@ private fun AuthField(
     imeAction: ImeAction = ImeAction.Next,
     onImeAction: () -> Unit = {},
     focusRequester: FocusRequester? = null,
-    fieldError: String? = null
+    fieldError: String? = null,
+    helpText: String? = null
 ) {
     Column {
         OutlinedTextField(
@@ -199,6 +211,12 @@ private fun AuthField(
             Text(
                 fieldError,
                 color = Color(0xFFF06292), fontSize = 12.sp,
+                modifier = Modifier.padding(start = 14.dp, top = 4.dp)
+            )
+        } else if (helpText != null) {
+            Text(
+                helpText,
+                color = White50, fontSize = 12.sp,
                 modifier = Modifier.padding(start = 14.dp, top = 4.dp)
             )
         }
@@ -313,12 +331,17 @@ private fun SduiFormContent(
 ) {
     val isRegister = screenType == "register"
 
-    val buttons   = components.filterIsInstance<SduiAppComponent.Button>()
-    val googleBtn = if (showGoogleSignIn) buttons.find { it.action == "GOOGLE_LOGIN_ACTION" } else null
-    val submitBtn = buttons.firstOrNull { it.action in setOf("LOGIN_ACTION", "REGISTER_ACTION", "RESET_PASSWORD_ACTION") }
-    val forgotBtn = buttons.find { it.action == "NAVIGATE_TO_FORGOT_PASSWORD" || it.action == "FORGOT_PASSWORD_ACTION" }
-    val navBtns   = buttons.filter { it.action.startsWith("NAVIGATE_") && it.action != "NAVIGATE_TO_FORGOT_PASSWORD" }
-    val inputFields = components.filterIsInstance<SduiAppComponent.Input>()
+    val allButtons    = components.filterIsInstance<SduiAppComponent.Button>()
+    val allInputs     = components.filterIsInstance<SduiAppComponent.Input>()
+
+    // Condition-filtered views — re-evaluate whenever inputs change
+    val visibleButtons  = allButtons.filter { it.condition?.isSatisfied(inputs) != false }
+    val inputFields     = allInputs.filter  { it.condition?.isSatisfied(inputs) != false }
+
+    val googleBtn = if (showGoogleSignIn) visibleButtons.find { it.action == "GOOGLE_LOGIN_ACTION" } else null
+    val submitBtn = visibleButtons.firstOrNull { it.action in setOf("LOGIN_ACTION", "REGISTER_ACTION", "RESET_PASSWORD_ACTION") }
+    val forgotBtn = visibleButtons.find { it.action == "NAVIGATE_TO_FORGOT_PASSWORD" || it.action == "FORGOT_PASSWORD_ACTION" }
+    val navBtns   = visibleButtons.filter { it.action.startsWith("NAVIGATE_") && it.action != "NAVIGATE_TO_FORGOT_PASSWORD" }
 
     // Local form state
     var passwordVisible  by remember { mutableStateOf(emptyMap<String, Boolean>()) }
@@ -342,26 +365,28 @@ private fun SduiFormContent(
 
     fun validate(): Boolean {
         val errs = mutableMapOf<String, String>()
-        val email    = inputs["email"]?.trim() ?: ""
-        val password = inputs["password"] ?: ""
-        val hasEmailField    = inputFields.any { it.id == "email" }
-        val hasPasswordField = inputFields.any { it.id == "password" }
-        if (hasEmailField) {
-            when {
-                email.isEmpty() -> errs["email"] = "Please enter your email address"
-                !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches() ->
-                    errs["email"] = "Please enter a valid email address"
+        inputFields.forEach { field ->
+            val value = inputs[field.id]?.trim() ?: ""
+            val v = field.validation
+            if (v != null) {
+                if (v.required && value.isEmpty()) {
+                    errs[field.id] = v.errorMessage ?: "Please fill in ${field.label}."
+                } else if (value.isNotEmpty()) {
+                    v.minLength?.let { min ->
+                        if (value.length < min) errs[field.id] = v.errorMessage ?: "${field.label} must be at least $min characters."
+                    }
+                    v.maxLength?.let { max ->
+                        if (value.length > max) errs[field.id] = v.errorMessage ?: "${field.label} must be at most $max characters."
+                    }
+                    v.pattern?.let { pat ->
+                        if (!Regex(pat).containsMatchIn(value)) errs[field.id] = v.errorMessage ?: "${field.label} is invalid."
+                    }
+                }
             }
         }
-        if (hasPasswordField) {
-            when {
-                password.isEmpty() -> errs["password"] = "Please enter your password"
-                isRegister && password.length < 6 ->
-                    errs["password"] = "Password must be at least 6 characters"
-            }
-        }
-        if (isRegister && password.isNotEmpty() && password != confirmPw) {
-            errs["confirmPassword"] = "Passwords don't match"
+        if (isRegister) {
+            val password = inputs["password"] ?: ""
+            if (password.isNotEmpty() && password != confirmPw) errs["confirmPassword"] = "Passwords don't match"
         }
         fieldErrors = errs
         return errs.isEmpty()
@@ -411,7 +436,8 @@ private fun SduiFormContent(
                     { focusRequesters.getOrNull(index + 1)?.requestFocus() }
                 },
                 focusRequester = focusRequesters.getOrNull(index),
-                fieldError     = fieldErrors[field.id]
+                fieldError     = fieldErrors[field.id],
+                helpText       = field.helpText
             )
         }
 

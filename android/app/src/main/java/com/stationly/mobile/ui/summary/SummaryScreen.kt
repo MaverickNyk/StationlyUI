@@ -52,6 +52,7 @@ fun SummaryScreen(
     val sduiPayloads by viewModel.sduiPayloads.collectAsState()
     val announcement by viewModel.announcement.collectAsState()
     val homeConfig by viewModel.homeConfig.collectAsState()
+    val forceUpdate by viewModel.forceUpdate.collectAsState()
     val deletingBoardId by viewModel.isDeletingBoard.collectAsState()
 
     val firebaseUser = remember { FirebaseAuth.getInstance().currentUser }
@@ -174,6 +175,19 @@ fun SummaryScreen(
                 }
             }
             
+            // ── Update nudge — dismissible bottom dialog, never blocks the app ──
+            var updateDismissed by remember { mutableStateOf(false) }
+            if (forceUpdate && !updateDismissed) {
+                UpdateNudgeDialog(
+                    title    = homeConfig["app.update.title"]   ?: "New update available",
+                    message  = homeConfig["app.update.message"] ?: "Update Stationly for the latest features and improvements.",
+                    cta      = homeConfig["app.update.cta"]     ?: "Update Now",
+                    dismiss  = homeConfig["app.update.dismiss"] ?: "Maybe Later",
+                    storeUrl = homeConfig["app.storeUrl"]       ?: "https://play.google.com/store/apps/details?id=com.stationly.mobile",
+                    onDismiss = { updateDismissed = true }
+                )
+            }
+
             // ── Slim offline banner — non-blocking, slides in from top ──
             com.stationly.mobile.ui.common.OfflineBanner(
                 visible = uiState.isBackendOffline,
@@ -305,4 +319,61 @@ private fun SummaryTopBar(
             titleContentColor = Color.White
         )
     )
+}
+
+@Composable
+private fun UpdateNudgeDialog(
+    title: String,
+    message: String,
+    cta: String,
+    dismiss: String,
+    storeUrl: String,
+    onDismiss: () -> Unit
+) {
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        androidx.compose.material3.Surface(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+            color = Color(0xFF1A1A1A),
+            tonalElevation = 0.dp
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = androidx.compose.ui.Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.stationly_logo),
+                    contentDescription = null,
+                    modifier = androidx.compose.ui.Modifier.size(52.dp).clip(CircleShape)
+                )
+                Text(
+                    title,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                Text(
+                    message,
+                    color = Color.White.copy(alpha = 0.55f),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                Spacer(androidx.compose.ui.Modifier.height(4.dp))
+                Button(
+                    onClick = { uriHandler.openUri(storeUrl); onDismiss() },
+                    colors = ButtonDefaults.buttonColors(containerColor = TflAmber, contentColor = Color.Black),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                    modifier = androidx.compose.ui.Modifier.fillMaxWidth().height(50.dp)
+                ) {
+                    Text(cta, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+                TextButton(onClick = onDismiss, modifier = androidx.compose.ui.Modifier.fillMaxWidth()) {
+                    Text(dismiss, color = Color.White.copy(alpha = 0.40f), fontSize = 14.sp)
+                }
+            }
+        }
+    }
 }

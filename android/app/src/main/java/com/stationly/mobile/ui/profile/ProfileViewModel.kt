@@ -57,9 +57,13 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     private val _aboutComponents = MutableStateFlow<List<SduiAppComponent>>(emptyList())
     val aboutComponents: StateFlow<List<SduiAppComponent>> = _aboutComponents.asStateFlow()
 
+    private val _homeConfig = MutableStateFlow<Map<String, String>>(emptyMap())
+    val homeConfig: StateFlow<Map<String, String>> = _homeConfig.asStateFlow()
+
     init {
         loadStations()
         loadAboutLayout()
+        viewModelScope.launch { fetchHomeConfig() }
     }
 
     private fun loadAboutLayout() {
@@ -70,6 +74,14 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             } catch (_: Exception) {
                 // Keep empty — ProfileScreen falls back to hardcoded content
             }
+        }
+    }
+
+    private suspend fun fetchHomeConfig() {
+        try {
+            _homeConfig.value = sduiService.getHomeConfig().strings
+        } catch (_: Exception) {
+            // Falls back to hardcoded strings already present in ProfileScreen
         }
     }
 
