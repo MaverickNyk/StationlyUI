@@ -23,24 +23,18 @@ object GlobalBoardProcessor {
      * Groups by platform and takes the top 3 earliest arrivals PER platform.
      * Orders platforms by whichever platform has the earliest overall train.
      */
-    fun processPredictions(predictions: List<PredictionDisplay>): List<PredictionDisplay> {
+    fun processPredictions(predictions: List<PredictionDisplay>): List<PredictionDisplay> =
+        groupByPlatformSorted(predictions).flatMap { (_, platformPreds) -> platformPreds.take(3) }
+
+    private fun groupByPlatformSorted(predictions: List<PredictionDisplay>): List<Map.Entry<String, List<PredictionDisplay>>> {
         val sorted = StationlyFormatters.sortPredictions(predictions)
-        // Group by platform to ensure we take top 3 per platform as requested
-        val grouped = sorted.groupBy { it.platform }
-        
-        // Sort the platforms so the one with the earliest train appears first
-        val sortedPlatforms = grouped.entries.sortedBy { (_, platformPreds) ->
-            val firstPred = platformPreds.firstOrNull()?.eta?.lowercase()?.trim() ?: ""
+        return sorted.groupBy { it.platform }.entries.sortedBy { (_, platformPreds) ->
+            val firstEta = platformPreds.firstOrNull()?.eta?.lowercase()?.trim() ?: ""
             when {
-                firstPred.contains("due") -> 0
-                firstPred.contains("min") -> firstPred.replace(" min", "").toIntOrNull() ?: 999
-                else -> firstPred.toIntOrNull() ?: 999
+                firstEta.contains("due") -> 0
+                firstEta.contains("min") -> firstEta.replace(" min", "").toIntOrNull() ?: 999
+                else -> firstEta.toIntOrNull() ?: 999
             }
-        }
-        
-        // Flatten back to a single list
-        return sortedPlatforms.flatMap { (_, platformPreds) -> 
-            platformPreds.take(3) 
         }
     }
 
@@ -105,47 +99,23 @@ object GlobalBoardProcessor {
         lineName: String,
         hasSelection: Boolean,
         isLoggedIn: Boolean = true,
-        hasEverUpdated: Boolean = false
+        hasEverUpdated: Boolean = false,
+        lineStatusSeverity: String? = null,
+        lineStatusReason: String? = null,
+        currentHour: Int = -1
     ): List<LegacyRow> {
         val rows = mutableListOf<LegacyRow>()
 
         if (predictions.isEmpty()) {
-             val statusMsg = when {
-                 !isLoggedIn -> "Please Login"
-                 !hasSelection -> "No Station"
-                 !hasEverUpdated -> "Fetching live signals..."
-                 else -> "All trains have departed!"
-             }
-             rows.add(LegacyRow.Header(statusMsg))
-             
-             // Fixed 3 empty rows for placeholder
-             rows.add(LegacyRow.Departure(0, " ", " "))
-             rows.add(LegacyRow.Departure(0, " ", " "))
-             rows.add(LegacyRow.Departure(0, " ", " "))
-
-             if (!isLoggedIn) rows.add(LegacyRow.Message("Please Login and setup your first board"))
-             else if (!hasSelection) rows.add(LegacyRow.Message("Please setup your first departure board"))
-             
-             return rows
+            buildPlaceholderRows(
+                lineName, hasSelection, isLoggedIn, hasEverUpdated,
+                lineStatusSeverity, lineStatusReason, currentHour
+            ).forEach { rows.add(it) }
+            return rows
         }
 
-        // 1. Sort all predictions first
-        val sorted = StationlyFormatters.sortPredictions(predictions)
-        
-        // 2. Group by platform
-        val grouped = sorted.groupBy { it.platform }
-        
-        // 3. Sort platforms by the earliest ETA in each platform
-        val sortedPlatforms = grouped.entries.sortedBy { (_, platformPreds) ->
-            val firstPred = platformPreds.firstOrNull()?.eta?.lowercase()?.trim() ?: ""
-            when {
-                firstPred.contains("due") -> 0
-                firstPred.contains("min") -> firstPred.replace(" min", "").toIntOrNull() ?: 999
-                else -> firstPred.toIntOrNull() ?: 999
-            }
-        }
-        
-        sortedPlatforms.forEach { (platform, platformPreds) ->
+        val platformGroups = groupByPlatformSorted(predictions)
+        platformGroups.forEach { (platform, platformPreds) ->
             val stopLetter = platformPreds.firstOrNull()?.stopLetter
             val platformLabel = if (!stopLetter.isNullOrBlank()) "Stop $stopLetter" else platform
             
@@ -158,8 +128,7 @@ object GlobalBoardProcessor {
                 rows.add(LegacyRow.Departure(index + 1, pred.destination, pred.eta))
             }
             
-            // If it's a single platform, ensure we show at least 3 rows (even if placeholders)
-            if (sortedPlatforms.size == 1 && platformTop3.size < 3) {
+            if (platformGroups.size == 1 && platformTop3.size < 3) {
                 for (i in platformTop3.size until 3) {
                     rows.add(LegacyRow.Departure(0, " ", " "))
                 }
@@ -167,5 +136,110 @@ object GlobalBoardProcessor {
         }
 
         return rows
+    }
+
+    private fun buildPlaceholderRows(
+        lineName: String,
+        hasSelection: Boolean,
+        isLoggedIn: Boolean,
+        hasEverUpdated: Boolean,
+        lineStatusSeverity: String?,
+        lineStatusReason: String?,
+        currentHour: Int
+    ): List<LegacyRow> {
+        val line = lineName.trim()
+        val isNightRoute = line.matches(Regex("(?i)^N\\d+$"))
+        val isDay = currentHour in 6..22
+        val isPostNight = currentHour in 5..6
+        val isEarlyMorning = currentHour in 4..6
+        val severity = lineStatusSeverity?.trim() ?: ""
+        val reason = lineStatusReason?.trim()?.takeIf { it.isNotBlank() }
+
+        val lines: List<String> = when {
+            !isLoggedIn -> listOf(
+                "👋 Hey, welcome!",
+                "Sign in to see your live board",
+                "Real-time. Every minute. Free.",
+                "Tap to open Stationly →"
+            )
+            !hasSelection -> listOf(
+                "🚉 You're one stop away",
+                "Pick a station, we'll do the rest",
+                "Tube · Bus · DLR · Overground",
+                "Tap to set up your board →"
+            )
+            isNightRoute && currentHour != -1 && isDay -> listOf(
+                "🌙 Night owls only",
+                "$line runs after midnight",
+                "Come back tonight for live times",
+                ""
+            )
+            isNightRoute && currentHour != -1 && isPostNight -> listOf(
+                "🌙 That's a wrap for tonight",
+                "$line stopped running around 5am",
+                "Back again after midnight",
+                ""
+            )
+            severity.contains("strike", ignoreCase = true) ||
+            severity.contains("industrial action", ignoreCase = true) -> listOf(
+                "😤 Strike action on $line",
+                "No service running today",
+                reason ?: "Staff are on strike",
+                "Check TfL for alternatives"
+            )
+            severity.equals("Suspended", ignoreCase = true) -> listOf(
+                "⚠️ $line is suspended",
+                reason ?: "No service right now",
+                "Engineers are working on it",
+                "Tap ↻ to check for updates"
+            )
+            severity.equals("Bus Service", ignoreCase = true) -> listOf(
+                "🚌 Running on buses",
+                "$line replaced by buses today",
+                reason ?: "Check TfL for bus stop info",
+                ""
+            )
+            severity.equals("Planned Closure", ignoreCase = true) -> listOf(
+                "🔧 Planned closure today",
+                reason ?: "$line closed for engineering",
+                "Normal service resumes after",
+                ""
+            )
+            isEarlyMorning && currentHour != -1 && !isNightRoute -> listOf(
+                "☀️ Early start?",
+                "First trains are warming up",
+                "Service begins shortly",
+                ""
+            )
+            !hasEverUpdated -> listOf(
+                "📡 Tuning in to TfL...",
+                "Your live board is almost ready",
+                "Signals incoming — hang tight",
+                ""
+            )
+            severity.equals("Good Service", ignoreCase = true) -> listOf(
+                "🚇 All clear on the line",
+                "No trains approaching right now",
+                "Should update any moment",
+                "Tap ↻ to refresh"
+            )
+            else -> listOf(
+                "All quiet at the platform",
+                reason ?: "No trains due right now",
+                "Tap ↻ to check again",
+                ""
+            )
+        }
+
+        val header = lines.getOrElse(0) { "" }
+        val row1   = lines.getOrElse(1) { "" }
+        val row2   = lines.getOrElse(2) { "" }
+        val row3   = lines.getOrElse(3) { "" }
+        return listOf(
+            LegacyRow.Header(header),
+            LegacyRow.Departure(0, row1, ""),
+            LegacyRow.Departure(0, row2, ""),
+            LegacyRow.Departure(0, row3, "")
+        )
     }
 }

@@ -305,6 +305,11 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                         ),
                         isFirstTime = true
                     )
+                } else {
+                    // No saved stations — redraw widget so it exits the login placeholder
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        com.stationly.mobile.widget.DepartureWidgetProvider.updateFromStorage(getApplication())
+                    }
                 }
                 _uiState.value = _uiState.value.copy(isAuthenticating = false)
                 onAuthSuccess()

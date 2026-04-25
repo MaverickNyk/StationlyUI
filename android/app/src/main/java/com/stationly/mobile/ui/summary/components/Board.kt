@@ -124,6 +124,7 @@ fun Board(
     val boardUpdate: (View) -> Unit = { view ->
         val context = view.context
         view.findViewById<View>(R.id.btn_settings).visibility = View.GONE
+        view.findViewById<View>(R.id.btn_refresh).visibility = View.GONE
 
         val chrono = view.findViewById<Chronometer>(R.id.last_updated_timer)
         chrono.visibility = View.VISIBLE
@@ -229,8 +230,17 @@ fun Board(
             }
         } else {
             waitingContainer.visibility = View.GONE
+            val legacySeverity = lineStatus?.let {
+                if (it.contains(":")) it.substringBefore(":").trim() else it.trim()
+            }
+            val legacyReason = lineStatus?.let {
+                if (it.contains(":")) it.substringAfter(":").trim().takeIf { r -> r.isNotBlank() } else null
+            }
             val legacyRows = com.stationly.core.util.GlobalBoardProcessor.prepareLegacyRows(
-                predictions, selection.line, true
+                predictions, selection.line, true,
+                lineStatusSeverity = legacySeverity,
+                lineStatusReason = legacyReason,
+                currentHour = java.time.LocalTime.now().hour
             )
             legacyRows.forEach { row ->
                 when (row) {
