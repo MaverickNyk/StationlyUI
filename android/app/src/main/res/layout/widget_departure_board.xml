@@ -17,6 +17,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_centerHorizontal="true"
+            android:layout_toStartOf="@id/header_buttons"
             android:background="@drawable/departure_board_active_row_background"
             android:paddingStart="8dp"
             android:paddingEnd="8dp"
@@ -34,8 +35,11 @@
 
             <TextView
                 android:id="@+id/line_name"
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:maxLines="1"
+                android:ellipsize="end"
                 android:textColor="@color/tfl_amber"
                 android:textSize="15sp"
                 android:textStyle="bold"
@@ -43,6 +47,7 @@
         </LinearLayout>
 
         <LinearLayout
+            android:id="@+id/header_buttons"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_alignParentEnd="true"

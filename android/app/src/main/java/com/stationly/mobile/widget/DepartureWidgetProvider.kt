@@ -7,18 +7,10 @@ import android.content.Intent
 import android.os.SystemClock
 import android.widget.RemoteViews
 import com.stationly.core.model.PredictionDisplay
-import com.stationly.core.model.WidgetState
-import com.stationly.core.platform.AndroidStorageManager
-import com.stationly.core.repository.DepartureRepository
-import com.stationly.core.usecase.FormatDeparturesUseCase
 import com.stationly.core.util.StationlyFormatters
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Dispatchers
-import java.time.Duration
-import java.time.Instant
-import java.time.OffsetDateTime
 import com.stationly.mobile.R
 
 /**
@@ -54,6 +46,10 @@ class DepartureWidgetProvider : AppWidgetProvider() {
     
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
+        when (intent.action) {
+            ACTION_TIMER_DIM -> { setTimerColor(context, COLOR_DIM); return }
+            ACTION_TIMER_RED -> { setTimerColor(context, COLOR_RED); return }
+        }
         val actions = listOf(ACTION_UPDATE_WIDGET, ACTION_MANUAL_REFRESH)
         if (intent.action in actions) {
             val pendingResult = goAsync()
@@ -84,6 +80,12 @@ class DepartureWidgetProvider : AppWidgetProvider() {
     companion object {
         const val ACTION_UPDATE_WIDGET = "com.stationly.mobile.ACTION_UPDATE_WIDGET"
         const val ACTION_MANUAL_REFRESH = "com.stationly.mobile.ACTION_MANUAL_REFRESH"
+        const val ACTION_TIMER_DIM = "com.stationly.mobile.ACTION_TIMER_DIM"
+        const val ACTION_TIMER_RED = "com.stationly.mobile.ACTION_TIMER_RED"
+
+        private const val COLOR_AMBER = 0xFFFFB300.toInt()
+        private const val COLOR_DIM   = 0xFF888888.toInt()
+        private const val COLOR_RED   = 0xFFFF3B30.toInt()
 
         fun triggerRefresh(context: Context) {
             val prefs = context.getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
@@ -95,6 +97,34 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             })
         }
         
+        private fun setTimerColor(context: Context, color: Int) {
+            val mgr = AppWidgetManager.getInstance(context)
+            val ids = mgr.getAppWidgetIds(android.content.ComponentName(context, DepartureWidgetProvider::class.java))
+            val views = RemoteViews(context.packageName, com.stationly.mobile.R.layout.widget_departure_board)
+            views.setTextColor(com.stationly.mobile.R.id.last_updated_timer, color)
+            for (id in ids) mgr.partiallyUpdateAppWidget(id, views)
+        }
+
+        private fun scheduleTimerColorAlarms(context: Context) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+            val now = SystemClock.elapsedRealtime()
+
+            val dimIntent = android.app.PendingIntent.getBroadcast(
+                context, 10,
+                Intent(context, DepartureWidgetProvider::class.java).apply { action = ACTION_TIMER_DIM },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            val redIntent = android.app.PendingIntent.getBroadcast(
+                context, 11,
+                Intent(context, DepartureWidgetProvider::class.java).apply { action = ACTION_TIMER_RED },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.cancel(dimIntent)
+            alarmManager.cancel(redIntent)
+            alarmManager.set(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, now + 60_000L, dimIntent)
+            alarmManager.set(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, now + 180_000L, redIntent)
+        }
+
         fun showRefreshSpinner(context: Context) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
             val ids = appWidgetManager.getAppWidgetIds(
@@ -144,7 +174,9 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 try {
                     val format = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
                     sduiPayload = format.decodeFromString<com.stationly.core.model.sdui.SduiWidgetPayload>(sduiJson)
-                } catch (e: Exception) {}
+                } catch (e: Exception) {
+                    android.util.Log.w("Widget", "Failed to parse SDUI layout for ${selection.station}", e)
+                }
             }
             
             if (sduiPayload != null && predictions.isNotEmpty()) {
@@ -194,31 +226,29 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // Set station name in header
             views.setTextViewText(R.id.line_name, stationName)
             
-            // Handle empty/dead state for Chronometer & Status when no selection
+            // Status and timer always visible — layout never shifts
+            views.setViewVisibility(R.id.status_container, android.view.View.VISIBLE)
+            views.setViewVisibility(R.id.last_updated_timer, if (hasSelection) android.view.View.VISIBLE else android.view.View.INVISIBLE)
+
             if (hasSelection) {
-                views.setViewVisibility(R.id.last_updated_timer, android.view.View.VISIBLE)
-                views.setViewVisibility(R.id.status_container, android.view.View.VISIBLE)
-                
-                views.setChronometer(
-                    R.id.last_updated_timer,
-                    SystemClock.elapsedRealtime(),
-                    "%s ago",
-                    true
-                )
-                
-                if (lineStatusSeverity != null) {
+                views.setChronometer(R.id.last_updated_timer, SystemClock.elapsedRealtime(), "%s ago", true)
+                views.setTextColor(R.id.last_updated_timer, COLOR_AMBER)
+                scheduleTimerColorAlarms(context)
+            }
+
+            when {
+                lineStatusSeverity != null -> {
                     views.setTextViewText(R.id.status_severity, lineStatusSeverity)
-                    views.setTextViewText(
-                        R.id.status_reason, 
-                        StationlyFormatters.formatStatusReason(lineStatusReason ?: "")
-                    )
-                } else {
+                    views.setTextViewText(R.id.status_reason, StationlyFormatters.formatStatusReason(lineStatusReason ?: ""))
+                }
+                hasSelection -> {
                     views.setTextViewText(R.id.status_severity, "Status")
                     views.setTextViewText(R.id.status_reason, "Connecting to TfL signals...")
                 }
-            } else {
-                views.setViewVisibility(R.id.last_updated_timer, android.view.View.INVISIBLE)
-                views.setViewVisibility(R.id.status_container, android.view.View.GONE)
+                else -> {
+                    views.setTextViewText(R.id.status_severity, "Stationly")
+                    views.setTextViewText(R.id.status_reason, "Open the app to get started")
+                }
             }
             
             // Set up click intent to open app
@@ -258,7 +288,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 theme?.primaryColor?.let {
                     dynTextColor = com.stationly.mobile.util.SduiThemeManager.parseColor(it, defaultTextColor)
                     views.setTextColor(R.id.line_name, dynTextColor)
-                    views.setTextColor(R.id.last_updated_timer, dynTextColor)
+                    // Don't override timer color — stale alarms manage it independently
                 }
                 theme?.backgroundColor?.let {
                     val dynBgColor = com.stationly.mobile.util.SduiThemeManager.parseColor(it, android.graphics.Color.BLACK)
@@ -315,12 +345,11 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             } else {
                 // Unified Legacy Path (Perfectly Synced with Inside-App Board)
                 views.setViewVisibility(R.id.waiting_container, android.view.View.GONE)
-                
-                val hasSelection = com.stationly.core.platform.Platform.sqlStorage.getAllSelections().isNotEmpty()
+
                 val isLoggedIn = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser != null
                 val hasEverUpdated = if (hasSelection) {
-                    val selection = com.stationly.core.platform.Platform.sqlStorage.getAllSelections().first()
-                    com.stationly.core.platform.Platform.sqlStorage.hasPredictionsInDatabase(selection.station, selection.line)
+                    val sel = com.stationly.core.platform.Platform.sqlStorage.getAllSelections().first()
+                    com.stationly.core.platform.Platform.sqlStorage.hasPredictionsInDatabase(sel.station, sel.line)
                 } else false
                 
                 val legacyRows = com.stationly.core.util.GlobalBoardProcessor.prepareLegacyRows(
@@ -328,7 +357,10 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     lineName,
                     hasSelection,
                     isLoggedIn,
-                    hasEverUpdated
+                    hasEverUpdated,
+                    lineStatusSeverity,
+                    lineStatusReason,
+                    java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
                 )
 
                 legacyRows.forEach { row ->
@@ -340,10 +372,13 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         }
                         is com.stationly.core.util.LegacyRow.Departure -> {
                             val dep = RemoteViews(context.packageName, R.layout.widget_departure_row)
-                            // Hide number for spacer rows
                             dep.setTextViewText(R.id.departure_number, if (row.index > 0) row.index.toString() else "")
                             dep.setTextViewText(R.id.destination_text, row.destination)
                             dep.setTextViewText(R.id.eta_text, row.eta)
+                            dep.setInt(
+                                R.id.destination_text, "setGravity",
+                                if (row.index == 0) android.view.Gravity.CENTER_HORIZONTAL else android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL
+                            )
                             rowViews.add(dep)
                         }
                         is com.stationly.core.util.LegacyRow.Message -> {
@@ -363,68 +398,6 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             } else {
                 val componentName = android.content.ComponentName(context, DepartureWidgetProvider::class.java)
                 appWidgetManager.updateAppWidget(componentName, views)
-            }
-        }
-        
-        /**
-         * Show waiting state in widget
-         * Called when waiting for FCM updates
-         */
-        fun showWaitingState(
-            context: Context,
-            stationName: String,
-            lineName: String
-        ) {
-            val appWidgetManager = AppWidgetManager.getInstance(context)
-            val appWidgetIds = appWidgetManager.getAppWidgetIds(
-                android.content.ComponentName(context, DepartureWidgetProvider::class.java)
-            )
-            
-            for (appWidgetId in appWidgetIds) {
-                val views = RemoteViews(context.packageName, R.layout.widget_departure_board)
-                views.setTextViewText(R.id.line_name, stationName)
-                val rowViews = mutableListOf<RemoteViews>()
-                val header = RemoteViews(context.packageName, R.layout.widget_platform_header)
-                header.setTextViewText(R.id.platform_name, "🛰️ Syncing live signals...")
-                rowViews.add(header)
-                
-                for (i in 0 until 3) {
-                    val row = RemoteViews(context.packageName, R.layout.widget_departure_row)
-                    row.setTextViewText(R.id.departure_number, "")
-                    row.setTextViewText(R.id.destination_text, "")
-                    row.setTextViewText(R.id.eta_text, "")
-                    rowViews.add(row)
-                }
-                
-                applyRowsToWidget(views, rowViews)
-                
-                views.setChronometer(
-                    R.id.last_updated_timer,
-                    SystemClock.elapsedRealtime(),
-                    "%s ago",
-                    true
-                )
-                
-                // Set click intent
-                val intent = Intent(context, com.stationly.mobile.MainActivity::class.java)
-                val pendingIntent = android.app.PendingIntent.getActivity(
-                    context, 0, intent,
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-                )
-                views.setOnClickPendingIntent(R.id.btn_settings, pendingIntent)
-
-                val refreshIntent = Intent(context, DepartureWidgetProvider::class.java).apply {
-                    action = ACTION_MANUAL_REFRESH
-                }
-                val refreshPendingIntent = android.app.PendingIntent.getBroadcast(
-                    context, 1, refreshIntent,
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-                )
-                views.setOnClickPendingIntent(R.id.btn_refresh, refreshPendingIntent)
-                views.setViewVisibility(R.id.btn_refresh, android.view.View.VISIBLE)
-                views.setViewVisibility(R.id.progress_refresh, android.view.View.GONE)
-
-                appWidgetManager.updateAppWidget(appWidgetId, views)
             }
         }
         

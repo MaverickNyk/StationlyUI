@@ -230,8 +230,17 @@ fun Board(
             }
         } else {
             waitingContainer.visibility = View.GONE
+            val legacySeverity = lineStatus?.let {
+                if (it.contains(":")) it.substringBefore(":").trim() else it.trim()
+            }
+            val legacyReason = lineStatus?.let {
+                if (it.contains(":")) it.substringAfter(":").trim().takeIf { r -> r.isNotBlank() } else null
+            }
             val legacyRows = com.stationly.core.util.GlobalBoardProcessor.prepareLegacyRows(
-                predictions, selection.line, true
+                predictions, selection.line, true,
+                lineStatusSeverity = legacySeverity,
+                lineStatusReason = legacyReason,
+                currentHour = java.time.LocalTime.now().hour
             )
             legacyRows.forEach { row ->
                 when (row) {
