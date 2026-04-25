@@ -1,10 +1,13 @@
 package com.stationly.mobile.ui.common
 
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -91,7 +94,7 @@ fun ServiceUnavailableScreen(
             Spacer(Modifier.height(32.dp))
 
             Text(
-                "Something went wrong",
+                "Can't reach servers",
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
                 fontSize = 24.sp,
@@ -132,9 +135,63 @@ fun ServiceUnavailableScreen(
     }
 }
 
-private fun messageForContext(context: String) = when(context) {
-    "selection" -> "The Stationly backend is temporarily unreachable.\nPlease check your connection."
-    "board" -> "Your live board couldn't connect to the backend.\nSignals might not be real-time."
-    else -> "We're having trouble reaching our servers.\nPlease check your connection and try again."
+private fun messageForContext(context: String) = when (context) {
+    "selection" -> "Can't reach Stationly servers.\nYour previous setup is saved — you can still view your board."
+    "board"     -> "Can't reach Stationly servers.\nLive TfL data continues via direct signals."
+    else        -> "Can't reach Stationly servers.\nPlease check your connection and try again."
+}
+
+/**
+ * Slim non-blocking banner for screens that have cached data to show.
+ * Use this instead of ServiceUnavailableScreen when the user can still
+ * interact with the screen in a degraded state.
+ */
+@Composable
+fun OfflineBanner(
+    visible: Boolean,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = slideInVertically(tween(300)) { -it } + fadeIn(tween(300)),
+        exit  = slideOutVertically(tween(200)) { -it } + fadeOut(tween(200))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF1A1208))
+                .padding(start = 14.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.CloudOff,
+                contentDescription = null,
+                tint = TflAmber,
+                modifier = Modifier.size(15.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Can't reach Stationly servers",
+                color = Color(0xFFCCAA44),
+                fontSize = 13.sp,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(
+                onClick = onRetry,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+            ) {
+                Text("Retry", color = TflAmber, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
+            IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Dismiss",
+                    tint = Color(0xFF886633),
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+        }
+    }
 }
 

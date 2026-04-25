@@ -311,12 +311,9 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         }
                         is com.stationly.core.model.sdui.SduiWidgetComponent.Row -> {
                             val row = RemoteViews(context.packageName, R.layout.widget_departure_row)
-                            row.setTextViewText(R.id.departure_number, component.index)
                             row.setTextViewText(R.id.destination_text, component.destination)
                             row.setTextViewText(R.id.eta_text, component.eta)
-                                                        val etaColor = com.stationly.mobile.util.SduiThemeManager.parseColor(component.etaColor, dynTextColor)
-                            
-                            row.setTextColor(R.id.departure_number, dynTextColor)
+                            val etaColor = com.stationly.mobile.util.SduiThemeManager.parseColor(component.etaColor, dynTextColor)
                             row.setTextColor(R.id.destination_text, dynTextColor)
                             row.setTextColor(R.id.eta_text, etaColor)
                             rowViews.add(row)
@@ -332,11 +329,9 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         }
                         is com.stationly.core.model.sdui.SduiWidgetComponent.Message -> {
                             val row = RemoteViews(context.packageName, R.layout.widget_departure_row)
-                            row.setTextViewText(R.id.departure_number, "-")
                             row.setTextViewText(R.id.destination_text, component.text)
                             row.setTextViewText(R.id.eta_text, "")
-                             val msgColor = com.stationly.mobile.util.SduiThemeManager.parseColor(component.color, dynTextColor)
-                            row.setTextColor(R.id.departure_number, dynTextColor)
+                            val msgColor = com.stationly.mobile.util.SduiThemeManager.parseColor(component.color, dynTextColor)
                             row.setTextColor(R.id.destination_text, msgColor)
                             rowViews.add(row)
                         }
@@ -372,7 +367,6 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         }
                         is com.stationly.core.util.LegacyRow.Departure -> {
                             val dep = RemoteViews(context.packageName, R.layout.widget_departure_row)
-                            dep.setTextViewText(R.id.departure_number, if (row.index > 0) row.index.toString() else "")
                             dep.setTextViewText(R.id.destination_text, row.destination)
                             dep.setTextViewText(R.id.eta_text, row.eta)
                             dep.setInt(

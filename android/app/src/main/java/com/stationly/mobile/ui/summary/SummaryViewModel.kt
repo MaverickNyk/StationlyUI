@@ -20,6 +20,7 @@ import com.stationly.core.platform.AndroidStorageManager
 import com.stationly.core.platform.AndroidNotificationManager
 import com.stationly.core.platform.AndroidWidgetManager
 import com.stationly.mobile.util.PREFS_NAME
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -364,6 +365,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                     isBackendOffline = true,
                     error = "Unable to reach Stationly servers. Check your connection."
                 )
+                scheduleAutoRetry()
             }
         }
     }
@@ -468,6 +470,13 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     fun retryLoad() {
         _uiState.value = _uiState.value.copy(error = null, isBackendOffline = false)
         refreshAll()
+    }
+
+    private fun scheduleAutoRetry() {
+        viewModelScope.launch {
+            delay(30_000)
+            if (_uiState.value.isBackendOffline) retryLoad()
+        }
     }
     
 }

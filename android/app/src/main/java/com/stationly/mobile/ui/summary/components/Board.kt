@@ -191,13 +191,10 @@ fun Board(
                         val row = LayoutInflater.from(context).inflate(
                             R.layout.widget_departure_row, rowsContainer, false
                         )
-                        val nTv = row.findViewById<TextView>(R.id.departure_number)
                         val dTv = row.findViewById<TextView>(R.id.destination_text)
                         val eTv = row.findViewById<TextView>(R.id.eta_text)
-                        nTv.text = component.index
                         dTv.text = component.destination
                         eTv.text = component.eta
-                        nTv.setTextColor(dynTextColor)
                         dTv.setTextColor(dynTextColor)
                         eTv.setTextColor(SduiThemeManager.parseColor(component.etaColor, dynTextColor))
                         if (component.animation == "pulse" && component.eta == "Due") {
@@ -216,9 +213,6 @@ fun Board(
                         val row = LayoutInflater.from(context).inflate(
                             R.layout.widget_departure_row, rowsContainer, false
                         )
-                        row.findViewById<TextView>(R.id.departure_number).apply {
-                            text = "-"; setTextColor(dynTextColor)
-                        }
                         val dTv = row.findViewById<TextView>(R.id.destination_text)
                         dTv.text = component.text
                         dTv.setTextColor(SduiThemeManager.parseColor(component.color, dynTextColor))
@@ -255,10 +249,6 @@ fun Board(
                         val dep = LayoutInflater.from(context).inflate(
                             R.layout.widget_departure_row, rowsContainer, false
                         )
-                        dep.findViewById<TextView>(R.id.departure_number).apply {
-                            text = if (row.index > 0) row.index.toString() else ""
-                            setTextColor(dynTextColor)
-                        }
                         dep.findViewById<TextView>(R.id.destination_text).apply {
                             text = row.destination; setTextColor(dynTextColor)
                         }
