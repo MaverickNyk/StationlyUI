@@ -1,9 +1,15 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 package com.stationly.mobile.ui.summary
 
+import android.app.PendingIntent
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import android.content.Intent
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.foundation.background
@@ -54,6 +60,7 @@ fun SummaryScreen(
     val homeConfig by viewModel.homeConfig.collectAsState()
     val forceUpdate by viewModel.forceUpdate.collectAsState()
     val deletingBoardId by viewModel.isDeletingBoard.collectAsState()
+    val showWidgetPromo by viewModel.showWidgetPromo.collectAsState()
 
     val firebaseUser = remember { FirebaseAuth.getInstance().currentUser }
     val userName = remember(firebaseUser) {
@@ -142,6 +149,16 @@ fun SummaryScreen(
                                     AnnouncementBanner(
                                         announcement = banner,
                                         onDismiss = { viewModel.dismissAnnouncement() }
+                                    )
+                                }
+                            }
+
+                            if (showWidgetPromo) {
+                                item(key = "widget_promo") {
+                                    WidgetPromoCard(
+                                        onDismiss = { viewModel.dismissWidgetPromo() },
+                                        onAdd = { viewModel.hideWidgetPromoForSession() },
+                                        modifier = Modifier.animateItem()
                                     )
                                 }
                             }
@@ -319,6 +336,97 @@ private fun SummaryTopBar(
             titleContentColor = Color.White
         )
     )
+}
+
+@Composable
+private fun WidgetPromoCard(
+    onDismiss: () -> Unit,
+    onAdd: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val manager = AppWidgetManager.getInstance(context)
+    val canPin = manager.isRequestPinAppWidgetSupported
+
+    Surface(
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+        color = Color(0xFF111111),
+        modifier = modifier
+            .fillMaxWidth()
+            .border(
+                width = 1.dp,
+                color = TflAmber.copy(alpha = 0.25f),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+            )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Widget icon
+            Surface(
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+                color = TflAmber.copy(alpha = 0.12f),
+                modifier = Modifier.size(44.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = TflAmber,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "Add to Home Screen",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+                Text(
+                    text = "Live departures one glance away",
+                    color = Color.Gray,
+                    fontSize = 12.sp
+                )
+            }
+
+            if (canPin) {
+                TextButton(
+                    onClick = {
+                        val provider = ComponentName(context, com.stationly.mobile.widget.DepartureWidgetProvider::class.java)
+                        // After user confirms in the system dialog, fire home intent so
+                        // they land on the home screen and can resize / reposition the widget
+                        val goHome = PendingIntent.getActivity(
+                            context, 0,
+                            Intent(Intent.ACTION_MAIN).apply {
+                                addCategory(Intent.CATEGORY_HOME)
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            },
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                        )
+                        manager.requestPinAppWidget(provider, null, goHome)
+                        onAdd()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = TflAmber)
+                ) {
+                    Text("Add", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+            }
+
+            IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Dismiss",
+                    tint = Color.Gray,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
 }
 
 @Composable

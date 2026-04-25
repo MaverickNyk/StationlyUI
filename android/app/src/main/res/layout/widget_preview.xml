@@ -1,23 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    android:id="@+id/departure_board"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="@drawable/departure_board_unlit_background"
     android:orientation="vertical"
     android:padding="8dp">
 
-    <!-- Top Header Row — full-width active background, name centered, buttons right -->
+    <!-- Header Row -->
     <FrameLayout
-        android:id="@+id/header_row"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@drawable/departure_board_active_row_background"
         android:paddingTop="2dp"
         android:paddingBottom="2dp">
 
-        <!-- Icon + name: wrap_content group centered — icon stays touching the text -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -35,21 +31,18 @@
                 android:contentDescription="Stationly" />
 
             <TextView
-                android:id="@+id/line_name"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:text="Oxford Circus"
                 android:maxLines="1"
                 android:ellipsize="end"
                 android:maxEms="16"
                 android:textColor="@color/tfl_amber"
                 android:textSize="15sp"
-                android:textStyle="bold"
-                tools:text="Arsenal Underground Station" />
+                android:textStyle="bold" />
         </LinearLayout>
 
-        <!-- Buttons pinned to right -->
         <LinearLayout
-            android:id="@+id/header_buttons"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="end|center_vertical"
@@ -57,111 +50,155 @@
             android:orientation="horizontal">
 
             <ImageView
-                android:id="@+id/btn_refresh"
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:layout_marginEnd="8dp"
-                android:contentDescription="Refresh"
                 android:padding="2dp"
-                android:src="@drawable/ic_refresh" />
-
-            <ProgressBar
-                android:id="@+id/progress_refresh"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:layout_marginEnd="8dp"
-                android:visibility="gone"
-                android:indeterminate="true"
-                android:indeterminateTint="#FFB900" />
+                android:src="@drawable/ic_refresh"
+                android:contentDescription="Refresh" />
 
             <ImageView
-                android:id="@+id/btn_settings"
                 android:layout_width="24dp"
                 android:layout_height="24dp"
-                android:contentDescription="Settings"
                 android:padding="2dp"
-                android:src="@drawable/ic_settings" />
+                android:src="@drawable/ic_settings"
+                android:contentDescription="Settings" />
         </LinearLayout>
     </FrameLayout>
 
-    <!-- Funny Countdown / Message Area -->
+    <!-- Departure Row 1 -->
     <LinearLayout
-        android:id="@+id/waiting_container"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
+        android:layout_marginTop="2dp"
         android:background="@drawable/departure_board_active_row_background"
-        android:gravity="center"
-        android:orientation="vertical"
-        android:padding="8dp"
-        android:visibility="gone">
+        android:orientation="horizontal"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp">
 
         <TextView
-            android:id="@+id/funny_message"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:text="Ealing Broadway"
+            android:textColor="@color/tfl_amber"
+            android:textSize="15sp" />
+
+        <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:gravity="center"
-            android:singleLine="false"
-            android:ellipsize="end"
+            android:text="2 min"
             android:textColor="@color/tfl_amber"
             android:textSize="15sp"
-            tools:text="🚇 Wrangling the pigeons... " />
-
-        <Chronometer
-            android:id="@+id/countdown"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:countDown="true"
-            android:textColor="@color/tfl_amber"
-            android:textSize="17sp"
-            android:textStyle="bold"
-            tools:text="00:59" />
+            android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- Dynamic Rows Container (API < 31) -->
+    <!-- Departure Row 2 -->
     <LinearLayout
-        android:id="@+id/rows_container"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:orientation="vertical" />
-        
-    <!-- Native Scrolling Container (API >= 31) -->
-    <ListView
-        android:id="@+id/rows_list"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:background="@drawable/departure_board_active_row_background"
+        android:orientation="horizontal"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:text="Hainault"
+            android:textColor="@color/tfl_amber"
+            android:textSize="15sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="5 min"
+            android:textColor="@color/tfl_amber"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- Departure Row 3 -->
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:divider="@null"
-        android:dividerHeight="0dp"
-        android:visibility="gone"
-        android:scrollbars="vertical"
-        android:scrollbarThumbVertical="@drawable/scrollbar_thumb"
-        android:scrollbarSize="3dp"
-        android:fadeScrollbars="true"
-        android:scrollbarFadeDuration="1500"
-        android:scrollbarDefaultDelayBeforeFade="600" />
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:background="@drawable/departure_board_active_row_background"
+        android:orientation="horizontal"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:text="Ealing Broadway"
+            android:textColor="@color/tfl_amber"
+            android:textSize="15sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="9 min"
+            android:textColor="@color/tfl_amber"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- Departure Row 4 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:background="@drawable/departure_board_active_row_background"
+        android:orientation="horizontal"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:text="Ruislip Gardens"
+            android:textColor="@color/tfl_amber"
+            android:textSize="15sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="14 min"
+            android:textColor="@color/tfl_amber"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+    </LinearLayout>
 
     <!-- Line Status Row -->
     <LinearLayout
-        android:id="@+id/status_container"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
         android:background="@drawable/departure_board_active_row_background"
         android:orientation="horizontal"
         android:paddingStart="4dp"
-        android:paddingEnd="4dp"
-        android:visibility="gone">
+        android:paddingEnd="4dp">
 
         <TextView
-            android:id="@+id/status_severity"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:text="Good Service"
             android:textColor="@color/tfl_amber"
             android:textSize="13sp"
-            android:textStyle="bold"
-            tools:text="Part Closure" />
+            android:textStyle="bold" />
 
         <TextView
             android:layout_width="wrap_content"
@@ -171,56 +208,43 @@
             android:textSize="13sp" />
 
         <TextView
-            android:id="@+id/status_reason"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:singleLine="true"
-            android:ellipsize="marquee"
-            android:marqueeRepeatLimit="marquee_forever"
-            android:focusable="true"
-            android:focusableInTouchMode="true"
-            android:freezesText="true"
-            android:scrollHorizontally="true"
-            android:requiresFadingEdge="horizontal"
-            android:fadingEdgeLength="16dp"
+            android:ellipsize="end"
+            android:text="Central line"
             android:textColor="@color/tfl_amber"
-            android:textSize="13sp"
-            tools:text="Service status reason text goes here...">
-            <requestFocus />
-        </TextView>
+            android:textSize="13sp" />
     </LinearLayout>
 
+    <!-- Clock Row -->
     <RelativeLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp">
 
-        <TextClock
-            android:id="@+id/clock"
+        <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_centerInParent="true"
             android:background="@drawable/departure_board_active_row_background"
-            android:format12Hour="hh:mm:ss a"
-            android:format24Hour="HH:mm:ss"
             android:paddingStart="6dp"
             android:paddingEnd="6dp"
+            android:text="08:23:45"
             android:textColor="@color/tfl_amber"
             android:textSize="19sp"
-            android:textStyle="bold"
-            tools:text="17:23:42" />
+            android:textStyle="bold" />
 
-        <Chronometer
-            android:id="@+id/last_updated_timer"
+        <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_alignParentEnd="true"
             android:layout_centerVertical="true"
+            android:text="0:42 ago"
             android:textColor="@color/tfl_amber"
             android:textSize="12sp"
-            android:textStyle="italic"
-            android:format="%s ago" />
+            android:textStyle="italic" />
     </RelativeLayout>
 
 </LinearLayout>

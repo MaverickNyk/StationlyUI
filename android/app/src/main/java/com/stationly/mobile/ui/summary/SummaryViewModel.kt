@@ -1,6 +1,9 @@
 package com.stationly.mobile.ui.summary
 
 import android.app.Application
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
@@ -111,6 +114,10 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     // Station ID currently being deleted, null when idle
     private val _isDeletingBoard = MutableStateFlow<String?>(null)
     val isDeletingBoard: StateFlow<String?> = _isDeletingBoard.asStateFlow()
+
+    // True when widget hasn't been pinned yet and user hasn't dismissed the promo
+    private val _showWidgetPromo = MutableStateFlow(false)
+    val showWidgetPromo: StateFlow<Boolean> = _showWidgetPromo.asStateFlow()
     
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key != null && key.startsWith("predictions_")) {
@@ -142,6 +149,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
 
         viewModelScope.launch { fetchAnnouncement() }
         viewModelScope.launch { fetchHomeConfig() }
+        checkWidgetPromo()
 
         viewModelScope.launch {
             selectionRepository.initialize()
@@ -458,6 +466,29 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         return false
     }
 
+    fun checkWidgetPromo() {
+        // Check each widget instance's host category — filters out lock-screen/systemui
+        // phantom instances which linger even when the home screen widget is removed
+        val manager = AppWidgetManager.getInstance(context)
+        val provider = ComponentName(context, com.stationly.mobile.widget.DepartureWidgetProvider::class.java)
+        val hasHomeScreenWidget = manager.getAppWidgetIds(provider).any { id ->
+            val category = manager.getAppWidgetOptions(id)
+                .getInt(AppWidgetManager.OPTION_APPWIDGET_HOST_CATEGORY, -1)
+            category == AppWidgetProviderInfo.WIDGET_CATEGORY_HOME_SCREEN
+        }
+        _showWidgetPromo.value = !hasHomeScreenWidget
+    }
+
+    // X button — hides until next resume (checkWidgetPromo re-evaluates on every ON_RESUME)
+    fun dismissWidgetPromo() {
+        _showWidgetPromo.value = false
+    }
+
+    // Called by Add button — hide until next resume check
+    fun hideWidgetPromoForSession() {
+        _showWidgetPromo.value = false
+    }
+
     fun dismissAnnouncement() {
         val current = _announcement.value ?: return
         val key = current.dismissKey ?: current.id
@@ -474,6 +505,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             selectionRepository.initialize()
         }
+        checkWidgetPromo()
     }
 
     /**
