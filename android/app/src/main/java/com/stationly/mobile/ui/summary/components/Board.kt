@@ -121,7 +121,11 @@ fun Board(
     )
     val borderAlpha = if (isUrgent) 0.35f + borderPulse * 0.55f else 0.22f
 
-    val boardUpdate: (View) -> Unit = { view ->
+    // Stable lambda — only recreated when data changes, not on every animation frame.
+    // Without remember(), infiniteTransition recompositions recreate this reference
+    // ~60fps, causing AndroidView to call update() continuously and reset the
+    // Chronometer base and marquee scroll on every frame.
+    val boardUpdate: (View) -> Unit = remember(predictions, lineStatus, sduiPayload, lastUpdated, homeConfig) { { view ->
         val context = view.context
         view.findViewById<View>(R.id.btn_settings).visibility = View.GONE
         view.findViewById<View>(R.id.btn_refresh).visibility = View.GONE
@@ -140,20 +144,23 @@ fun Board(
         val severityText = view.findViewById<TextView>(R.id.status_severity)
         val reasonText = view.findViewById<TextView>(R.id.status_reason)
         statusContainer.visibility = View.VISIBLE
+        val newSeverity: String
+        val newReason: String
         if (lineStatus != null) {
-            val severity = if (lineStatus.contains(":")) lineStatus.substringBefore(":") else lineStatus
-            val reason = if (lineStatus.contains(":")) lineStatus.substringAfter(":") else ""
-            severityText.text = severity
-            reasonText.text = reason
+            newSeverity = if (lineStatus.contains(":")) lineStatus.substringBefore(":") else lineStatus
+            newReason = if (lineStatus.contains(":")) lineStatus.substringAfter(":") else ""
         } else {
-            severityText.text = homeConfig["board.status_label"] ?: "Status"
-            reasonText.text = homeConfig["board.connecting_label"] ?: "Connecting to TfL signals..."
+            newSeverity = homeConfig["board.status_label"] ?: "Status"
+            newReason = homeConfig["board.connecting_label"] ?: "Connecting to TfL signals..."
         }
-        // Reset then post the marquee re-arm so it runs after the layout pass.
-        // isSelected=true needs getWidth()>0 (canMarquee), which is only true after
-        // the view has been measured. post() defers to after the current frame.
-        reasonText.isSelected = false
-        reasonText.post { reasonText.isSelected = true }
+        severityText.text = newSeverity
+        // Only reset marquee scroll when the text changes — continuous refreshes (e.g. during
+        // a "Due" blink cycle) would otherwise interrupt the scroll on every update.
+        if (reasonText.text.toString() != newReason) {
+            reasonText.text = newReason
+            reasonText.isSelected = false
+            reasonText.post { reasonText.isSelected = true }
+        }
 
         val rowsContainer = view.findViewById<LinearLayout>(R.id.rows_container)
         val waitingContainer = view.findViewById<LinearLayout>(R.id.waiting_container)
@@ -267,7 +274,7 @@ fun Board(
                 }
             }
         }
-    }
+    } }
 
     // ── Outer card ──
     Box(modifier = Modifier.fillMaxWidth()) {
