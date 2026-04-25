@@ -8,24 +8,25 @@
     android:orientation="vertical"
     android:padding="8dp">
 
-    <!-- Top Header Area -->
-    <RelativeLayout
+    <!-- Top Header Row — full-width active background, name centered, buttons right -->
+    <FrameLayout
+        android:id="@+id/header_row"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content">
+        android:layout_height="wrap_content"
+        android:background="@drawable/departure_board_active_row_background"
+        android:paddingTop="2dp"
+        android:paddingBottom="2dp">
 
+        <!-- Icon + name: constrained by symmetric margins so it never overlaps buttons -->
         <LinearLayout
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_centerHorizontal="true"
-            android:layout_toStartOf="@id/header_buttons"
-            android:background="@drawable/departure_board_active_row_background"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:paddingTop="4dp"
-            android:paddingBottom="4dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-            
+            android:layout_gravity="center"
+            android:layout_marginStart="68dp"
+            android:layout_marginEnd="68dp"
+            android:orientation="horizontal"
+            android:gravity="center">
+
             <ImageView
                 android:layout_width="16dp"
                 android:layout_height="16dp"
@@ -43,15 +44,17 @@
                 android:textColor="@color/tfl_amber"
                 android:textSize="15sp"
                 android:textStyle="bold"
+                android:gravity="center"
                 tools:text="Arsenal Underground Station" />
         </LinearLayout>
 
+        <!-- Buttons pinned to right -->
         <LinearLayout
             android:id="@+id/header_buttons"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_alignParentEnd="true"
-            android:layout_centerVertical="true"
+            android:layout_gravity="end|center_vertical"
+            android:paddingEnd="4dp"
             android:orientation="horizontal">
 
             <ImageView
@@ -80,7 +83,7 @@
                 android:padding="2dp"
                 android:src="@drawable/ic_settings" />
         </LinearLayout>
-    </RelativeLayout>
+    </FrameLayout>
 
     <!-- Funny Countdown / Message Area -->
     <LinearLayout
@@ -145,7 +148,7 @@
         android:id="@+id/status_container"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="4dp"
         android:background="@drawable/departure_board_active_row_background"
         android:orientation="horizontal"
         android:paddingStart="4dp"

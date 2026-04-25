@@ -20,6 +20,7 @@ import com.stationly.core.platform.AndroidStorageManager
 import com.stationly.core.platform.AndroidNotificationManager
 import com.stationly.core.platform.AndroidWidgetManager
 import com.stationly.mobile.util.PREFS_NAME
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -83,6 +84,9 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     // Line Statuses (Key: mode_line)
     private val _lineStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
     val lineStatuses: StateFlow<Map<String, String>> = _lineStatuses.asStateFlow()
+
+    private val _failedLineStatusKeys = MutableStateFlow<Set<String>>(emptySet())
+    val failedLineStatusKeys: StateFlow<Set<String>> = _failedLineStatusKeys.asStateFlow()
     
     // Per-station last updated timestamps
     private val _stationUpdates = MutableStateFlow<Map<String, Long>>(emptyMap())
@@ -241,38 +245,31 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     }
     
     private fun loadLineStatus(selection: UserSelection) {
+        val key = "${selection.mode}_${selection.line}".lowercase()
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val dbStatus = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
-                
                 if (dbStatus != null) {
-                    val severity = dbStatus.statusSeverityDescription
-                    val reason = dbStatus.reason
-                    
-                    var cleanReason = com.stationly.core.util.StationlyFormatters.formatStatusReason(reason ?: "").trim()
-                    if (cleanReason.isNotEmpty()) {
-                        cleanReason = ": $cleanReason"
-                    }
-                    val formattedStatus = "$severity$cleanReason"
-                    
-                    val currentMap = _lineStatuses.value.toMutableMap()
-                    val key = "${selection.mode}_${selection.line}".lowercase()
-                    currentMap[key] = formattedStatus
-                    _lineStatuses.value = currentMap
+                    var cleanReason = com.stationly.core.util.StationlyFormatters.formatStatusReason(dbStatus.reason ?: "").trim()
+                    if (cleanReason.isNotEmpty()) cleanReason = ": $cleanReason"
+                    val formattedStatus = "${dbStatus.statusSeverityDescription}$cleanReason"
 
-                    // Update widget with new status
+                    _lineStatuses.value = _lineStatuses.value.toMutableMap().also { it[key] = formattedStatus }
+                    _failedLineStatusKeys.value = _failedLineStatusKeys.value - key
+
                     widgetManager.updateWidget(
-                         com.stationly.core.model.WidgetState(
-                             stationName = selection.stationName,
-                             lineName = selection.line,
-                             predictions = _predictions.value[selection.station] ?: emptyList(),
-                             status = formattedStatus,
-                             lastUpdated = System.currentTimeMillis() / 1000
-                         )
+                        com.stationly.core.model.WidgetState(
+                            stationName = selection.stationName,
+                            lineName = selection.line,
+                            predictions = _predictions.value[selection.station] ?: emptyList(),
+                            status = formattedStatus,
+                            lastUpdated = System.currentTimeMillis() / 1000
+                        )
                     )
                 }
             } catch (e: Exception) {
                 Log.e("SummaryViewModel", "Error loading line status", e)
+                _failedLineStatusKeys.value = _failedLineStatusKeys.value + key
             }
         }
     }
@@ -364,6 +361,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                     isBackendOffline = true,
                     error = "Unable to reach Stationly servers. Check your connection."
                 )
+                scheduleAutoRetry()
             }
         }
     }
@@ -468,6 +466,13 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     fun retryLoad() {
         _uiState.value = _uiState.value.copy(error = null, isBackendOffline = false)
         refreshAll()
+    }
+
+    private fun scheduleAutoRetry() {
+        viewModelScope.launch {
+            delay(30_000)
+            if (_uiState.value.isBackendOffline) retryLoad()
+        }
     }
     
 }

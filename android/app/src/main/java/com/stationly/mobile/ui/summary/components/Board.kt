@@ -78,6 +78,7 @@ fun Board(
     predictions: List<PredictionDisplay>,
     hasPredictions: Boolean,
     lineStatus: String?,
+    lineStatusFailed: Boolean = false,
     sduiPayload: SduiWidgetPayload? = null,
     lastUpdated: Long,
     onDelete: () -> Unit,
@@ -121,7 +122,11 @@ fun Board(
     )
     val borderAlpha = if (isUrgent) 0.35f + borderPulse * 0.55f else 0.22f
 
-    val boardUpdate: (View) -> Unit = { view ->
+    // Stable lambda — only recreated when data changes, not on every animation frame.
+    // Without remember(), infiniteTransition recompositions recreate this reference
+    // ~60fps, causing AndroidView to call update() continuously and reset the
+    // Chronometer base and marquee scroll on every frame.
+    val boardUpdate: (View) -> Unit = remember(predictions, lineStatus, lineStatusFailed, sduiPayload, lastUpdated, homeConfig) { { view ->
         val context = view.context
         view.findViewById<View>(R.id.btn_settings).visibility = View.GONE
         view.findViewById<View>(R.id.btn_refresh).visibility = View.GONE
@@ -140,28 +145,34 @@ fun Board(
         val severityText = view.findViewById<TextView>(R.id.status_severity)
         val reasonText = view.findViewById<TextView>(R.id.status_reason)
         statusContainer.visibility = View.VISIBLE
+        val newSeverity: String
+        val newReason: String
         if (lineStatus != null) {
-            val severity = if (lineStatus.contains(":")) lineStatus.substringBefore(":") else lineStatus
-            val reason = if (lineStatus.contains(":")) lineStatus.substringAfter(":") else ""
-            severityText.text = severity
-            reasonText.text = reason
+            newSeverity = if (lineStatus.contains(":")) lineStatus.substringBefore(":") else lineStatus
+            newReason = if (lineStatus.contains(":")) lineStatus.substringAfter(":") else ""
+        } else if (lineStatusFailed) {
+            newSeverity = homeConfig["board.status_label"] ?: "Status"
+            newReason = "Status unavailable — pull down to retry"
         } else {
-            severityText.text = homeConfig["board.status_label"] ?: "Status"
-            reasonText.text = homeConfig["board.connecting_label"] ?: "Connecting to TfL signals..."
+            newSeverity = homeConfig["board.status_label"] ?: "Status"
+            newReason = homeConfig["board.connecting_label"] ?: "Connecting to TfL signals..."
         }
-        // Reset then post the marquee re-arm so it runs after the layout pass.
-        // isSelected=true needs getWidth()>0 (canMarquee), which is only true after
-        // the view has been measured. post() defers to after the current frame.
-        reasonText.isSelected = false
-        reasonText.post { reasonText.isSelected = true }
+        severityText.text = newSeverity
+        // Only reset marquee scroll when the text changes — continuous refreshes (e.g. during
+        // a "Due" blink cycle) would otherwise interrupt the scroll on every update.
+        if (reasonText.text.toString() != newReason) {
+            reasonText.text = newReason
+            reasonText.isSelected = false
+            reasonText.post { reasonText.isSelected = true }
+        }
 
         val rowsContainer = view.findViewById<LinearLayout>(R.id.rows_container)
         val waitingContainer = view.findViewById<LinearLayout>(R.id.waiting_container)
         rowsContainer.removeAllViews()
         var dynTextColor = context.getColor(R.color.tfl_amber)
 
-        // Hide header row — shown in Compose header above
-        (view.findViewById<TextView>(R.id.line_name).parent as? View)?.visibility = View.GONE
+        // Hide entire header row — station name is shown in the Compose layer above
+        view.findViewById<View>(R.id.header_row)?.visibility = View.GONE
 
         if (sduiPayload != null) {
             val theme = sduiPayload.theme
@@ -191,13 +202,10 @@ fun Board(
                         val row = LayoutInflater.from(context).inflate(
                             R.layout.widget_departure_row, rowsContainer, false
                         )
-                        val nTv = row.findViewById<TextView>(R.id.departure_number)
                         val dTv = row.findViewById<TextView>(R.id.destination_text)
                         val eTv = row.findViewById<TextView>(R.id.eta_text)
-                        nTv.text = component.index
                         dTv.text = component.destination
                         eTv.text = component.eta
-                        nTv.setTextColor(dynTextColor)
                         dTv.setTextColor(dynTextColor)
                         eTv.setTextColor(SduiThemeManager.parseColor(component.etaColor, dynTextColor))
                         if (component.animation == "pulse" && component.eta == "Due") {
@@ -216,9 +224,6 @@ fun Board(
                         val row = LayoutInflater.from(context).inflate(
                             R.layout.widget_departure_row, rowsContainer, false
                         )
-                        row.findViewById<TextView>(R.id.departure_number).apply {
-                            text = "-"; setTextColor(dynTextColor)
-                        }
                         val dTv = row.findViewById<TextView>(R.id.destination_text)
                         dTv.text = component.text
                         dTv.setTextColor(SduiThemeManager.parseColor(component.color, dynTextColor))
@@ -255,10 +260,6 @@ fun Board(
                         val dep = LayoutInflater.from(context).inflate(
                             R.layout.widget_departure_row, rowsContainer, false
                         )
-                        dep.findViewById<TextView>(R.id.departure_number).apply {
-                            text = if (row.index > 0) row.index.toString() else ""
-                            setTextColor(dynTextColor)
-                        }
                         dep.findViewById<TextView>(R.id.destination_text).apply {
                             text = row.destination; setTextColor(dynTextColor)
                         }
@@ -277,7 +278,7 @@ fun Board(
                 }
             }
         }
-    }
+    } }
 
     // ── Outer card ──
     Box(modifier = Modifier.fillMaxWidth()) {
@@ -516,18 +517,28 @@ private fun NextDepartureRow(prediction: PredictionDisplay, lineColor: Color) {
         }
     }
     var countdown by remember(prediction) { mutableIntStateOf(initialMinutes) }
+    var isDeparted by remember(prediction) { mutableStateOf(false) }
     LaunchedEffect(prediction) {
         while (countdown > 0) { delay(60_000L); countdown = (countdown - 1).coerceAtLeast(0) }
+        // Train is Due — if no fresh prediction arrives within 90s, assume it has departed.
+        delay(90_000L)
+        isDeparted = true
     }
 
-    val isDue = countdown == 0
+    val isDue = countdown == 0 && !isDeparted
     val infiniteTransition = rememberInfiniteTransition(label = "due_pulse")
     val pulseAlpha by infiniteTransition.animateFloat(
         initialValue = 1f, targetValue = 0.4f,
         animationSpec = infiniteRepeatable(tween(700, easing = EaseInOut), RepeatMode.Reverse),
         label = "due_alpha"
     )
+    val rowAlpha by animateFloatAsState(
+        targetValue = if (isDeparted) 0.35f else 1f,
+        animationSpec = tween(600),
+        label = "departed_fade"
+    )
     val etaColor = when {
+        isDeparted   -> Color.White.copy(alpha = 0.4f)
         isDue        -> Color(0xFFFF5252)
         countdown == 1 -> TflAmber
         else         -> Color.White
@@ -543,6 +554,7 @@ private fun NextDepartureRow(prediction: PredictionDisplay, lineColor: Color) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .graphicsLayer { alpha = rowAlpha }
             .background(lineColor.copy(alpha = 0.06f))
     ) {
         Row(
@@ -605,13 +617,17 @@ private fun NextDepartureRow(prediction: PredictionDisplay, lineColor: Color) {
             // Right: ETA large and prominent
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    if (isDue) "Due" else "$countdown",
+                    when {
+                        isDeparted -> "──"
+                        isDue      -> "Due"
+                        else       -> "$countdown"
+                    },
                     color = etaColor.copy(alpha = if (isDue) pulseAlpha else 1f),
                     fontWeight = FontWeight.Black,
                     fontSize = 22.sp,
                     fontFamily = FontFamily.Monospace
                 )
-                if (!isDue) {
+                if (!isDue && !isDeparted) {
                     Text(
                         "min",
                         color = etaColor.copy(alpha = 0.6f),

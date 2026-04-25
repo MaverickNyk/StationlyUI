@@ -8,9 +8,10 @@ import android.os.SystemClock
 import android.widget.RemoteViews
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.util.StationlyFormatters
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import com.stationly.mobile.R
 
 /**
@@ -35,7 +36,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         appWidgetIds: IntArray
     ) {
         val pendingResult = goAsync()
-        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
                 updateFromStorage(context)
             } finally {
@@ -53,7 +54,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         val actions = listOf(ACTION_UPDATE_WIDGET, ACTION_MANUAL_REFRESH)
         if (intent.action in actions) {
             val pendingResult = goAsync()
-            kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                 try {
                     if (intent.action != ACTION_UPDATE_WIDGET) {
                         showRefreshSpinner(context)
@@ -311,12 +312,9 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         }
                         is com.stationly.core.model.sdui.SduiWidgetComponent.Row -> {
                             val row = RemoteViews(context.packageName, R.layout.widget_departure_row)
-                            row.setTextViewText(R.id.departure_number, component.index)
                             row.setTextViewText(R.id.destination_text, component.destination)
                             row.setTextViewText(R.id.eta_text, component.eta)
-                                                        val etaColor = com.stationly.mobile.util.SduiThemeManager.parseColor(component.etaColor, dynTextColor)
-                            
-                            row.setTextColor(R.id.departure_number, dynTextColor)
+                            val etaColor = com.stationly.mobile.util.SduiThemeManager.parseColor(component.etaColor, dynTextColor)
                             row.setTextColor(R.id.destination_text, dynTextColor)
                             row.setTextColor(R.id.eta_text, etaColor)
                             rowViews.add(row)
@@ -332,11 +330,9 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         }
                         is com.stationly.core.model.sdui.SduiWidgetComponent.Message -> {
                             val row = RemoteViews(context.packageName, R.layout.widget_departure_row)
-                            row.setTextViewText(R.id.departure_number, "-")
                             row.setTextViewText(R.id.destination_text, component.text)
                             row.setTextViewText(R.id.eta_text, "")
-                             val msgColor = com.stationly.mobile.util.SduiThemeManager.parseColor(component.color, dynTextColor)
-                            row.setTextColor(R.id.departure_number, dynTextColor)
+                            val msgColor = com.stationly.mobile.util.SduiThemeManager.parseColor(component.color, dynTextColor)
                             row.setTextColor(R.id.destination_text, msgColor)
                             rowViews.add(row)
                         }
@@ -372,7 +368,6 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         }
                         is com.stationly.core.util.LegacyRow.Departure -> {
                             val dep = RemoteViews(context.packageName, R.layout.widget_departure_row)
-                            dep.setTextViewText(R.id.departure_number, if (row.index > 0) row.index.toString() else "")
                             dep.setTextViewText(R.id.destination_text, row.destination)
                             dep.setTextViewText(R.id.eta_text, row.eta)
                             dep.setInt(

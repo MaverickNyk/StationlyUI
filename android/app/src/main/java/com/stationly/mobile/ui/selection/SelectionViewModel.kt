@@ -17,6 +17,7 @@ import kotlinx.serialization.encodeToString
 import com.stationly.core.service.SduiApiServiceFactory
 import com.stationly.core.service.TflApiServiceFactory
 import com.stationly.core.platform.Platform
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -124,9 +125,16 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun retryLoad() {
-        _uiState.value = _uiState.value.copy(error = null, failedFetches = emptySet())
+        _uiState.value = _uiState.value.copy(error = null, isBackendOffline = false, failedFetches = emptySet())
         loadServerLayout()
         loadModes()
+    }
+
+    private fun scheduleAutoRetry() {
+        viewModelScope.launch {
+            delay(30_000)
+            if (_uiState.value.isBackendOffline) retryLoad()
+        }
     }
 
     fun retryDropdown(componentId: String) {
@@ -195,6 +203,7 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                         isLoading = false, isBackendOffline = true,
                         error = com.stationly.mobile.util.BackendErrorUtil.getFriendlyMessage(e)
                     )
+                    scheduleAutoRetry()
                 } else {
                     _uiState.value = _uiState.value.copy(isLoading = false)
                 }
