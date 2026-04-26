@@ -93,6 +93,7 @@ fun ProfileScreen(
     val isLoadingProfile by profileViewModel.isLoading.collectAsState()
     val aboutComponents by profileViewModel.aboutComponents.collectAsState()
     val deletingStationId by profileViewModel.deletingStationId.collectAsState()
+    val homeConfig by profileViewModel.homeConfig.collectAsState()
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
     var showDeleteStationDialog by remember { mutableStateOf<SubscribedStation?>(null) }
     var isDeletingAccount by remember { mutableStateOf(false) }
@@ -146,7 +147,7 @@ fun ProfileScreen(
             // ── My Stations Section ──
             item {
                 Spacer(Modifier.height(4.dp))
-                SectionHeader("My Stations", Icons.Rounded.Train)
+                SectionHeader(homeConfig["profile.stations.title"] ?: "My Stations", Icons.Rounded.Train)
             }
 
             if (isLoadingProfile) {
@@ -159,7 +160,12 @@ fun ProfileScreen(
                     }
                 }
             } else if (stations.isEmpty()) {
-                item { EmptyStationsCard() }
+                item {
+                    EmptyStationsCard(
+                        title    = homeConfig["profile.stations.empty_title"]    ?: "No stations yet",
+                        subtitle = homeConfig["profile.stations.empty_subtitle"] ?: "Set up a board to start tracking departures"
+                    )
+                }
             } else {
                 items(stations, key = { "${it.id}_${it.line}" }) { station ->
                     StationCard(
@@ -173,7 +179,7 @@ fun ProfileScreen(
             // ── About Stationly Section (SDUI-driven) ──
             item {
                 Spacer(Modifier.height(4.dp))
-                SectionHeader("About Stationly", Icons.Rounded.Info)
+                SectionHeader(homeConfig["profile.about.title"] ?: "About Stationly", Icons.Rounded.Info)
             }
 
             if (aboutComponents.isEmpty()) {
@@ -283,7 +289,7 @@ fun ProfileScreen(
                     } else {
                         Icon(Icons.Rounded.Logout, null, tint = DangerRed, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(12.dp))
-                        Text("Sign Out", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = White90)
+                        Text(homeConfig["profile.signout.label"] ?: "Sign Out", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = White90)
                     }
                 }
             }
@@ -308,27 +314,29 @@ fun ProfileScreen(
 
     // ── Delete Station Confirmation Dialog ──
     showDeleteStationDialog?.let { station ->
+        val dsTitle   = homeConfig["profile.delete_station.title"]   ?: "Delete This Board?"
+        val dsBody    = (homeConfig["profile.delete_station.body"]   ?: "You\u2019re about to remove your {name} board.")
+            .replace("{name}", station.name)
+        val dsBullets = (homeConfig["profile.delete_station.bullets"]
+            ?: "Live departure tracking will stop,Departure notifications will be unsubscribed,Widget will be cleared")
+            .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        val dsFooter  = homeConfig["profile.delete_station.footer"]  ?: "You can always set up a new board from the home screen."
+        val dsConfirm = homeConfig["profile.delete_station.confirm"] ?: "Delete Board"
+        val dsCancel  = homeConfig["profile.delete_station.cancel"]  ?: "Keep It"
+
         AlertDialog(
             onDismissRequest = { showDeleteStationDialog = null },
             containerColor = Surface2,
             titleContentColor = White90,
             textContentColor = White55,
             icon = { Icon(Icons.Rounded.DeleteOutline, null, tint = DangerRed, modifier = Modifier.size(28.dp)) },
-            title = { Text("Delete This Board?", fontWeight = FontWeight.Bold) },
+            title = { Text(dsTitle, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        "You're about to remove your ${station.name} board.",
-                        fontWeight = FontWeight.Medium
-                    )
-                    WarningBullet("Live departure tracking will stop")
-                    WarningBullet("Departure notifications will be unsubscribed")
-                    WarningBullet("Widget will be cleared")
+                    Text(dsBody, fontWeight = FontWeight.Medium)
+                    dsBullets.forEach { WarningBullet(it) }
                     Spacer(Modifier.height(2.dp))
-                    Text(
-                        "You can always set up a new board from the home screen.",
-                        color = White25, fontSize = 12.sp
-                    )
+                    Text(dsFooter, color = White25, fontSize = 12.sp)
                 }
             },
             confirmButton = {
@@ -339,44 +347,45 @@ fun ProfileScreen(
                         profileViewModel.deleteStation(stationToDelete)
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = DangerRed)
-                ) { Text("Delete Board", fontWeight = FontWeight.Bold) }
+                ) { Text(dsConfirm, fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
                 TextButton(
                     onClick = { showDeleteStationDialog = null },
                     colors = ButtonDefaults.textButtonColors(contentColor = White55)
-                ) { Text("Keep It") }
+                ) { Text(dsCancel) }
             }
         )
     }
 
     // ── Delete Account Confirmation Dialog ──
     if (showDeleteAccountDialog) {
+        val daTitle   = homeConfig["profile.delete_account.title"]   ?: "Delete Your Account?"
+        val daIntro   = homeConfig["profile.delete_account.intro"]   ?: "This action is permanent and cannot be undone. You will lose:"
+        val daBullets = (homeConfig["profile.delete_account.bullets"]
+            ?: "All your saved stations and boards,Your notification preferences,Your profile and account data")
+            .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        val daFooter  = homeConfig["profile.delete_account.footer"]  ?: "You\u2019ll need to create a new account to use Stationly again."
+        val daConfirm = homeConfig["profile.delete_account.confirm"] ?: "Delete Permanently"
+        val daCancel  = homeConfig["profile.delete_account.cancel"]  ?: "Keep Account"
+
         AlertDialog(
             onDismissRequest = { if (!isDeletingAccount) showDeleteAccountDialog = false },
             containerColor = Surface2,
             titleContentColor = White90,
             textContentColor = White55,
             icon = {
-                Icon(
-                    Icons.Rounded.WarningAmber, null,
-                    tint = DangerRed, modifier = Modifier.size(32.dp)
-                )
+                Icon(Icons.Rounded.WarningAmber, null, tint = DangerRed, modifier = Modifier.size(32.dp))
             },
             title = {
-                Text("Delete Your Account?", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                Text(daTitle, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("This action is permanent and cannot be undone. You will lose:")
-                    WarningBullet("All your saved stations and boards")
-                    WarningBullet("Your notification preferences")
-                    WarningBullet("Your profile and account data")
+                    Text(daIntro)
+                    daBullets.forEach { WarningBullet(it) }
                     Spacer(Modifier.height(4.dp))
-                    Text(
-                        "You'll need to create a new account to use Stationly again.",
-                        color = White25, fontSize = 12.sp
-                    )
+                    Text(daFooter, color = White25, fontSize = 12.sp)
                 }
             },
             confirmButton = {
@@ -399,12 +408,9 @@ fun ProfileScreen(
                     colors = ButtonDefaults.textButtonColors(contentColor = DangerRed)
                 ) {
                     if (isDeletingAccount) {
-                        CircularProgressIndicator(
-                            color = DangerRed, strokeWidth = 2.dp,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        CircularProgressIndicator(color = DangerRed, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
                     } else {
-                        Text("Delete Permanently", fontWeight = FontWeight.Bold)
+                        Text(daConfirm, fontWeight = FontWeight.Bold)
                     }
                 }
             },
@@ -413,7 +419,7 @@ fun ProfileScreen(
                     TextButton(
                         onClick = { showDeleteAccountDialog = false },
                         colors = ButtonDefaults.textButtonColors(contentColor = White55)
-                    ) { Text("Keep Account") }
+                    ) { Text(daCancel) }
                 }
             }
         )
@@ -601,7 +607,10 @@ private fun StationCard(station: SubscribedStation, isDeleting: Boolean = false,
    Empty Stations Card
    ═══════════════════════════════════════════════════════════════ */
 @Composable
-private fun EmptyStationsCard() {
+private fun EmptyStationsCard(
+    title: String = "No stations yet",
+    subtitle: String = "Set up a board to start tracking departures"
+) {
     Surface(
         color = Surface1,
         shape = RoundedCornerShape(16.dp),
@@ -613,12 +622,9 @@ private fun EmptyStationsCard() {
         ) {
             Icon(Icons.Outlined.Train, null, tint = White25, modifier = Modifier.size(40.dp))
             Spacer(Modifier.height(12.dp))
-            Text("No stations yet", color = White55, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            Text(title, color = White55, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
             Spacer(Modifier.height(4.dp))
-            Text(
-                "Set up a board to start tracking departures",
-                color = White25, fontSize = 13.sp, textAlign = TextAlign.Center
-            )
+            Text(subtitle, color = White25, fontSize = 13.sp, textAlign = TextAlign.Center)
         }
     }
 }

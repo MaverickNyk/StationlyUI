@@ -155,11 +155,33 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Evaluates SduiValidation rules from the loaded layout against current inputs.
+     * Returns the first failing errorMessage, or null if all fields are valid.
+     * This replaces per-action hardcoded validation so the backend owns the rules.
+     */
+    private fun validateInputs(): String? {
+        val layout = _uiState.value.layout ?: return null
+        val inputs = _uiState.value.inputs
+        layout.components.filterIsInstance<com.stationly.core.model.sdui.SduiAppComponent.Input>()
+            .forEach { input ->
+                val v = input.validation ?: return@forEach
+                val value = inputs[input.id]?.trim() ?: ""
+                if (v.required && value.isEmpty()) return v.errorMessage ?: "Please fill in ${input.label}."
+                if (value.isNotEmpty()) {
+                    v.minLength?.let { if (value.length < it) return v.errorMessage ?: "${input.label} must be at least $it characters." }
+                    v.maxLength?.let { if (value.length > it) return v.errorMessage ?: "${input.label} must be at most $it characters." }
+                    v.pattern?.let  { if (!Regex(it).containsMatchIn(value)) return v.errorMessage ?: "${input.label} is invalid." }
+                }
+            }
+        return null
+    }
+
     private fun performEmailAuth(onAuthSuccess: () -> Unit) {
         val email    = _uiState.value.inputs["email"]?.trim() ?: ""
         val password = _uiState.value.inputs["password"] ?: ""
-        if (email.isEmpty() || password.isEmpty()) {
-            _uiState.value = _uiState.value.copy(error = "Please enter your email and password.")
+        validateInputs()?.let { error ->
+            _uiState.value = _uiState.value.copy(error = error)
             return
         }
         viewModelScope.launch {
@@ -181,10 +203,8 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
         val password    = _uiState.value.inputs["password"] ?: ""
         val displayName = _uiState.value.inputs["displayName"]?.trim() ?: ""
 
-        if (email.isEmpty() || password.length < 6) {
-            _uiState.value = _uiState.value.copy(
-                error = "Use a valid email and a password with at least 6 characters."
-            )
+        validateInputs()?.let { error ->
+            _uiState.value = _uiState.value.copy(error = error)
             return
         }
         viewModelScope.launch {

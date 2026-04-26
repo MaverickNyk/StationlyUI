@@ -152,7 +152,7 @@ fun Board(
             newReason = if (lineStatus.contains(":")) lineStatus.substringAfter(":") else ""
         } else if (lineStatusFailed) {
             newSeverity = homeConfig["board.status_label"] ?: "Status"
-            newReason = "Status unavailable — pull down to retry"
+            newReason = homeConfig["board.status_failed_label"] ?: "Status unavailable — pull down to retry"
         } else {
             newSeverity = homeConfig["board.status_label"] ?: "Status"
             newReason = homeConfig["board.connecting_label"] ?: "Connecting to TfL signals..."

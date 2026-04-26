@@ -29,27 +29,20 @@ fun StationExploreSection(
         lineStatuses.values.count { !it.trim().lowercase().startsWith("good service") }
     }
 
-    val travelPeriod = remember(strings) {
-        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-        when (hour) {
-            in 7..9   -> strings["explore.period.morning"]   ?: "Morning rush hour"
-            in 17..19 -> strings["explore.period.evening"]   ?: "Evening rush hour"
-            in 22..23 -> strings["explore.period.late_night"]?: "Late night service"
-            in 0..5   -> strings["explore.period.night"]     ?: "Night service"
-            else      -> strings["explore.period.offpeak"]   ?: "Off-peak"
+    val travelPeriodKey = remember(strings) {
+        val hour = java.time.LocalTime.now().hour
+        fun bound(key: String, default: Int) = strings[key]?.toIntOrNull() ?: default
+        when {
+            hour in bound("explore.period.morning.start", 7)..bound("explore.period.morning.end", 9)         -> "morning"
+            hour in bound("explore.period.evening.start", 17)..bound("explore.period.evening.end", 19)       -> "evening"
+            hour in bound("explore.period.late_night.start", 22)..bound("explore.period.late_night.end", 23) -> "late_night"
+            hour in bound("explore.period.night.start", 0)..bound("explore.period.night.end", 5)             -> "night"
+            else -> "offpeak"
         }
     }
 
-    val travelPeriodSub = remember(strings) {
-        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-        when (hour) {
-            in 7..9   -> strings["explore.period.morning_sub"]    ?: "Expect busier trains"
-            in 17..19 -> strings["explore.period.evening_sub"]    ?: "Expect busier trains"
-            in 22..23 -> strings["explore.period.late_night_sub"] ?: "Reduced frequency"
-            in 0..5   -> strings["explore.period.night_sub"]      ?: "Reduced frequency"
-            else      -> strings["explore.period.offpeak_sub"]    ?: "Normal frequency"
-        }
-    }
+    val travelPeriod    = strings["explore.period.$travelPeriodKey"]     ?: travelPeriodKey.replace('_', ' ')
+    val travelPeriodSub = strings["explore.period.${travelPeriodKey}_sub"] ?: ""
 
     Column(modifier = Modifier.padding(top = 8.dp)) {
         Text(
@@ -64,10 +57,11 @@ fun StationExploreSection(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            val disruptionLabel = strings["explore.disruptions_label"] ?: "Disruption"
             ExploreCard(
                 icon = if (disruptions == 0) Icons.Outlined.CheckCircle else Icons.Outlined.Warning,
                 title = if (disruptions == 0) strings["explore.good_service"] ?: "Good Service"
-                        else "$disruptions Disruption${if (disruptions > 1) "s" else ""}",
+                        else "$disruptions $disruptionLabel${if (disruptions > 1) "s" else ""}",
                 subtitle = if (disruptions == 0) strings["explore.good_service_sub"] ?: "All lines running normally"
                            else strings["explore.disruptions_sub"] ?: "Delays on network",
                 accentColor = if (disruptions == 0) Color(0xFF4CAF50) else TflAmber,

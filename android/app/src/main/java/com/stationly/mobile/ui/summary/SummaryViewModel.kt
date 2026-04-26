@@ -1,6 +1,9 @@
 package com.stationly.mobile.ui.summary
 
 import android.app.Application
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
@@ -104,9 +107,17 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     private val _homeConfig = MutableStateFlow<Map<String, String>>(emptyMap())
     val homeConfig: StateFlow<Map<String, String>> = _homeConfig.asStateFlow()
 
+    // True when the installed version is below app.minVersion
+    private val _forceUpdate = MutableStateFlow(false)
+    val forceUpdate: StateFlow<Boolean> = _forceUpdate.asStateFlow()
+
     // Station ID currently being deleted, null when idle
     private val _isDeletingBoard = MutableStateFlow<String?>(null)
     val isDeletingBoard: StateFlow<String?> = _isDeletingBoard.asStateFlow()
+
+    // True when widget hasn't been pinned yet and user hasn't dismissed the promo
+    private val _showWidgetPromo = MutableStateFlow(false)
+    val showWidgetPromo: StateFlow<Boolean> = _showWidgetPromo.asStateFlow()
     
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key != null && key.startsWith("predictions_")) {
@@ -138,6 +149,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
 
         viewModelScope.launch { fetchAnnouncement() }
         viewModelScope.launch { fetchHomeConfig() }
+        checkWidgetPromo()
 
         viewModelScope.launch {
             selectionRepository.initialize()
@@ -431,10 +443,50 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
 
     private suspend fun fetchHomeConfig() {
         try {
-            _homeConfig.value = sduiService.getHomeConfig().strings
+            val config = sduiService.getHomeConfig().strings
+            _homeConfig.value = config
+            config["app.minVersion"]?.let { minVer ->
+                _forceUpdate.value = isVersionBelow(com.stationly.mobile.BuildConfig.VERSION_NAME, minVer)
+            }
         } catch (e: Exception) {
             Log.w("SummaryViewModel", "Could not fetch home config — falling back to hardcoded strings", e)
         }
+    }
+
+    private fun isVersionBelow(installed: String, minimum: String): Boolean {
+        fun parse(v: String) = v.trim().split(".").mapNotNull { it.toIntOrNull() }
+        val ins = parse(installed)
+        val min = parse(minimum)
+        for (i in 0 until maxOf(ins.size, min.size)) {
+            val a = ins.getOrElse(i) { 0 }
+            val b = min.getOrElse(i) { 0 }
+            if (a < b) return true
+            if (a > b) return false
+        }
+        return false
+    }
+
+    fun checkWidgetPromo() {
+        // Check each widget instance's host category — filters out lock-screen/systemui
+        // phantom instances which linger even when the home screen widget is removed
+        val manager = AppWidgetManager.getInstance(context)
+        val provider = ComponentName(context, com.stationly.mobile.widget.DepartureWidgetProvider::class.java)
+        val hasHomeScreenWidget = manager.getAppWidgetIds(provider).any { id ->
+            val category = manager.getAppWidgetOptions(id)
+                .getInt(AppWidgetManager.OPTION_APPWIDGET_HOST_CATEGORY, -1)
+            category == AppWidgetProviderInfo.WIDGET_CATEGORY_HOME_SCREEN
+        }
+        _showWidgetPromo.value = !hasHomeScreenWidget
+    }
+
+    // X button — hides until next resume (checkWidgetPromo re-evaluates on every ON_RESUME)
+    fun dismissWidgetPromo() {
+        _showWidgetPromo.value = false
+    }
+
+    // Called by Add button — hide until next resume check
+    fun hideWidgetPromoForSession() {
+        _showWidgetPromo.value = false
     }
 
     fun dismissAnnouncement() {
@@ -453,6 +505,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             selectionRepository.initialize()
         }
+        checkWidgetPromo()
     }
 
     /**
