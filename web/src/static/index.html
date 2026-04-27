@@ -4,27 +4,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stationly - Don't Be Late.</title>
-    <meta name="description"
-        content="The only honest London transport app. Widgets, real-time updates, and zero nonsense.">
+    <title>Stationly — Don't Be Late.</title>
+    <meta name="description" content="Real-time London departure boards on your home screen. Live TfL data, 270+ stations, 20k+ bus stops. Home screen widget for iOS and Android.">
 
-    <!-- Open Graph / Meta Tags -->
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://stationly.co.uk/">
-    <meta property="og:title" content="Stationly - Don't Be Late.">
-    <meta property="og:description"
-        content="The only honest London transport app. Widgets, real-time updates, and zero nonsense.">
+    <meta property="og:title" content="Stationly — Don't Be Late.">
+    <meta property="og:description" content="Real-time London departure boards on your home screen. Live TfL data, 270+ stations, 20k+ bus stops. Home screen widget for iOS and Android.">
     <meta property="og:image" content="https://stationly.co.uk/assets/widget_demo.png">
+    <meta property="twitter:card" content="summary_large_image">
     <meta property="twitter:image" content="https://stationly.co.uk/assets/widget_demo.png">
 
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <meta name="theme-color" content="#080D1A">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/variables.css">
     <link rel="stylesheet" href="css/base.css">
     <link rel="stylesheet" href="css/layout.css">
     <link rel="stylesheet" href="css/components.css">
-    <link rel="stylesheet" href="css/auth.css">
-    <link rel="icon" type="image/png" href="assets/stationly_logo_final.png">
-    <link rel="apple-touch-icon" href="assets/stationly_logo_final.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="assets/stationly_logo_web.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon.png">
+    <link rel="apple-touch-icon" href="assets/stationly_logo_web.png">
 </head>
 
 <body>
@@ -33,433 +34,535 @@
     <header class="header">
         <div class="container nav-container">
             <a href="#" class="logo" onclick="switchTab('home')">
-                <img src="assets/stationly_logo_final.png" alt="Stationly">
+                <img src="assets/stationly_logo_web.png" alt="Stationly">
                 <span>Stationly</span>
             </a>
-
-            <!-- Desktop Nav -->
             <nav class="nav-links">
                 <button class="nav-btn active" onclick="switchTab('home')">Home</button>
                 <button class="nav-btn" onclick="switchTab('developer')">Developers</button>
                 <button class="nav-btn" onclick="switchTab('support')">Support</button>
-                <button class="nav-btn" id="nav-auth-btn" onclick="switchTab('auth')">Login</button>
             </nav>
-
-            <!-- Hamburger Button -->
             <div class="hamburger" onclick="toggleMenu()">
-                <span></span>
-                <span></span>
-                <span></span>
+                <span></span><span></span><span></span>
             </div>
         </div>
-
-        <!-- Mobile Nav Menu (Hidden by default) -->
         <div class="mobile-menu">
             <button class="nav-btn" onclick="switchTab('home')">Home</button>
             <button class="nav-btn" onclick="switchTab('developer')">Developers</button>
             <button class="nav-btn" onclick="switchTab('support')">Support</button>
-            <button class="nav-btn" onclick="switchTab('auth')">Login</button>
         </div>
     </header>
 
-    <!-- Main Content Wrapper -->
     <main>
 
-        <!-- HOME TAB -->
+        <!-- ══════════════════════════════════════
+             HOME TAB
+        ══════════════════════════════════════ -->
         <div id="home" class="tab-content" style="padding-top: 0;">
 
-            <!-- Hero Section -->
+            <!-- ── Hero ── -->
             <section class="hero">
-                <div class="container">
-                    <div class="grid grid-2 hero-content">
+                <div class="hero-bg-glow hero-bg-glow-red"></div>
+                <div class="hero-grid-pattern"></div>
+
+                <div class="container" style="position: relative; z-index: 1;">
+                    <div class="hero-inner">
                         <div class="hero-text">
-                            <h1 class="gradient-text">Stop being late.<br>Start being smarter.</h1>
-                            <p>Because opening three different apps just to find out your train left 30 seconds ago is
-                                nobody's idea of fun. Get live widgets right on your home screen.</p>
-
-                            <div class="download-badges">
-                                <a href="#" class="badge-link">
-                                    <img src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83"
-                                        alt="Download on the App Store">
+                            <div class="launch-badge">
+                                <span class="launch-dot"></span>
+                                Launching 2026
+                            </div>
+                            <h1 class="gradient-text">The only departure<br>board you need.</h1>
+                            <p class="hero-subtitle">Live TfL departures on your home screen widget. Just glance at your phone — no tapping, no unlocking, no apps to open.</p>
+                            <div class="store-badges">
+                                <a href="#" class="store-badge" onclick="scrollToWaitlist(event)">
+                                    <svg class="store-badge-icon" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+                                    </svg>
+                                    <div class="store-badge-text">
+                                        <span class="store-badge-label">Coming Soon</span>
+                                        <span class="store-badge-name">App Store</span>
+                                    </div>
                                 </a>
-                                <a href="#" class="badge-link">
-                                    <img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png"
-                                        alt="Get it on Google Play">
+                                <a href="#" class="store-badge" onclick="scrollToWaitlist(event)">
+                                    <svg class="store-badge-icon" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M3.18 23.76c.37.2.8.22 1.2.06l11.4-6.58-2.5-2.5-10.1 9.02zM.5 1.5C.19 1.88 0 2.42 0 3.1v17.8c0 .68.19 1.22.5 1.6l.08.08 9.97-9.97v-.24L.58 1.42.5 1.5zM20.3 10.37l-2.65-1.53-2.8 2.8 2.8 2.8 2.67-1.54c.76-.44.76-1.09-.02-1.53zM4.38.18L15.78 6.76l-2.5 2.5L3.18.24C3.58.08 4.01.1 4.38.18z"/>
+                                    </svg>
+                                    <div class="store-badge-text">
+                                        <span class="store-badge-label">Coming Soon</span>
+                                        <span class="store-badge-name">Google Play</span>
+                                    </div>
                                 </a>
                             </div>
                         </div>
 
-                        <!-- The Widget Demo (HTML Implementation) -->
-                        <div class="div-center" style="display: flex; justify-content: center; position: relative;">
-                            <div class="widget-container" style="width: 100%;">
-                                <img src="assets/widget_demo.png" alt="Stationly Widget"
-                                    style="width: 100%; height: auto; border-radius: 22px; box-shadow: 0 20px 50px rgba(0,0,0,0.5); position: relative; z-index: 10;">
-                                <!-- Subtle reflection/glow behind -->
-                                <div
-                                    style="position: absolute; top: 20px; left: 10px; right: 10px; height: 100%; background: var(--primary); filter: blur(60px); opacity: 0.4; z-index: -1;">
-                                </div>
-                            </div>
+                        <div class="hero-visual">
+                            <div class="widget-glow"></div>
+                            <img src="assets/widget_demo.png" alt="Stationly Widget" class="widget-hero-img">
                         </div>
                     </div>
                 </div>
             </section>
 
-            <!-- Features Section -->
-            <section class="section">
-                <div class="container">
-                    <h2 style="text-align: center;">What's in the box?</h2>
-                    <p style="text-align: center; max-width: 600px; margin: 0 auto 2rem auto;">Everything you need to
-                        survive London transport, and nothing you don't. No restaurant recommendations, no weather
-                        reports, just trains.</p>
-
-                    <div class="grid grid-3">
-                        <div class="glass feature-card">
-                            <div class="feature-icon">⚡</div>
-                            <h3>Real-time, for real</h3>
-                            <p>Live departure times for Underground, Overground, DLR, and more. Updated faster than you
-                                can say "signal failure at Camden Town."</p>
-                        </div>
-                        <div class="glass feature-card">
-                            <div class="feature-icon">📱</div>
-                            <h3>Widgets baby</h3>
-                            <p>Slap your favourite station right on your home screen. Check when to run for the train
-                                without even unlocking your phone.</p>
-                        </div>
-                        <div class="glass feature-card">
-                            <div class="feature-icon">🛡️</div>
-                            <h3>Honestly Helpful</h3>
-                            <p>We'll tell you about delays before you get to the station. Because finding out the line
-                                is suspended when you're at the barriers is a rookie error.</p>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- How It Works (New Content) -->
-            <section class="section" style="background: rgba(255,255,255,0.02);">
-                <div class="container">
-                    <div class="grid grid-2" style="align-items: center;">
-                        <div>
-                            <h2>Simplicity is the ultimate sophistication</h2>
-                            <p>Or so they say. We just think apps should be simple.</p>
-
-                            <div class="steps-section">
-                                <div class="step-item">
-                                    <div class="step-number">👁️</div>
-                                    <div>
-                                        <h3>See it</h3>
-                                        <p>Search for any station in the TfL network. We found the ones you didn't even
-                                            know existed.</p>
-                                    </div>
-                                </div>
-                                <div class="step-item">
-                                    <div class="step-number">👆</div>
-                                    <div>
-                                        <h3>Select it</h3>
-                                        <p>Pick your platform and direction. Northbound? Southbound? Or just "Get me
-                                            home" bound.</p>
-                                    </div>
-                                </div>
-                                <div class="step-item">
-                                    <div class="step-number">✅</div>
-                                    <div>
-                                        <h3>Sorted</h3>
-                                        <p>Long press home screen. Add Stationly. You are now officially a master of
-                                            time and space.</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div style="display: flex; justify-content: center; position: relative;">
-                            <img src="assets/phone_demo_new.png" alt="Stationly Interface"
-                                style="max-height: 500px; filter: drop-shadow(0 20px 40px rgba(0,0,0,0.5)); transform: rotate(5deg); position: relative; z-index: 10;">
-                            <!-- Glow Effect -->
-                            <div
-                                style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 300px; height: 400px; background: var(--primary); filter: blur(90px); opacity: 0.4; z-index: 1;">
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Funny Statement Section (Updated) -->
-            <section class="section" style="background: rgba(255,255,255,0.03);">
-                <div class="container">
-                    <div class="glass" style="padding: 2.5rem; text-align: center; max-width: 800px; margin: 0 auto;">
-                        <h2>Look, here's the deal</h2>
-                        <p>We're not trying to be the next Facebook. We just want to know if we need to sprint to the
-                            platform or if we have time to grab an overpriced croissant.</p>
-                        <p>That's it. That's the app. It sits on your home screen. It tells you when the train is
-                            coming. It doesn't ask for your mother's maiden name or suggest "ROMANTIC DATE SPOTS IN
-                            MORDEN".</p>
-                        <p style="font-size: 1.2rem; font-weight: 700; color: white; margin-top: 2rem;">It's reliable.
-                            It's spectacular.</p>
-                    </div>
-                </div>
-            </section>
-
-        </div>
-
-        <!-- DEVELOPER TAB -->
-        <!-- DEVELOPER TAB -->
-        <div id="developer" class="tab-content" style="padding-top: 90px;">
-            <div class="container-fluid">
-                <div class="glass" style="padding: 1rem; width: 100%;">
-                    <div style="text-align: center; margin-bottom: 1rem;">
-                        <h2>Start Building with Stationly</h2>
-                        <p>Access our real-time data API. It's clean, fast, and doesn't smell like the Central Line in
-                            July.</p>
-                    </div>
-                    <!-- Placeholder for API Doc Iframe -->
-                    <div class="api-container"
-                        style="display: flex; justify-content: center; align-items: center; background: #fff; color: #333; overflow: hidden;">
-                        <iframe src="https://api.stationly.co.uk/docs"
-                            style="width: 100%; height: 100%; border: none;"></iframe>
+            <!-- ── Station Marquee ── -->
+            <div class="marquee-section">
+                <div class="marquee-track">
+                    <div class="marquee-inner">
+                        <span>King's Cross</span><span class="marquee-dot">·</span>
+                        <span>Oxford Circus</span><span class="marquee-dot">·</span>
+                        <span>Canary Wharf</span><span class="marquee-dot">·</span>
+                        <span>Victoria</span><span class="marquee-dot">·</span>
+                        <span>London Bridge</span><span class="marquee-dot">·</span>
+                        <span>Paddington</span><span class="marquee-dot">·</span>
+                        <span>Waterloo</span><span class="marquee-dot">·</span>
+                        <span>Elephant &amp; Castle</span><span class="marquee-dot">·</span>
+                        <span>Liverpool Street</span><span class="marquee-dot">·</span>
+                        <span>Stratford</span><span class="marquee-dot">·</span>
+                        <span>Bank</span><span class="marquee-dot">·</span>
+                        <span>Shoreditch High St</span><span class="marquee-dot">·</span>
+                        <span>Brixton</span><span class="marquee-dot">·</span>
+                        <span>Camden Town</span><span class="marquee-dot">·</span>
+                        <span>Shepherd's Bush</span><span class="marquee-dot">·</span>
+                        <!-- duplicate for seamless loop -->
+                        <span>King's Cross</span><span class="marquee-dot">·</span>
+                        <span>Oxford Circus</span><span class="marquee-dot">·</span>
+                        <span>Canary Wharf</span><span class="marquee-dot">·</span>
+                        <span>Victoria</span><span class="marquee-dot">·</span>
+                        <span>London Bridge</span><span class="marquee-dot">·</span>
+                        <span>Paddington</span><span class="marquee-dot">·</span>
+                        <span>Waterloo</span><span class="marquee-dot">·</span>
+                        <span>Elephant &amp; Castle</span><span class="marquee-dot">·</span>
+                        <span>Liverpool Street</span><span class="marquee-dot">·</span>
+                        <span>Stratford</span><span class="marquee-dot">·</span>
+                        <span>Bank</span><span class="marquee-dot">·</span>
+                        <span>Shoreditch High St</span><span class="marquee-dot">·</span>
+                        <span>Brixton</span><span class="marquee-dot">·</span>
+                        <span>Camden Town</span><span class="marquee-dot">·</span>
+                        <span>Shepherd's Bush</span><span class="marquee-dot">·</span>
                     </div>
                 </div>
             </div>
+
+            <!-- ── Stats Strip ── -->
+            <section class="stats-section reveal">
+                <div class="container">
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-number">270<span class="stat-plus">+</span></div>
+                            <div class="stat-label">Tube &amp; Rail Stations</div>
+                        </div>
+                        <div class="stat-divider"></div>
+                        <div class="stat-item">
+                            <div class="stat-number">20k<span class="stat-plus">+</span></div>
+                            <div class="stat-label">Bus Stops</div>
+                        </div>
+                        <div class="stat-divider"></div>
+                        <div class="stat-item">
+                            <div class="stat-number">Live</div>
+                            <div class="stat-label">Real-time Data</div>
+                        </div>
+                        <div class="stat-divider"></div>
+                        <div class="stat-item">
+                            <div class="stat-number">0</div>
+                            <div class="stat-label">Taps to glance</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ── Features ── -->
+            <section class="section">
+                <div class="container">
+                    <div class="section-header reveal">
+                        <h2>No faff. No filler.<br>Just your next train.</h2>
+                        <p>Everything a London commuter actually needs. Nothing that gets in the way.</p>
+                    </div>
+                    <div class="grid grid-3">
+                        <div class="glass feature-card reveal">
+                            <div class="feature-icon-wrap">
+                                <svg viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            </div>
+                            <h3>Your platform. Right now.</h3>
+                            <p>Live departure times across every TfL line — Tube, Overground, DLR, Elizabeth line, bus. Updated every few seconds from the source.</p>
+                        </div>
+                        <div class="glass feature-card reveal" style="transition-delay: 0.1s;">
+                            <div class="feature-icon-wrap">
+                                <svg viewBox="0 0 24 24" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                            </div>
+                            <h3>Lives on your home screen</h3>
+                            <p>The widget shows your board before you even unlock your phone. Set it once, forget about it. It just works, every morning.</p>
+                        </div>
+                        <div class="glass feature-card reveal" style="transition-delay: 0.2s;">
+                            <div class="feature-icon-wrap">
+                                <svg viewBox="0 0 24 24" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                            </div>
+                            <h3>Know before you leave</h3>
+                            <p>Disruption on your line? You'll know before you've put your shoes on — not when you're already at the gates.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ── Widget Spotlight ── -->
+            <section class="section widget-spotlight">
+                <div class="container">
+                    <div class="spotlight-inner">
+                        <div class="spotlight-text reveal">
+                            <div class="spotlight-label">The Widget</div>
+                            <h2>Your station. Always visible. Never in the way.</h2>
+                            <p>Pick your station once. From that moment it just shows up — platform, time, how long you've got. No app to open, no button to tap. Just look at your phone and go.</p>
+                            <ul class="spotlight-features">
+                                <li><span class="sf-check">✓</span> Multiple stations tracked at once</li>
+                                <li><span class="sf-check">✓</span> Resizable — compact to full-width</li>
+                                <li><span class="sf-check">✓</span> Background updates, always fresh</li>
+                                <li><span class="sf-check">✓</span> Works on any home screen launcher</li>
+                            </ul>
+                        </div>
+                        <div class="spotlight-visual reveal" style="transition-delay: 0.15s;">
+                            <div class="spotlight-glow"></div>
+                            <img src="assets/widget_demo.png" alt="Stationly Widget" class="spotlight-img">
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ── How it Works ── -->
+            <section class="section">
+                <div class="container">
+                    <div class="section-header reveal">
+                        <h2>Three steps.<br><span style="color: var(--text-muted); font-size: 2.25rem; font-weight: 700; letter-spacing: -0.02em;">That's genuinely it.</span></h2>
+                    </div>
+                    <div class="steps-grid">
+                        <div class="step-card reveal">
+                            <div class="step-icon-wrap">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            </div>
+                            <div class="step-num">01</div>
+                            <h3>Pick your station</h3>
+                            <p>Search 270+ tube and rail stations, or 20,000+ bus stops. Choose your line, platform, and direction — every TfL mode covered.</p>
+                        </div>
+                        <div class="step-connector">→</div>
+                        <div class="step-card reveal" style="transition-delay: 0.1s;">
+                            <div class="step-icon-wrap">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                            </div>
+                            <div class="step-num">02</div>
+                            <h3>Add the widget</h3>
+                            <p>Long press your home screen, tap Add Widget, choose Stationly. Done in under 10 seconds.</p>
+                        </div>
+                        <div class="step-connector">→</div>
+                        <div class="step-card reveal" style="transition-delay: 0.2s;">
+                            <div class="step-icon-wrap">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                            </div>
+                            <div class="step-num">03</div>
+                            <h3>Just glance</h3>
+                            <p>Look at your home screen. See the next departure. No tapping, no unlocking. Sprint or stroll — your choice.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ── Quote ── -->
+            <section class="section reveal" style="padding-top: 1.5rem; padding-bottom: 3.5rem;">
+                <div class="container">
+                    <div class="quote-block">
+                        <span class="quote-marks">"</span>
+                        <p class="quote-text">We're not trying to be the next big super-app. We just want to know if the Northern line is suspended again before we've already walked to the station.</p>
+                        <p class="quote-attribution">— The Stationly team, speaking for every London commuter ever</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ── Notify CTA ── -->
+            <section class="section notify-section">
+                <div class="container">
+                    <div class="notify-inner reveal">
+                        <div class="notify-glow"></div>
+                        <div class="notify-label">Coming Soon · 2026</div>
+                        <h2>Be the first to board.</h2>
+                        <p>Stationly is launching in 2026. Drop your email and we'll let you know the moment doors open.</p>
+                        <form class="notify-form" id="notify-form">
+                            <input type="email" placeholder="your@email.com" class="notify-input" required>
+                            <button type="submit" class="notify-btn">Notify Me</button>
+                        </form>
+                        <p class="notify-fine" id="notify-success" style="display:none; color: var(--amber);">You're on the list — we'll be in touch!</p>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+        <!-- /home -->
+
+        <!-- ══════════════════════════════════════
+             DEVELOPER TAB
+        ══════════════════════════════════════ -->
+        <div id="developer" class="tab-content" style="padding-top: 80px;">
+
+            <!-- Dev Hero -->
+            <div style="background: rgba(255,255,255,0.02); border-bottom: 1px solid rgba(255,255,255,0.06); padding: 3rem 0 2.5rem;">
+                <div class="container">
+                    <div class="dev-hero">
+                        <div>
+                            <div class="launch-badge" style="margin-bottom:1rem;">
+                                <span class="launch-dot"></span>
+                                API v1 · Live
+                            </div>
+                            <h2 style="font-size: 2.5rem; margin-bottom: 0.5rem;">Stationly Developer API</h2>
+                            <p style="max-width: 520px; margin-bottom: 0;">Real-time TfL departure data — clean JSON, no wrappers, no nonsense. Base URL: <code class="dev-code-inline">api.stationly.co.uk</code></p>
+                        </div>
+                        <div class="dev-stats">
+                            <div class="dev-stat">
+                                <span class="dev-stat-val">REST</span>
+                                <span class="dev-stat-lbl">JSON API</span>
+                            </div>
+                            <div class="dev-stat">
+                                <span class="dev-stat-val">Live</span>
+                                <span class="dev-stat-lbl">TfL Feed</span>
+                            </div>
+                            <div class="dev-stat">
+                                <span class="dev-stat-val">Free</span>
+                                <span class="dev-stat-lbl">To explore</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Quick start -->
+                    <div class="dev-quickstart">
+                        <div class="dev-qs-label">Quick start</div>
+                        <div class="dev-codeblock">
+                            <div class="dev-codeblock-bar">
+                                <span class="dev-lang">curl</span>
+                                <span class="dev-endpoint">GET /departures/{station_id}</span>
+                            </div>
+                            <pre class="dev-pre"><code>curl https://api.stationly.co.uk/departures/940GZZLUPAC \
+  -H "Accept: application/json"</code></pre>
+                        </div>
+                    </div>
+
+                    <!-- API access note -->
+                    <div style="margin-top: 1.5rem; padding: 1.1rem 1.4rem; background: rgba(221,44,51,0.07); border: 1px solid rgba(221,44,51,0.2); border-radius: 10px; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+                        <span style="font-size: 1.2rem;">🔑</span>
+                        <p style="margin: 0; font-size: 0.9rem; color: var(--text-muted); line-height: 1.6;">
+                            <strong style="color: var(--text-main);">Want to use our API?</strong> The public endpoints are open to explore. For dedicated access, higher rate limits, or integration support — just reach out at <a href="mailto:support@stationly.co.uk" style="color: var(--primary); text-decoration: none;">support@stationly.co.uk</a> and we'll get you sorted.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live docs iframe -->
+            <div class="container-fluid" style="padding: 1.5rem 2rem;">
+                <div class="glass" style="padding: 0.75rem; overflow: hidden;">
+                    <div style="padding: 0.75rem 1rem; border-bottom: 1px solid rgba(255,255,255,0.06); display:flex; align-items:center; gap:0.75rem;">
+                        <span style="font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em;">Interactive API Reference</span>
+                        <a href="https://api.stationly.co.uk/docs" target="_blank" style="font-size:0.8rem; color:var(--primary); text-decoration:none; margin-left:auto;">Open in new tab ↗</a>
+                    </div>
+                    <div class="api-container">
+                        <iframe src="https://api.stationly.co.uk/docs" style="width: 100%; height: 100%; border: none;"></iframe>
+                    </div>
+                </div>
+            </div>
+
         </div>
 
-        <!-- SUPPORT TAB -->
+        <!-- ══════════════════════════════════════
+             SUPPORT TAB
+        ══════════════════════════════════════ -->
         <div id="support" class="tab-content">
             <div class="container">
                 <div class="support-hero">
-                    <h1>We're here to help</h1>
-                    <p>Something broken? Widget acting up? Or just want to tell us how much you saved on your commute?
-                    </p>
+                    <h1>Got a question?</h1>
+                    <p>Widget playing up? Something not showing right? Or just want to tell us what you think? We're one email away.</p>
                 </div>
 
-                <div class="grid grid-2" style="max-width: 900px; margin: 4rem auto;">
+                <div class="grid grid-2" style="max-width: 900px; margin: 3rem auto 0;">
                     <div class="glass contact-card">
                         <h3>Need Support?</h3>
                         <p>For bugs, crashes, and "why isn't this working" questions.</p>
                         <a href="mailto:support@stationly.co.uk" class="email-link">support@stationly.co.uk</a>
                     </div>
-
                     <div class="glass contact-card">
                         <h3>General Enquiries</h3>
                         <p>For press, partnerships, or just to say hello.</p>
                         <a href="mailto:info@stationly.co.uk" class="email-link">info@stationly.co.uk</a>
                     </div>
                 </div>
-            </div>
-        </div>
 
-        <!-- AUTH TAB -->
-        <div id="auth" class="tab-content">
-            <div class="container" style="padding-top: 100px;">
-                <div class="glass" style="max-width: 500px; margin: 0 auto; padding: 2.5rem;">
-
-                    <!-- Login / Register Forms -->
-                    <div id="auth-forms">
-                        <!-- Login Form -->
-                        <div id="login-container">
-                            <h2 style="text-align: center; margin-bottom: 0.5rem;">Touch In</h2>
-                            <p style="text-align: center; margin-bottom: 2rem; opacity: 0.7;">
-                                Mind the gap between you and your profile.
-                            </p>
-                            <form id="login-form" class="auth-form">
-                                <div class="form-group">
-                                    <label>Email</label>
-                                    <input type="email" name="email" required placeholder="name@example.com">
-                                </div>
-                                <div class="form-group">
-                                    <label>Password</label>
-                                    <input type="password" name="password" required placeholder="••••••••">
-                                    <div style="text-align: right; margin-top: 0.5rem;">
-                                        <a href="#" id="show-reset-password"
-                                            style="font-size: 0.85rem; color: var(--text-muted); text-decoration: none;">Forgot
-                                            Password?</a>
-                                    </div>
-                                </div>
-                                <div id="login-error" class="error-msg"
-                                    style="display:none; color: #ff4d4d; margin-bottom: 1rem;"></div>
-                                <button type="submit" class="cta-btn full-width">Sign In</button>
-                                <button type="button" id="google-login-btn" class="cta-btn secondary full-width"
-                                    style="margin-top: 1rem; background: white; color: black; display: flex; align-items: center; justify-content: center; gap: 10px;">
-                                    <svg viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg">
-                                        <path
-                                            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                                            fill="#4285F4" />
-                                        <path
-                                            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                                            fill="#34A853" />
-                                        <path
-                                            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                                            fill="#FBBC05" />
-                                        <path
-                                            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                                            fill="#EA4335" />
-                                        <path d="M1 1h22v22H1z" fill="none" />
-                                    </svg>
-                                    Express Entry (Google)
-                                </button>
-                            </form>
-                            <p style="text-align: center; margin-top: 1.5rem; opacity: 0.7;">
-                                First time travelling? <a href="#" id="show-register"
-                                    style="color: var(--primary); text-decoration: none;">Get a ticket (Sign up)</a>
-                            </p>
+                <!-- FAQ -->
+                <div class="faq-section">
+                    <h2 style="text-align:center; margin-bottom: 2.5rem;">Common questions</h2>
+                    <div class="faq-list">
+                        <div class="faq-item">
+                            <button class="faq-question" onclick="toggleFaq(this)">
+                                <span>Which lines does Stationly support?</span>
+                                <span class="faq-chevron">+</span>
+                            </button>
+                            <div class="faq-answer">
+                                <p>All of them. Stationly covers the full TfL network — London Underground, Overground, DLR, Elizabeth line, National Rail services within London, and buses. If TfL has live data for it, Stationly shows it.</p>
+                            </div>
                         </div>
-
-                        <!-- Register Form -->
-                        <div id="register-container" style="display: none;">
-                            <h2 style="text-align: center; margin-bottom: 0.5rem;">Get On Board</h2>
-                            <p style="text-align: center; margin-bottom: 2rem; opacity: 0.7;">
-                                No ticket inspectors here. Just create an account.
-                            </p>
-                            <form id="register-form" class="auth-form">
-                                <div class="form-group">
-                                    <label>Full Name</label>
-                                    <input type="text" name="name" required placeholder="John Doe">
-                                </div>
-                                <div class="form-group">
-                                    <label>Email</label>
-                                    <input type="email" name="email" required placeholder="name@example.com">
-                                </div>
-                                <div class="form-group">
-                                    <label>Password</label>
-                                    <input type="password" name="password" required placeholder="••••••••"
-                                        minlength="6">
-                                </div>
-                                <div id="register-error" class="error-msg"
-                                    style="display:none; color: #ff4d4d; margin-bottom: 1rem;"></div>
-                                <button type="submit" class="cta-btn full-width">Start Journey</button>
-                            </form>
-                            <p style="text-align: center; margin-top: 1.5rem; opacity: 0.7;">
-                                Already have a season pass? <a href="#" id="show-login"
-                                    style="color: var(--primary); text-decoration: none;">Touch In</a>
-                            </p>
+                        <div class="faq-item">
+                            <button class="faq-question" onclick="toggleFaq(this)">
+                                <span>Does it work for buses?</span>
+                                <span class="faq-chevron">+</span>
+                            </button>
+                            <div class="faq-answer">
+                                <p>Yes — Stationly covers over 20,000 TfL bus stops across London. Live countdowns, route numbers, and destination boards. Just like at the real stop, but on your home screen.</p>
+                            </div>
                         </div>
-
-                        <!-- Reset Password Form -->
-                        <div id="reset-container" style="display: none;">
-                            <h2 style="text-align: center; margin-bottom: 0.5rem;">Lost Property?</h2>
-                            <p style="text-align: center; margin-bottom: 2rem; opacity: 0.7;">
-                                Don't worry, we'll help you find your password.
-                            </p>
-                            <form id="reset-form" class="auth-form">
-                                <div class="form-group">
-                                    <label>Email</label>
-                                    <input type="email" name="email" required placeholder="name@example.com">
-                                </div>
-                                <div id="reset-message" class="error-msg"
-                                    style="display:none; margin-bottom: 1rem; text-align: center;"></div>
-                                <button type="submit" class="cta-btn full-width">Send Reset Link</button>
-                            </form>
-                            <p style="text-align: center; margin-top: 1.5rem; opacity: 0.7;">
-                                <a href="#" id="back-to-login"
-                                    style="color: var(--text-muted); text-decoration: none;">&larr;
-                                    Back to Login</a>
-                            </p>
+                        <div class="faq-item">
+                            <button class="faq-question" onclick="toggleFaq(this)">
+                                <span>Why isn't my widget updating?</span>
+                                <span class="faq-chevron">+</span>
+                            </button>
+                            <div class="faq-answer">
+                                <p>This is usually caused by battery optimisation settings restricting background processes. Go to Settings → Battery → Battery Optimisation and set Stationly to "Not optimised". You can also tap the refresh icon directly on the widget to force an update.</p>
+                            </div>
+                        </div>
+                        <div class="faq-item">
+                            <button class="faq-question" onclick="toggleFaq(this)">
+                                <span>How accurate is the departure data?</span>
+                                <span class="faq-chevron">+</span>
+                            </button>
+                            <div class="faq-answer">
+                                <p>Stationly pulls data directly from TfL's Open Data APIs — the same source used by official TfL apps and journey planners. Departure times are as accurate as TfL's own systems. The timestamp on every board shows exactly when the data was last refreshed.</p>
+                            </div>
+                        </div>
+                        <div class="faq-item">
+                            <button class="faq-question" onclick="toggleFaq(this)">
+                                <span>Does Stationly work offline?</span>
+                                <span class="faq-chevron">+</span>
+                            </button>
+                            <div class="faq-answer">
+                                <p>Departure times require a live connection — there's no way around that, since the data is real-time. If you go offline, the widget shows the last known times with a timestamp so you know how old the data is.</p>
+                            </div>
+                        </div>
+                        <div class="faq-item">
+                            <button class="faq-question" onclick="toggleFaq(this)">
+                                <span>Which platforms will Stationly be on?</span>
+                                <span class="faq-chevron">+</span>
+                            </button>
+                            <div class="faq-answer">
+                                <p>Stationly is mobile-first — iOS and Android. Sign up on the home page and we'll notify you the moment it's available to download.</p>
+                            </div>
+                        </div>
+                        <div class="faq-item">
+                            <button class="faq-question" onclick="toggleFaq(this)">
+                                <span>How do I add multiple stations to the widget?</span>
+                                <span class="faq-chevron">+</span>
+                            </button>
+                            <div class="faq-answer">
+                                <p>Open the app, tap the pencil icon, and add as many boards as you want. Each board can track a different station, platform, and direction. You can then swipe between them on the widget.</p>
+                            </div>
                         </div>
                     </div>
-
-                    <!-- Profile Section (Hidden by default) -->
-                    <div id="profile-section" style="display: none; text-align: center;">
-                        <div class="avatar-circle">
-                            <span id="user-avatar">U</span>
-                        </div>
-                        <h2 style="margin-top: 1rem;">Your Profile</h2>
-                        <p id="user-display-email" style="opacity: 0.7; margin-bottom: 2rem;"></p>
-
-                        <!-- Editable Fields -->
-                        <div class="auth-form" style="text-align: left; margin-bottom: 2rem;">
-                            <div class="form-group">
-                                <label>Full Name</label>
-                                <input type="text" id="profile-name" placeholder="Name">
-                            </div>
-                            <div class="form-group">
-                                <label>Mobile Number</label>
-                                <input type="tel" id="profile-mobile" placeholder="+44 7700 900000">
-                            </div>
-                            <div class="form-group">
-                                <label>Address</label>
-                                <input type="text" id="profile-address" placeholder="123 High Street">
-                            </div>
-                            <div class="form-group">
-                                <label>Location / City</label>
-                                <input type="text" id="profile-location" placeholder="London">
-                            </div>
-                            <button id="update-profile-btn" class="cta-btn secondary"
-                                style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);">Save
-                                Changes</button>
-                            <div id="profile-status" style="margin-top: 10px; font-size: 0.9rem; text-align: center;">
-                            </div>
-                        </div>
-
-                        <div style="width: 100%; height: 1px; background: rgba(255,255,255,0.1); margin-bottom: 2rem;">
-                        </div>
-
-                        <div style="display: flex; flex-direction: column; gap: 1rem;">
-                            <button id="logout-btn" class="cta-btn secondary"
-                                style="background: transparent; border: 1px solid rgba(255,255,255,0.2);">Sign
-                                Out</button>
-                            <button id="delete-account-btn"
-                                style="background: transparent; border: none; color: #ff4d4d; margin-top: 1rem; cursor: pointer;">Delete
-                                Account</button>
-                        </div>
-                    </div>
-
                 </div>
+
             </div>
         </div>
+
 
     </main>
 
     <!-- Footer -->
     <footer class="footer">
         <div class="container">
-            <!-- Top Separator Line -->
-            <div style="width: 100%; height: 1px; background: rgba(255,255,255,0.1); margin-bottom: 2rem;"></div>
-
+            <div style="height: 1px; background: rgba(255,255,255,0.07); margin-bottom: 2.5rem;"></div>
             <div class="footer-content">
                 <div class="footer-brand">
-                    <div style="font-weight: 700; font-size: 1.2rem; color: white;">Stationly</div>
-                    <div style="opacity: 0.6; margin-top: 0.5rem;">Powered by TfL Open Data.<br>Contains OS data © Crown
-                        copyright 2026.</div>
+                    <div style="font-weight: 800; font-size: 1.2rem; color: white; letter-spacing: -0.02em;">Stationly</div>
+                    <div style="opacity: 0.45; margin-top: 0.4rem; font-size: 0.82rem; line-height: 1.6;">Powered by TfL Open Data.<br>Contains OS data © Crown copyright 2026.</div>
                 </div>
                 <div class="footer-links">
                     <a href="#" onclick="switchTab('support')">Contact Us</a>
-                    <a href="#">Privacy Policy</a>
-                    <a href="#">Terms of Service</a>
+                    <a href="/privacy/">Privacy Policy</a>
+                    <a href="/terms/">Terms of Service</a>
                 </div>
             </div>
-
-            <div style="width: 100%; margin-top: 2rem; text-align: center; opacity: 0.5;">
+            <div style="margin-top: 2.5rem; text-align: center; opacity: 0.3; font-size: 0.82rem;">
                 &copy; 2026 Stationly Limited. All rights reserved.
             </div>
         </div>
     </footer>
 
+    <!-- Init scripts -->
     <script>
+        // Tab init — runs before main.js to prevent flash
         (function () {
             try {
                 var hash = window.location.hash.substring(1) || 'home';
                 var el = document.getElementById(hash);
-                if (el) {
-                    el.classList.add('active');
-                } else {
-                    document.getElementById('home').classList.add('active');
-                }
-
-                // Update Nav Buttons immediately to prevent flash
-                var btns = document.querySelectorAll('.nav-btn');
-                btns.forEach(function (b) {
-                    // Simple check - logic duplicated from main.js but needed for speed
+                if (el) el.classList.add('active');
+                else document.getElementById('home').classList.add('active');
+                document.querySelectorAll('.nav-btn').forEach(function (b) {
                     var txt = b.textContent.toLowerCase();
-                    var isAuth = hash === 'auth' && b.id === 'nav-auth-btn';
-
-                    if (txt.indexOf(hash) !== -1 || isAuth) {
-                        b.classList.add('active');
-                    } else {
-                        b.classList.remove('active');
-                    }
+                    if (txt.indexOf(hash) !== -1) b.classList.add('active');
+                    else b.classList.remove('active');
                 });
             } catch (e) {
-                console.error("Initial tab load error", e);
                 document.getElementById('home').classList.add('active');
             }
         })();
+
+        // Scroll reveal
+        (function () {
+            var obs = new IntersectionObserver(function (entries) {
+                entries.forEach(function (e) { if (e.isIntersecting) e.target.classList.add('visible'); });
+            }, { threshold: 0.08 });
+            document.querySelectorAll('.reveal').forEach(function (el) { obs.observe(el); });
+        })();
+
+        // Notify form — calls backend waitlist endpoint
+        document.getElementById('notify-form').addEventListener('submit', async function (e) {
+            e.preventDefault();
+            var emailInput = this.querySelector('input[type="email"]');
+            var btn = this.querySelector('button[type="submit"]');
+            var email = emailInput ? emailInput.value.trim() : '';
+            if (!email) return;
+            btn.disabled = true;
+            btn.textContent = 'Saving…';
+            try {
+                var res = await fetch('https://api.stationly.co.uk/api/v1/waitlist/join', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: email })
+                });
+                if (res.ok) {
+                    this.style.display = 'none';
+                    document.getElementById('notify-success').style.display = 'block';
+                } else {
+                    btn.disabled = false;
+                    btn.textContent = 'Notify Me';
+                    alert('Something went wrong — please try again.');
+                }
+            } catch (err) {
+                btn.disabled = false;
+                btn.textContent = 'Notify Me';
+                alert('Could not connect — please try again.');
+            }
+        });
+
+        // Store badge scroll to waitlist
+        function scrollToWaitlist(e) {
+            e.preventDefault();
+            var section = document.getElementById('notify-form').closest('section');
+            section.scrollIntoView({ behavior: 'smooth' });
+            setTimeout(function () {
+                var inner = section.querySelector('.notify-inner');
+                if (inner) {
+                    inner.classList.add('notify-highlight');
+                    setTimeout(function () { inner.classList.remove('notify-highlight'); }, 1800);
+                }
+            }, 600);
+        }
+
+        // FAQ toggle
+        function toggleFaq(btn) {
+            var item = btn.parentElement;
+            var isOpen = item.classList.contains('open');
+            document.querySelectorAll('.faq-item.open').forEach(function (el) { el.classList.remove('open'); });
+            if (!isOpen) item.classList.add('open');
+        }
     </script>
     <script type="module" src="js/main.js"></script>
 </body>

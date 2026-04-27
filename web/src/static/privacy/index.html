@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy — Stationly</title>
+    <meta name="description" content="Stationly Privacy Policy">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../css/variables.css">
+    <link rel="stylesheet" href="../css/base.css">
+    <link rel="stylesheet" href="../css/layout.css">
+    <link rel="stylesheet" href="../css/components.css">
+    <link rel="icon" type="image/png" href="../assets/stationly_logo_final.png">
+    <link rel="apple-touch-icon" href="../assets/stationly_logo_final.png">
+    <style>
+        .legal-hero {
+            padding: 120px 0 48px;
+            text-align: center;
+        }
+        .legal-hero h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            color: white;
+            margin-bottom: 0.75rem;
+        }
+        .legal-hero p {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+        .legal-body {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 0 1.5rem 80px;
+        }
+        .legal-section {
+            margin-bottom: 2.5rem;
+        }
+        .legal-section h2 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: white;
+            margin-bottom: 0.75rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(255,255,255,0.07);
+        }
+        .legal-section p,
+        .legal-section li {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            line-height: 1.8;
+            margin-bottom: 0.6rem;
+        }
+        .legal-section ul {
+            padding-left: 1.4rem;
+        }
+        .legal-section li {
+            margin-bottom: 0.4rem;
+        }
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+            font-size: 0.88rem;
+        }
+        .data-table th {
+            background: rgba(255,255,255,0.05);
+            color: white;
+            font-weight: 600;
+            padding: 0.6rem 0.9rem;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        .data-table td {
+            padding: 0.6rem 0.9rem;
+            color: var(--text-muted);
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+            vertical-align: top;
+            line-height: 1.6;
+        }
+        a.legal-link {
+            color: var(--primary);
+            text-decoration: none;
+        }
+        a.legal-link:hover { text-decoration: underline; }
+        @media (max-width: 600px) {
+            .legal-hero h1 { font-size: 1.8rem; }
+            .data-table { font-size: 0.8rem; }
+        }
+    </style>
+</head>
+
+<body>
+
+    <header class="header">
+        <div class="container nav-container">
+            <a href="/" class="logo">
+                <img src="../assets/stationly_logo_final.png" alt="Stationly">
+                <span>Stationly</span>
+            </a>
+            <nav class="nav-links">
+                <a href="/" class="nav-btn">Home</a>
+                <a href="/#support" class="nav-btn">Support</a>
+                <a href="/terms/" class="nav-btn">Terms</a>
+            </nav>
+            <div class="hamburger" onclick="this.closest('.header').classList.toggle('nav-open')">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="mobile-menu">
+            <a href="/" class="nav-btn">Home</a>
+            <a href="/#support" class="nav-btn">Support</a>
+            <a href="/terms/" class="nav-btn">Terms</a>
+        </div>
+    </header>
+
+    <main>
+        <div class="legal-hero">
+            <div class="container">
+                <h1>Privacy Policy</h1>
+                <p>Last updated: 26 April 2026 &nbsp;·&nbsp; Effective: 26 April 2026</p>
+            </div>
+        </div>
+
+        <div class="legal-body">
+
+            <div class="legal-section">
+                <h2>1. Who We Are</h2>
+                <p>Stationly ("Stationly", "we", "us", "our") is an independent software developer operating the Stationly mobile application, home screen widget, and website at <a href="https://stationly.co.uk" class="legal-link">stationly.co.uk</a> (collectively the "Service"). This Privacy Policy explains what personal data we collect, why we collect it, how we use and protect it, and what rights you have in relation to it.</p>
+                <p>We are committed to handling your personal data in accordance with the UK General Data Protection Regulation (UK GDPR) and the Data Protection Act 2018. For all privacy-related enquiries, please contact us at <a href="mailto:info@stationly.co.uk" class="legal-link">info@stationly.co.uk</a>.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>2. Data We Collect</h2>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Data</th>
+                            <th>Why We Collect It</th>
+                            <th>Legal Basis</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong style="color:white">Account</strong></td>
+                            <td>Name, email address</td>
+                            <td>Identifying and securing your account</td>
+                            <td>Contract</td>
+                        </tr>
+                        <tr>
+                            <td><strong style="color:white">Station preferences</strong></td>
+                            <td>Saved stations, lines, directions</td>
+                            <td>Syncing your boards across devices</td>
+                            <td>Contract</td>
+                        </tr>
+                        <tr>
+                            <td><strong style="color:white">Push token</strong></td>
+                            <td>Firebase Cloud Messaging device token</td>
+                            <td>Delivering real-time departure updates</td>
+                            <td>Consent</td>
+                        </tr>
+                        <tr>
+                            <td><strong style="color:white">Device &amp; app info</strong></td>
+                            <td>Device model, OS version, app version, crash logs</td>
+                            <td>Diagnosing bugs and ensuring compatibility</td>
+                            <td>Legitimate interests</td>
+                        </tr>
+                        <tr>
+                            <td><strong style="color:white">Usage data</strong></td>
+                            <td>Features used, screens viewed, session duration (anonymised)</td>
+                            <td>Understanding how people use the app to improve it</td>
+                            <td>Legitimate interests</td>
+                        </tr>
+                        <tr>
+                            <td><strong style="color:white">Profile data (optional)</strong></td>
+                            <td>Mobile number, address, city</td>
+                            <td>Profile features you voluntarily complete</td>
+                            <td>Consent</td>
+                        </tr>
+                        <tr>
+                            <td><strong style="color:white">Support communications</strong></td>
+                            <td>Emails you send to us</td>
+                            <td>Responding to your enquiries</td>
+                            <td>Legitimate interests</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p style="margin-top:1rem;">We do <strong>not</strong> collect your GPS or precise location at any point. All station selection is made manually by you within the app. We do <strong>not</strong> collect payment information. We do <strong>not</strong> build advertising profiles. We do <strong>not</strong> sell, rent, or trade your personal data to any third party under any circumstances.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>3. How We Use Your Data</h2>
+                <p>We use your personal data only for the following purposes, and no others:</p>
+                <ul>
+                    <li>Creating, authenticating, and maintaining your account</li>
+                    <li>Synchronising your saved station preferences across your devices</li>
+                    <li>Delivering push notifications containing departure data for your saved stations</li>
+                    <li>Diagnosing technical problems and crashes</li>
+                    <li>Improving the Service through anonymised usage analysis</li>
+                    <li>Responding to support requests and enquiries</li>
+                    <li>Complying with legal and regulatory obligations</li>
+                    <li>Protecting the security and integrity of the Service</li>
+                </ul>
+            </div>
+
+            <div class="legal-section">
+                <h2>4. Third-Party Sub-Processors</h2>
+                <p>To deliver the Service, your data may be processed by the following third parties. Each processes data under their own privacy policies, over which we have no control:</p>
+                <ul>
+                    <li><strong style="color:white">Google Firebase (Authentication, Firestore, Cloud Messaging, Crashlytics)</strong> — core infrastructure for accounts, data storage, push notifications, and crash reporting. <a href="https://firebase.google.com/support/privacy" class="legal-link" target="_blank" rel="noopener">Firebase Privacy Policy</a></li>
+                    <li><strong style="color:white">Google Sign-In</strong> — optional social authentication. Subject to <a href="https://policies.google.com/privacy" class="legal-link" target="_blank" rel="noopener">Google Privacy Policy</a></li>
+                    <li><strong style="color:white">Transport for London (TfL) Open Data API</strong> — source of all departure data. API requests are made without transmitting your identity, account details, or station preferences to TfL</li>
+                </ul>
+                <p>We do not use any advertising networks, data brokers, or marketing analytics platforms. We do not share your personal data with any other third party except as required by law.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>5. International Data Transfers</h2>
+                <p>Your data may be processed on Google Firebase servers located in the United States and within the European Economic Area. Google LLC relies on Standard Contractual Clauses and the UK International Data Transfer Agreement (IDTA) to ensure lawful transfer of personal data outside the UK. For more information, see <a href="https://firebase.google.com/support/privacy" class="legal-link" target="_blank" rel="noopener">Firebase Privacy &amp; Security</a>.</p>
+                <p>We accept no liability for the data handling practices of Google or any other third-party sub-processor, including any failure of their security measures or any data breach on their systems.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>6. Data Retention</h2>
+                <ul>
+                    <li><strong style="color:white">Account and preference data</strong> — retained for the duration your account is active and deleted within 30 days of account deletion</li>
+                    <li><strong style="color:white">Push notification tokens</strong> — deleted when you revoke notification permissions or uninstall the app</li>
+                    <li><strong style="color:white">Crash logs and device data</strong> — retained for up to 12 months in anonymised or aggregated form</li>
+                    <li><strong style="color:white">Support emails</strong> — retained for up to 2 years for reference and compliance purposes</li>
+                    <li><strong style="color:white">Optional profile data</strong> — deleted immediately upon account deletion or upon your request</li>
+                </ul>
+            </div>
+
+            <div class="legal-section">
+                <h2>7. Data Security</h2>
+                <p>We implement industry-standard technical and organisational security measures to protect your personal data, including:</p>
+                <ul>
+                    <li>Encryption of all data in transit via HTTPS/TLS</li>
+                    <li>Encryption at rest via Google Firebase infrastructure</li>
+                    <li>Firebase Security Rules that restrict database access to authenticated account holders only</li>
+                    <li>No storage of passwords in plain text (managed entirely by Firebase Authentication)</li>
+                    <li>Restricted internal access to personal data on a need-to-know basis</li>
+                </ul>
+                <p>However, no system is perfectly secure. We cannot guarantee the absolute security of your data. To the fullest extent permitted by law, we accept <strong>zero liability</strong> for any data breach, unauthorised access, loss, alteration, or disclosure of personal data, however caused, including as a result of our own negligence or the failure of any third-party system.</p>
+                <p>In the event of a data breach affecting your rights and freedoms, we will notify the Information Commissioner's Office (ICO) and, where required, you, within the timeframes required by UK GDPR.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>8. Your Rights Under UK GDPR</h2>
+                <p>Subject to applicable law, you have the following rights in relation to your personal data. To exercise any right, contact us at <a href="mailto:info@stationly.co.uk" class="legal-link">info@stationly.co.uk</a>. We will respond within 30 days. We reserve the right to verify your identity before processing any request.</p>
+                <ul>
+                    <li><strong style="color:white">Right of access</strong> — to obtain a copy of the personal data we hold about you</li>
+                    <li><strong style="color:white">Right to rectification</strong> — to request correction of inaccurate or incomplete data</li>
+                    <li><strong style="color:white">Right to erasure</strong> — to request deletion of your personal data ("right to be forgotten"), subject to legal retention obligations</li>
+                    <li><strong style="color:white">Right to restrict processing</strong> — to request that we limit how we process your data in certain circumstances</li>
+                    <li><strong style="color:white">Right to data portability</strong> — to receive your personal data in a structured, commonly used, machine-readable format</li>
+                    <li><strong style="color:white">Right to object</strong> — to object to processing based on legitimate interests</li>
+                    <li><strong style="color:white">Right to withdraw consent</strong> — to withdraw consent at any time for any processing based on consent (including push notifications via your device settings), without affecting the lawfulness of prior processing</li>
+                    <li><strong style="color:white">Right to complain</strong> — to escalate concerns to the relevant data protection authority if you believe your data has not been handled lawfully</li>
+                </ul>
+                <p>Note that some rights are not absolute and may be subject to limitations under applicable law. We accept no liability for any delay or failure to respond to a rights request caused by circumstances beyond our reasonable control.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>9. Automated Decision-Making and Profiling</h2>
+                <p>We do not use any automated decision-making or profiling that produces legal or similarly significant effects on you. No decisions about you are made solely by automated means. We do not build any behavioural, demographic, or interest-based profiles from your data.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>10. Special Category Data</h2>
+                <p>We do not knowingly collect, process, or store any special category personal data as defined by UK GDPR, including data relating to racial or ethnic origin, political opinions, religious or philosophical beliefs, trade union membership, genetic data, biometric data, health data, sex life, or sexual orientation. If you believe you have inadvertently shared such data with us, contact us at <a href="mailto:info@stationly.co.uk" class="legal-link">info@stationly.co.uk</a> and we will delete it promptly.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>11. Marketing Communications</h2>
+                <p>We will not send you marketing or promotional communications without your explicit prior consent. Where we send service-related communications (such as account notifications or changes to these policies), these are not marketing and are necessary for the operation of the Service. You may opt out of any marketing communication at any time by contacting us at <a href="mailto:info@stationly.co.uk" class="legal-link">info@stationly.co.uk</a>.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>12. Do Not Track</h2>
+                <p>Our website does not respond to browser "Do Not Track" (DNT) signals, as there is no industry-standard interpretation of DNT. However, as stated in this Policy, we do not use any cross-site tracking, advertising cookies, or behavioural analytics. Your browsing of this website is not tracked for advertising purposes regardless of your DNT setting.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>13. Data Protection Officer</h2>
+                <p>As a small independent developer, we are not required under UK GDPR to appoint a Data Protection Officer. All data protection matters are handled directly by the company at <a href="mailto:info@stationly.co.uk" class="legal-link">info@stationly.co.uk</a>.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>14. Firebase Analytics</h2>
+                <p>The Stationly app may use Firebase Analytics (Google) to collect anonymised, aggregated usage data such as screen views and feature interactions. This data is collected without any personally identifying information and is used solely to understand how the app is used in aggregate in order to improve the Service. You may opt out of Firebase Analytics data collection by adjusting your device's advertising settings or by contacting us.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>15. Cookies and Local Storage</h2>
+                <p>Our website uses only the following browser storage mechanisms:</p>
+                <ul>
+                    <li><strong style="color:white">Firebase Authentication tokens</strong> — stored in browser local storage solely to maintain your signed-in session. These are functional and not advertising cookies.</li>
+                    <li><strong style="color:white">Session state</strong> — tab navigation state is held in memory only and is not persisted to storage.</li>
+                </ul>
+                <p>We do not use advertising cookies, third-party tracking cookies, analytics cookies, or any form of cross-site tracking. We do not use Google Analytics or any similar analytics platform on this website.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>16. Children's Privacy</h2>
+                <p>The Service is not directed at, and we do not knowingly collect personal data from, children under the age of 13. If you are a parent or guardian and believe your child has provided us with personal data without your consent, please contact us at <a href="mailto:info@stationly.co.uk" class="legal-link">info@stationly.co.uk</a> and we will delete such data promptly. We accept no liability for any harm arising from the use of the Service by individuals under 13 who have provided false information about their age.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>17. Zero Liability for Data Processing</h2>
+                <p>To the fullest extent permitted by applicable law, Stationly and its directors, officers, employees, contractors, and agents accept <strong>zero liability</strong> for any loss, damage, harm, or consequence — whether direct, indirect, incidental, consequential, or otherwise — arising from or related to:</p>
+                <ul>
+                    <li>The collection, storage, processing, or use of your personal data in accordance with this Privacy Policy</li>
+                    <li>Any data breach, unauthorised access, or accidental disclosure of personal data, however caused</li>
+                    <li>Any failure of security measures implemented by us or any third-party sub-processor</li>
+                    <li>Any loss or corruption of personal data</li>
+                    <li>Any failure or delay in responding to a data subject rights request</li>
+                    <li>Any act or omission of any third-party sub-processor including Google Firebase</li>
+                    <li>Any transfer of personal data to a third country</li>
+                </ul>
+                <p>Where liability cannot be excluded by law, our total aggregate liability shall not exceed <strong>£1 (one pound sterling)</strong>.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>18. Changes to This Policy</h2>
+                <p>We may update this Privacy Policy at any time. We will update the "Last updated" date at the top of this page. Where changes are material, we will make reasonable efforts to notify you via the app or email. Your continued use of the Service after any change constitutes your acceptance of the revised Policy. If you do not agree to any change, you must stop using the Service and may request deletion of your account.</p>
+            </div>
+
+            <div class="legal-section">
+                <h2>19. Contact</h2>
+                <p>For any privacy-related questions or to exercise your data rights, contact us at <a href="mailto:info@stationly.co.uk" class="legal-link">info@stationly.co.uk</a>. We aim to respond within 30 days.</p>
+            </div>
+
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <div style="width: 100%; height: 1px; background: rgba(255,255,255,0.1); margin-bottom: 2rem;"></div>
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <div style="font-weight: 700; font-size: 1.2rem; color: white;">Stationly</div>
+                    <div style="opacity: 0.6; margin-top: 0.5rem;">Powered by TfL Open Data.<br>Contains OS data © Crown copyright 2026.</div>
+                </div>
+                <div class="footer-links">
+                    <a href="/#support">Contact Us</a>
+                    <a href="/privacy/">Privacy Policy</a>
+                    <a href="/terms/">Terms of Service</a>
+                </div>
+            </div>
+            <div style="width: 100%; margin-top: 2rem; text-align: center; opacity: 0.5;">
+                &copy; 2026 Stationly Limited. All rights reserved.
+            </div>
+        </div>
+    </footer>
+
+</body>
+</html>
