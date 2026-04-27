@@ -1,18 +1,30 @@
 :root {
+    /* Brand */
     --primary: #DD2C33;
-    /* Tube Red */
     --primary-dark: #B91C22;
-    --secondary: #1A237E;
-    /* Deep Blue */
-    --accent: #5C6BC0;
-    /* Soft Blue */
-    --bg-dark: #0F172A;
-    --bg-darker: #020617;
-    --text-main: #F8FAFC;
-    --text-muted: #94A3B8;
-    --white: #FFFFFF;
+    --amber: #F5A623;
+    --amber-dim: rgba(245, 166, 35, 0.12);
 
-    /* Glass Effect Variables */
-    --glass: rgba(255, 255, 255, 0.03);
-    --glass-border: rgba(255, 255, 255, 0.05);
+    /* Backgrounds */
+    --bg-dark: #080D1A;
+    --bg-darker: #040810;
+
+    /* Text */
+    --text-main: #EFF3FC;
+    --text-muted: #7A8499;
+    --text-dim: rgba(239, 243, 252, 0.35);
+
+    /* Surfaces */
+    --glass: rgba(255, 255, 255, 0.04);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --glass-hover: rgba(255, 255, 255, 0.07);
+
+    /* Glows */
+    --glow-red: rgba(221, 44, 51, 0.25);
+    --glow-amber: rgba(245, 166, 35, 0.18);
+
+    /* Legacy compat */
+    --secondary: #1A237E;
+    --accent: #5C6BC0;
+    --white: #FFFFFF;
 }
