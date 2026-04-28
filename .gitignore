@@ -74,3 +74,6 @@ captures/
 !gradle/wrapper/gradle-wrapper.jar
 !kotlin-js-store/yarn.lock
 graphify-out/
+
+# Staging deploy scripts
+staging_*.sh
