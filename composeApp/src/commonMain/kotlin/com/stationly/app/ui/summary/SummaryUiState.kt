@@ -1,0 +1,9 @@
+package com.stationly.app.ui.summary
+
+data class SummaryUiState(
+    val isRefreshing: Boolean = false,
+    val isBackendOffline: Boolean = false,
+    val lastUpdated: Long = 0L,
+    val activeStationId: String? = null,
+    val activeLineId: String? = null,
+)

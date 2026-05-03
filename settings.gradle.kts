@@ -10,6 +10,8 @@ pluginManagement {
         kotlin("plugin.compose") version "2.0.0"
         id("org.jetbrains.compose") version "1.6.11"
         id("app.cash.sqldelight") version "2.0.2"
+        id("com.android.application") version "8.8.0" apply false
+        id("com.android.library") version "8.8.0" apply false
     }
 }
 
@@ -24,4 +26,5 @@ dependencyResolutionManagement {
 rootProject.name = "StationlyUI"
 include(":core")
 include(":android:app")
+include(":composeApp")
 include(":web")
