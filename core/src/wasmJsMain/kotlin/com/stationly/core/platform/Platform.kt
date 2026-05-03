@@ -32,42 +32,23 @@ actual object Platform {
 
 class WebWidgetManager : WidgetManager {
     override suspend fun updateWidget(state: WidgetState) {
-        // No-op on web
-        console.log("Widget update requested: ${state.stationName}")
+        console.log("Widget update: ${state.stationName}")
     }
-    
-    override suspend fun showWaitingState(station: String, line: String) {
-        // No-op
-        console.log("Waiting state for $station - $line")
-    }
-    
-    override suspend fun formatForWidget(predictions: List<UserSelection>): WidgetState {
-        return WidgetState(
-            stationName = "",
-            lineName = "",
-            predictions = emptyList(),
-            status = null,
-            lastUpdated = 0L
-        )
-    }
+
+    override suspend fun showWaitingState(station: String, line: String) {}
+
+    override suspend fun formatForWidget(predictions: List<UserSelection>): WidgetState =
+        WidgetState("", "", emptyList(), null, 0L)
+
+    override suspend fun clearWidgetData() {}
 }
 
 class WebNotificationManager : NotificationManager {
-    override suspend fun subscribeToTopics(topics: List<String>) {
-        console.log("Subscribing to topics: ${topics.joinToString()}")
-    }
-    
-    override suspend fun unsubscribeFromTopics(topics: List<String>) {
-        console.log("Unsubscribing from topics: ${topics.joinToString()}")
-    }
-    
-    override suspend fun handleNotification(payload: Map<String, String>) {
-        console.log("Notification received")
-    }
-    
-    override suspend fun registerDevice(): String {
-        return "web-device-id-placeholder"
-    }
+    override suspend fun subscribeToTopics(topics: List<String>) {}
+    override suspend fun unsubscribeFromTopics(topics: List<String>) {}
+    override suspend fun handleNotification(payload: Map<String, String>) {}
+    override suspend fun registerDevice(): String = ""
+    override suspend fun clearAllTopics() {}
 }
 
 class WebStorageManager : StorageManager {
@@ -109,6 +90,10 @@ class WebStorageManager : StorageManager {
     }
     
     override suspend fun clearCache() {
+        localStorage.clear()
+    }
+
+    override suspend fun clearAll() {
         localStorage.clear()
     }
     

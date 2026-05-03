@@ -1,37 +1,44 @@
 package com.stationly.app.platform
 
 import com.stationly.app.ui.login.PlatformAuthProvider
+import com.stationly.core.platform.AppGroupKeys
 import kotlinx.coroutines.delay
 import platform.Foundation.NSUserDefaults
 
 /**
- * iOS implementation of PlatformAuthProvider.
+ * iOS PlatformAuthProvider — bridges KMP ViewModel layer to Swift AuthBridge.
  *
- * Auth is performed by native Swift (AuthBridge.swift) which stores results in
- * NSUserDefaults.standardUserDefaults. This class reads those values and writes
- * pending commands that Swift picks up on the next main-thread run-loop cycle.
+ * Protocol (both sides use NSUserDefaults.standard):
  *
- * Command protocol:
- *   KMP writes:  auth_pending_command = "<verb>|<arg1>|<arg2>"
- *   Swift fires Firebase, then either:
- *     - removes auth_pending_command + writes firebase_auth_token  (success)
- *     - removes auth_pending_command + writes auth_pending_error   (failure)
+ * 1. KMP writes:  auth_pending_command = "<verb>|<arg1>|<arg2>"
+ * 2. Swift AuthBridge observes via UserDefaults.didChangeNotification, processes
+ *    the Firebase call, then:
+ *      - success → clears auth_pending_command + writes firebase_auth_token
+ *                  (or auth_operation_success = "1" for resetConfirm)
+ *      - failure → clears auth_pending_command + writes auth_pending_error = <message>
+ * 3. KMP polls every 250 ms (up to 15 s) until auth_pending_command disappears.
+ *
+ * Supported commands:
+ *   signIn|<email>|<password>
+ *   register|<email>|<password>
+ *   googleSignIn|<idToken>
+ *   resetConfirm|<oobCode>|<newPassword>
  */
 class IosPlatformAuthProvider : PlatformAuthProvider {
 
     private val defaults = NSUserDefaults.standardUserDefaults
 
     override fun isLoggedIn(): Boolean =
-        defaults.stringForKey("firebase_auth_token")?.isNotBlank() == true
+        defaults.stringForKey(AppGroupKeys.FIREBASE_AUTH_TOKEN)?.isNotBlank() == true
 
     override fun currentUserEmail(): String? =
-        defaults.stringForKey("firebase_user_email")
+        defaults.stringForKey(AppGroupKeys.FIREBASE_USER_EMAIL)
 
     override fun currentUserDisplayName(): String? =
-        defaults.stringForKey("firebase_user_display_name")
+        defaults.stringForKey(AppGroupKeys.FIREBASE_USER_NAME)
 
     override fun currentUserPhotoUrl(): String? =
-        defaults.stringForKey("firebase_user_photo_url")
+        defaults.stringForKey(AppGroupKeys.FIREBASE_USER_PHOTO)
 
     override suspend fun signInWithEmail(email: String, password: String): Result<String> =
         issueCommand("signIn|$email|$password")
@@ -46,44 +53,38 @@ class IosPlatformAuthProvider : PlatformAuthProvider {
         issueCommand("resetConfirm|$oobCode|$newPassword").map { }
 
     /**
-     * Writes a command, then polls every 250 ms for up to 15 s.
-     * Swift AuthBridge clears auth_pending_command once it finishes.
+     * Writes a command and polls every 250 ms for up to 15 s.
+     * Handles three completion states:
+     *   • firebase_auth_token present  → success (sign-in / register)
+     *   • auth_operation_success = "1" → success (resetConfirm, no token)
+     *   • auth_pending_error present   → failure with message
      */
     private suspend fun issueCommand(command: String): Result<String> {
-        defaults.setObject(command, forKey = "auth_pending_command")
-        defaults.removeObjectForKey("auth_pending_error")
+        defaults.setObject(command, forKey = AppGroupKeys.AUTH_PENDING_COMMAND)
+        defaults.removeObjectForKey(AppGroupKeys.AUTH_PENDING_ERROR)
+        defaults.removeObjectForKey(AppGroupKeys.AUTH_OPERATION_SUCCESS)
         defaults.synchronize()
 
-        repeat(60) {  // 60 × 250 ms = 15 s timeout
+        repeat(60) {                      // 60 × 250 ms = 15 s
             delay(250L)
-            val pending = defaults.stringForKey("auth_pending_command")
-            val token   = defaults.stringForKey("firebase_auth_token")
-            val error   = defaults.stringForKey("auth_pending_error")
+            val pending  = defaults.stringForKey(AppGroupKeys.AUTH_PENDING_COMMAND)
+            val token    = defaults.stringForKey(AppGroupKeys.FIREBASE_AUTH_TOKEN)
+            val error    = defaults.stringForKey(AppGroupKeys.AUTH_PENDING_ERROR)
+            val success  = defaults.stringForKey(AppGroupKeys.AUTH_OPERATION_SUCCESS)
 
             if (pending == null) {
-                defaults.removeObjectForKey("auth_pending_error")
+                defaults.removeObjectForKey(AppGroupKeys.AUTH_PENDING_ERROR)
+                defaults.removeObjectForKey(AppGroupKeys.AUTH_OPERATION_SUCCESS)
                 return when {
-                    error != null -> Result.failure(Exception(error))
-                    token != null -> Result.success(token)
-                    else          -> Result.failure(Exception("Auth failed"))
+                    error   != null -> Result.failure(Exception(error))
+                    token   != null -> Result.success(token)
+                    success != null -> Result.success("")   // resetConfirm success
+                    else            -> Result.failure(Exception("Auth failed. Please try again."))
                 }
             }
         }
 
-        defaults.removeObjectForKey("auth_pending_command")
-        return Result.failure(Exception("Auth timed out. Please check your connection."))
+        defaults.removeObjectForKey(AppGroupKeys.AUTH_PENDING_COMMAND)
+        return Result.failure(Exception("Request timed out. Please check your connection."))
     }
-}
-
-/**
- * Singleton called by Swift AppDelegate / AuthBridge after completing an auth
- * operation so KMP can react without waiting for the poll cycle.
- * Swift calls: AuthCallbackBridgeKt.AuthCallbackBridge.notifySuccess()
- */
-object AuthCallbackBridge {
-    var onAuthSuccess: (() -> Unit)? = null
-    var onAuthFailure: ((String) -> Unit)? = null
-
-    fun notifySuccess() { onAuthSuccess?.invoke() }
-    fun notifyFailure(error: String) { onAuthFailure?.invoke(error) }
 }

@@ -33,8 +33,6 @@ class AndroidWidgetManager(
     }
     
     override suspend fun formatForWidget(predictions: List<UserSelection>): WidgetState {
-        // This would use the FormatDeparturesUseCase
-        // For now, return a placeholder
         return WidgetState(
             stationName = "Loading...",
             lineName = "",
@@ -42,6 +40,13 @@ class AndroidWidgetManager(
             status = null,
             lastUpdated = System.currentTimeMillis() / 1000
         )
+    }
+
+    override suspend fun clearWidgetData() {
+        val intent = android.content.Intent("com.stationly.mobile.ACTION_UPDATE_WIDGET")
+        intent.setComponent(android.content.ComponentName(context.packageName, "com.stationly.mobile.widget.DepartureWidgetProvider"))
+        intent.putExtra("ACTION_TYPE", "CLEAR_WIDGET_DATA")
+        context.sendBroadcast(intent)
     }
 }
 
@@ -85,6 +90,16 @@ class AndroidNotificationManager(
             ""
         }
     }
+
+    override suspend fun clearAllTopics() {
+        val fcm = FirebaseMessaging.getInstance()
+        // Android FCM doesn't expose a "get all subscriptions" API; tracked topics
+        // are stored in shared prefs under "fcm_topics" — unsubscribe each.
+        val prefs = context.getSharedPreferences("StationlyPrefs", android.content.Context.MODE_PRIVATE)
+        val topics = prefs.getStringSet("fcm_topics", emptySet()) ?: emptySet()
+        topics.forEach { runCatching { fcm.unsubscribeFromTopic(it).await() } }
+        prefs.edit().remove("fcm_topics").apply()
+    }
 }
 
 // Android StorageManager implementation
@@ -121,6 +136,14 @@ class AndroidStorageManager(
     }
     
     override suspend fun clearCache() {
+        val editor = prefs.edit()
+        prefs.all.keys.filter {
+            it.startsWith("line_status_") || it.startsWith("predictions_") || it == "selections"
+        }.forEach { editor.remove(it) }
+        editor.apply()
+    }
+
+    override suspend fun clearAll() {
         prefs.edit().clear().apply()
     }
     

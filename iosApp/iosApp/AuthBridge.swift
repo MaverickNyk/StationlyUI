@@ -1,97 +1,150 @@
 import Foundation
 import FirebaseAuth
 import GoogleSignIn
-// import ComposeApp  // Uncomment after Xcode integration
+// import ComposeApp  // Uncomment after Xcode framework integration
 
-/// AuthBridge is the Swift-side adapter between Firebase Auth / Google Sign-In
-/// and the KMP `AuthCallbackBridge`. It also writes auth state into
-/// NSUserDefaults so that the KMP IosPlatformAuthProvider can read it.
+/// Swift-side Firebase Auth adapter.
+///
+/// KMP writes `auth_pending_command` to NSUserDefaults; this class observes
+/// that key via UserDefaults.didChangeNotification and dispatches the
+/// corresponding Firebase call. On completion it either stores
+/// `firebase_auth_token` (success) or `auth_pending_error` (failure), and
+/// clears `auth_pending_command`.  The KMP IosPlatformAuthProvider polls for
+/// these keys every 250 ms (up to 15 s).
+///
+/// Command format:  "<verb>|<arg1>|<arg2>"
+///   signIn|<email>|<password>
+///   register|<email>|<password>
+///   googleSignIn|<idToken>
+///   resetConfirm|<oobCode>|<newPassword>
 class AuthBridge {
     static let shared = AuthBridge()
     private init() {}
 
+    private var observerAdded = false
+
     // MARK: - KMP wiring
 
     func wireToKMP() {
-        // After Xcode integration, uncomment and implement each closure to
-        // forward calls from the KMP ViewModel layer to the Swift implementations
-        // below. Example pattern:
-        //
-        // AuthCallbackBridge.shared.signInWithEmailImpl = { [weak self] email, password in
-        //     return await self?.signInWithEmail(email: email, password: password) ?? .failure(makeError("Bridge deallocated"))
-        // }
-        // AuthCallbackBridge.shared.registerWithEmailImpl = { [weak self] email, password in
-        //     return await self?.registerWithEmail(email: email, password: password) ?? .failure(makeError("Bridge deallocated"))
-        // }
-        // AuthCallbackBridge.shared.signInWithGoogleImpl = { [weak self] vc in
-        //     return await self?.signInWithGoogle(presentingViewController: vc) ?? .failure(makeError("Bridge deallocated"))
-        // }
-        // AuthCallbackBridge.shared.logoutImpl = { [weak self] in
-        //     await self?.logout()
-        // }
-        // AuthCallbackBridge.shared.refreshTokenImpl = { [weak self] in
-        //     await self?.refreshTokenIfNeeded()
-        // }
-        // AuthCallbackBridge.shared.confirmPasswordResetImpl = { [weak self] oobCode, newPassword in
-        //     return await self?.confirmPasswordReset(oobCode: oobCode, newPassword: newPassword) ?? .failure(makeError("Bridge deallocated"))
-        // }
+        guard !observerAdded else { return }
+        observerAdded = true
 
-        // Observe Firebase auth state changes and broadcast to the rest of the app
+        // React to every NSUserDefaults change; filter for auth_pending_command inside
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleUserDefaultsChange),
+            name: UserDefaults.didChangeNotification,
+            object: nil
+        )
+
+        // Refresh token whenever Firebase auth state changes
         Auth.auth().addStateDidChangeListener { [weak self] _, user in
-            if let user = user {
-                Task {
-                    await self?.refreshTokenIfNeeded()
-                }
+            guard let self else { return }
+            if user != nil {
+                Task { await self.refreshTokenIfNeeded() }
             } else {
-                self?.clearUserInfo()
+                self.clearUserInfo()
             }
             NotificationCenter.default.post(name: .authStateDidChange, object: nil)
         }
     }
 
-    // MARK: - Email/Password auth
+    // MARK: - Command dispatch
+
+    @objc private func handleUserDefaultsChange() {
+        let ud = UserDefaults.standard
+        guard let command = ud.string(forKey: "auth_pending_command") else { return }
+
+        // Clear immediately to prevent double-processing on repeated notifications
+        ud.removeObject(forKey: "auth_pending_command")
+        ud.removeObject(forKey: "auth_pending_error")
+        ud.removeObject(forKey: "auth_operation_success")
+        ud.synchronize()
+
+        let parts = command.components(separatedBy: "|")
+        guard let verb = parts.first else { return }
+
+        Task {
+            switch verb {
+            case "signIn" where parts.count >= 3:
+                let r = await signInWithEmail(email: parts[1], password: parts[2])
+                if case .failure(let e) = r { writeError(e.localizedDescription) }
+
+            case "register" where parts.count >= 3:
+                let r = await registerWithEmail(email: parts[1], password: parts[2])
+                if case .failure(let e) = r { writeError(e.localizedDescription) }
+
+            case "googleSignIn" where parts.count >= 2:
+                let r = await signInWithGoogleIdToken(idToken: parts[1])
+                if case .failure(let e) = r { writeError(e.localizedDescription) }
+
+            case "resetConfirm" where parts.count >= 3:
+                let r = await confirmPasswordReset(oobCode: parts[1], newPassword: parts[2])
+                switch r {
+                case .success:
+                    // No token issued for reset; signal KMP via dedicated key
+                    ud.set("1", forKey: "auth_operation_success")
+                    ud.synchronize()
+                case .failure(let e):
+                    writeError(e.localizedDescription)
+                }
+
+            default:
+                writeError("Unknown command: \(verb)")
+            }
+        }
+    }
+
+    private func writeError(_ message: String) {
+        UserDefaults.standard.set(message, forKey: "auth_pending_error")
+        UserDefaults.standard.synchronize()
+    }
+
+    // MARK: - Email / password
 
     func signInWithEmail(email: String, password: String) async -> Result<String, Error> {
         do {
             let result = try await Auth.auth().signIn(withEmail: email, password: password)
-            let token = try await result.user.getIDToken()
+            let token  = try await result.user.getIDToken()
             storeUserInfo(user: result.user, token: token)
             return .success(token)
-        } catch {
-            return .failure(error)
-        }
+        } catch { return .failure(error) }
     }
 
     func registerWithEmail(email: String, password: String) async -> Result<String, Error> {
         do {
             let result = try await Auth.auth().createUser(withEmail: email, password: password)
-            let token = try await result.user.getIDToken()
+            let token  = try await result.user.getIDToken()
             storeUserInfo(user: result.user, token: token)
             return .success(token)
-        } catch {
-            return .failure(error)
-        }
+        } catch { return .failure(error) }
     }
 
     // MARK: - Google Sign-In
 
+    /// Exchange an idToken (already obtained by the Compose Google Sign-In layer)
+    /// for a Firebase credential and session.
+    private func signInWithGoogleIdToken(idToken: String) async -> Result<String, Error> {
+        do {
+            let accessToken = GIDSignIn.sharedInstance.currentUser?.accessToken.tokenString ?? ""
+            let credential  = GoogleAuthProvider.credential(withIDToken: idToken, accessToken: accessToken)
+            let authResult  = try await Auth.auth().signIn(with: credential)
+            let token       = try await authResult.user.getIDToken()
+            storeUserInfo(user: authResult.user, token: token)
+            return .success(token)
+        } catch { return .failure(error) }
+    }
+
+    /// Full interactive Google Sign-In flow; caller provides a presenting view controller.
+    /// Called from the native Compose Google Sign-In button handler (iOS only).
     func signInWithGoogle(presentingViewController: UIViewController) async -> Result<String, Error> {
         do {
-            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presentingViewController)
+            let result    = try await GIDSignIn.sharedInstance.signIn(withPresenting: presentingViewController)
             guard let idToken = result.user.idToken?.tokenString else {
                 return .failure(AuthBridgeError.missingIDToken)
             }
-            let credential = GoogleAuthProvider.credential(
-                withIDToken: idToken,
-                accessToken: result.user.accessToken.tokenString
-            )
-            let authResult = try await Auth.auth().signIn(with: credential)
-            let token = try await authResult.user.getIDToken()
-            storeUserInfo(user: authResult.user, token: token)
-            return .success(token)
-        } catch {
-            return .failure(error)
-        }
+            return await signInWithGoogleIdToken(idToken: idToken)
+        } catch { return .failure(error) }
     }
 
     // MARK: - Password reset
@@ -100,9 +153,7 @@ class AuthBridge {
         do {
             try await Auth.auth().confirmPasswordReset(withCode: oobCode, newPassword: newPassword)
             return .success(())
-        } catch {
-            return .failure(error)
-        }
+        } catch { return .failure(error) }
     }
 
     // MARK: - Sign-out
@@ -111,8 +162,6 @@ class AuthBridge {
         try? Auth.auth().signOut()
         GIDSignIn.sharedInstance.signOut()
         clearUserInfo()
-        // KMP layer reads the absence of firebase_auth_token to treat user as logged out
-        UserDefaults.standard.removeObject(forKey: "firebase_auth_token")
         NotificationCenter.default.post(name: .authStateDidChange, object: nil)
     }
 
@@ -123,32 +172,43 @@ class AuthBridge {
         do {
             let token = try await user.getIDToken(forcingRefresh: false)
             UserDefaults.standard.set(token, forKey: "firebase_auth_token")
+            UserDefaults.standard.synchronize()
         } catch {
             print("[AuthBridge] Token refresh failed: \(error.localizedDescription)")
         }
     }
 
-    // MARK: - UserDefaults persistence (read by KMP IosPlatformAuthProvider)
+    // MARK: - NSUserDefaults persistence (read by KMP IosPlatformAuthProvider)
 
     private func storeUserInfo(user: FirebaseAuth.User, token: String) {
-        let defaults = UserDefaults.standard
-        defaults.set(token,                          forKey: "firebase_auth_token")
-        defaults.set(user.email,                     forKey: "firebase_user_email")
-        defaults.set(user.displayName,               forKey: "firebase_user_display_name")
-        defaults.set(user.photoURL?.absoluteString,  forKey: "firebase_user_photo_url")
-        defaults.set(user.uid,                       forKey: "firebase_user_uid")
-        defaults.synchronize()
+        let ud = UserDefaults.standard
+        ud.set(token,                         forKey: "firebase_auth_token")
+        ud.set(user.email,                    forKey: "firebase_user_email")
+        ud.set(user.displayName,              forKey: "firebase_user_display_name")
+        ud.set(user.photoURL?.absoluteString, forKey: "firebase_user_photo_url")
+        ud.set(user.uid,                      forKey: "firebase_user_uid")
+
+        // Provider badge label for ProfileScreen
+        let rawProvider = user.providerData
+            .first(where: { $0.providerID != "firebase" })?.providerID ?? "password"
+        ud.set(rawProvider == "google.com" ? "Google" :
+               rawProvider == "apple.com"  ? "Apple"  : "Email",
+               forKey: "signin_provider")
+
+        // "Member since Month YYYY" label
+        if let created = user.metadata.creationDate {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "MMMM yyyy"
+            fmt.locale = Locale(identifier: "en_GB")
+            ud.set(fmt.string(from: created), forKey: "member_since")
+        }
+        ud.synchronize()
     }
 
     private func clearUserInfo() {
-        let keys = [
-            "firebase_auth_token",
-            "firebase_user_email",
-            "firebase_user_display_name",
-            "firebase_user_photo_url",
-            "firebase_user_uid"
-        ]
-        keys.forEach { UserDefaults.standard.removeObject(forKey: $0) }
+        ["firebase_auth_token", "firebase_user_email", "firebase_user_display_name",
+         "firebase_user_photo_url", "firebase_user_uid", "signin_provider", "member_since"]
+            .forEach { UserDefaults.standard.removeObject(forKey: $0) }
         UserDefaults.standard.synchronize()
     }
 }
@@ -157,11 +217,9 @@ class AuthBridge {
 
 enum AuthBridgeError: LocalizedError {
     case missingIDToken
+    var errorDescription: String? { "Google Sign-In did not return an ID token." }
+}
 
-    var errorDescription: String? {
-        switch self {
-        case .missingIDToken:
-            return "Google Sign-In did not return an ID token."
-        }
-    }
+extension Notification.Name {
+    static let authStateDidChange = Notification.Name("authStateDidChange")
 }

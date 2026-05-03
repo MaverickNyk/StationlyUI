@@ -1,35 +1,68 @@
 package com.stationly.core.platform
 
+import com.stationly.core.model.FcmPayload
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.WidgetState
+import com.stationly.core.repository.DepartureRepository
+import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.repository.SqlStorage
+import com.stationly.core.service.NetworkModule
+import com.stationly.core.usecase.FormatDeparturesUseCase
+import com.stationly.core.usecase.ProcessFcmPayloadUseCase
+import com.stationly.core.usecase.SyncPredictionsUseCase
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
-import platform.Foundation.*
+import platform.Foundation.NSDate
+import platform.Foundation.NSUserDefaults
+import platform.Foundation.timeIntervalSince1970
 
 private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-// ── App Group identifier shared between main app and WidgetKit extension ──
 private const val APP_GROUP_ID = "group.com.stationly.mobile"
 
-// ── NSUserDefaults keys ──
+// ── All NSUserDefaults keys used across KMP and Swift ──
 object AppGroupKeys {
-    const val WIDGET_STATION_NAME    = "widget_station_name"
-    const val WIDGET_LINE_NAME       = "widget_line_name"
-    const val WIDGET_PREDICTIONS     = "widget_predictions"
-    const val WIDGET_STATUS          = "widget_status"
-    const val WIDGET_LAST_UPDATED    = "widget_last_updated"
-    const val WIDGET_RELOAD_SIGNAL   = "widget_reload_signal"
-    const val FCM_TOPICS             = "fcm_topics"
-    const val FCM_SUBSCRIBE_PENDING  = "fcm_subscribe_pending"
+    // Widget data written by KMP, read by WidgetKit extension
+    const val WIDGET_STATION_NAME     = "widget_station_name"
+    const val WIDGET_LINE_NAME        = "widget_line_name"
+    const val WIDGET_PREDICTIONS      = "widget_predictions"
+    const val WIDGET_STATUS           = "widget_status"
+    const val WIDGET_LAST_UPDATED     = "widget_last_updated"
+    const val WIDGET_RELOAD_SIGNAL    = "widget_reload_signal"
+
+    // FCM topic management — written by KMP, processed by Swift FCMBridge
+    const val FCM_TOPICS              = "fcm_topics"
+    const val FCM_SUBSCRIBE_PENDING   = "fcm_subscribe_pending"
     const val FCM_UNSUBSCRIBE_PENDING = "fcm_unsubscribe_pending"
-    const val FIREBASE_AUTH_TOKEN    = "firebase_auth_token"
-    const val APNS_TOKEN             = "apns_token"
+    const val FCM_TOKEN               = "fcm_token"    // FCM registration token stored by AppDelegate
+
+    // Auth state — written by Swift AuthBridge, read by KMP IosPlatformAuthProvider
+    const val FIREBASE_AUTH_TOKEN     = "firebase_auth_token"
+    const val FIREBASE_USER_EMAIL     = "firebase_user_email"
+    const val FIREBASE_USER_NAME      = "firebase_user_display_name"
+    const val FIREBASE_USER_PHOTO     = "firebase_user_photo_url"
+    const val FIREBASE_USER_UID       = "firebase_user_uid"
+
+    // Auth command protocol — KMP writes, Swift reads and executes, then clears
+    const val AUTH_PENDING_COMMAND    = "auth_pending_command"
+    const val AUTH_PENDING_ERROR      = "auth_pending_error"
+    const val AUTH_OPERATION_SUCCESS  = "auth_operation_success"  // for non-token operations (e.g. resetConfirm)
+
+    // Profile metadata
+    const val SIGNIN_PROVIDER         = "signin_provider"
+    const val MEMBER_SINCE            = "member_since"
 }
+
+// ─────────────────────────────────────────────────────────
+// Widget Manager
+// ─────────────────────────────────────────────────────────
 
 class IosWidgetManager : WidgetManager {
 
@@ -37,93 +70,124 @@ class IosWidgetManager : WidgetManager {
         get() = NSUserDefaults(suiteName = APP_GROUP_ID)
 
     override suspend fun updateWidget(state: WidgetState) = withContext(Dispatchers.IO) {
-        val defaults = appGroupDefaults ?: return@withContext
-
+        val d = appGroupDefaults ?: return@withContext
         val predictionsJson = try {
             json.encodeToString(ListSerializer(PredictionDisplay.serializer()), state.predictions)
-        } catch (e: Exception) { "[]" }
+        } catch (_: Exception) { "[]" }
 
-        defaults.setObject(state.stationName, forKey = AppGroupKeys.WIDGET_STATION_NAME)
-        defaults.setObject(state.lineName, forKey = AppGroupKeys.WIDGET_LINE_NAME)
-        defaults.setObject(predictionsJson, forKey = AppGroupKeys.WIDGET_PREDICTIONS)
-        defaults.setObject(state.status ?: "", forKey = AppGroupKeys.WIDGET_STATUS)
-        defaults.setDouble(state.lastUpdated.toDouble(), forKey = AppGroupKeys.WIDGET_LAST_UPDATED)
-        // Bump the reload signal — Swift WidgetKit observes this value to trigger timeline refresh
-        val current = defaults.integerForKey(AppGroupKeys.WIDGET_RELOAD_SIGNAL)
-        defaults.setInteger(current + 1, forKey = AppGroupKeys.WIDGET_RELOAD_SIGNAL)
-        defaults.synchronize()
+        d.setObject(state.stationName,          forKey = AppGroupKeys.WIDGET_STATION_NAME)
+        d.setObject(state.lineName,              forKey = AppGroupKeys.WIDGET_LINE_NAME)
+        d.setObject(predictionsJson,             forKey = AppGroupKeys.WIDGET_PREDICTIONS)
+        d.setObject(state.status ?: "",          forKey = AppGroupKeys.WIDGET_STATUS)
+        d.setDouble(state.lastUpdated.toDouble(), forKey = AppGroupKeys.WIDGET_LAST_UPDATED)
+        // Bumping the signal tells Swift WidgetReloadObserver to call WidgetCenter.reloadAllTimelines()
+        val sig = d.integerForKey(AppGroupKeys.WIDGET_RELOAD_SIGNAL)
+        d.setInteger(sig + 1, forKey = AppGroupKeys.WIDGET_RELOAD_SIGNAL)
+        d.synchronize()
     }
 
     override suspend fun showWaitingState(station: String, line: String) = withContext(Dispatchers.IO) {
-        val defaults = appGroupDefaults ?: return@withContext
-        defaults.setObject(station, forKey = AppGroupKeys.WIDGET_STATION_NAME)
-        defaults.setObject(line, forKey = AppGroupKeys.WIDGET_LINE_NAME)
-        defaults.setObject("[]", forKey = AppGroupKeys.WIDGET_PREDICTIONS)
-        defaults.setObject("", forKey = AppGroupKeys.WIDGET_STATUS)
-        defaults.synchronize()
+        val d = appGroupDefaults ?: return@withContext
+        d.setObject(station, forKey = AppGroupKeys.WIDGET_STATION_NAME)
+        d.setObject(line,    forKey = AppGroupKeys.WIDGET_LINE_NAME)
+        d.setObject("[]",    forKey = AppGroupKeys.WIDGET_PREDICTIONS)
+        d.setObject("",      forKey = AppGroupKeys.WIDGET_STATUS)
+        val sig = d.integerForKey(AppGroupKeys.WIDGET_RELOAD_SIGNAL)
+        d.setInteger(sig + 1, forKey = AppGroupKeys.WIDGET_RELOAD_SIGNAL)
+        d.synchronize()
+    }
+
+    override suspend fun clearWidgetData() = withContext(Dispatchers.IO) {
+        val d = appGroupDefaults ?: return@withContext
+        d.removeObjectForKey(AppGroupKeys.WIDGET_STATION_NAME)
+        d.removeObjectForKey(AppGroupKeys.WIDGET_LINE_NAME)
+        d.removeObjectForKey(AppGroupKeys.WIDGET_PREDICTIONS)
+        d.removeObjectForKey(AppGroupKeys.WIDGET_STATUS)
+        d.removeObjectForKey(AppGroupKeys.WIDGET_LAST_UPDATED)
+        // Bump signal so widget reloads to empty state
+        val sig = d.integerForKey(AppGroupKeys.WIDGET_RELOAD_SIGNAL)
+        d.setInteger(sig + 1, forKey = AppGroupKeys.WIDGET_RELOAD_SIGNAL)
+        d.synchronize()
     }
 
     override suspend fun formatForWidget(predictions: List<UserSelection>): WidgetState {
         return WidgetState(
             stationName = predictions.firstOrNull()?.stationName ?: "",
-            lineName = predictions.firstOrNull()?.line ?: "",
+            lineName    = predictions.firstOrNull()?.line ?: "",
             predictions = emptyList(),
-            status = null,
-            lastUpdated = (NSDate().timeIntervalSince1970).toLong()
+            status      = null,
+            lastUpdated = NSDate().timeIntervalSince1970.toLong()
         )
     }
 }
+
+// ─────────────────────────────────────────────────────────
+// Notification Manager
+// ─────────────────────────────────────────────────────────
 
 class IosNotificationManager : NotificationManager {
 
     private val defaults = NSUserDefaults.standardUserDefaults
 
     override suspend fun subscribeToTopics(topics: List<String>) = withContext(Dispatchers.IO) {
-        val existing = (defaults.arrayForKey(AppGroupKeys.FCM_TOPICS) as? List<*>)
-            ?.filterIsInstance<String>() ?: emptyList()
-        val updated = (existing + topics).distinct()
-        defaults.setObject(updated, forKey = AppGroupKeys.FCM_TOPICS)
-        // Queue for Swift FCM subscription on next app foreground
-        val pending = (defaults.arrayForKey(AppGroupKeys.FCM_SUBSCRIBE_PENDING) as? List<*>)
-            ?.filterIsInstance<String>() ?: emptyList()
+        val existing = pendingList(AppGroupKeys.FCM_TOPICS)
+        defaults.setObject((existing + topics).distinct(), forKey = AppGroupKeys.FCM_TOPICS)
+        val pending = pendingList(AppGroupKeys.FCM_SUBSCRIBE_PENDING)
         defaults.setObject((pending + topics).distinct(), forKey = AppGroupKeys.FCM_SUBSCRIBE_PENDING)
         defaults.synchronize()
     }
 
     override suspend fun unsubscribeFromTopics(topics: List<String>) = withContext(Dispatchers.IO) {
-        val existing = (defaults.arrayForKey(AppGroupKeys.FCM_TOPICS) as? List<*>)
-            ?.filterIsInstance<String>() ?: emptyList()
+        val existing = pendingList(AppGroupKeys.FCM_TOPICS)
         defaults.setObject(existing - topics.toSet(), forKey = AppGroupKeys.FCM_TOPICS)
-        val pending = (defaults.arrayForKey(AppGroupKeys.FCM_UNSUBSCRIBE_PENDING) as? List<*>)
-            ?.filterIsInstance<String>() ?: emptyList()
+        val pending = pendingList(AppGroupKeys.FCM_UNSUBSCRIBE_PENDING)
         defaults.setObject((pending + topics).distinct(), forKey = AppGroupKeys.FCM_UNSUBSCRIBE_PENDING)
         defaults.synchronize()
     }
 
-    override suspend fun handleNotification(payload: Map<String, String>) {
-        // Handled by AppDelegate / UNUserNotificationCenterDelegate on the Swift side
+    override suspend fun clearAllTopics() = withContext(Dispatchers.IO) {
+        val all = pendingList(AppGroupKeys.FCM_TOPICS)
+        if (all.isNotEmpty()) {
+            val pending = pendingList(AppGroupKeys.FCM_UNSUBSCRIBE_PENDING)
+            defaults.setObject((pending + all).distinct(), forKey = AppGroupKeys.FCM_UNSUBSCRIBE_PENDING)
+        }
+        defaults.removeObjectForKey(AppGroupKeys.FCM_TOPICS)
+        defaults.removeObjectForKey(AppGroupKeys.FCM_SUBSCRIBE_PENDING)
+        defaults.synchronize()
     }
 
-    override suspend fun registerDevice(): String {
-        return defaults.stringForKey(AppGroupKeys.APNS_TOKEN) ?: ""
+    override suspend fun handleNotification(payload: Map<String, String>) {
+        // Handled by Swift AppDelegate / UNUserNotificationCenterDelegate
+        // FCM payload processing is done by FcmPayloadBridge.processPayload()
     }
+
+    override suspend fun registerDevice(): String =
+        defaults.stringForKey(AppGroupKeys.FCM_TOKEN) ?: ""
+
+    private fun pendingList(key: String): List<String> =
+        (defaults.arrayForKey(key) as? List<*>)?.filterIsInstance<String>() ?: emptyList()
 }
+
+// ─────────────────────────────────────────────────────────
+// Storage Manager
+// ─────────────────────────────────────────────────────────
 
 class IosStorageManager : StorageManager {
 
     private val defaults = NSUserDefaults.standardUserDefaults
 
     override suspend fun saveSelections(selections: List<UserSelection>) = withContext(Dispatchers.IO) {
-        val str = json.encodeToString(ListSerializer(UserSelection.serializer()), selections)
-        defaults.setObject(str, forKey = "selections")
+        defaults.setObject(
+            json.encodeToString(ListSerializer(UserSelection.serializer()), selections),
+            forKey = "selections"
+        )
         defaults.synchronize()
     }
 
     override suspend fun loadSelections(): List<UserSelection> = withContext(Dispatchers.IO) {
         val str = defaults.stringForKey("selections") ?: return@withContext emptyList()
-        return@withContext try {
-            json.decodeFromString(ListSerializer(UserSelection.serializer()), str)
-        } catch (e: Exception) { emptyList() }
+        try { json.decodeFromString(ListSerializer(UserSelection.serializer()), str) }
+        catch (_: Exception) { emptyList() }
     }
 
     override suspend fun saveLineStatus(lineId: String, statusJson: String) = withContext(Dispatchers.IO) {
@@ -136,11 +200,16 @@ class IosStorageManager : StorageManager {
     }
 
     override suspend fun clearCache() = withContext(Dispatchers.IO) {
-        val allKeys = (defaults.dictionaryRepresentation().keys as? List<*>)
-            ?.filterIsInstance<String>() ?: emptyList()
-        allKeys.filter {
-            it.startsWith("line_status_") || it.startsWith("predictions_") || it == "selections"
+        allKeys().filter {
+            it.startsWith("line_status_") || it.startsWith("predictions_") ||
+            it.startsWith("cached_") || it == "selections"
         }.forEach { defaults.removeObjectForKey(it) }
+        defaults.synchronize()
+    }
+
+    override suspend fun clearAll() = withContext(Dispatchers.IO) {
+        // Remove every key written by KMP / AuthBridge, including auth tokens
+        allKeys().forEach { defaults.removeObjectForKey(it) }
         defaults.synchronize()
     }
 
@@ -152,27 +221,68 @@ class IosStorageManager : StorageManager {
     override suspend fun loadString(key: String): String? = withContext(Dispatchers.IO) {
         defaults.stringForKey(key)
     }
+
+    private fun allKeys(): List<String> =
+        (defaults.dictionaryRepresentation().keys as? List<*>)?.filterIsInstance<String>() ?: emptyList()
 }
 
-// ── iOS API key (same as Android — move to xcconfig in production) ──
+// ─────────────────────────────────────────────────────────
+// Platform singleton
+// ─────────────────────────────────────────────────────────
+
 private const val IOS_API_KEY = "bff7e80b234d440d9fea4a1b3b96fae4"
 
 actual object Platform {
     private var _sqlStorage: SqlStorage? = null
 
-    actual val widgetManager: WidgetManager = IosWidgetManager()
+    actual val widgetManager: WidgetManager       = IosWidgetManager()
     actual val notificationManager: NotificationManager = IosNotificationManager()
-    actual val storageManager: StorageManager = IosStorageManager()
+    actual val storageManager: StorageManager     = IosStorageManager()
 
     actual val sqlStorage: SqlStorage
         get() = _sqlStorage ?: SqlStorage(createDatabase(DriverFactory())).also { _sqlStorage = it }
 
     actual fun getPlatformName(): String = "iOS"
-    actual fun getApiKey(): String = IOS_API_KEY
+    actual fun getApiKey(): String       = IOS_API_KEY
 
     actual suspend fun getAuthToken(): String? = withContext(Dispatchers.IO) {
-        // The Swift side refreshes the token and stores it in NSUserDefaults.
-        // See AuthBridge.swift in iosApp.
         NSUserDefaults.standardUserDefaults.stringForKey(AppGroupKeys.FIREBASE_AUTH_TOKEN)
+    }
+}
+
+// ─────────────────────────────────────────────────────────
+// FCM Payload Bridge
+// Called by Swift AppDelegate when an FCM push notification arrives.
+// Swift serialises the push userInfo dict to JSON and calls processPayload().
+// ─────────────────────────────────────────────────────────
+
+object FcmPayloadBridge {
+
+    private val processUseCase: ProcessFcmPayloadUseCase by lazy {
+        ProcessFcmPayloadUseCase(
+            departureRepository = DepartureRepository(
+                NetworkModule.tflApi,
+                Platform.storageManager,
+                Platform.sqlStorage,
+                SyncPredictionsUseCase(Platform.sqlStorage)
+            ),
+            widgetManager          = Platform.widgetManager,
+            storageManager         = Platform.storageManager,
+            formatDeparturesUseCase = FormatDeparturesUseCase()
+        )
+    }
+
+    /**
+     * Fire-and-forget: parse JSON FCM payload, update SQLite cache, refresh widget.
+     * Called from Swift on a background queue; uses GlobalScope since this is a
+     * platform-event callback with no associated lifecycle.
+     */
+    fun processPayload(jsonString: String) {
+        GlobalScope.launch(Dispatchers.IO) {
+            try {
+                val payload = json.decodeFromString<FcmPayload>(jsonString)
+                processUseCase(payload)
+            } catch (_: Exception) { }
+        }
     }
 }

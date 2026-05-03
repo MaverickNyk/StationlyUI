@@ -1,64 +1,78 @@
 import Foundation
 import FirebaseMessaging
 
-/// FCMBridge processes FCM topic subscribe/unsubscribe requests that were
-/// enqueued by the KMP layer in NSUserDefaults while an FCM token was not yet
-/// available. Called both on FCM token receipt and on app foreground.
+/// FCMBridge processes two things:
+/// 1. Topic subscribe/unsubscribe requests queued by KMP in NSUserDefaults.standard
+///    (keys: fcm_subscribe_pending, fcm_unsubscribe_pending)
+/// 2. Raw FCM payload JSON stored by AppDelegate under "pending_fcm_payload",
+///    forwarded to KMP FcmPayloadBridge once the framework is integrated.
+///
+/// Called on: FCM token receipt, app foreground.
 class FCMBridge {
     static let shared = FCMBridge()
     private init() {}
 
-    private let subscribeKey   = "fcm_subscribe_pending"
-    private let unsubscribeKey = "fcm_unsubscribe_pending"
+    // MARK: - Topic subscriptions
 
     func processPendingSubscriptions() {
-        let defaults = UserDefaults.standard
+        let ud = UserDefaults.standard
 
-        // -- Subscribe --
-        if let topics = defaults.array(forKey: subscribeKey) as? [String], !topics.isEmpty {
-            topics.forEach { topic in
+        // Subscribe
+        if let subscribePending = ud.array(forKey: "fcm_subscribe_pending") as? [String],
+           !subscribePending.isEmpty {
+            subscribePending.forEach { topic in
                 Messaging.messaging().subscribe(toTopic: topic) { error in
-                    if let error = error {
-                        print("[FCMBridge] Subscribe to '\(topic)' failed: \(error.localizedDescription)")
-                    }
+                    if let error { print("[FCMBridge] Subscribe \(topic) failed: \(error)") }
                 }
             }
-            defaults.removeObject(forKey: subscribeKey)
+            ud.removeObject(forKey: "fcm_subscribe_pending")
         }
 
-        // -- Unsubscribe --
-        if let topics = defaults.array(forKey: unsubscribeKey) as? [String], !topics.isEmpty {
-            topics.forEach { topic in
+        // Unsubscribe
+        if let unsubscribePending = ud.array(forKey: "fcm_unsubscribe_pending") as? [String],
+           !unsubscribePending.isEmpty {
+            unsubscribePending.forEach { topic in
                 Messaging.messaging().unsubscribe(fromTopic: topic) { error in
-                    if let error = error {
-                        print("[FCMBridge] Unsubscribe from '\(topic)' failed: \(error.localizedDescription)")
-                    }
+                    if let error { print("[FCMBridge] Unsubscribe \(topic) failed: \(error)") }
                 }
             }
-            defaults.removeObject(forKey: unsubscribeKey)
+            ud.removeObject(forKey: "fcm_unsubscribe_pending")
         }
 
-        defaults.synchronize()
+        ud.synchronize()
+
+        // Also forward any buffered FCM payload to KMP
+        processPendingPayload()
     }
 
-    /// Enqueue a topic subscription to be processed once an FCM token is
-    /// available. The KMP layer calls this directly via the shared UserDefaults
-    /// key; this helper is exposed for any Swift-side callers.
+    // MARK: - Buffered FCM payload forwarding
+
+    /// AppDelegate stores raw FCM userInfo JSON under "pending_fcm_payload".
+    /// Once the ComposeApp framework is linked, forward it to KMP and clear the key.
+    private func processPendingPayload() {
+        let ud = UserDefaults.standard
+        guard let json = ud.string(forKey: "pending_fcm_payload") else { return }
+        ud.removeObject(forKey: "pending_fcm_payload")
+        ud.synchronize()
+
+        // After Xcode framework integration uncomment:
+        // FcmPayloadBridgeKt.FcmPayloadBridge.processPayload(jsonString: json)
+        _ = json  // suppress unused-variable warning until framework is linked
+    }
+
+    // MARK: - Helpers for direct Swift-side enqueue (if needed)
+
     func enqueueSubscription(topic: String) {
-        var pending = (UserDefaults.standard.array(forKey: subscribeKey) as? [String]) ?? []
-        if !pending.contains(topic) {
-            pending.append(topic)
-            UserDefaults.standard.set(pending, forKey: subscribeKey)
-        }
+        var pending = (UserDefaults.standard.array(forKey: "fcm_subscribe_pending") as? [String]) ?? []
+        if !pending.contains(topic) { pending.append(topic) }
+        UserDefaults.standard.set(pending, forKey: "fcm_subscribe_pending")
+        UserDefaults.standard.synchronize()
     }
 
-    /// Enqueue a topic unsubscription to be processed once an FCM token is
-    /// available.
     func enqueueUnsubscription(topic: String) {
-        var pending = (UserDefaults.standard.array(forKey: unsubscribeKey) as? [String]) ?? []
-        if !pending.contains(topic) {
-            pending.append(topic)
-            UserDefaults.standard.set(pending, forKey: unsubscribeKey)
-        }
+        var pending = (UserDefaults.standard.array(forKey: "fcm_unsubscribe_pending") as? [String]) ?? []
+        if !pending.contains(topic) { pending.append(topic) }
+        UserDefaults.standard.set(pending, forKey: "fcm_unsubscribe_pending")
+        UserDefaults.standard.synchronize()
     }
 }

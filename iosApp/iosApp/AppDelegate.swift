@@ -3,6 +3,7 @@ import FirebaseCore
 import FirebaseMessaging
 import GoogleSignIn
 import WidgetKit
+// import ComposeApp  // Uncomment after Xcode framework integration
 
 class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNotificationCenterDelegate {
 
@@ -12,20 +13,17 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         Messaging.messaging().delegate = self
         UNUserNotificationCenter.current().delegate = self
 
-        // Request notification permissions
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
         application.registerForRemoteNotifications()
 
-        // Set up GoogleSignIn
         if let clientID = FirebaseApp.app()?.options.clientID {
-            let config = GIDConfiguration(clientID: clientID)
-            GIDSignIn.sharedInstance.configuration = config
+            GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
         }
 
-        // Wire up KMP AuthCallbackBridge
+        // Wire KMP ↔ Swift auth command protocol
         AuthBridge.shared.wireToKMP()
 
-        // Observe widget reload signals written by KMP
+        // Poll App Group UserDefaults every 5 s; reload widget when KMP bumps signal
         WidgetReloadObserver.shared.start()
 
         return true
@@ -43,12 +41,14 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         print("[AppDelegate] APNs registration failed: \(error.localizedDescription)")
     }
 
-    // MARK: - FCM
+    // MARK: - FCM token
 
     func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
         guard let token = fcmToken else { return }
-        UserDefaults.standard.set(token, forKey: "apns_token")
-        // Process any pending FCM topic subscriptions queued by KMP
+        // Store under "fcm_token" — read by KMP IosNotificationManager.registerDevice()
+        UserDefaults.standard.set(token, forKey: "fcm_token")
+        UserDefaults.standard.synchronize()
+        // Process any FCM topic subscriptions that KMP queued before the token was ready
         FCMBridge.shared.processPendingSubscriptions()
     }
 
@@ -63,8 +63,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     // MARK: - Foreground
 
     func applicationDidBecomeActive(_ application: UIApplication) {
+        // Refresh Firebase token so KMP always has a fresh one
+        Task { await AuthBridge.shared.refreshTokenIfNeeded() }
+        // Flush any queued FCM subscriptions
         FCMBridge.shared.processPendingSubscriptions()
-        // Reload widget so ETAs are fresh immediately when user returns to device
+        // Force widget refresh when user returns to the app
         WidgetCenter.shared.reloadAllTimelines()
     }
 
@@ -73,22 +76,39 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                  willPresent notification: UNNotification,
                                  withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        // Process FCM payload through KMP so the widget and SQLite cache update immediately
+        processFcmPayload(notification.request.content.userInfo)
         completionHandler([.banner, .sound])
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                  didReceive response: UNNotificationResponse,
                                  withCompletionHandler completionHandler: @escaping () -> Void) {
+        // Also process on tap (covers background delivery)
+        processFcmPayload(response.notification.request.content.userInfo)
         completionHandler()
+    }
+
+    // MARK: - FCM payload → KMP
+
+    private func processFcmPayload(_ userInfo: [AnyHashable: Any]) {
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: userInfo),
+              let jsonString = String(data: jsonData, encoding: .utf8) else { return }
+        // FcmPayloadBridge is a KMP object compiled into the ComposeApp framework.
+        // After Xcode integration uncomment:
+        // FcmPayloadBridgeKt.FcmPayloadBridge.processPayload(jsonString: jsonString)
+        //
+        // Until then, store the raw JSON so SummaryViewModel picks it up on next poll.
+        UserDefaults.standard.set(jsonString, forKey: "pending_fcm_payload")
+        UserDefaults.standard.synchronize()
     }
 }
 
 // MARK: - WidgetReloadObserver
-// Watches the widget_reload_signal key in the App Group UserDefaults. Every time
-// KMP bumps this integer (after receiving fresh prediction data via FCM), we
-// tell WidgetKit to reload all timelines so the widget reflects the latest data
-// without waiting for the 30-second polling interval.
 
+/// Watches `widget_reload_signal` in the App Group UserDefaults.
+/// KMP bumps this integer on every widget data write; we react by telling
+/// WidgetKit to reload all timelines immediately (no waiting for 30 s policy).
 class WidgetReloadObserver {
     static let shared = WidgetReloadObserver()
     private init() {}
@@ -99,9 +119,6 @@ class WidgetReloadObserver {
     private var timer: Timer?
 
     func start() {
-        // Poll the shared defaults every 5 seconds. A KVO observer on
-        // UserDefaults across process boundaries is unreliable on iOS, so a
-        // lightweight timer is the pragmatic approach.
         timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             self?.checkSignal()
         }
@@ -116,8 +133,5 @@ class WidgetReloadObserver {
         }
     }
 
-    func stop() {
-        timer?.invalidate()
-        timer = nil
-    }
+    func stop() { timer?.invalidate(); timer = nil }
 }

@@ -106,6 +106,8 @@ class StationLifecycleUseCase(
         }
         selectionRepository.clearAll()
         sqlStorage.clearAllData()
-        storageManager.clearCache()
+        notificationManager.clearAllTopics()
+        widgetManager.clearWidgetData()
+        storageManager.clearAll()
     }
 }
