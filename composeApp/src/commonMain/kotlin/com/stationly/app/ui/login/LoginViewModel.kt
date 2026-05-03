@@ -144,6 +144,24 @@ class LoginViewModel(
         }
     }
 
+    fun onGoogleSignInInteractive(onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isAuthenticating = true, error = null)
+            authProvider.signInWithGoogleInteractive().fold(
+                onSuccess = {
+                    _uiState.value = _uiState.value.copy(isAuthenticating = false)
+                    onSuccess()
+                },
+                onFailure = { e ->
+                    _uiState.value = _uiState.value.copy(
+                        isAuthenticating = false,
+                        error = friendlyAuthError(e.message ?: "")
+                    )
+                }
+            )
+        }
+    }
+
     fun onForgotPasswordSubmit(email: String, onSent: () -> Unit) {
         if (email.isBlank()) {
             _uiState.value = _uiState.value.copy(error = "Enter your email to receive a reset link.")

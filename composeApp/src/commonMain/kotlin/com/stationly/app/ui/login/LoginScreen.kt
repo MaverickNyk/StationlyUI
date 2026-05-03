@@ -215,7 +215,10 @@ fun LoginScreen(
                 }
                 Spacer(Modifier.height(16.dp))
                 OutlinedButton(
-                    onClick = { onGoogleSignIn?.invoke() },
+                    onClick = {
+                        if (onGoogleSignIn != null) onGoogleSignIn.invoke()
+                        else viewModel.onGoogleSignInInteractive(onNavigateToSummary)
+                    },
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(14.dp),
                     border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(0.15f)),

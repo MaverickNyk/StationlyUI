@@ -6,4 +6,5 @@ data class SummaryUiState(
     val lastUpdated: Long = 0L,
     val activeStationId: String? = null,
     val activeLineId: String? = null,
+    val userInitial: String = "?"
 )

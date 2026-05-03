@@ -8,9 +8,14 @@ import com.stationly.app.ui.theme.StationlyTheme
 @Composable
 fun App(
     authProvider: PlatformAuthProvider,
-    startLoggedIn: Boolean = false
+    startLoggedIn: Boolean = false,
+    deepLinkOobCode: String? = null
 ) {
     StationlyTheme {
-        AppNavigation(authProvider = authProvider, startLoggedIn = startLoggedIn)
+        AppNavigation(
+            authProvider    = authProvider,
+            startLoggedIn   = startLoggedIn,
+            deepLinkOobCode = deepLinkOobCode
+        )
     }
 }

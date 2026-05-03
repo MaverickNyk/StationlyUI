@@ -104,7 +104,8 @@ fun SummaryScreen(
                 onNavigateToSelection = onNavigateToSelection,
                 selectionsEmpty = selections.isEmpty(),
                 pulseAlpha = pulseAlpha,
-                liveLabel = homeConfig["topbar.live_label"] ?: "Live Network"
+                liveLabel = homeConfig["topbar.live_label"] ?: "Live Network",
+                userInitial = uiState.userInitial
             )
         }
     ) { padding ->
@@ -230,7 +231,8 @@ private fun SummaryTopBar(
     onNavigateToSelection: () -> Unit,
     selectionsEmpty: Boolean,
     pulseAlpha: Float,
-    liveLabel: String = "Live Network"
+    liveLabel: String = "Live Network",
+    userInitial: String = "?"
 ) {
     CenterAlignedTopAppBar(
         title = {
@@ -292,7 +294,7 @@ private fun SummaryTopBar(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Text(
-                            "P",
+                            userInitial,
                             color = TflAmber,
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp

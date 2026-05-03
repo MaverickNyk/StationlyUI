@@ -1,6 +1,8 @@
 package com.stationly.app.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -13,10 +15,26 @@ import com.stationly.app.ui.summary.SummaryScreen
 @Composable
 fun AppNavigation(
     authProvider: PlatformAuthProvider,
-    startLoggedIn: Boolean = false
+    startLoggedIn: Boolean = false,
+    deepLinkOobCode: String? = null
 ) {
     val navController = rememberNavController()
     val startDestination = if (startLoggedIn) "summary" else "auth/login"
+
+    // Deep link: code passed directly from Swift on cold start
+    LaunchedEffect(deepLinkOobCode) {
+        if (deepLinkOobCode != null) {
+            navController.navigate("auth/reset-confirm/$deepLinkOobCode")
+        }
+    }
+
+    // Deep link: code stored in NSUserDefaults by Swift when app was already running
+    val pendingResetCode = remember { authProvider.consumePendingResetCode() }
+    LaunchedEffect(pendingResetCode) {
+        if (pendingResetCode != null) {
+            navController.navigate("auth/reset-confirm/$pendingResetCode")
+        }
+    }
 
     NavHost(navController = navController, startDestination = startDestination) {
 

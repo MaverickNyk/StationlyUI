@@ -87,6 +87,7 @@ class SummaryViewModel(
     init {
         viewModelScope.launch { fetchAnnouncement() }
         viewModelScope.launch { fetchHomeConfig() }
+        viewModelScope.launch { loadUserInitial() }
         viewModelScope.launch {
             selectionRepository.initialize()
             selectionRepository.selections.value.firstOrNull()?.let { refreshDataIfStale(it) }
@@ -264,6 +265,13 @@ class SummaryViewModel(
                 _isDeletingBoard.value = null
             }
         }
+    }
+
+    private suspend fun loadUserInitial() {
+        val name = Platform.storageManager.loadString("firebase_user_display_name")
+            ?: Platform.storageManager.loadString("firebase_user_email")
+        val initial = name?.firstOrNull { it.isLetter() }?.uppercaseChar()?.toString() ?: "?"
+        _uiState.value = _uiState.value.copy(userInitial = initial)
     }
 
     private suspend fun fetchAnnouncement() {

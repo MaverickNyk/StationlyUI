@@ -11,9 +11,16 @@ import platform.UIKit.UIViewController
  *                       Swift checks this before calling in and passes the result.
  */
 @Suppress("FunctionName", "unused")
-fun MainViewController(startLoggedIn: Boolean = false): UIViewController {
+fun MainViewController(
+    startLoggedIn: Boolean = false,
+    deepLinkOobCode: String? = null
+): UIViewController {
     val authProvider = IosPlatformAuthProvider()
     return ComposeUIViewController {
-        App(authProvider = authProvider, startLoggedIn = startLoggedIn)
+        App(
+            authProvider   = authProvider,
+            startLoggedIn  = startLoggedIn,
+            deepLinkOobCode = deepLinkOobCode
+        )
     }
 }

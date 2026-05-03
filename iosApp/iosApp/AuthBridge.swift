@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import FirebaseAuth
 import GoogleSignIn
 // import ComposeApp  // Uncomment after Xcode framework integration
@@ -78,6 +79,14 @@ class AuthBridge {
                 let r = await signInWithGoogleIdToken(idToken: parts[1])
                 if case .failure(let e) = r { writeError(e.localizedDescription) }
 
+            case "googleSignInInteractive":
+                guard let rootVC = await rootViewController() else {
+                    writeError("No root view controller available")
+                    return
+                }
+                let r = await signInWithGoogle(presentingViewController: rootVC)
+                if case .failure(let e) = r { writeError(e.localizedDescription) }
+
             case "resetConfirm" where parts.count >= 3:
                 let r = await confirmPasswordReset(oobCode: parts[1], newPassword: parts[2])
                 switch r {
@@ -89,6 +98,11 @@ class AuthBridge {
                     writeError(e.localizedDescription)
                 }
 
+            case "signOut":
+                await logout()
+                ud.set("1", forKey: "auth_operation_success")
+                ud.synchronize()
+
             default:
                 writeError("Unknown command: \(verb)")
             }
@@ -98,6 +112,15 @@ class AuthBridge {
     private func writeError(_ message: String) {
         UserDefaults.standard.set(message, forKey: "auth_pending_error")
         UserDefaults.standard.synchronize()
+    }
+
+    @MainActor
+    private func rootViewController() -> UIViewController? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }?
+            .rootViewController
     }
 
     // MARK: - Email / password

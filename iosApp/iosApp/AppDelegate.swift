@@ -52,12 +52,36 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         FCMBridge.shared.processPendingSubscriptions()
     }
 
-    // MARK: - URL handling (Google Sign-In deep links)
+    // MARK: - URL handling (Google Sign-In + Firebase password reset deep links)
+    // To enable password reset deep links, register a custom URL scheme in Info.plist:
+    //   CFBundleURLSchemes: ["stationly"]
+    // Firebase will then redirect password-reset emails to stationly://...?mode=resetPassword&oobCode=...
 
     func application(_ application: UIApplication,
                      open url: URL,
                      options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-        return GIDSignIn.sharedInstance.handle(url)
+        // Google Sign-In handles its own redirect URLs
+        if GIDSignIn.sharedInstance.handle(url) { return true }
+        // Firebase email action link (password reset)
+        handleFirebaseActionURL(url)
+        return true
+    }
+
+    // MARK: - Firebase email action URL parsing
+
+    private func handleFirebaseActionURL(_ url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems  = components.queryItems else { return }
+        let params = Dictionary(uniqueKeysWithValues: queryItems.compactMap { item -> (String, String)? in
+            guard let value = item.value else { return nil }
+            return (item.name, value)
+        })
+        guard params["mode"] == "resetPassword",
+              let oobCode = params["oobCode"], !oobCode.isEmpty else { return }
+
+        UserDefaults.standard.set(oobCode, forKey: "pending_reset_oob_code")
+        UserDefaults.standard.synchronize()
+        NotificationCenter.default.post(name: .passwordResetLink, object: oobCode)
     }
 
     // MARK: - Foreground
@@ -102,6 +126,12 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         UserDefaults.standard.set(jsonString, forKey: "pending_fcm_payload")
         UserDefaults.standard.synchronize()
     }
+}
+
+// MARK: - Notification names
+
+extension Notification.Name {
+    static let passwordResetLink = Notification.Name("passwordResetLink")
 }
 
 // MARK: - WidgetReloadObserver

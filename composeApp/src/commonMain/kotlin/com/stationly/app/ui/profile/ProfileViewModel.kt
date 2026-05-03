@@ -49,14 +49,18 @@ class ProfileViewModel(
     }
 
     private fun loadProfile() {
-        _uiState.value = _uiState.value.copy(
-            email = authProvider.currentUserEmail() ?: "",
-            displayName = authProvider.currentUserDisplayName()
-                ?: authProvider.currentUserEmail()?.substringBefore("@") ?: "User",
-            photoUrl = authProvider.currentUserPhotoUrl(),
-            signInProvider = storageManager.loadString("signin_provider") ?: "Stationly",
-            memberSince = storageManager.loadString("member_since") ?: ""
-        )
+        viewModelScope.launch {
+            val provider    = storageManager.loadString("signin_provider") ?: "Stationly"
+            val memberSince = storageManager.loadString("member_since") ?: ""
+            _uiState.value = _uiState.value.copy(
+                email = authProvider.currentUserEmail() ?: "",
+                displayName = authProvider.currentUserDisplayName()
+                    ?: authProvider.currentUserEmail()?.substringBefore("@") ?: "User",
+                photoUrl = authProvider.currentUserPhotoUrl(),
+                signInProvider = provider,
+                memberSince = memberSince
+            )
+        }
     }
 
     private fun loadStations() {
@@ -119,16 +123,10 @@ class ProfileViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSigningOut = true, error = null)
             try {
-                // Unsubscribe all FCM topics before logout
-                Platform.sqlStorage.getAllSelections().forEach { sel ->
-                    Platform.notificationManager.unsubscribeFromTopic("Station_${sel.station}")
-                    Platform.notificationManager.unsubscribeFromTopic("LineStatus_${sel.mode}_${sel.line}")
-                }
-                // Clear all local data
+                // Firebase sign-out first (iOS: triggers Swift AuthBridge.logout(); Android: direct)
+                authProvider.signOut()
+                // Unsubscribe FCM, clear widget, clear all storage
                 stationLifecycleUseCase.cleanupAll()
-                Platform.widgetManager.clearWidgetData()
-                // Clear auth state via authProvider (bridge triggers Swift logout on iOS)
-                storageManager.clearAll()
                 _uiState.value = _uiState.value.copy(isSigningOut = false, signOutSuccess = true)
                 onSuccess()
             } catch (e: Exception) {
@@ -144,25 +142,13 @@ class ProfileViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isDeletingAccount = true, error = null)
             try {
-                val uid = storageManager.loadString("firebase_uid") ?: run {
+                val uid = storageManager.loadString("firebase_user_uid") ?: run {
                     _uiState.value = _uiState.value.copy(isDeletingAccount = false, error = "Not authenticated")
                     return@launch
                 }
-
-                // Delete backend data
                 sduiApi.deleteAccount(uid)
-
-                // Unsubscribe all FCM topics
-                Platform.sqlStorage.getAllSelections().forEach { sel ->
-                    Platform.notificationManager.unsubscribeFromTopic("Station_${sel.station}")
-                    Platform.notificationManager.unsubscribeFromTopic("LineStatus_${sel.mode}_${sel.line}")
-                }
-
-                // Clear all local data
+                authProvider.signOut()
                 stationLifecycleUseCase.cleanupAll()
-                Platform.widgetManager.clearWidgetData()
-                storageManager.clearAll()
-
                 _uiState.value = _uiState.value.copy(isDeletingAccount = false, deleteAccountSuccess = true)
                 onSuccess()
             } catch (e: Exception) {

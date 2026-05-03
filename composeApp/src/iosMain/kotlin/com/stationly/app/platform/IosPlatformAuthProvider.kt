@@ -49,8 +49,21 @@ class IosPlatformAuthProvider : PlatformAuthProvider {
     override suspend fun signInWithGoogle(idToken: String): Result<String> =
         issueCommand("googleSignIn|$idToken")
 
+    override suspend fun signInWithGoogleInteractive(): Result<String> =
+        issueCommand("googleSignInInteractive")
+
     override suspend fun confirmPasswordReset(oobCode: String, newPassword: String): Result<Unit> =
         issueCommand("resetConfirm|$oobCode|$newPassword").map { }
+
+    override suspend fun signOut(): Result<Unit> =
+        issueCommand("signOut").map { }
+
+    override fun consumePendingResetCode(): String? {
+        val code = defaults.stringForKey(AppGroupKeys.PENDING_RESET_OOB_CODE) ?: return null
+        defaults.removeObjectForKey(AppGroupKeys.PENDING_RESET_OOB_CODE)
+        defaults.synchronize()
+        return code.ifBlank { null }
+    }
 
     /**
      * Writes a command and polls every 250 ms for up to 15 s.

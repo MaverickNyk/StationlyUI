@@ -49,4 +49,16 @@ class AndroidPlatformAuthProvider(private val context: Context) : PlatformAuthPr
     } catch (e: Exception) {
         Result.failure(e)
     }
+
+    override suspend fun signInWithGoogleInteractive(): Result<String> =
+        Result.failure(Exception("Use the Google Sign-In button to continue."))
+
+    override suspend fun signOut(): Result<Unit> = try {
+        auth.signOut()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    override fun consumePendingResetCode(): String? = null
 }
