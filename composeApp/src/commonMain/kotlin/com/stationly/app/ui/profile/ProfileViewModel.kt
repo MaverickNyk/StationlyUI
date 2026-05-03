@@ -166,7 +166,7 @@ class ProfileViewModel(
 
     private suspend fun syncStationsToBackend() {
         try {
-            val uid = storageManager.loadString("firebase_uid") ?: return
+            val uid = storageManager.loadString("firebase_user_uid") ?: return
             sduiApi.syncStations(uid, _uiState.value.stations)
         } catch (_: Exception) {}
     }

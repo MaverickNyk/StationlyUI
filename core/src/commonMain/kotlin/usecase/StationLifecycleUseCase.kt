@@ -64,7 +64,7 @@ class StationLifecycleUseCase(
                 lineName = selection.line,
                 predictions = refreshedPreds,
                 status = refreshedStatus?.statusSeverityDescription,
-                lastUpdated = now
+                lastUpdated = now / 1000  // convert ms → seconds (Swift reads as timeIntervalSince1970)
             )
         )
     }

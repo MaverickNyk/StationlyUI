@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import platform.Foundation.NSBundle
 import platform.Foundation.NSDate
 import platform.Foundation.NSUserDefaults
 import platform.Foundation.timeIntervalSince1970
@@ -211,8 +212,13 @@ class IosStorageManager : StorageManager {
     }
 
     override suspend fun clearAll() = withContext(Dispatchers.IO) {
-        // Remove every key written by KMP / AuthBridge, including auth tokens
-        allKeys().forEach { defaults.removeObjectForKey(it) }
+        // removePersistentDomainForName is the safe, API-sanctioned way to wipe all app UserDefaults
+        val bundleId = NSBundle.mainBundle.bundleIdentifier
+        if (bundleId != null) {
+            defaults.removePersistentDomainForName(bundleId)
+        } else {
+            allKeys().forEach { defaults.removeObjectForKey(it) }
+        }
         defaults.synchronize()
     }
 
@@ -225,8 +231,9 @@ class IosStorageManager : StorageManager {
         defaults.stringForKey(key)
     }
 
+    // dictionaryRepresentation().keys is Set<Any?> — filterIsInstance avoids the broken List cast
     private fun allKeys(): List<String> =
-        (defaults.dictionaryRepresentation().keys as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+        defaults.dictionaryRepresentation().keys.filterIsInstance<String>()
 }
 
 // ─────────────────────────────────────────────────────────
@@ -285,7 +292,9 @@ object FcmPayloadBridge {
             try {
                 val payload = json.decodeFromString<FcmPayload>(jsonString)
                 processUseCase(payload)
-            } catch (_: Exception) { }
+            } catch (e: Exception) {
+                println("[FcmPayloadBridge] Failed to process payload: ${e.message}")
+            }
         }
     }
 }

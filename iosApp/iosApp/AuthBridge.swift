@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import FirebaseAuth
+import FirebaseMessaging
 import GoogleSignIn
 // import ComposeApp  // Uncomment after Xcode framework integration
 
@@ -99,6 +100,11 @@ class AuthBridge {
                 }
 
             case "signOut":
+                // Unsubscribe from all active FCM topics directly — cannot rely on the
+                // pending-unsubscribe queue because KMP clears UserDefaults immediately after.
+                if let topics = ud.array(forKey: "fcm_topics") as? [String] {
+                    topics.forEach { Messaging.messaging().unsubscribe(fromTopic: $0) { _ in } }
+                }
                 await logout()
                 ud.set("1", forKey: "auth_operation_success")
                 ud.synchronize()

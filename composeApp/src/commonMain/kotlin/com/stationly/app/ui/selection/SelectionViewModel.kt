@@ -22,7 +22,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 class SelectionViewModel(
-    private val locationProvider: LocationProvider = NoOpLocationProvider
+    private val locationProvider: LocationProvider = platformLocationProvider()
 ) : ViewModel() {
 
     private val sduiService = NetworkModule.sduiApi

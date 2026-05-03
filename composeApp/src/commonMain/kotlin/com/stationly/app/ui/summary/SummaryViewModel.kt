@@ -35,6 +35,8 @@ class SummaryViewModel(
     )
 ) : ViewModel() {
 
+    private val sduiApi = NetworkModule.sduiApi
+
     private val formatDeparturesUseCase = FormatDeparturesUseCase()
     private val stationLifecycleUseCase = StationLifecycleUseCase(
         selectionRepository = selectionRepository,
@@ -247,17 +249,15 @@ class SummaryViewModel(
                 _lineStatuses.value = currentLineStatuses
 
                 try {
-                    val authToken = Platform.getAuthToken()
-                    if (authToken != null) {
-                        val remainingSelections = _selections.value.filter { it.station != selection.station }
-                        val mapped = remainingSelections.map {
-                            com.stationly.core.model.sdui.SubscribedStation(
-                                id = it.station, name = it.stationName,
-                                line = it.line, mode = it.mode, direction = it.direction
-                            )
-                        }
-                        // Best-effort backend sync
+                    val uid = Platform.storageManager.loadString("firebase_user_uid") ?: return@try
+                    val remainingSelections = _selections.value.filter { it.station != selection.station }
+                    val mapped = remainingSelections.map {
+                        com.stationly.core.model.sdui.SubscribedStation(
+                            id = it.station, name = it.stationName,
+                            line = it.line, mode = it.mode, direction = it.direction
+                        )
                     }
+                    sduiApi.syncStations(uid, mapped)
                 } catch (_: Exception) {}
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy()
