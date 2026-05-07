@@ -222,8 +222,8 @@ private fun SduiAnnouncementBanner(
         color = Surface1,
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(1.dp, borderColor),
-        modifier = if (component.url != null) Modifier.fillMaxWidth().clickable { onLinkOpen(component.url) }
-                   else Modifier.fillMaxWidth()
+        modifier = component.url?.let { url -> Modifier.fillMaxWidth().clickable { onLinkOpen(url) } }
+                   ?: Modifier.fillMaxWidth()
     ) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
             Box(

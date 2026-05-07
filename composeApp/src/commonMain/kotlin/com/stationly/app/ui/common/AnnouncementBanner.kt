@@ -77,7 +77,8 @@ fun AnnouncementBanner(
                     fontSize = 12.sp,
                     lineHeight = 17.sp
                 )
-                if (announcement.url != null) {
+                val announcementUrl = announcement.url
+                if (announcementUrl != null) {
                     Spacer(Modifier.height(6.dp))
                     Text(
                         "Learn more",
@@ -85,7 +86,7 @@ fun AnnouncementBanner(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.clickable {
-                            runCatching { uriHandler.openUri(announcement.url) }
+                            runCatching { uriHandler.openUri(announcementUrl) }
                         }
                     )
                 }

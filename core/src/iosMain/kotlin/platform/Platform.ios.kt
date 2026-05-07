@@ -139,6 +139,7 @@ class IosNotificationManager : NotificationManager {
         val pending = pendingList(AppGroupKeys.FCM_SUBSCRIBE_PENDING)
         defaults.setObject((pending + topics).distinct(), forKey = AppGroupKeys.FCM_SUBSCRIBE_PENDING)
         defaults.synchronize()
+        Unit
     }
 
     override suspend fun unsubscribeFromTopics(topics: List<String>) = withContext(Dispatchers.IO) {
@@ -147,6 +148,7 @@ class IosNotificationManager : NotificationManager {
         val pending = pendingList(AppGroupKeys.FCM_UNSUBSCRIBE_PENDING)
         defaults.setObject((pending + topics).distinct(), forKey = AppGroupKeys.FCM_UNSUBSCRIBE_PENDING)
         defaults.synchronize()
+        Unit
     }
 
     override suspend fun clearAllTopics() = withContext(Dispatchers.IO) {
@@ -158,6 +160,7 @@ class IosNotificationManager : NotificationManager {
         defaults.removeObjectForKey(AppGroupKeys.FCM_TOPICS)
         defaults.removeObjectForKey(AppGroupKeys.FCM_SUBSCRIBE_PENDING)
         defaults.synchronize()
+        Unit
     }
 
     override suspend fun handleNotification(payload: Map<String, String>) {
@@ -186,6 +189,7 @@ class IosStorageManager : StorageManager {
             forKey = "selections"
         )
         defaults.synchronize()
+        Unit
     }
 
     override suspend fun loadSelections(): List<UserSelection> = withContext(Dispatchers.IO) {
@@ -197,6 +201,7 @@ class IosStorageManager : StorageManager {
     override suspend fun saveLineStatus(lineId: String, statusJson: String) = withContext(Dispatchers.IO) {
         defaults.setObject(statusJson, forKey = "line_status_$lineId")
         defaults.synchronize()
+        Unit
     }
 
     override suspend fun loadLineStatus(lineId: String): String? = withContext(Dispatchers.IO) {
@@ -209,6 +214,7 @@ class IosStorageManager : StorageManager {
             it.startsWith("cached_") || it == "selections"
         }.forEach { defaults.removeObjectForKey(it) }
         defaults.synchronize()
+        Unit
     }
 
     override suspend fun clearAll() = withContext(Dispatchers.IO) {
@@ -220,11 +226,13 @@ class IosStorageManager : StorageManager {
             allKeys().forEach { defaults.removeObjectForKey(it) }
         }
         defaults.synchronize()
+        Unit
     }
 
     override suspend fun saveString(key: String, value: String) = withContext(Dispatchers.IO) {
         defaults.setObject(value, forKey = key)
         defaults.synchronize()
+        Unit
     }
 
     override suspend fun loadString(key: String): String? = withContext(Dispatchers.IO) {
@@ -240,7 +248,7 @@ class IosStorageManager : StorageManager {
 // Platform singleton
 // ─────────────────────────────────────────────────────────
 
-private const val IOS_API_KEY = "bff7e80b234d440d9fea4a1b3b96fae4"
+private const val IOS_API_KEY = "f7d6c5b4-3a2b-1c0d-e9f8-a7b6c5d4e3f2"
 
 actual object Platform {
     private var _sqlStorage: SqlStorage? = null
@@ -254,6 +262,11 @@ actual object Platform {
 
     actual fun getPlatformName(): String = "iOS"
     actual fun getApiKey(): String       = IOS_API_KEY
+    actual fun getEnvironment(): AppEnvironment {
+        val env = NSBundle.mainBundle.objectForInfoDictionaryKey("StationlyEnvironment") as? String
+        return if (env == "staging") AppEnvironment.STAGING else AppEnvironment.PRODUCTION
+    }
+    actual fun getBaseUrl(): String = com.stationly.core.config.AppConfig.apiBaseUrl
 
     actual suspend fun getAuthToken(): String? = withContext(Dispatchers.IO) {
         NSUserDefaults.standardUserDefaults.stringForKey(AppGroupKeys.FIREBASE_AUTH_TOKEN)

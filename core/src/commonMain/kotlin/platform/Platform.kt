@@ -3,6 +3,8 @@ package com.stationly.core.platform
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.WidgetState
 
+enum class AppEnvironment { STAGING, PRODUCTION }
+
 interface WidgetManager {
     suspend fun updateWidget(state: WidgetState)
     suspend fun showWaitingState(station: String, line: String)
@@ -37,5 +39,7 @@ expect object Platform {
 
     fun getPlatformName(): String
     fun getApiKey(): String
+    fun getEnvironment(): AppEnvironment
+    fun getBaseUrl(): String
     suspend fun getAuthToken(): String?
 }

@@ -24,9 +24,11 @@ actual object Platform {
     actual val widgetManager: WidgetManager = WebWidgetManager()
     actual val notificationManager: NotificationManager = WebNotificationManager()
     actual val storageManager: StorageManager = WebStorageManager()
-    
+
     actual fun getPlatformName(): String = "Web"
     actual fun getApiKey(): String = ""
+    actual fun getEnvironment(): AppEnvironment = AppEnvironment.PRODUCTION
+    actual fun getBaseUrl(): String = com.stationly.core.config.AppConfig.apiBaseUrl
     actual suspend fun getAuthToken(): String? = null
 }
 

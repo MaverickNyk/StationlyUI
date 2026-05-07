@@ -80,7 +80,7 @@ fun AppNavigation(
         }
 
         composable("auth/reset-confirm/{oobCode}") { backStackEntry ->
-            val oobCode = backStackEntry.arguments?.getString("oobCode") ?: ""
+            val oobCode = backStackEntry.savedStateHandle.get<String>("oobCode") ?: ""
             LoginScreen(
                 screenType = "reset-confirm",
                 authProvider = authProvider,

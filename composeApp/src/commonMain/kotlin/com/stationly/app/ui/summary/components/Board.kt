@@ -414,10 +414,11 @@ private fun SduiBoardContent(payload: SduiWidgetPayload, lineColor: Color) {
         payload.components.forEach { component ->
             when (component) {
                 is SduiWidgetComponent.Header -> {
+                    val headerColor = component.color
                     Text(
                         text = component.title,
-                        color = if (!component.color.isNullOrBlank())
-                            parseColorSafe(component.color, lineColor) else lineColor,
+                        color = if (!headerColor.isNullOrBlank())
+                            parseColorSafe(headerColor, lineColor) else lineColor,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
                         letterSpacing = 0.8.sp,
@@ -426,6 +427,7 @@ private fun SduiBoardContent(payload: SduiWidgetPayload, lineColor: Color) {
                 }
                 is SduiWidgetComponent.Row -> {
                     val isDue = component.eta.trim().lowercase() == "due"
+                    val rowEtaColor = component.etaColor
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -442,7 +444,7 @@ private fun SduiBoardContent(payload: SduiWidgetPayload, lineColor: Color) {
                         )
                         Spacer(Modifier.width(8.dp))
                         val etaColor = when {
-                            !component.etaColor.isNullOrBlank() -> parseColorSafe(component.etaColor, lineColor)
+                            !rowEtaColor.isNullOrBlank() -> parseColorSafe(rowEtaColor, lineColor)
                             isDue -> Color(0xFFFF5252)
                             else -> lineColor
                         }
@@ -456,10 +458,11 @@ private fun SduiBoardContent(payload: SduiWidgetPayload, lineColor: Color) {
                     }
                 }
                 is SduiWidgetComponent.Message -> {
+                    val msgColor = component.color
                     Text(
                         text = component.text,
-                        color = if (!component.color.isNullOrBlank())
-                            parseColorSafe(component.color, lineColor) else lineColor,
+                        color = if (!msgColor.isNullOrBlank())
+                            parseColorSafe(msgColor, lineColor) else lineColor,
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace
                     )

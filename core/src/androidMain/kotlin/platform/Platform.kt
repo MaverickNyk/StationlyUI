@@ -160,24 +160,28 @@ class AndroidStorageManager(
 actual object Platform {
     private lateinit var appContext: Context
     private var apiKey: String = ""
-    
-    fun initialize(context: Context, apiKey: String) {
+    private var environment: AppEnvironment = AppEnvironment.PRODUCTION
+
+    fun initialize(context: Context, apiKey: String, environment: AppEnvironment) {
         appContext = context.applicationContext
         this.apiKey = apiKey
+        this.environment = environment
     }
-    
+
     actual val widgetManager: WidgetManager by lazy { AndroidWidgetManager(appContext) }
     actual val notificationManager: NotificationManager by lazy { AndroidNotificationManager(appContext) }
     actual val storageManager: StorageManager by lazy { AndroidStorageManager(appContext) }
-    
+
     actual val sqlStorage: com.stationly.core.repository.SqlStorage by lazy {
         val driverFactory = DriverFactory(appContext)
         val database = createDatabase(driverFactory)
         com.stationly.core.repository.SqlStorage(database)
     }
-    
+
     actual fun getPlatformName(): String = "Android"
     actual fun getApiKey(): String = apiKey
+    actual fun getEnvironment(): AppEnvironment = environment
+    actual fun getBaseUrl(): String = com.stationly.core.config.AppConfig.apiBaseUrl
     
     actual suspend fun getAuthToken(): String? {
         return try {

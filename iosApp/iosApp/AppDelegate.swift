@@ -3,21 +3,21 @@ import FirebaseCore
 import FirebaseMessaging
 import GoogleSignIn
 import WidgetKit
-// import ComposeApp  // Uncomment after Xcode framework integration
+import composeApp
 
 class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNotificationCenterDelegate {
 
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        FirebaseApp.configure()
-        Messaging.messaging().delegate = self
-        UNUserNotificationCenter.current().delegate = self
-
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
-        application.registerForRemoteNotifications()
-
-        if let clientID = FirebaseApp.app()?.options.clientID {
-            GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
+        let firebaseReady = configureFirebaseIfAvailable()
+        if firebaseReady {
+            Messaging.messaging().delegate = self
+            UNUserNotificationCenter.current().delegate = self
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
+            application.registerForRemoteNotifications()
+            if let clientID = FirebaseApp.app()?.options.clientID {
+                GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
+            }
         }
 
         // Wire KMP ↔ Swift auth command protocol
@@ -26,6 +26,20 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         // Poll App Group UserDefaults every 5 s; reload widget when KMP bumps signal
         WidgetReloadObserver.shared.start()
 
+        return true
+    }
+
+    // MARK: - Firebase setup
+
+    @discardableResult
+    private func configureFirebaseIfAvailable() -> Bool {
+        guard let path = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist"),
+              let dict = NSDictionary(contentsOfFile: path),
+              dict["GOOGLE_APP_ID"] != nil else {
+            print("[AppDelegate] GoogleService-Info.plist missing or placeholder — Firebase not configured")
+            return false
+        }
+        FirebaseApp.configure()
         return true
     }
 
@@ -87,11 +101,10 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     // MARK: - Foreground
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        // Refresh Firebase token so KMP always has a fresh one
-        Task { await AuthBridge.shared.refreshTokenIfNeeded() }
-        // Flush any queued FCM subscriptions
-        FCMBridge.shared.processPendingSubscriptions()
-        // Force widget refresh when user returns to the app
+        if FirebaseApp.app() != nil {
+            Task { await AuthBridge.shared.refreshTokenIfNeeded() }
+            FCMBridge.shared.processPendingSubscriptions()
+        }
         WidgetCenter.shared.reloadAllTimelines()
     }
 
@@ -113,18 +126,21 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         completionHandler()
     }
 
+    // MARK: - Background FCM (data messages / content-available:1)
+
+    func application(_ application: UIApplication,
+                     didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        processFcmPayload(userInfo)
+        completionHandler(.newData)
+    }
+
     // MARK: - FCM payload → KMP
 
     private func processFcmPayload(_ userInfo: [AnyHashable: Any]) {
         guard let jsonData = try? JSONSerialization.data(withJSONObject: userInfo),
               let jsonString = String(data: jsonData, encoding: .utf8) else { return }
-        // FcmPayloadBridge is a KMP object compiled into the ComposeApp framework.
-        // After Xcode integration uncomment:
-        // FcmPayloadBridgeKt.FcmPayloadBridge.processPayload(jsonString: jsonString)
-        //
-        // Until then, store the raw JSON so SummaryViewModel picks it up on next poll.
-        UserDefaults.standard.set(jsonString, forKey: "pending_fcm_payload")
-        UserDefaults.standard.synchronize()
+        FcmPayloadBridge.shared.processPayload(jsonString: jsonString)
     }
 }
 

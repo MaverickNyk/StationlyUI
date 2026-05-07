@@ -230,6 +230,12 @@ class LoginViewModel(
         else -> raw.ifBlank { "Something went wrong. Please try again." }
     }
 
+    fun togglePasswordVisibility(field: String) {
+        val current = _uiState.value.passwordVisible.toMutableMap()
+        current[field] = !(current[field] ?: false)
+        _uiState.value = _uiState.value.copy(passwordVisible = current)
+    }
+
     private fun String.containsAny(vararg keywords: String) =
         keywords.any { this.contains(it, ignoreCase = true) }
 }

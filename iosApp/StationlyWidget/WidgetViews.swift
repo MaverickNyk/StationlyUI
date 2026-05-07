@@ -558,29 +558,37 @@ struct EmptyWidgetView: View {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #if DEBUG
+@available(iOS 17.0, *)
 private let previewEntry = DepartureEntry(date: Date(), widgetData: .placeholder)
+@available(iOS 17.0, *)
 private let emptyEntry   = DepartureEntry(date: Date(), widgetData: .empty)
 
+@available(iOS 17.0, *)
 #Preview("Small — live data", as: .systemSmall) {
     StationlyDepartureBoardWidget()
 } timeline: { previewEntry }
 
+@available(iOS 17.0, *)
 #Preview("Small — empty", as: .systemSmall) {
     StationlyDepartureBoardWidget()
 } timeline: { emptyEntry }
 
+@available(iOS 17.0, *)
 #Preview("Medium — live data", as: .systemMedium) {
     StationlyDepartureBoardWidget()
 } timeline: { previewEntry }
 
+@available(iOS 17.0, *)
 #Preview("Medium — empty", as: .systemMedium) {
     StationlyDepartureBoardWidget()
 } timeline: { emptyEntry }
 
+@available(iOS 17.0, *)
 #Preview("Large — live data", as: .systemLarge) {
     StationlyDepartureBoardWidget()
 } timeline: { previewEntry }
 
+@available(iOS 17.0, *)
 #Preview("Large — empty", as: .systemLarge) {
     StationlyDepartureBoardWidget()
 } timeline: { emptyEntry }

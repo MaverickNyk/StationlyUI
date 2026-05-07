@@ -7,6 +7,7 @@ import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.model.sdui.SduiAppScreen
 import com.stationly.core.model.sdui.SduiDropdownOption
 import com.stationly.core.model.sdui.SubscribedStation
+import com.stationly.core.config.AppConfig
 import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SelectionRepository
@@ -151,7 +152,13 @@ class SelectionViewModel(
     private fun loadModes() {
         viewModelScope.launch {
             try {
-                val modesResult = sduiService.getDropdownData("/modes")
+                val rawModes = sduiService.getDropdownData("/modes")
+                val modesResult = rawModes.map { opt ->
+                    val url = opt.iconUrl
+                    if (url != null)
+                        opt.copy(iconUrl = url.replace(AppConfig.PROD_API_URL, AppConfig.apiBaseUrl))
+                    else opt
+                }
                 val updatedData = _dropdownData.value.toMutableMap()
                 updatedData["mode"] = modesResult
                 _dropdownData.value = updatedData

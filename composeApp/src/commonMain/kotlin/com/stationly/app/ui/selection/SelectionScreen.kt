@@ -393,8 +393,15 @@ private fun ModeCard(mode: SduiDropdownOption, primary: Color, onClick: () -> Un
                         .border(2.dp, primary.copy(0.35f), CircleShape),
                     Alignment.Center
                 ) {
-                    // No AsyncImage in commonMain — show initial letter fallback
-                    Text(mode.label.take(1), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Surface0)
+                    if (mode.iconUrl != null) {
+                        coil3.compose.AsyncImage(
+                            model = mode.iconUrl,
+                            contentDescription = mode.label,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    } else {
+                        Text(mode.label.take(1), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Surface0)
+                    }
                 }
             }
             Spacer(Modifier.height(14.dp))
@@ -609,7 +616,8 @@ private fun OptRow(
             "Bus ${opt.label.trim()}" else opt.label
     }
     val lineColor = remember(opt.color, mode) {
-        if (mode != "bus" && opt.color != null) parseColorSafe(opt.color) else null
+        val c = opt.color
+        if (mode != "bus" && c != null) parseColorSafe(c) else null
     }
 
     Surface(
@@ -625,14 +633,17 @@ private fun OptRow(
                 Spacer(Modifier.width(12.dp))
             } else Spacer(Modifier.width(14.dp))
 
-            // Mode or option icon placeholder (letter initial, no AsyncImage in commonMain)
             if (modeIcon != null) {
                 Box(
                     Modifier.size(34.dp).background(Color.White, CircleShape)
                         .border(1.dp, primary.copy(0.25f), CircleShape),
                     Alignment.Center
                 ) {
-                    Text(opt.label.take(1), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Surface0)
+                    coil3.compose.AsyncImage(
+                        model = modeIcon,
+                        contentDescription = null,
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
                 Spacer(Modifier.width(12.dp))
             }

@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import FirebaseCore
 import FirebaseAuth
 import FirebaseMessaging
 import GoogleSignIn
@@ -39,7 +40,8 @@ class AuthBridge {
             object: nil
         )
 
-        // Refresh token whenever Firebase auth state changes
+        // Refresh token whenever Firebase auth state changes (only if Firebase is configured)
+        guard FirebaseApp.app() != nil else { return }
         Auth.auth().addStateDidChangeListener { [weak self] _, user in
             guard let self else { return }
             if user != nil {
@@ -199,7 +201,7 @@ class AuthBridge {
     func refreshTokenIfNeeded() async {
         guard let user = Auth.auth().currentUser else { return }
         do {
-            let token = try await user.getIDToken(forcingRefresh: false)
+            let token = try await user.getIDToken()
             UserDefaults.standard.set(token, forKey: "firebase_auth_token")
             UserDefaults.standard.synchronize()
         } catch {

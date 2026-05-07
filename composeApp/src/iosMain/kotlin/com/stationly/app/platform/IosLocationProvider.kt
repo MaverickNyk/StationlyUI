@@ -1,39 +1,25 @@
-package com.stationly.app.platform
+package com.stationly.app.ui.selection
 
-import com.stationly.app.ui.selection.LocationProvider
-import com.stationly.app.ui.selection.NoOpLocationProvider
-import com.stationly.app.ui.selection.platformLocationProvider
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.useContents
 import kotlinx.coroutines.suspendCancellableCoroutine
 import platform.CoreLocation.*
 import platform.Foundation.NSError
 import platform.darwin.NSObject
 import kotlin.coroutines.resume
-import kotlin.math.abs
 
 actual fun platformLocationProvider(): LocationProvider = IosLocationProvider()
 
 /**
  * iOS CLLocationManager-based LocationProvider.
- *
- * Uses requestLocation() (one-shot, best available fix) with kCLLocationAccuracyHundredMeters.
- * Returns immediately from the 2-minute location cache when available and still fresh.
- *
+ * Uses requestLocation() (one-shot) with kCLLocationAccuracyHundredMeters.
  * Requires NSLocationWhenInUseUsageDescription in Info.plist.
  */
 class IosLocationProvider : LocationProvider {
 
-    override suspend fun getCurrentLocation(): Pair<Double, Double>? {
-        // Fast path: last known location if < 2 minutes old
-        CLLocationManager().location?.let { cached ->
-            if (abs(cached.timestamp.timeIntervalSinceNow) < 120.0) {
-                return Pair(cached.coordinate.latitude, cached.coordinate.longitude)
-            }
-        }
-
-        return suspendCancellableCoroutine { cont ->
-            val fetcher = LocationFetcher { result ->
-                cont.resume(result)
-            }
+    override suspend fun getCurrentLocation(): Pair<Double, Double>? =
+        suspendCancellableCoroutine { cont ->
+            val fetcher = LocationFetcher { result -> cont.resume(result) }
             // Keep a strong reference — CLLocationManager holds its delegate weakly,
             // and the KN GC could collect the delegate before the callback fires.
             activeRequest = fetcher
@@ -43,7 +29,6 @@ class IosLocationProvider : LocationProvider {
             }
             fetcher.start()
         }
-    }
 
     companion object {
         private var activeRequest: LocationFetcher? = null
@@ -73,9 +58,10 @@ private class LocationFetcher(
         manager.delegate = null
     }
 
+    @OptIn(ExperimentalForeignApi::class)
     override fun locationManager(manager: CLLocationManager, didUpdateLocations: List<*>) {
         val loc = didUpdateLocations.lastOrNull() as? CLLocation
-        deliver(loc?.let { Pair(it.coordinate.latitude, it.coordinate.longitude) })
+        deliver(loc?.coordinate?.useContents { Pair(latitude, longitude) })
     }
 
     override fun locationManager(manager: CLLocationManager, didFailWithError: NSError) {
@@ -88,7 +74,7 @@ private class LocationFetcher(
             kCLAuthorizationStatusAuthorizedAlways -> manager.requestLocation()
             kCLAuthorizationStatusDenied,
             kCLAuthorizationStatusRestricted       -> deliver(null)
-            else                                   -> {} // still waiting for user decision
+            else                                   -> {}
         }
     }
 

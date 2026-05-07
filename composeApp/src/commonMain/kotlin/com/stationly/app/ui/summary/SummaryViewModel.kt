@@ -110,6 +110,12 @@ class SummaryViewModel(
                 }
             }
         }
+        viewModelScope.launch {
+            while (true) {
+                delay(30_000)
+                _selections.value.forEach { loadPredictions(it) }
+            }
+        }
     }
 
     private fun loadPredictions(selection: UserSelection) {
@@ -248,19 +254,20 @@ class SummaryViewModel(
                 currentLineStatuses.remove("${selection.mode}_${selection.line}".lowercase())
                 _lineStatuses.value = currentLineStatuses
 
-                try {
-                    val uid = Platform.storageManager.loadString("firebase_user_uid") ?: return@try
-                    val remainingSelections = _selections.value.filter { it.station != selection.station }
-                    val mapped = remainingSelections.map {
-                        com.stationly.core.model.sdui.SubscribedStation(
-                            id = it.station, name = it.stationName,
-                            line = it.line, mode = it.mode, direction = it.direction
-                        )
-                    }
-                    sduiApi.syncStations(uid, mapped)
-                } catch (_: Exception) {}
-            } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy()
+                val uid = Platform.storageManager.loadString("firebase_user_uid")
+                if (uid != null) {
+                    try {
+                        val remainingSelections = _selections.value.filter { it.station != selection.station }
+                        val mapped = remainingSelections.map {
+                            com.stationly.core.model.sdui.SubscribedStation(
+                                id = it.station, name = it.stationName,
+                                line = it.line, mode = it.mode, direction = it.direction
+                            )
+                        }
+                        sduiApi.syncStations(uid, mapped)
+                    } catch (_: Exception) {}
+                }
+            } catch (_: Exception) {
             } finally {
                 _isDeletingBoard.value = null
             }

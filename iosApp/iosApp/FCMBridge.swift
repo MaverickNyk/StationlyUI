@@ -1,5 +1,6 @@
 import Foundation
 import FirebaseMessaging
+import composeApp
 
 /// FCMBridge processes two things:
 /// 1. Topic subscribe/unsubscribe requests queued by KMP in NSUserDefaults.standard
@@ -55,9 +56,7 @@ class FCMBridge {
         ud.removeObject(forKey: "pending_fcm_payload")
         ud.synchronize()
 
-        // After Xcode framework integration uncomment:
-        // FcmPayloadBridgeKt.FcmPayloadBridge.processPayload(jsonString: json)
-        _ = json  // suppress unused-variable warning until framework is linked
+        FcmPayloadBridge.shared.processPayload(jsonString: json)
     }
 
     // MARK: - Helpers for direct Swift-side enqueue (if needed)
