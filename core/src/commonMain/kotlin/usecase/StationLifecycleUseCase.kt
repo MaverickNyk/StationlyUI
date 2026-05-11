@@ -37,7 +37,6 @@ class StationLifecycleUseCase(
             "Station_${selection.station}",
             "LineStatus_${selection.mode}_${selection.line}"
         )
-        println("STATION: 📡 Subscribing to topics: $topics")
         notificationManager.subscribeToTopics(topics)
 
         // 3. Clear any stale predictions for this station/line before fetch
@@ -64,7 +63,7 @@ class StationLifecycleUseCase(
                 lineName = selection.line,
                 predictions = refreshedPreds,
                 status = refreshedStatus?.statusSeverityDescription,
-                lastUpdated = now
+                lastUpdated = now / 1000  // convert ms → seconds (Swift reads as timeIntervalSince1970)
             )
         )
     }
@@ -98,14 +97,24 @@ class StationLifecycleUseCase(
 
     /**
      * Cleanup everything (Logout/Clear All)
+     *
+     * Topic collection must happen before clearAll() so the unsubscription
+     * queue written by unsubscribeFromTopics() is not immediately wiped.
      */
     suspend fun cleanupAll() {
         val allSelections = sqlStorage.getAllSelections()
-        allSelections.forEach { selection ->
-            discardStation(selection, clearSelectionInRepo = false)
-        }
+        val allTopics = allSelections.flatMap { sel ->
+            listOf("Station_${sel.station}", "LineStatus_${sel.mode}_${sel.line}")
+        }.distinct()
+
         selectionRepository.clearAll()
         sqlStorage.clearAllData()
-        storageManager.clearCache()
+        widgetManager.clearWidgetData()
+        storageManager.clearAll()
+
+        // Re-queue unsubscriptions after clearAll so they survive the wipe
+        if (allTopics.isNotEmpty()) {
+            notificationManager.unsubscribeFromTopics(allTopics)
+        }
     }
 }
