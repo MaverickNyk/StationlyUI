@@ -20,10 +20,10 @@
         <item name="colorSurfaceVariant">@color/stationly_surface</item>
     </style>
 
-    <!-- Splash screen theme -->
+    <!-- Splash screen — dark field with the red Stationly roundel centered. -->
     <style name="Theme.Stationly.Splash" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">@color/white</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/stationly_logo</item>
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
         <item name="postSplashScreenTheme">@style/Theme.Stationly</item>
     </style>
 </resources>

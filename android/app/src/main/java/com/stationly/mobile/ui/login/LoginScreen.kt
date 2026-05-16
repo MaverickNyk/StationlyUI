@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.stationly.core.config.AppConfig
 import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.model.sdui.SduiCondition
 import kotlinx.coroutines.delay
@@ -251,13 +252,13 @@ private fun TermsCheckbox(accepted: Boolean, showError: Boolean, onToggle: () ->
     val uriHandler = LocalUriHandler.current
     val annotatedText = buildAnnotatedString {
         withStyle(SpanStyle(color = White50, fontSize = 13.sp)) { append("I agree to the ") }
-        pushStringAnnotation("URL", "https://stationly.app/terms")
+        pushStringAnnotation("URL", "${AppConfig.webBaseUrl}/terms/")
         withStyle(SpanStyle(color = Amber, fontSize = 13.sp, textDecoration = TextDecoration.Underline)) {
             append("Terms of Service")
         }
         pop()
         withStyle(SpanStyle(color = White50, fontSize = 13.sp)) { append(" and ") }
-        pushStringAnnotation("URL", "https://stationly.app/privacy")
+        pushStringAnnotation("URL", "${AppConfig.webBaseUrl}/privacy/")
         withStyle(SpanStyle(color = Amber, fontSize = 13.sp, textDecoration = TextDecoration.Underline)) {
             append("Privacy Policy")
         }

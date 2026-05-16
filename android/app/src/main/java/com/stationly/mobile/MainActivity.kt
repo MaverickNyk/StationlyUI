@@ -5,16 +5,20 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.*
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.stationly.mobile.ui.common.StagingBanner
 import com.stationly.mobile.ui.selection.SelectionScreen
 import com.stationly.mobile.ui.summary.SummaryScreen
 import com.stationly.mobile.ui.theme.StationlyTheme
@@ -42,10 +46,13 @@ class MainActivity : ComponentActivity() {
         handleDeepLink(intent)
         setContent {
             StationlyTheme {
-                AppNavigation(
-                    passwordResetComplete = passwordResetComplete,
-                    pendingResetOobCode   = pendingResetOobCode
-                )
+                Box(Modifier.fillMaxSize()) {
+                    AppNavigation(
+                        passwordResetComplete = passwordResetComplete,
+                        pendingResetOobCode   = pendingResetOobCode
+                    )
+                    StagingBanner(Modifier.align(Alignment.BottomCenter))
+                }
             }
         }
     }
