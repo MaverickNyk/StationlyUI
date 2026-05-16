@@ -31,7 +31,6 @@ out/
 
 # Node / Web
 node_modules/
-package-lock.json
 dist/
 .npm/
 
