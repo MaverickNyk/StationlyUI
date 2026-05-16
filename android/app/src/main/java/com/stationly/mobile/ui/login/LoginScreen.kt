@@ -10,6 +10,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.layout.ContentScale
@@ -53,6 +56,7 @@ import com.stationly.core.config.AppConfig
 import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.model.sdui.SduiCondition
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private fun SduiCondition.isSatisfied(inputs: Map<String, String>): Boolean {
     val v = inputs[dependsOn]?.trim() ?: ""
@@ -154,6 +158,7 @@ private fun OrRow() {
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun AuthField(
     label: String,
@@ -169,6 +174,11 @@ private fun AuthField(
     fieldError: String? = null,
     helpText: String? = null
 ) {
+    // Auto-scroll this field above the IME the moment it gains focus so the user
+    // never has to manually scroll. Pairs with the .imePadding() on the parent
+    // scroll container that already reserves space for the keyboard.
+    val bringIntoView = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
     Column {
         OutlinedTextField(
             value = value,
@@ -176,6 +186,17 @@ private fun AuthField(
             label = { Text(label, fontSize = 14.sp) },
             modifier = Modifier
                 .fillMaxWidth()
+                .bringIntoViewRequester(bringIntoView)
+                .onFocusEvent { state ->
+                    if (state.isFocused) {
+                        scope.launch {
+                            // Small delay so the IME has finished animating in before
+                            // we measure how far to scroll.
+                            delay(250)
+                            runCatching { bringIntoView.bringIntoView() }
+                        }
+                    }
+                }
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
             singleLine = true,
             isError = fieldError != null,
@@ -291,6 +312,35 @@ private fun TermsCheckbox(accepted: Boolean, showError: Boolean, onToggle: () ->
             )
         }
     }
+}
+
+// ── Terms & Privacy inline disclaimer (no checkbox — for social sign-in paths) ─
+@Composable
+private fun TermsDisclaimer(modifier: Modifier = Modifier) {
+    val uriHandler = LocalUriHandler.current
+    val text = buildAnnotatedString {
+        withStyle(SpanStyle(color = White50, fontSize = 12.sp)) { append("By continuing, you agree to our ") }
+        pushStringAnnotation("URL", "${AppConfig.webBaseUrl}/terms/")
+        withStyle(SpanStyle(color = Amber, fontSize = 12.sp, textDecoration = TextDecoration.Underline)) {
+            append("Terms of Service")
+        }
+        pop()
+        withStyle(SpanStyle(color = White50, fontSize = 12.sp)) { append(" and ") }
+        pushStringAnnotation("URL", "${AppConfig.webBaseUrl}/privacy/")
+        withStyle(SpanStyle(color = Amber, fontSize = 12.sp, textDecoration = TextDecoration.Underline)) {
+            append("Privacy Policy")
+        }
+        pop()
+        withStyle(SpanStyle(color = White50, fontSize = 12.sp)) { append(".") }
+    }
+    ClickableText(
+        text = text,
+        modifier = modifier,
+        style = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, lineHeight = 18.sp),
+        onClick = { offset ->
+            text.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { uriHandler.openUri(it.item) }
+        }
+    )
 }
 
 // ── Password reset success banner ──────────────────────────────────────────────
@@ -471,10 +521,13 @@ private fun SduiFormContent(
             )
         }
 
-        // Submit button — enabled only when all fields have content
+        // Submit button — enabled only when all fields are filled AND, for register,
+        // the terms checkbox is ticked. Without the terms gate the button felt
+        // submittable but doSubmit() silently bounced the click on an inline error.
         if (submitBtn != null) {
             val allFilled = inputFields.all { (inputs[it.id] ?: "").isNotBlank() } &&
-                (!isRegister || confirmPw.isNotBlank())
+                (!isRegister || confirmPw.isNotBlank()) &&
+                (!isRegister || termsAccepted)
             Spacer(Modifier.height(2.dp))
             PrimaryButton(submitBtn.label, enabled = allFilled) { doSubmit() }
         }
@@ -625,6 +678,8 @@ private fun LandingContent(
             Text("Create account", color = Amber, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.clickable(onClick = onRegisterClick).padding(vertical = 10.dp, horizontal = 6.dp))
         }
+        Spacer(Modifier.height(20.dp))
+        TermsDisclaimer(Modifier.padding(horizontal = 12.dp))
     }
 }
 
