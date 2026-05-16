@@ -512,6 +512,19 @@
             document.querySelectorAll('.reveal').forEach(function (el) { obs.observe(el); });
         })();
 
+        // Resolve API base from hostname so staging site hits staging backend
+        var API_BASE = window.location.hostname === 'staging.stationly.co.uk'
+            ? 'https://staging-api.stationly.co.uk'
+            : 'https://api.stationly.co.uk';
+
+        // Staging banner
+        if (window.location.hostname === 'staging.stationly.co.uk') {
+            var banner = document.createElement('div');
+            banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#f59e0b;color:#000;text-align:center;font-size:13px;font-weight:600;padding:6px 12px;';
+            banner.textContent = '⚠ Staging Environment — data may differ from production';
+            document.body.prepend(banner);
+        }
+
         // Notify form — calls backend waitlist endpoint
         document.getElementById('notify-form').addEventListener('submit', async function (e) {
             e.preventDefault();
@@ -522,7 +535,7 @@
             btn.disabled = true;
             btn.textContent = 'Saving…';
             try {
-                var res = await fetch('https://api.stationly.co.uk/api/v1/waitlist/join', {
+                var res = await fetch(API_BASE + '/api/v1/waitlist/join', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ email: email })
