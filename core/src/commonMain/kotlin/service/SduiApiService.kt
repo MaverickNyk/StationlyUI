@@ -1,6 +1,7 @@
 package com.stationly.core.service
 
 import com.stationly.core.model.sdui.*
+import com.stationly.core.platform.Platform
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
@@ -44,7 +45,7 @@ interface SduiApiService {
  */
 class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
     
-    private val baseUrl = "https://api.stationly.co.uk/api/v1"
+    private val baseUrl = Platform.getBaseUrl() + "/api/v1"
     
     override suspend fun getSelectionLayout(track: String?): SduiAppScreen {
         val url = if (track != null) "$baseUrl/sdui/app/layout?track=$track" else "$baseUrl/sdui/app/layout"

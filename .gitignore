@@ -76,3 +76,8 @@ graphify-out/
 
 # Staging deploy scripts
 staging_*.sh
+
+# Xcode user-specific files
+xcuserdata/
+*.xcuserstate
+IDEWorkspaceChecks.plist
