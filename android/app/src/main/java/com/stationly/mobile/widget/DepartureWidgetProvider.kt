@@ -252,8 +252,14 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 }
             }
             
-            // Set up click intent to open app
-            val intent = Intent(context, com.stationly.mobile.MainActivity::class.java)
+            // Set up click intent to open app — match launcher semantics so the
+            // Splash Screen API shows the icon (widget-triggered launches without
+            // ACTION_MAIN/CATEGORY_LAUNCHER only show the splash background).
+            val intent = Intent(context, com.stationly.mobile.MainActivity::class.java).apply {
+                action = Intent.ACTION_MAIN
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
             val pendingIntent = android.app.PendingIntent.getActivity(
                 context, 0, intent,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
