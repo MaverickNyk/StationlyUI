@@ -30,6 +30,18 @@ android {
         }
     }
 
+    flavorDimensions += "environment"
+    productFlavors {
+        create("prod") {
+            dimension = "environment"
+        }
+        create("staging") {
+            dimension = "environment"
+            versionNameSuffix = "-staging"
+            resValue("string", "app_name", "Stationly Staging")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false

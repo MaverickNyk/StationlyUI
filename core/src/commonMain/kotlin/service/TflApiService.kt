@@ -1,6 +1,7 @@
 package com.stationly.core.service
 
 import com.stationly.core.model.*
+import com.stationly.core.platform.Platform
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
@@ -24,7 +25,7 @@ interface TflApiService {
  */
 class TflApiServiceImpl(private val client: HttpClient) : TflApiService {
     
-    private val baseUrl = "https://api.stationly.co.uk/api/v1"
+    private val baseUrl = Platform.getBaseUrl() + "/api/v1"
     
     override suspend fun getModes(): List<TransportMode> {
         return client.get("$baseUrl/modes").body()

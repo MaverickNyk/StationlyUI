@@ -55,7 +55,7 @@ class UserSyncRepository(
             
             profile.stations
         } catch (e: Exception) {
-            android.util.Log.e("UserSyncRepository", "Profile sync failed", e)
+            println("[UserSyncRepository] Profile sync failed: ${e.message}")
             throw e
         }
         
