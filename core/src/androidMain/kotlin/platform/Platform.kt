@@ -195,4 +195,12 @@ actual object Platform {
             null
         }
     }
+
+    actual suspend fun signOutFromAuthExpiry() {
+        val auth = FirebaseAuth.getInstance()
+        if (auth.currentUser != null) {
+            android.util.Log.w("Platform", "Backend returned 401 — signing user out")
+            auth.signOut()
+        }
+    }
 }
