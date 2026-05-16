@@ -1,0 +1,61 @@
+name: Deploy Web to Production
+
+on:
+  push:
+    branches: [release_prod]
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build
+        working-directory: web
+        run: npm run build
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PROD_SSH_KEY }}" > ~/.ssh/prod.key
+          chmod 600 ~/.ssh/prod.key
+          ssh-keyscan -H ${{ secrets.PROD_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to server
+        run: |
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/prod.key" \
+            --exclude .DS_Store \
+            web/build/dist/ \
+            ubuntu@${{ secrets.PROD_HOST }}:/var/www/stationly-web/
+
+      - name: Reload Nginx
+        run: |
+          ssh -i ~/.ssh/prod.key ubuntu@${{ secrets.PROD_HOST }} \
+            "sudo nginx -t && sudo systemctl reload nginx"
+
+      - name: Health check
+        run: |
+          sleep 3
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 https://stationly.co.uk/ 2>/dev/null || echo "000")
+          if [[ "$STATUS" == "200" || "$STATUS" == "301" || "$STATUS" == "302" ]]; then
+            echo "✅ Production deployment complete — stationly.co.uk responding (HTTP $STATUS)"
+          else
+            echo "❌ Health check failed — unexpected HTTP $STATUS"
+            exit 1
+          fi
