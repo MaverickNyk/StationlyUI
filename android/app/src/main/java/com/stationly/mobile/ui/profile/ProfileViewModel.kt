@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 class ProfileViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -97,6 +98,56 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             )
         }
         _isLoading.value = false
+    }
+
+    /**
+     * Update the user's display name on Firebase Auth + sync to backend Firestore.
+     * Returns Result.success(newName) on success, Result.failure(...) otherwise.
+     * onComplete fires on the main dispatcher with the trimmed/normalised value
+     * so the UI can update without re-querying Firebase.
+     */
+    fun updateDisplayName(
+        rawName: String,
+        onComplete: (Result<String>) -> Unit
+    ) {
+        viewModelScope.launch {
+            val trimmed = rawName.trim()
+            if (trimmed.length < 2) {
+                onComplete(Result.failure(IllegalArgumentException("Name must be at least 2 characters.")))
+                return@launch
+            }
+            if (trimmed.length > 60) {
+                onComplete(Result.failure(IllegalArgumentException("Name is too long.")))
+                return@launch
+            }
+            val user = FirebaseAuth.getInstance().currentUser
+            if (user == null) {
+                onComplete(Result.failure(IllegalStateException("Not signed in.")))
+                return@launch
+            }
+            try {
+                user.updateProfile(
+                    com.google.firebase.auth.UserProfileChangeRequest.Builder()
+                        .setDisplayName(trimmed)
+                        .build()
+                ).await()
+                // Mirror to backend Firestore so the user doc, FCM payloads, and
+                // future emails (welcome, reset, verify) see the new name.
+                sduiService.syncProfile(
+                    com.stationly.core.model.sdui.SyncProfileRequest(
+                        uid           = user.uid,
+                        email         = user.email ?: "",
+                        displayName   = trimmed,
+                        photoURL      = user.photoUrl?.toString(),
+                        signInProvider = user.providerData.find { it.providerId != "firebase" }?.providerId
+                            ?: "email"
+                    )
+                )
+                onComplete(Result.success(trimmed))
+            } catch (e: Exception) {
+                onComplete(Result.failure(e))
+            }
+        }
     }
 
     fun deleteStation(station: SubscribedStation) {

@@ -23,12 +23,21 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Email
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.NotificationsActive
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Widgets
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -36,6 +45,7 @@ import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
@@ -79,30 +89,23 @@ private val White20   = Color.White.copy(alpha = 0.20f)
 private val White10   = Color.White.copy(alpha = 0.10f)
 
 // ── Background ─────────────────────────────────────────────────────────────────
-private data class BgLine(val color: Color, val yFrac: Float, val phase: Float, val speed: Float)
-private val BG_LINES = listOf(
-    BgLine(Color(0xFF0098D4), 0.12f, 0.00f, 1.00f),
-    BgLine(Color(0xFFFFD300), 0.30f, 0.40f, 0.70f),
-    BgLine(Color(0xFFE32017), 0.52f, 0.65f, 1.20f),
-    BgLine(Color(0xFF878D93), 0.72f, 0.20f, 0.85f),
-    BgLine(Color(0xFF9B0056), 0.90f, 0.80f, 1.10f),
-)
-
+// Clean dark with a soft amber radial glow behind the brand area. One static element,
+// no animation — the brand and content stay the focus.
 @Composable
 private fun SubtleBackground() {
-    val progress by rememberInfiniteTransition(label = "bg").animateFloat(
-        0f, 1f, infiniteRepeatable(tween(14000, easing = LinearEasing)), "p"
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(
+                        Amber.copy(alpha = 0.06f),
+                        Color.Transparent
+                    ),
+                    radius = 900f
+                )
+            )
     )
-    Canvas(Modifier.fillMaxSize()) {
-        BG_LINES.forEach { l ->
-            val y = size.height * l.yFrac
-            drawLine(l.color.copy(0.05f), Offset(0f, y), Offset(size.width, y), 1.dp.toPx())
-            val x = size.width * ((progress * l.speed + l.phase) % 1f)
-            drawCircle(l.color.copy(0.07f), 20.dp.toPx(), Offset(x, y))
-            drawCircle(l.color.copy(0.22f),  6.dp.toPx(), Offset(x, y))
-            drawCircle(l.color.copy(0.90f),  2.dp.toPx(), Offset(x, y))
-        }
-    }
 }
 
 // ── Logo ───────────────────────────────────────────────────────────────────────
@@ -203,12 +206,28 @@ private fun AuthField(
             visualTransformation = if (isPassword && !showPassword) PasswordVisualTransformation() else VisualTransformation.None,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
             keyboardActions = KeyboardActions(onAny = { onImeAction() }),
+            leadingIcon = {
+                // Inline mail/lock/person icon — picked from keyboardType so the SDUI
+                // backend doesn't have to ship an icon string per field.
+                val icon = when {
+                    isPassword                      -> Icons.Outlined.Lock
+                    keyboardType == KeyboardType.Email -> Icons.Outlined.Email
+                    else                            -> Icons.Outlined.Person
+                }
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = if (fieldError != null) Color(0xFFF06292) else White50,
+                    modifier = Modifier.size(20.dp)
+                )
+            },
             trailingIcon = if (isPassword) {
                 {
                     IconButton(onTogglePassword) {
                         Icon(
                             if (showPassword) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
-                            null, tint = if (fieldError != null) Color(0xFFF06292) else White50,
+                            contentDescription = if (showPassword) "Hide password" else "Show password",
+                            tint = if (fieldError != null) Color(0xFFF06292) else White50,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -263,7 +282,7 @@ private fun ErrorBanner(message: String) {
 @Composable
 private fun BackButton(onClick: () -> Unit) {
     IconButton(onClick, Modifier.size(44.dp).background(White10, CircleShape)) {
-        Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White, modifier = Modifier.size(20.dp))
+        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(20.dp))
     }
 }
 
@@ -574,12 +593,60 @@ private fun SduiFormContent(
 // ── Reset password success state ───────────────────────────────────────────────
 @Composable
 private fun ResetSuccessContent(email: String, onBack: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Icon(Icons.Filled.CheckCircle, null, tint = Amber, modifier = Modifier.size(60.dp))
-        Text("Check your inbox", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-        Text("We've sent a reset link to\n$email", color = White50, fontSize = 14.sp, textAlign = TextAlign.Center, lineHeight = 22.sp)
-        Spacer(Modifier.height(8.dp))
-        PrimaryButton("Back to sign in", onClick = onBack)
+    val context = LocalContext.current
+    val pulse by rememberInfiniteTransition(label = "checkPulse").animateFloat(
+        0.96f, 1.04f,
+        infiniteRepeatable(tween(1400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        "checkPulseValue"
+    )
+    Column(
+        modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(84.dp)
+                .scale(pulse)
+                .background(Amber.copy(alpha = 0.10f), CircleShape)
+                .border(1.dp, Amber.copy(alpha = 0.30f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.CheckCircle, null, tint = Amber, modifier = Modifier.size(44.dp))
+        }
+        Text("Check your inbox", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Text(
+            "We've sent a reset link to",
+            color = White50, fontSize = 14.sp, textAlign = TextAlign.Center
+        )
+        Text(
+            email,
+            color = Amber, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Tap the link in the email to set a new password. The link expires in 30 minutes.",
+            color = White50, fontSize = 13.sp, textAlign = TextAlign.Center, lineHeight = 20.sp,
+            modifier = Modifier.padding(horizontal = 8.dp)
+        )
+        Spacer(Modifier.height(4.dp))
+        // Primary: jump straight to the user's email app — mirrors the same affordance
+        // on VerifyEmailScreen so reset-password feels like a sibling flow.
+        PrimaryButton("Open email app", onClick = {
+            runCatching {
+                val intent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+                    addCategory(android.content.Intent.CATEGORY_APP_EMAIL)
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+            }
+        })
+        Text(
+            "Back to sign in",
+            color = White50, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+            modifier = Modifier.clickable(onClick = onBack).padding(8.dp)
+        )
     }
 }
 
@@ -608,17 +675,18 @@ private fun FormScreenContent(
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding()) {
+        // Slim sticky-feeling header: back arrow on its own row, title+subtitle left-
+        // aligned right under it. Drops the centered logo + huge centred title which
+        // ate ~140dp of vertical space and pushed the form behind the keyboard.
         Box(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 16.dp, top = 8.dp)) {
             BackButton(onBack)
         }
-        Spacer(Modifier.height(16.dp))
-        Box(Modifier.fillMaxWidth(), Alignment.Center) { StationlyLogo(56) }
-        Spacer(Modifier.height(28.dp))
-        Column(Modifier.padding(horizontal = 28.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(title,    color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(20.dp))
+        Column(Modifier.padding(horizontal = 28.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title,    color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
             Text(subtitle, color = White50,     fontSize = 14.sp)
         }
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(24.dp))
         when {
             uiState.isLoading -> Box(Modifier.fillMaxWidth().height(220.dp), Alignment.Center) {
                 CircularProgressIndicator(color = Amber, strokeWidth = 2.dp, modifier = Modifier.size(32.dp))
@@ -648,38 +716,177 @@ private fun LandingContent(
     onEmailClick: () -> Unit,
     onRegisterClick: () -> Unit
 ) {
+    var showMoreOptions by remember { mutableStateOf(false) }
+    val chevronRotation by animateFloatAsState(if (showMoreOptions) 180f else 0f, label = "chevron")
+
     Column(
         Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        StationlyLogo(88)
-        Spacer(Modifier.height(20.dp))
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text("STATI", color = Color.White, fontSize = 40.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1.5).sp)
-            Text("ONLY", color = Amber, fontSize = 40.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1.5).sp)
-        }
+        // Welcoming hero — sits in the upper portion, tight to the live pill.
+        Spacer(Modifier.weight(0.45f))
+        LivePill()
+        Spacer(Modifier.height(18.dp))
+        StationlyBrandLockup()
         Spacer(Modifier.height(10.dp))
-        Text("Stop being late. Start being smarter.", color = White50, fontSize = 13.sp, letterSpacing = 0.3.sp, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(48.dp))
+        Text(
+            "Stop being late. Start being smarter.",
+            color = White50, fontSize = 13.sp, letterSpacing = 0.3.sp,
+            textAlign = TextAlign.Center
+        )
+
+        // Feature bullets — three concrete things you get after you sign up.
+        // Fills the previously-dead middle space and primes curiosity for the
+        // person hovering over the Google button.
+        Spacer(Modifier.height(36.dp))
+        FeatureBullets()
+
+        // Action area — Google primary, email behind an expander.
+        Spacer(Modifier.weight(0.55f))
         GoogleButton("Continue with Google", onGoogleClick)
-        Spacer(Modifier.height(14.dp))
-        OrRow()
-        Spacer(Modifier.height(14.dp))
-        OutlinedButton(
-            onEmailClick, Modifier.fillMaxWidth().height(54.dp),
-            shape = RoundedCornerShape(14.dp),
-            border = androidx.compose.foundation.BorderStroke(1.5.dp, AmberDim),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Amber)
-        ) { Text("Continue with email", fontWeight = FontWeight.SemiBold, fontSize = 15.sp) }
-        Spacer(Modifier.height(20.dp))
-        Row(Modifier.fillMaxWidth(), Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Text("New here?  ", color = White50, fontSize = 14.sp)
-            Text("Create account", color = Amber, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clickable(onClick = onRegisterClick).padding(vertical = 10.dp, horizontal = 6.dp))
+        Spacer(Modifier.height(12.dp))
+
+        OtherWaysToggle(
+            expanded = showMoreOptions,
+            chevronRotation = chevronRotation,
+            onClick = { showMoreOptions = !showMoreOptions }
+        )
+
+        AnimatedVisibility(
+            visible = showMoreOptions,
+            enter = fadeIn(tween(200)) + expandVertically(tween(220)),
+            exit = fadeOut(tween(150)) + shrinkVertically(tween(180))
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onEmailClick, Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AmberDim),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Amber)
+                ) { Text("Continue with email", fontWeight = FontWeight.SemiBold, fontSize = 15.sp) }
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("New here?  ", color = White50, fontSize = 14.sp)
+                    Text(
+                        "Create account",
+                        color = Amber, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clickable(onClick = onRegisterClick)
+                            .padding(vertical = 6.dp, horizontal = 6.dp)
+                    )
+                }
+            }
         }
-        Spacer(Modifier.height(20.dp))
+
+        Spacer(Modifier.height(14.dp))
         TermsDisclaimer(Modifier.padding(horizontal = 12.dp))
+        // Extra breathing room above the system nav bar — and above the staging
+        // banner overlay if this is a staging build — so the disclaimer text
+        // never crashes into the orange "STAGING ENVIRONMENT" strip.
+        Spacer(Modifier.height(if (com.stationly.mobile.BuildConfig.FLAVOR == "staging") 28.dp else 8.dp))
+    }
+}
+
+@Composable
+private fun LivePill() {
+    val pulse by rememberInfiniteTransition(label = "livePulse").animateFloat(
+        0.4f, 1f,
+        infiniteRepeatable(tween(1400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        "livePulseValue"
+    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .background(Color(0xFF1A1A1A).copy(alpha = 0.6f), RoundedCornerShape(50))
+            .border(1.dp, White10, RoundedCornerShape(50))
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .background(Color(0xFF4CAF50).copy(alpha = pulse), CircleShape)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "Live across London",
+            color = White80,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 0.8.sp
+        )
+    }
+}
+
+@Composable
+private fun FeatureBullets() {
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
+        FeatureRow(Icons.Outlined.Schedule, "Live arrivals", "Tube · Overground · Elizabeth · DLR · Bus")
+        FeatureRow(Icons.Outlined.Widgets, "Home-screen widgets", "Glance and go — no app open needed")
+        FeatureRow(Icons.Outlined.NotificationsActive, "Quiet alerts", "Only when your line actually needs you")
+    }
+}
+
+@Composable
+private fun FeatureRow(icon: ImageVector, title: String, subtitle: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .background(Amber.copy(alpha = 0.10f), CircleShape)
+                .border(1.dp, Amber.copy(alpha = 0.22f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, tint = Amber, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = White50, fontSize = 12.sp, lineHeight = 16.sp)
+        }
+    }
+}
+
+@Composable
+private fun StationlyBrandLockup() {
+    // Roundel + wordmark as one tight vertical lockup. Wordmark in a single amber so
+    // the brand reads as one word, not "STATI / ONLY".
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        StationlyLogo(96)
+        Spacer(Modifier.height(14.dp))
+        Text(
+            "STATIONLY",
+            color = Amber,
+            fontSize = 40.sp,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = (-1.0).sp
+        )
+    }
+}
+
+@Composable
+private fun OtherWaysToggle(
+    expanded: Boolean,
+    chevronRotation: Float,
+    onClick: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.clickable(onClick = onClick).padding(vertical = 8.dp, horizontal = 12.dp)
+    ) {
+        Text(
+            if (expanded) "Hide other options" else "Other ways to sign in",
+            color = White50,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 0.3.sp
+        )
+        Spacer(Modifier.width(6.dp))
+        Icon(
+            imageVector = Icons.Filled.KeyboardArrowDown,
+            contentDescription = null,
+            tint = White50,
+            modifier = Modifier.size(16.dp).rotate(chevronRotation)
+        )
     }
 }
 
@@ -742,11 +949,9 @@ private fun ResetConfirmContent(
         Box(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 16.dp, top = 8.dp)) {
             BackButton(onBack)
         }
-        Spacer(Modifier.height(16.dp))
-        Box(Modifier.fillMaxWidth(), Alignment.Center) { StationlyLogo(56) }
-        Spacer(Modifier.height(28.dp))
-        Column(Modifier.padding(horizontal = 28.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Set new password", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(20.dp))
+        Column(Modifier.padding(horizontal = 28.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Set new password", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
             Text("Choose something you'll actually remember.", color = White50, fontSize = 14.sp)
         }
         Spacer(Modifier.height(28.dp))
@@ -793,6 +998,7 @@ fun LoginScreen(
     screenType: String = "login",
     resetOobCode: String = "",
     onNavigateToSummary: () -> Unit,
+    onNeedsEmailVerification: () -> Unit = {},
     onNavigateToLogin: () -> Unit = {},
     onNavigateToRegister: () -> Unit = {},
     onNavigateToForgotPassword: () -> Unit = {},
@@ -843,6 +1049,7 @@ fun LoginScreen(
                                 viewModel.handleAction(
                                     action                    = action,
                                     onAuthSuccess             = onNavigateToSummary,
+                                    onNeedsEmailVerification  = onNeedsEmailVerification,
                                     onNavigateToRegister      = onNavigateToRegister,
                                     onNavigateToForgotPassword = onNavigateToForgotPassword,
                                     onGoogleSignInRequested   = ::launchGoogle
@@ -871,6 +1078,7 @@ fun LoginScreen(
                     viewModel.handleAction(
                         action                    = action,
                         onAuthSuccess             = onNavigateToSummary,
+                        onNeedsEmailVerification  = onNeedsEmailVerification,
                         onNavigateToRegister      = onNavigateToRegister,
                         onNavigateToLogin         = onNavigateToLogin,
                         onNavigateToForgotPassword = onNavigateToForgotPassword,

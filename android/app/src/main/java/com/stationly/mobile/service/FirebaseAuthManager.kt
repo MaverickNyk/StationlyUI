@@ -12,7 +12,13 @@ import com.google.android.gms.tasks.Task
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 
 sealed class AuthResult {
     data class Success(val user: FirebaseUser) : AuthResult()
@@ -22,7 +28,11 @@ sealed class AuthResult {
 class FirebaseAuthManager(private val context: Context) {
     val auth: FirebaseAuth = FirebaseAuth.getInstance()
     private val TAG = "FirebaseAuthManager"
-    
+
+    // Fire-and-forget scope for non-blocking side effects (backend logout notify, etc.).
+    // SupervisorJob so one failure can't cancel siblings.
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private val CLIENT_ID = "48865967804-daogo1om8e92inob2lr2481akgvm6a4a.apps.googleusercontent.com"
 
     // Set up Google Sign In
@@ -36,9 +46,12 @@ class FirebaseAuthManager(private val context: Context) {
 
     suspend fun signInWithGoogle(task: Task<GoogleSignInAccount>): AuthResult {
         return try {
-            val account = task.getResult(ApiException::class.java)!!
-            Log.d(TAG, "firebaseAuthWithGoogle:" + account.id)
-            val credential = GoogleAuthProvider.getCredential(account.idToken, null)
+            val account = task.getResult(ApiException::class.java)
+                ?: return AuthResult.Error("Google sign-in returned no account. Please try again.")
+            val idToken = account.idToken
+                ?: return AuthResult.Error("Google sign-in didn't return an ID token. Please try again.")
+            Log.d(TAG, "firebaseAuthWithGoogle uid=${com.stationly.mobile.service.AuthLog.maskPii(account.id)}")
+            val credential = GoogleAuthProvider.getCredential(idToken, null)
             val authResult = auth.signInWithCredential(credential).await()
             val user = authResult.user
             if (user != null) {
@@ -99,19 +112,30 @@ class FirebaseAuthManager(private val context: Context) {
         }
     }
     
-    suspend fun logout() {
-        val currentUser = auth.currentUser
-        if (currentUser != null) {
-            try {
-                // Call backend to update lastLogoutTime and loggedIn status
-                com.stationly.core.service.SduiApiServiceFactory.create().logOut(currentUser.uid)
-                Log.d(TAG, "Successfully notified backend of logout for ${currentUser.uid}")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to notify backend of logout", e)
+    /**
+     * Sign the user out. Local sign-out + cleanup is the durable path — backend notify
+     * is fire-and-forget so a broken `/user/logout` endpoint can't strand the user
+     * "halfway logged in". Runs cleanup under [NonCancellable] so even if the calling
+     * coroutine is cancelled mid-logout (rare, but happens during navigation), the
+     * local state is consistent.
+     */
+    suspend fun logout() = withContext(NonCancellable) {
+        val uid = auth.currentUser?.uid
+
+        // 1. Fire-and-forget backend notify. Doesn't block local cleanup.
+        if (uid != null) {
+            backgroundScope.launch {
+                try {
+                    com.stationly.core.service.SduiApiServiceFactory.create().logOut(uid)
+                    Log.d(TAG, "Backend logout notify ok uid=${AuthLog.maskPii(uid)}")
+                } catch (e: Exception) {
+                    AuthLog.logoutBackendFailed(e.message ?: e::class.simpleName.orEmpty())
+                }
             }
         }
 
-        // Unsubscribe from all current station topics before clearing
+        // 2. Unsubscribe FCM topics for any active selections — must happen BEFORE we
+        //    wipe SQL since the topic names are derived from selections.
         try {
             val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
             selections.forEach { selection ->
@@ -119,26 +143,28 @@ class FirebaseAuthManager(private val context: Context) {
                     "Station_${selection.station}",
                     "LineStatus_${selection.mode}_${selection.line}"
                 )
-                Log.d(TAG, "Unsubscribing from topics on logout: $topics")
                 com.stationly.core.platform.Platform.notificationManager.unsubscribeFromTopics(topics)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to unsubscribe during logout", e)
+            Log.w(TAG, "Topic unsubscribe during logout failed (continuing)", e)
         }
 
+        // 3. Sign out Firebase + Google locally. From this point on the user is
+        //    definitively logged out regardless of what happened above.
         auth.signOut()
         getGoogleSignInClient().signOut()
 
-        // Full wipe on logout — clearAll() drops every SharedPrefs key including
-        // firebase_user_*, signin_provider, member_since, sdui_layout_*, fcm_topics,
-        // etc. clearCache() only touched prediction/selection caches and left the
-        // previous user's identity behind, which surfaced as a "Stationly User"
-        // sticking around after sign-out.
+        // 4. Full wipe of local data — every SharedPrefs key including firebase_user_*,
+        //    signin_provider, member_since, sdui_layout_*, fcm_topics, etc. Previously
+        //    used clearCache() which left identity fields behind and surfaced as a
+        //    "Stationly User" placeholder lingering after sign-out.
         com.stationly.core.platform.Platform.sqlStorage.clearAllData()
         com.stationly.core.platform.Platform.storageManager.clearAll()
 
-        // Force the widget to update and reflect the cleared state
+        // 5. Push the empty state to the widget.
         com.stationly.mobile.widget.DepartureWidgetProvider.updateFromStorage(context)
+
+        if (uid != null) AuthLog.logoutSuccess(uid)
     }
     
     val currentUser: FirebaseUser?

@@ -50,11 +50,21 @@ object NetworkModule {
             HttpResponseValidator {
                 validateResponse { response ->
                     if (response.status == HttpStatusCode.Unauthorized) {
-                        // Sign out asynchronously — the UI subscribes to the resulting
-                        // FirebaseAuth state change and navigates to login. Platform
-                        // implementation no-ops if there's no signed-in user, so this
-                        // is safe to call for every 401.
-                        authExpiryScope.launch { Platform.signOutFromAuthExpiry() }
+                        val path = response.call.request.url.encodedPath
+                        // Skip sign-out for endpoints that are themselves part of the
+                        // auth handshake — if /auth/* or /sdui/app/login is returning
+                        // 401, signing the user out doesn't help, it creates an
+                        // infinite loop where every subsequent request also 401s.
+                        // Same for the user-sync endpoints called during onboarding;
+                        // the LoginViewModel's own rollback handles those.
+                        val isAuthEndpoint = path.contains("/auth/")
+                            || path.endsWith("/sdui/app/login")
+                            || path.endsWith("/sdui/app/register")
+                            || path.endsWith("/sdui/app/forgot-password")
+                            || path.contains("/user/sync/")
+                        if (!isAuthEndpoint) {
+                            authExpiryScope.launch { Platform.signOutFromAuthExpiry() }
+                        }
                     }
                 }
             }

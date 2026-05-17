@@ -39,6 +39,10 @@ import com.stationly.mobile.ui.theme.StationlyTheme
 class MainActivity : ComponentActivity() {
     private val passwordResetComplete = mutableStateOf(false)
     private val pendingResetOobCode   = mutableStateOf<String?>(null)
+    // oobCode for an inbound stationly://verified deep link — set by handleDeepLink,
+    // consumed by AppNavigation which applies the code via Firebase client SDK
+    // (LoginViewModel.applyVerificationCode) and routes the user past the verify gate.
+    private val pendingVerifyOobCode  = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,7 +54,8 @@ class MainActivity : ComponentActivity() {
                 Box(Modifier.fillMaxSize()) {
                     AppNavigation(
                         passwordResetComplete = passwordResetComplete,
-                        pendingResetOobCode   = pendingResetOobCode
+                        pendingResetOobCode   = pendingResetOobCode,
+                        pendingVerifyOobCode  = pendingVerifyOobCode
                     )
                     StagingBanner(Modifier.align(Alignment.BottomCenter))
                 }
@@ -69,6 +74,10 @@ class MainActivity : ComponentActivity() {
         when {
             uri.scheme == "stationly" && uri.host == "auth"  -> passwordResetComplete.value = true
             uri.scheme == "stationly" && uri.host == "home"  -> { /* just opens the app — no-op */ }
+            uri.scheme == "stationly" && uri.host == "verified" -> {
+                val code = uri.getQueryParameter("oobCode")
+                if (!code.isNullOrBlank()) pendingVerifyOobCode.value = code
+            }
             uri.scheme == "stationly" && uri.host == "reset" -> {
                 val code = uri.getQueryParameter("oobCode")
                 if (!code.isNullOrBlank()) pendingResetOobCode.value = code
@@ -88,7 +97,8 @@ class MainActivity : ComponentActivity() {
 fun AppNavigation(
     modifier: Modifier = Modifier,
     passwordResetComplete: MutableState<Boolean> = mutableStateOf(false),
-    pendingResetOobCode: MutableState<String?> = mutableStateOf(null)
+    pendingResetOobCode: MutableState<String?> = mutableStateOf(null),
+    pendingVerifyOobCode: MutableState<String?> = mutableStateOf(null)
 ) {
     val navController = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -97,7 +107,44 @@ fun AppNavigation(
     val firebaseUser by rememberFirebaseAuthState()
     // Initial routing decision — re-evaluated only on cold start (rememberSaveable isn't
     // needed since the NavHost preserves its own state across recompositions).
-    val startDestination = remember { if (authManager.currentUser != null) "summary" else "auth/login" }
+    //
+    // Three buckets:
+    //   - No user        → auth/login
+    //   - User exists but is email-provider AND not yet verified → auth/verify-email
+    //     (closes the cold-start verify-bypass: previously a user who signed up via
+    //      email then killed the app could re-open straight into summary)
+    //   - Anyone else (Google, Apple, verified email) → summary
+    val startDestination = remember {
+        val u = authManager.currentUser
+        when {
+            u == null -> "auth/login"
+            isUnverifiedEmailUser(u) -> "auth/verify-email"
+            else -> "summary"
+        }
+    }
+
+    // ALSO react to subsequent auth-state changes — e.g. token rotated mid-session
+    // and Firebase decided the cached profile is stale. If a user becomes unverified
+    // (rare but possible after admin action), bounce them to verify-email.
+    //
+    // Critically, this only fires when the user is on a NON-auth route (e.g. summary).
+    // During signup the LoginViewModel owns navigation via onNeedsEmailVerification
+    // — if we navigate here first, we clear the register ViewModel mid-coroutine
+    // and cancel the in-flight branded-email backend call, which silently falls
+    // back to Firebase's default email.
+    LaunchedEffect(firebaseUser) {
+        val u = firebaseUser
+        if (u != null && isUnverifiedEmailUser(u)) {
+            val currentRoute = navController.currentDestination?.route
+            val onAuthScreen = currentRoute?.startsWith("auth/") == true
+            if (!onAuthScreen) {
+                navController.navigate("auth/verify-email") {
+                    popUpTo(0) { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+        }
+    }
 
     // Reactive eviction: the moment Firebase reports no user (sign-out, token revoked,
     // account deleted, 401 from backend), jump back to login and clear the back stack
@@ -132,6 +179,23 @@ fun AppNavigation(
         pendingResetOobCode.value = null
     }
 
+    // When a stationly://verified deep link arrives (user tapped the verify link in
+    // their email and the OS routed it to us instead of the browser), apply the
+    // code via Firebase client SDK and bounce them to the summary. The user might
+    // be on the verify-email screen or on a cold-start LoginScreen — either way,
+    // applyVerificationCode handles reload + token refresh + sync + nav.
+    val verifyVm: com.stationly.mobile.ui.login.LoginViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    LaunchedEffect(pendingVerifyOobCode.value) {
+        val code = pendingVerifyOobCode.value ?: return@LaunchedEffect
+        pendingVerifyOobCode.value = null
+        verifyVm.applyVerificationCode(code) {
+            navController.navigate("summary") {
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -148,13 +212,18 @@ fun AppNavigation(
                         popUpTo("auth/login") { inclusive = true }
                     }
                 },
+                onNeedsEmailVerification = {
+                    navController.navigate("auth/verify-email") {
+                        launchSingleTop = true
+                    }
+                },
                 onNavigateToRegister = { navController.navigate("auth/register") },
                 onNavigateToForgotPassword = { navController.navigate("auth/forgot-password") },
                 showPasswordResetSuccess = passwordResetComplete.value,
                 onPasswordResetBannerShown = { passwordResetComplete.value = false }
             )
         }
-        
+
         // Sign Up Screen
         composable("auth/register") {
             com.stationly.mobile.ui.login.LoginScreen(
@@ -164,9 +233,32 @@ fun AppNavigation(
                         popUpTo("auth/login") { inclusive = true }
                     }
                 },
+                onNeedsEmailVerification = {
+                    navController.navigate("auth/verify-email") {
+                        // Replace register on the back stack so back goes to landing.
+                        popUpTo("auth/login") { inclusive = false }
+                        launchSingleTop = true
+                    }
+                },
                 onNavigateToLogin = { navController.popBackStack() }, // Standard back
                 onNavigateToRegister = {}, // Already here
                 onNavigateToForgotPassword = { navController.navigate("auth/forgot-password") }
+            )
+        }
+
+        // Verify Email — hard gate after email signup or for an unverified email login.
+        composable("auth/verify-email") {
+            com.stationly.mobile.ui.login.VerifyEmailScreen(
+                onVerified = {
+                    navController.navigate("summary") {
+                        popUpTo("auth/login") { inclusive = true }
+                    }
+                },
+                onUseDifferentEmail = {
+                    navController.navigate("auth/login") {
+                        popUpTo("auth/login") { inclusive = true }
+                    }
+                }
             )
         }
         
@@ -238,4 +330,19 @@ fun AppNavigation(
             )
         }
     }
+}
+
+/**
+ * True when the user signed up with email/password AND hasn't verified yet. Google
+ * and Apple emails are pre-verified by the provider so they always return false
+ * even with isEmailVerified == false at the very first instant. Used to gate the
+ * summary screen at cold start so a half-completed signup can't sneak past the
+ * verify-email screen by killing and reopening the app.
+ */
+private fun isUnverifiedEmailUser(user: com.google.firebase.auth.FirebaseUser): Boolean {
+    if (user.isEmailVerified) return false
+    // providerData includes "firebase" pseudo-provider plus the real ones — we only
+    // care whether "password" is among them, which means email/password is at least
+    // one of the user's sign-in methods.
+    return user.providerData.any { it.providerId == "password" }
 }
