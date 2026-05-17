@@ -271,6 +271,16 @@ actual object Platform {
     actual suspend fun getAuthToken(): String? = withContext(Dispatchers.IO) {
         NSUserDefaults.standardUserDefaults.stringForKey(AppGroupKeys.FIREBASE_AUTH_TOKEN)
     }
+
+    actual suspend fun signOutFromAuthExpiry() {
+        // iOS Firebase sign-out runs in Swift; enqueue the "signOut" command for the
+        // AuthBridge to pick up. Token slot is cleared so any in-flight request that
+        // re-reads it sees no token rather than the expired one.
+        val ud = NSUserDefaults.standardUserDefaults
+        if (ud.stringForKey(AppGroupKeys.FIREBASE_AUTH_TOKEN) == null) return
+        ud.removeObjectForKey(AppGroupKeys.FIREBASE_AUTH_TOKEN)
+        ud.setObject("signOut", forKey = "auth_pending_command")
+    }
 }
 
 // ─────────────────────────────────────────────────────────

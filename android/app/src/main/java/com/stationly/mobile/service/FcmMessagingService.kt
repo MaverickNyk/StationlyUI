@@ -2,6 +2,7 @@ package com.stationly.mobile.service
 
 import android.content.Context
 import android.util.Log
+import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.google.gson.Gson
@@ -15,6 +16,7 @@ import com.stationly.mobile.widget.DepartureWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import java.util.concurrent.TimeUnit
 
 /**
@@ -242,7 +244,19 @@ class FcmMessagingService : FirebaseMessagingService() {
     }
     
     override fun onNewToken(token: String) {
-        Log.d("FCM", "Refreshed token: $token")
-        // In real implementation, send token to server
+        Log.d("FCM", "FCM token rotated — re-subscribing to stored topics")
+        val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+        val topics = prefs.getStringSet("fcm_topics", emptySet()) ?: emptySet()
+        if (topics.isEmpty()) return
+        val fcm = FirebaseMessaging.getInstance()
+        CoroutineScope(Dispatchers.IO).launch {
+            topics.forEach { topic ->
+                try {
+                    fcm.subscribeToTopic(topic).await()
+                } catch (e: Exception) {
+                    Log.e("FCM", "Re-subscribe failed for $topic after token rotation", e)
+                }
+            }
+        }
     }
 }

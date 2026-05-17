@@ -57,14 +57,18 @@ class AndroidNotificationManager(
     
     override suspend fun subscribeToTopics(topics: List<String>) {
         val fcm = FirebaseMessaging.getInstance()
+        val prefs = context.getSharedPreferences("StationlyPrefs", android.content.Context.MODE_PRIVATE)
+        val stored = (prefs.getStringSet("fcm_topics", emptySet()) ?: emptySet()).toMutableSet()
         topics.forEach { topic ->
             try {
                 fcm.subscribeToTopic(topic).await()
+                stored.add(topic)
                 android.util.Log.d("NotificationManager", "Successfully subscribed to $topic")
             } catch (e: Exception) {
                 android.util.Log.e("NotificationManager", "Failed to subscribe to $topic", e)
             }
         }
+        prefs.edit().putStringSet("fcm_topics", stored).apply()
     }
     
     override suspend fun unsubscribeFromTopics(topics: List<String>) {
@@ -189,6 +193,14 @@ actual object Platform {
             user?.getIdToken(false)?.await()?.token
         } catch (e: Exception) {
             null
+        }
+    }
+
+    actual suspend fun signOutFromAuthExpiry() {
+        val auth = FirebaseAuth.getInstance()
+        if (auth.currentUser != null) {
+            android.util.Log.w("Platform", "Backend returned 401 — signing user out")
+            auth.signOut()
         }
     }
 }

@@ -16,4 +16,8 @@
     <color name="stationly_surface">#FFF5F5F5</color>
     <color name="stationly_error">#FFB00020</color>
     <color name="tfl_amber">#FFC819</color>
+
+    <!-- Flavor-overridable colors (staging/res overrides these) -->
+    <color name="ic_launcher_background">#FFFFFFFF</color>
+    <color name="splash_background">#0F0F0F</color>
 </resources>

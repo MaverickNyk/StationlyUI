@@ -39,6 +39,7 @@ import com.stationly.core.service.SduiApiServiceFactory
 import com.stationly.mobile.service.FirebaseAuthManager
 import com.stationly.mobile.ui.common.SduiCard
 import com.stationly.mobile.ui.common.SduiSection
+import com.stationly.mobile.ui.common.rememberFirebaseAuthState
 import kotlinx.coroutines.launch
 
 /* ═══════════════════════════════════════════════════════════════
@@ -62,22 +63,29 @@ fun ProfileScreen(
     authManager: FirebaseAuthManager,
     profileViewModel: ProfileViewModel = viewModel()
 ) {
-    val user = authManager.currentUser
-    val userEmail = user?.email ?: "Stationly User"
-    val userName = user?.displayName ?: userEmail.split("@").firstOrNull() ?: "User"
-    val photoUrl = user?.photoUrl?.toString()
-    val providerId = user?.providerData
-        ?.firstOrNull { it.providerId != "firebase" }?.providerId
+    // Subscribe to Firebase auth state so this screen can't outlive a sign-out.
+    val firebaseUser by rememberFirebaseAuthState()
+    LaunchedEffect(firebaseUser) {
+        if (firebaseUser == null) onLoggedOut()
+    }
+    // If Firebase has no user, bail out before rendering anything — the LaunchedEffect
+    // above is already routing us back to login. Returning here also prevents the
+    // "Stationly User" placeholder from ever flashing on screen.
+    val user = firebaseUser ?: return
+    val userEmail = user.email.orEmpty()
+    val userName = user.displayName ?: userEmail.substringBefore('@').ifBlank { "User" }
+    val photoUrl = user.photoUrl?.toString()
+    val providerId = user.providerData
+        .firstOrNull { it.providerId != "firebase" }?.providerId
     val providerLabel = when (providerId) {
         "google.com" -> "Google"
         "apple.com" -> "Apple"
         "password" -> "Email"
         else -> "Stationly"
     }
-    val memberSince = remember {
-        user?.metadata?.creationTimestamp?.let { ts ->
-            val date = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.UK).format(java.util.Date(ts))
-            date
+    val memberSince = remember(user.uid) {
+        user.metadata?.creationTimestamp?.let { ts ->
+            java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.UK).format(java.util.Date(ts))
         } ?: "Recently"
     }
 
@@ -394,7 +402,7 @@ fun ProfileScreen(
                         isDeletingAccount = true
                         coroutineScope.launch {
                             try {
-                                val uid = user?.uid ?: return@launch
+                                val uid = user.uid
                                 SduiApiServiceFactory.create().deleteAccount(uid)
                                 authManager.logout()
                                 onLoggedOut()
