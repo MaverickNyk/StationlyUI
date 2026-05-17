@@ -128,11 +128,15 @@ class FirebaseAuthManager(private val context: Context) {
 
         auth.signOut()
         getGoogleSignInClient().signOut()
-        
-        // Clear local storage on logout
+
+        // Full wipe on logout — clearAll() drops every SharedPrefs key including
+        // firebase_user_*, signin_provider, member_since, sdui_layout_*, fcm_topics,
+        // etc. clearCache() only touched prediction/selection caches and left the
+        // previous user's identity behind, which surfaced as a "Stationly User"
+        // sticking around after sign-out.
         com.stationly.core.platform.Platform.sqlStorage.clearAllData()
-        com.stationly.core.platform.Platform.storageManager.clearCache()
-        
+        com.stationly.core.platform.Platform.storageManager.clearAll()
+
         // Force the widget to update and reflect the cleared state
         com.stationly.mobile.widget.DepartureWidgetProvider.updateFromStorage(context)
     }

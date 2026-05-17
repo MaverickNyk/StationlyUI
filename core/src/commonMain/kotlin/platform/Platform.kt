@@ -42,4 +42,13 @@ expect object Platform {
     fun getEnvironment(): AppEnvironment
     fun getBaseUrl(): String
     suspend fun getAuthToken(): String?
+
+    /**
+     * Invoked by the network layer when the backend returns 401 for a request that
+     * carried a Firebase token. Signs the user out of Firebase locally — the platform
+     * UI layer subscribes to FirebaseAuth state changes and navigates to login as a
+     * side effect. No-op if there is no signed-in user (the 401 was about something
+     * other than the user's session).
+     */
+    suspend fun signOutFromAuthExpiry()
 }

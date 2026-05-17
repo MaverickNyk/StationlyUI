@@ -5,16 +5,21 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.*
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.stationly.mobile.ui.common.StagingBanner
+import com.stationly.mobile.ui.common.rememberFirebaseAuthState
 import com.stationly.mobile.ui.selection.SelectionScreen
 import com.stationly.mobile.ui.summary.SummaryScreen
 import com.stationly.mobile.ui.theme.StationlyTheme
@@ -42,10 +47,13 @@ class MainActivity : ComponentActivity() {
         handleDeepLink(intent)
         setContent {
             StationlyTheme {
-                AppNavigation(
-                    passwordResetComplete = passwordResetComplete,
-                    pendingResetOobCode   = pendingResetOobCode
-                )
+                Box(Modifier.fillMaxSize()) {
+                    AppNavigation(
+                        passwordResetComplete = passwordResetComplete,
+                        pendingResetOobCode   = pendingResetOobCode
+                    )
+                    StagingBanner(Modifier.align(Alignment.BottomCenter))
+                }
             }
         }
     }
@@ -85,8 +93,36 @@ fun AppNavigation(
     val navController = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
     val authManager = remember { com.stationly.mobile.service.FirebaseAuthManager(context) }
-    val isUserLoggedIn = authManager.currentUser != null
-    
+
+    val firebaseUser by rememberFirebaseAuthState()
+    // Initial routing decision — re-evaluated only on cold start (rememberSaveable isn't
+    // needed since the NavHost preserves its own state across recompositions).
+    val startDestination = remember { if (authManager.currentUser != null) "summary" else "auth/login" }
+
+    // Reactive eviction: the moment Firebase reports no user (sign-out, token revoked,
+    // account deleted, 401 from backend), jump back to login and clear the back stack
+    // so the previous user's data can't be revealed by pressing Back. Also runs a
+    // backup cleanup pass in case the sign-out bypassed FirebaseAuthManager.logout()
+    // (e.g. came from the 401 interceptor). All clears are idempotent.
+    LaunchedEffect(firebaseUser) {
+        if (firebaseUser == null) {
+            val sqlStorage = com.stationly.core.platform.Platform.sqlStorage
+            if (sqlStorage.getAllSelections().isNotEmpty()) {
+                com.stationly.core.platform.Platform.notificationManager.clearAllTopics()
+                sqlStorage.clearAllData()
+                com.stationly.core.platform.Platform.storageManager.clearAll()
+                com.stationly.core.platform.Platform.widgetManager.clearWidgetData()
+            }
+            val currentRoute = navController.currentDestination?.route
+            if (currentRoute == null || !currentRoute.startsWith("auth/")) {
+                navController.navigate("auth/login") {
+                    popUpTo(0) { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+        }
+    }
+
     // When a stationly://reset deep link arrives, navigate to the confirm screen
     LaunchedEffect(pendingResetOobCode.value) {
         val code = pendingResetOobCode.value ?: return@LaunchedEffect
@@ -98,7 +134,7 @@ fun AppNavigation(
 
     NavHost(
         navController = navController,
-        startDestination = if (isUserLoggedIn) "summary" else "auth/login",
+        startDestination = startDestination,
         modifier = modifier
     ) {
         // --- Authentication Flow ---

@@ -36,9 +36,9 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
-import com.google.firebase.auth.FirebaseAuth
 import com.stationly.mobile.R
 import com.stationly.mobile.ui.common.AnnouncementBanner
+import com.stationly.mobile.ui.common.rememberFirebaseAuthState
 import com.stationly.mobile.ui.summary.components.*
 import com.stationly.mobile.ui.theme.TflAmber
 
@@ -62,11 +62,9 @@ fun SummaryScreen(
     val deletingBoardId by viewModel.isDeletingBoard.collectAsState()
     val showWidgetPromo by viewModel.showWidgetPromo.collectAsState()
 
-    val firebaseUser = remember { FirebaseAuth.getInstance().currentUser }
-    val userName = remember(firebaseUser) {
-        firebaseUser?.displayName?.split(" ")?.firstOrNull()
-            ?: firebaseUser?.email?.split("@")?.firstOrNull()
-    }
+    val firebaseUser by rememberFirebaseAuthState()
+    val userName = firebaseUser?.displayName?.split(" ")?.firstOrNull()
+        ?: firebaseUser?.email?.substringBefore('@')
 
     // Reload selections from SQLite whenever this screen resumes.
     // Handles the case where ProfileScreen (or any other screen) deleted a station
@@ -275,7 +273,7 @@ private fun SummaryTopBar(
             }
         },
         navigationIcon = {
-            val firebaseUser = FirebaseAuth.getInstance().currentUser
+            val firebaseUser by rememberFirebaseAuthState()
             val photoUrl = firebaseUser?.photoUrl?.toString()
             IconButton(
                 onClick = onNavigateToProfile,

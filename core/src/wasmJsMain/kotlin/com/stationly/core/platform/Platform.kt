@@ -30,6 +30,7 @@ actual object Platform {
     actual fun getEnvironment(): AppEnvironment = AppEnvironment.PRODUCTION
     actual fun getBaseUrl(): String = com.stationly.core.config.AppConfig.apiBaseUrl
     actual suspend fun getAuthToken(): String? = null
+    actual suspend fun signOutFromAuthExpiry() {} // Web target: no auth bridge yet.
 }
 
 class WebWidgetManager : WidgetManager {
