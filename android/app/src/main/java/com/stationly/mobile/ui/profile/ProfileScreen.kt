@@ -41,6 +41,7 @@ import com.stationly.mobile.ui.common.SduiCard
 import com.stationly.mobile.ui.common.SduiSection
 import com.stationly.mobile.ui.common.rememberFirebaseAuthState
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 /* ═══════════════════════════════════════════════════════════════
    Palette
@@ -105,6 +106,12 @@ fun ProfileScreen(
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
     var showDeleteStationDialog by remember { mutableStateOf<SubscribedStation?>(null) }
     var isDeletingAccount by remember { mutableStateOf(false) }
+    var deleteAccountError by remember { mutableStateOf<String?>(null) }
+    // Live-editable display name (optimistically updated when the edit dialog
+    // succeeds; falls back to the FirebaseUser's name otherwise).
+    var editedName by remember(user.uid, userName) { mutableStateOf<String?>(null) }
+    val displayedName = editedName ?: userName
+    var showEditNameDialog by remember { mutableStateOf(false) }
     var isSigningOut by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -149,7 +156,14 @@ fun ProfileScreen(
         ) {
             // ── Profile Header Card ──
             item {
-                ProfileHeaderCard(userName, userEmail, photoUrl, providerLabel, memberSince)
+                ProfileHeaderCard(
+                    name = displayedName,
+                    email = userEmail,
+                    photoUrl = photoUrl,
+                    provider = providerLabel,
+                    memberSince = memberSince,
+                    onEditName = { showEditNameDialog = true }
+                )
             }
 
             // ── My Stations Section ──
@@ -320,6 +334,90 @@ fun ProfileScreen(
         }
     }
 
+    // ── Edit Display Name Dialog ──
+    if (showEditNameDialog) {
+        var nameDraft by remember(displayedName) { mutableStateOf(displayedName) }
+        var nameError by remember { mutableStateOf<String?>(null) }
+        var isSavingName by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { if (!isSavingName) showEditNameDialog = false },
+            containerColor = Surface2,
+            titleContentColor = White90,
+            textContentColor = White55,
+            title = { Text("Edit your name", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = nameDraft,
+                        onValueChange = {
+                            nameDraft = it
+                            if (nameError != null) nameError = null
+                        },
+                        label = { Text("Display name") },
+                        singleLine = true,
+                        isError = nameError != null,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        // Material3 defaults to blue accents which read wrong on
+                        // Stationly's amber + dark theme. Match the AuthField look
+                        // from LoginScreen so the dialog feels like the same product.
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor    = Amber,
+                            unfocusedBorderColor  = White25,
+                            focusedTextColor      = White90,
+                            unfocusedTextColor    = White90,
+                            focusedLabelColor     = Amber,
+                            unfocusedLabelColor   = White55,
+                            focusedContainerColor   = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            cursorColor           = Amber,
+                            errorBorderColor      = DangerRed,
+                            errorLabelColor       = DangerRed,
+                            errorCursorColor      = DangerRed
+                        )
+                    )
+                    nameError?.let {
+                        Text(it, color = DangerRed, fontSize = 12.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !isSavingName && nameDraft.trim() != displayedName,
+                    onClick = {
+                        isSavingName = true
+                        nameError = null
+                        profileViewModel.updateDisplayName(nameDraft) { result ->
+                            isSavingName = false
+                            result.onSuccess { newName ->
+                                editedName = newName
+                                showEditNameDialog = false
+                            }
+                            result.onFailure { e ->
+                                nameError = e.message ?: "Couldn't save. Please try again."
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Amber)
+                ) {
+                    if (isSavingName) {
+                        CircularProgressIndicator(color = Amber, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                    } else {
+                        Text("Save", fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            dismissButton = {
+                if (!isSavingName) {
+                    TextButton(
+                        onClick = { showEditNameDialog = false },
+                        colors = ButtonDefaults.textButtonColors(contentColor = White55)
+                    ) { Text("Cancel") }
+                }
+            }
+        )
+    }
+
     // ── Delete Station Confirmation Dialog ──
     showDeleteStationDialog?.let { station ->
         val dsTitle   = homeConfig["profile.delete_station.title"]   ?: "Delete This Board?"
@@ -394,21 +492,44 @@ fun ProfileScreen(
                     daBullets.forEach { WarningBullet(it) }
                     Spacer(Modifier.height(4.dp))
                     Text(daFooter, color = White25, fontSize = 12.sp)
+                    deleteAccountError?.let { err ->
+                        Spacer(Modifier.height(4.dp))
+                        Text(err, color = DangerRed, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    }
                 }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
                         isDeletingAccount = true
+                        deleteAccountError = null
                         coroutineScope.launch {
                             try {
+                                // Force-refresh the ID token before the delete call so the
+                                // backend sees a fresh Firebase token rather than a cached
+                                // one that might be near-expiry. Mirrors Firebase's own
+                                // "recent login required" semantics for sensitive ops.
+                                runCatching { user.getIdToken(true).await() }
                                 val uid = user.uid
                                 SduiApiServiceFactory.create().deleteAccount(uid)
+                                com.stationly.mobile.service.AuthLog.accountDeleted(uid)
                                 authManager.logout()
                                 onLoggedOut()
-                            } catch (_: Exception) {
+                            } catch (e: Exception) {
+                                val msg = e.message.orEmpty()
+                                val reauthNeeded = msg.contains("requires-recent-login", ignoreCase = true)
+                                    || msg.contains("recent login", ignoreCase = true)
+                                    || msg.contains("401")
+                                    || msg.contains("403")
+                                com.stationly.mobile.service.AuthLog.accountDeleteFailed(
+                                    if (reauthNeeded) "reauth_required" else msg.ifBlank { e::class.simpleName.orEmpty() }
+                                )
                                 isDeletingAccount = false
-                                showDeleteAccountDialog = false
+                                deleteAccountError = if (reauthNeeded) {
+                                    "For security, please sign out and sign in again before deleting your account."
+                                } else {
+                                    "Could not delete your account. Please check your connection and try again."
+                                }
                             }
                         }
                     },
@@ -440,7 +561,8 @@ fun ProfileScreen(
 @Composable
 private fun ProfileHeaderCard(
     name: String, email: String, photoUrl: String?,
-    provider: String, memberSince: String
+    provider: String, memberSince: String,
+    onEditName: () -> Unit = {}
 ) {
     Surface(
         color = Surface1,
@@ -451,7 +573,10 @@ private fun ProfileHeaderCard(
             modifier = Modifier.fillMaxWidth().padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Avatar with amber ring
+            // Avatar with amber ring. Google sign-ins carry a photoUrl from
+            // Google, email sign-ins fall back to the first-letter monogram.
+            // User-uploaded photos aren't supported on the Spark plan (no
+            // Firebase Storage); revisit when we have Blaze or a self-host path.
             Box(contentAlignment = Alignment.Center) {
                 Box(
                     Modifier
@@ -485,10 +610,27 @@ private fun ProfileHeaderCard(
 
             Spacer(Modifier.height(16.dp))
 
-            Text(
-                name, color = White90,
-                fontWeight = FontWeight.Bold, fontSize = 22.sp
-            )
+            // Name + inline edit pencil. Whole row is clickable so the touch
+            // target is generous on mobile.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(onClick = onEditName)
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    name, color = White90,
+                    fontWeight = FontWeight.Bold, fontSize = 22.sp
+                )
+                Icon(
+                    Icons.Outlined.Edit,
+                    contentDescription = "Edit name",
+                    tint = White55,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
             Spacer(Modifier.height(4.dp))
             Text(email, color = White55, fontSize = 14.sp)
 
