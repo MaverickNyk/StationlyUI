@@ -31,6 +31,12 @@ interface SduiApiService {
 
     // Auth
     suspend fun sendPasswordResetEmail(email: String): Boolean
+    /**
+     * Triggers the backend to send a Stationly-branded verification email via Resend
+     * (mirrors sendPasswordResetEmail). Identifies the user via their Firebase ID
+     * token in the Authorization header — no email argument needed.
+     */
+    suspend fun sendVerificationEmail(): Boolean
 
     // User Sync & Firestore
     suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse
@@ -107,6 +113,17 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
         val response = client.post("$baseUrl/auth/forgot-password") {
             contentType(ContentType.Application.Json)
             setBody(ResetRequest(email))
+        }
+        return response.status == HttpStatusCode.OK
+    }
+
+    override suspend fun sendVerificationEmail(): Boolean {
+        // Body is empty — the backend derives the user from the bearer token
+        // already attached by StationlyAuth (Platform.getAuthToken()). Lives under
+        // /user/* so the StationlyAuth Ktor plugin attaches the Firebase token;
+        // /auth/* paths are token-less by convention (forgot-password, etc.).
+        val response = client.post("$baseUrl/user/send-verification-email") {
+            contentType(ContentType.Application.Json)
         }
         return response.status == HttpStatusCode.OK
     }
