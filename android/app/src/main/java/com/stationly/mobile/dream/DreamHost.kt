@@ -16,14 +16,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 
 /**
- * Top-level composable hosted by [StationlyDreamService].
+ * Top-level composable hosted by [StationlyDreamService]. Picks between the
+ * available [DreamLayout]s based on the user's saved setting:
  *
- * Layout — split varies by orientation:
- *   - Portrait:  top 35% = clock + date / weather, bottom 65% = board cluster.
- *   - Landscape: left 30% = clock + date / weather, right 70% = board cluster.
- *
- * The departure board is always the visual anchor; the clock and summary
- * frame it without competing.
+ *   - [DreamLayout.CLOCK_AND_BOARD]  — clock cluster framing the departure
+ *                                       board. Portrait stacks 35/65; landscape
+ *                                       splits 30/70 left/right.
+ *   - [DreamLayout.FULLSCREEN_BOARD] — just the departure board, centred on
+ *                                       the dark canvas as a rounded signage
+ *                                       panel. See [FullscreenBoardLayout].
  *
  * Refresh model — broadcast only. FCM lands → SQL updated → FCM service
  * fires [StationlyDreamService.ACTION_DREAM_REFRESH] → service's receiver
@@ -34,6 +35,7 @@ import kotlinx.coroutines.withContext
 fun DreamHost(refreshTick: StateFlow<Long>) {
     val context = LocalContext.current
     val tick by refreshTick.collectAsState()
+    val layout by remember { mutableStateOf(DreamSettings.getLayout(context)) }
     val clockStyle by remember { mutableStateOf(DreamSettings.getClockStyle(context)) }
     val preferredStation by remember { mutableStateOf(DreamSettings.getStationId(context)) }
 
@@ -43,7 +45,7 @@ fun DreamHost(refreshTick: StateFlow<Long>) {
         snapshot = withContext(Dispatchers.IO) { loadDreamSnapshot(preferredStation) }
     }
 
-    BoxWithConstraints(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF0A0A0A))
@@ -51,6 +53,20 @@ fun DreamHost(refreshTick: StateFlow<Long>) {
             // edge-to-edge so without this our content slides under the camera.
             .windowInsetsPadding(WindowInsets.displayCutout)
     ) {
+        when (layout) {
+            DreamLayout.FULLSCREEN_BOARD -> FullscreenBoardLayout(snapshot)
+            DreamLayout.CLOCK_AND_BOARD  -> ClockAndBoardHost(snapshot, clockStyle)
+        }
+    }
+}
+
+/**
+ * Original "clock cluster + departure board" composition. Extracted from
+ * DreamHost so the host can switch between layouts cleanly.
+ */
+@Composable
+private fun ClockAndBoardHost(snapshot: DreamSnapshot, clockStyle: ClockStyle) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isLandscape = maxWidth > maxHeight
 
         // The device's short edge — same value in either orientation for a

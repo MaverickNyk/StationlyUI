@@ -20,6 +20,34 @@ enum class ClockStyle(val storedAs: String, val displayName: String) {
 }
 
 /**
+ * Which overall layout the dream uses.
+ *   CLOCK_AND_BOARD  — clock cluster + departure board side-by-side (or stacked
+ *                      in portrait). Default; the layout people see first.
+ *   FULLSCREEN_BOARD — only the departure board, scaled to fill the screen.
+ *                      Looks like the home-screen widget zoomed up, with the
+ *                      widget's own ticking TextClock + "X ago" timer along
+ *                      the bottom and the station header + Stationly logo at
+ *                      the top.
+ */
+enum class DreamLayout(val storedAs: String, val displayName: String, val description: String) {
+    CLOCK_AND_BOARD(
+        storedAs    = "clock_and_board",
+        displayName = "Clock + Board",
+        description = "Big clock with departure board alongside"
+    ),
+    FULLSCREEN_BOARD(
+        storedAs    = "fullscreen_board",
+        displayName = "Fullscreen Board",
+        description = "Just the departure board, filling the screen"
+    );
+
+    companion object {
+        fun fromStored(value: String?): DreamLayout =
+            entries.firstOrNull { it.storedAs == value } ?: CLOCK_AND_BOARD
+    }
+}
+
+/**
  * Read/write helper for everything the user can configure on the dream.
  * Lives in its own SharedPrefs file ("StationlyDreamPrefs") so a `clearAll()`
  * on the main StationlyPrefs (which happens on logout) doesn't reset the
@@ -27,11 +55,19 @@ enum class ClockStyle(val storedAs: String, val displayName: String) {
  */
 object DreamSettings {
     private const val FILE = "StationlyDreamPrefs"
+    private const val KEY_LAYOUT      = "layout"
     private const val KEY_CLOCK_STYLE = "clock_style"
     private const val KEY_STATION_ID  = "station_id"  // optional override
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+
+    fun getLayout(context: Context): DreamLayout =
+        DreamLayout.fromStored(prefs(context).getString(KEY_LAYOUT, null))
+
+    fun setLayout(context: Context, layout: DreamLayout) {
+        prefs(context).edit().putString(KEY_LAYOUT, layout.storedAs).apply()
+    }
 
     fun getClockStyle(context: Context): ClockStyle =
         ClockStyle.fromStored(prefs(context).getString(KEY_CLOCK_STYLE, null))

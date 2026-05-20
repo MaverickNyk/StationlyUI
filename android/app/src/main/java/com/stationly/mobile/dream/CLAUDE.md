@@ -25,13 +25,24 @@ dream/
 ├── DreamBoard.kt              AndroidView wrapper around widget_departure_board
 │                              XML. Diff-updates row TextViews on every refresh
 │                              (don't tear down: it kills scroll position).
+│                              Configurable via showHeader / showClock /
+│                              fullscreen so both dream layouts can reuse it.
+├── DreamFullscreenBoard.kt    Fullscreen-board dream — adaptive textScale from
+│                              short edge (smaller in portrait), card centred
+│                              on the canvas with width caps so it doesn't
+│                              stretch on tablets. Delegates to DreamBoard with
+│                              fullscreen=true.
 ├── DreamData.kt               DreamSnapshot data class + loadDreamSnapshot()
 │                              (synchronous SQL read).
 ├── DreamSettings.kt           SharedPrefs read/write for ClockStyle + station id.
 │                              Lives in its own prefs file (StationlyDreamPrefs)
 │                              so app-prefs clearAll() on logout doesn't reset it.
 ├── DreamSettingsActivity.kt   Compose UI shown when the user taps the gear icon
-│                              next to "Stationly" in system screensaver settings.
+│                              next to "Stationly" in system screensaver
+│                              settings. Hero header + visual preview tiles for
+│                              the layout picker (mini renders of each layout),
+│                              clock-style tiles (digital/analog), station
+│                              picker with line-colour dots.
 ├── WeatherStation.kt          Background poller (singleton-per-process) for
 │                              met.no temperature using last-known location only.
 └── CLAUDE.md                  This file.
@@ -66,10 +77,19 @@ clock to fill its actual slot up to that cap. Result:
 - Tablet portrait: big clock (capped at the dim max so it isn't a billboard).
 - Tablet landscape: chunky clock (30% of a tablet still has tons of room).
 
-**3. Layout split is 30:70 in landscape, 35:65 in portrait.**
-This is a visual decision the user has explicitly validated. Do not change
-the split to fix sizing — fix sizing via `DreamDims` and `ClockPanel`'s
-slot-fill math instead.
+**3. Two dream layouts share one host, one board.**
+`DreamLayout` enum picks between:
+  - `CLOCK_AND_BOARD` — clock cluster + summary header + board, 30:70 in
+    landscape and 35:65 in portrait (default).
+  - `FULLSCREEN_BOARD` — just the widget XML scaled up to fill the screen,
+    with widget's own ticking TextClock + chronometer along the bottom.
+The user picks the layout in `DreamSettingsActivity`; the clock-style
+section there is hidden when fullscreen is selected because that layout has
+its own built-in TextClock.
+
+Do not change the 30:70 / 35:65 split to fix sizing — fix sizing via
+`DreamDims` and `ClockPanel`'s slot-fill math instead. The user has
+explicitly validated those ratios.
 
 **4. DreamBoard diff-updates row TextViews.**
 The widget XML is inflated inside `AndroidView`. When fresh data arrives we
