@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -82,6 +83,7 @@ fun Board(
     sduiPayload: SduiWidgetPayload? = null,
     lastUpdated: Long,
     onDelete: () -> Unit,
+    onFullscreen: () -> Unit = {},
     nextPrediction: PredictionDisplay? = null,
     homeConfig: Map<String, String> = emptyMap(),
     isDeleting: Boolean = false
@@ -350,6 +352,19 @@ fun Board(
                         )
                     }
 
+                    // Fullscreen → big landscape view, hidden status bars,
+                    // same content but Netflix-style immersive.
+                    IconButton(
+                        onClick = onFullscreen,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.Fullscreen,
+                            contentDescription = "Open fullscreen",
+                            tint = Color.White.copy(alpha = 0.50f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                     // Subtle delete button
                     IconButton(
                         onClick = { showDeleteDialog = true },

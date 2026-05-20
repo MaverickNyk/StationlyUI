@@ -184,6 +184,18 @@ class FcmMessagingService : FirebaseMessagingService() {
         }
     }
     
+    /**
+     * Tell the Daydream (and any other dynamically-registered refresh listeners)
+     * that fresh data has landed in SQL. Uses its own action — the widget
+     * broadcast is component-targeted and never reaches dynamic receivers.
+     */
+    private fun broadcastDreamRefresh(context: Context) {
+        val intent = android.content.Intent(
+            com.stationly.mobile.dream.StationlyDreamService.ACTION_DREAM_REFRESH
+        ).setPackage(context.packageName)
+        context.sendBroadcast(intent)
+    }
+
     private fun updateWidgetFromStorage(context: Context, selection: UserSelection) {
         val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
@@ -237,6 +249,10 @@ class FcmMessagingService : FirebaseMessagingService() {
             sduiPayload,
             hasLoadedData
         )
+
+        // Notify the Daydream too — it has its own dynamic receiver since the
+        // widget broadcast is component-targeted and won't reach it.
+        broadcastDreamRefresh(context)
     }
     
     private fun getAllSelections(): List<UserSelection> {
