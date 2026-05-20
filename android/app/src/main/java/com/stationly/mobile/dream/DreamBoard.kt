@@ -50,10 +50,26 @@ fun DreamBoard(
      */
     textScale: Float = 1.75f,
     /**
-     * Show the station-name header strip. The widget shows it; in the dream we
-     * sometimes draw a Compose station header above the board instead.
+     * Show the station-name header strip. The widget shows it; in the
+     * clock-and-board dream we sometimes draw a Compose station header above
+     * the board instead, so it's hidden there.
      */
     showHeader: Boolean = false,
+    /**
+     * Show the widget's built-in ticking TextClock at the bottom. Hidden by
+     * default because the clock-and-board dream has its own larger clock; the
+     * fullscreen-board dream turns this on so the board has a built-in clock.
+     */
+    showClock: Boolean = false,
+    /**
+     * Fullscreen-board styling:
+     *  - rows centred vertically in their ScrollView viewport (no top/bottom
+     *    gap when few rows; scrolls when many)
+     *  - stronger amber border + larger corner radius — this IS the centerpiece,
+     *    not a card sitting next to a clock
+     *  - small inter-row margin so portrait doesn't read crammed
+     */
+    fullscreen: Boolean = false,
 ) {
     val sel = snapshot.selection
     val predictions = snapshot.predictions
@@ -62,7 +78,7 @@ fun DreamBoard(
 
     // Stable lambda — only recreated when data changes, so AndroidView.update()
     // doesn't fire on every recomposition (which would reset Chronometer + marquee).
-    val updater: (View) -> Unit = remember(sel, predictions, lineStatus, lastUpdated, textScale, showHeader) {
+    val updater: (View) -> Unit = remember(sel, predictions, lineStatus, lastUpdated, textScale, showHeader, showClock, fullscreen) {
         update@{ view ->
             val context = view.context
 
@@ -70,9 +86,11 @@ fun DreamBoard(
             view.findViewById<View>(R.id.btn_settings).visibility = View.GONE
             view.findViewById<View>(R.id.btn_refresh).visibility = View.GONE
 
-            // Hide the widget's own clock — the dream already shows a big clock
-            // on the side, so this would be a redundant tiny duplicate.
-            view.findViewById<View>(R.id.clock)?.visibility = View.GONE
+            // Widget's own TextClock — clock-and-board hides it (there's a bigger
+            // Compose clock alongside); fullscreen-board shows it so the board
+            // has a built-in ticking time at the bottom, widget-style.
+            view.findViewById<View>(R.id.clock)?.visibility =
+                if (showClock) View.VISIBLE else View.GONE
 
             // Either show the widget's own station-name header strip, or hide it
             // and rely on the Compose layer drawn above the board.
@@ -126,7 +144,7 @@ fun DreamBoard(
             // The vertical scrollbar is visible; the dream service has
             // isInteractive=true so the user can actually drag it.
             val rowsContainer = view.findViewById<LinearLayout>(R.id.rows_container)
-            val rowsScroll = ensureScrollWrapped(rowsContainer)
+            val rowsScroll = ensureScrollWrapped(rowsContainer, fullscreen)
 
             val legacyRows = if (sel == null) {
                 listOf<LegacyRow>(LegacyRow.Header("Add a board on the home screen"))
@@ -172,43 +190,48 @@ fun DreamBoard(
             } else {
                 rowsContainer.removeAllViews()
                 val inflater = LayoutInflater.from(context)
-                legacyRows.forEach { row ->
-                    when (row) {
-                        is LegacyRow.Header -> {
-                            val header = inflater.inflate(
-                                R.layout.widget_platform_header, rowsContainer, false
-                            )
-                            header.findViewById<TextView>(R.id.platform_name).apply {
+                // Extra spacing between rows when running fullscreen — at
+                // signage scale rows otherwise look too close together,
+                // especially in portrait. Dp picked to be ~half a row line
+                // height at default scale.
+                val rowGapPx = if (fullscreen)
+                    (6f * context.resources.displayMetrics.density).toInt()
+                else 0
+                legacyRows.forEachIndexed { index, row ->
+                    val rowView: View = when (row) {
+                        is LegacyRow.Header -> inflater.inflate(
+                            R.layout.widget_platform_header, rowsContainer, false
+                        ).also {
+                            it.findViewById<TextView>(R.id.platform_name).apply {
                                 text = row.title
                                 setBaselineSp(ROW_BASE_SP)
                             }
-                            rowsContainer.addView(header)
                         }
-                        is LegacyRow.Departure -> {
-                            val dep = inflater.inflate(
-                                R.layout.widget_departure_row, rowsContainer, false
-                            )
-                            dep.findViewById<TextView>(R.id.destination_text).apply {
+                        is LegacyRow.Departure -> inflater.inflate(
+                            R.layout.widget_departure_row, rowsContainer, false
+                        ).also {
+                            it.findViewById<TextView>(R.id.destination_text).apply {
                                 text = row.destination
                                 setBaselineSp(ROW_BASE_SP)
                             }
-                            dep.findViewById<TextView>(R.id.eta_text).apply {
+                            it.findViewById<TextView>(R.id.eta_text).apply {
                                 text = row.eta
                                 setBaselineSp(ROW_BASE_SP)
                             }
-                            rowsContainer.addView(dep)
                         }
-                        is LegacyRow.Message -> {
-                            val header = inflater.inflate(
-                                R.layout.widget_platform_header, rowsContainer, false
-                            )
-                            header.findViewById<TextView>(R.id.platform_name).apply {
+                        is LegacyRow.Message -> inflater.inflate(
+                            R.layout.widget_platform_header, rowsContainer, false
+                        ).also {
+                            it.findViewById<TextView>(R.id.platform_name).apply {
                                 text = row.text
                                 setBaselineSp(ROW_BASE_SP)
                             }
-                            rowsContainer.addView(header)
                         }
                     }
+                    if (rowGapPx > 0 && index > 0) {
+                        (rowView.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin = rowGapPx
+                    }
+                    rowsContainer.addView(rowView)
                 }
             }
 
@@ -227,18 +250,9 @@ fun DreamBoard(
     }
 
     val amber = colorResource(R.color.tfl_amber)
-    // Wrap the inflated widget in a soft rounded Compose surface — the widget's
-    // own backgrounds are square-cornered (designed for the home-screen tile).
-    // Inside the dream a gentle 18dp radius + faint amber border reads much
-    // more elegantly than hard pixel edges.
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        color = Color(0xFF050505),
-        border = BorderStroke(1.dp, amber.copy(alpha = 0.18f)),
-    ) {
+    val androidView: @Composable (Modifier) -> Unit = { innerModifier ->
         AndroidView(
-            modifier = Modifier.fillMaxWidth().padding(6.dp),
+            modifier = innerModifier,
             factory = { context ->
                 LayoutInflater.from(context).inflate(
                     R.layout.widget_departure_board, null, false
@@ -249,6 +263,25 @@ fun DreamBoard(
                 view.findViewById<Chronometer>(R.id.last_updated_timer)?.stop()
             }
         )
+    }
+
+    // Rounded Compose surface around the inflated widget — the widget's own
+    // backgrounds are square-cornered (designed for a home-screen tile), and
+    // a soft radius + amber border reads more elegantly. Fullscreen mode
+    // beefs everything up: larger radius and a brighter border because the
+    // board IS the centerpiece, not a card sitting next to a clock. Inner
+    // padding is slightly larger so content doesn't kiss the border.
+    val cornerRadius = if (fullscreen) 28.dp else 20.dp
+    val borderAlpha  = if (fullscreen) 0.32f else 0.18f
+    val borderWidth  = if (fullscreen) 2.dp  else 1.dp
+    val innerPad     = if (fullscreen) 14.dp else 6.dp
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(cornerRadius),
+        color = Color(0xFF050505),
+        border = BorderStroke(borderWidth, amber.copy(alpha = borderAlpha)),
+    ) {
+        androidView(Modifier.fillMaxWidth().padding(innerPad))
     }
 }
 
@@ -261,53 +294,72 @@ fun DreamBoard(
  *
  * Safe to call repeatedly — only wraps the first time.
  */
-private fun ensureScrollWrapped(rowsContainer: LinearLayout): ScrollView {
+private fun ensureScrollWrapped(rowsContainer: LinearLayout, fullscreen: Boolean): ScrollView {
     val existingParent = rowsContainer.parent
-    if (existingParent is ScrollView) return existingParent
+    val scroll: ScrollView = if (existingParent is ScrollView) {
+        existingParent
+    } else {
+        val parent = existingParent as ViewGroup
+        val idx = parent.indexOfChild(rowsContainer)
+        val originalParams = rowsContainer.layoutParams as LinearLayout.LayoutParams
+        parent.removeView(rowsContainer)
 
-    val parent = existingParent as ViewGroup
-    val idx = parent.indexOfChild(rowsContainer)
-    val originalParams = rowsContainer.layoutParams as LinearLayout.LayoutParams
-    parent.removeView(rowsContainer)
-
-    val scroll = ScrollView(rowsContainer.context).apply {
-        // 0dp + weight=1 is the idiomatic LinearLayout pattern for weighted
-        // height — the same pattern the widget XML's `rows_list` uses to
-        // claim the leftover vertical space inside the board card.
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            0,
-        ).apply {
-            weight = originalParams.weight.takeIf { it > 0f } ?: 1f
+        val s = ScrollView(rowsContainer.context).apply {
+            // 0dp + weight=1 is the idiomatic LinearLayout pattern for
+            // weighted height — same pattern the widget XML's `rows_list`
+            // uses to claim leftover vertical space inside the board card.
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+            ).apply {
+                weight = originalParams.weight.takeIf { it > 0f } ?: 1f
+            }
+            // Match the widget's rows_list scrollbar styling — thin (3dp),
+            // amber tapered thumb (drawable/scrollbar_thumb.xml), fades
+            // after 600ms idle then over 1500ms. Same affordance as the
+            // home-screen widget.
+            isVerticalScrollBarEnabled = true
+            scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
+            isScrollbarFadingEnabled = true
+            scrollBarFadeDuration = 1500
+            scrollBarDefaultDelayBeforeFade = 600
+            scrollBarSize = (3f * resources.displayMetrics.density).toInt()
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                verticalScrollbarThumbDrawable =
+                    androidx.core.content.ContextCompat.getDrawable(context, R.drawable.scrollbar_thumb)
+            }
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
         }
-        // Match the widget's rows_list scrollbar styling — thin (3dp), amber
-        // tapered gradient thumb (drawable/scrollbar_thumb.xml), fades after
-        // 600ms idle then over 1500ms. Same affordance the user sees on the
-        // home-screen widget.
-        isVerticalScrollBarEnabled = true
-        scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
-        isScrollbarFadingEnabled = true
-        scrollBarFadeDuration = 1500
-        scrollBarDefaultDelayBeforeFade = 600
-        scrollBarSize = (3f * resources.displayMetrics.density).toInt()
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-            verticalScrollbarThumbDrawable =
-                androidx.core.content.ContextCompat.getDrawable(context, R.drawable.scrollbar_thumb)
-        }
-        overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-        isFillViewport = false
+        parent.addView(s, idx)
+        s.addView(
+            rowsContainer,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        // Inside the scroll the LinearLayout must be wrap_content, not 0+weight.
+        (rowsContainer.layoutParams as ViewGroup.LayoutParams).height =
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        s
     }
-    parent.addView(scroll, idx)
-    scroll.addView(
-        rowsContainer,
-        ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ),
-    )
-    // Inside the scroll the LinearLayout must be wrap_content, not 0+weight.
-    (rowsContainer.layoutParams as ViewGroup.LayoutParams).height =
-        ViewGroup.LayoutParams.WRAP_CONTENT
+
+    // Apply orientation-dependent behaviour every time — on rotation or
+    // layout-change we re-enter this with the same ScrollView and need to
+    // refresh flags.
+    if (fullscreen) {
+        // Fullscreen-board: centre the rows in the ScrollView viewport so a
+        // short list doesn't pin to the top with a giant gap before the
+        // status row. `fillViewport=true` stretches the inner LinearLayout
+        // to viewport height; gravity inside the (vertical) LinearLayout
+        // then vertically centres its children. When rows overflow,
+        // gravity is ignored and the ScrollView scrolls naturally.
+        scroll.isFillViewport = true
+        rowsContainer.gravity = android.view.Gravity.CENTER_VERTICAL
+    } else {
+        scroll.isFillViewport = false
+        rowsContainer.gravity = android.view.Gravity.TOP
+    }
     return scroll
 }
 
