@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Production visual identity — declared explicitly for symmetry with staging. -->
-    <color name="tfl_amber">#FFC819</color>
-    <color name="ic_launcher_background">#FFFFFFFF</color>
-</resources>
