@@ -18,7 +18,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.stationly.mobile.ui.theme.TflAmber
 
 /**
  * Date + (optional) temperature. Sits below whichever clock the user picked.
@@ -50,10 +49,14 @@ internal fun DateAndWeatherStrip(dim: DreamDims) {
     val dateFontSize = (dim.titleSize.value * 0.72f).sp
     val tempFontSize = (dim.titleSize.value * 0.62f).sp
 
+    val themeColors = LocalDreamColors.current
+    val onCanvas    = themeColors.onCanvas
+    val brandAmber  = themeColors.brandAccent
+
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = dateFmt.format(now),
-            color = Color.White.copy(alpha = 0.85f),
+            color = onCanvas.copy(alpha = 0.85f),
             fontWeight = FontWeight.SemiBold,
             fontSize = dateFontSize,
             letterSpacing = 0.5.sp,
@@ -68,7 +71,7 @@ internal fun DateAndWeatherStrip(dim: DreamDims) {
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = "$t°",
-                    color = TflAmber,
+                    color = brandAmber,
                     fontWeight = FontWeight.Bold,
                     fontSize = tempFontSize,
                     letterSpacing = 0.5.sp,

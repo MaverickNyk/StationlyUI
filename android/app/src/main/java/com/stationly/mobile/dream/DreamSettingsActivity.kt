@@ -28,8 +28,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -37,7 +37,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.stationly.core.model.UserSelection
 import com.stationly.core.platform.Platform
-import com.stationly.mobile.R
 import com.stationly.mobile.ui.summary.components.TFL_LINE_COLORS
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -61,13 +60,11 @@ class DreamSettingsActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(
-                primary = colorResource(R.color.tfl_amber),
-                background = Color(0xFF0A0A0A),
-                surface = Color(0xFF141414),
-                onBackground = Color.White,
-                onSurface = Color.White,
-            )) {
+            // Wrap in StationlyThemeHost so this activity (launched by
+            // system Settings, not by MainActivity) picks up the user's
+            // AppTheme preference. Previously hardcoded a local
+            // darkColorScheme, which ignored the toggle.
+            com.stationly.mobile.ui.theme.StationlyThemeHost {
                 DreamSettingsScreen(onBack = { finish() })
             }
         }
@@ -78,9 +75,12 @@ class DreamSettingsActivity : ComponentActivity() {
 @Composable
 private fun DreamSettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    val amber = colorResource(R.color.tfl_amber)
+    // Brand accent — flows from the app theme so the picker tints flip
+    // with light/dark instead of staying TfL amber on a cream canvas.
+    val amber = MaterialTheme.colorScheme.primary
 
     var layout     by remember { mutableStateOf(DreamSettings.getLayout(context)) }
+    var theme      by remember { mutableStateOf(DreamSettings.getTheme(context)) }
     var clockStyle by remember { mutableStateOf(DreamSettings.getClockStyle(context)) }
     var stationId  by remember { mutableStateOf(DreamSettings.getStationId(context)) }
 
@@ -98,16 +98,17 @@ private fun DreamSettingsScreen(onBack: () -> Unit) {
                 title = { Text("Screensaver", fontWeight = FontWeight.Bold, fontSize = 18.sp) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.onBackground)
                     }
                 },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = Color(0xFF0A0A0A),
-                    titleContentColor = Color.White,
+                    containerColor    = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
                 )
             )
         },
-        containerColor = Color(0xFF0A0A0A),
+        containerColor = MaterialTheme.colorScheme.background,
     ) { inner ->
         Column(
             modifier = Modifier
@@ -134,6 +135,26 @@ private fun DreamSettingsScreen(onBack: () -> Unit) {
                         onClick = {
                             layout = l
                             scope.launch { DreamSettings.setLayout(context, l) }
+                        }
+                    )
+                }
+            }
+
+            // ── Theme — light / dark / system ────────────────────────────
+            SectionLabel("Theme")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                DreamTheme.entries.forEach { t ->
+                    ThemePill(
+                        theme = t,
+                        selected = t == theme,
+                        accent = amber,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            theme = t
+                            scope.launch { DreamSettings.setTheme(context, t) }
                         }
                     )
                 }
@@ -181,7 +202,10 @@ private fun DreamSettingsScreen(onBack: () -> Unit) {
                             title = sel.stationName,
                             subtitle = "${sel.line.replaceFirstChar { it.uppercase() }} · " +
                                 sel.direction.replaceFirstChar { it.uppercase() },
-                            lineColor = TFL_LINE_COLORS[sel.line.lowercase()] ?: amber,
+                            lineColor = com.stationly.mobile.ui.summary.components.lineColorForTheme(
+                                sel.line,
+                                MaterialTheme.colorScheme.background.luminance() < 0.5f,
+                            ).let { c -> if (c == com.stationly.mobile.ui.theme.TflAmber) amber else c },
                             selected = stationId == sel.station,
                             accent = amber,
                             onClick = {
@@ -225,14 +249,14 @@ private fun HeroBlurb(amber: Color) {
         }
         Text(
             text = "Pick how your screensaver looks",
-            color = Color.White,
+            color = MaterialTheme.colorScheme.onBackground,
             fontSize = 22.sp,
             fontWeight = FontWeight.ExtraBold,
             letterSpacing = (-0.4).sp,
         )
         Text(
             text = "Each layout uses the same live data — choose the one that fits where you'll see it.",
-            color = Color.White.copy(alpha = 0.55f),
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
             fontSize = 13.sp,
             lineHeight = 19.sp,
         )
@@ -243,7 +267,7 @@ private fun HeroBlurb(amber: Color) {
 private fun SectionLabel(text: String) {
     Text(
         text = text.uppercase(),
-        color = Color.White.copy(alpha = 0.55f),
+        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
         fontSize = 11.sp,
         fontWeight = FontWeight.Black,
         letterSpacing = 2.sp,
@@ -266,7 +290,7 @@ private fun LayoutPreviewTile(
     // Animate the border + ring colour on selection so the picker feels
     // responsive, not just toggled.
     val borderColor by animateColorAsState(
-        if (selected) accent else Color.White.copy(alpha = 0.06f),
+        if (selected) accent else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.06f),
         label = "tile_border",
     )
     val borderWidth by animateDpAsState(
@@ -277,7 +301,7 @@ private fun LayoutPreviewTile(
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(16.dp))
-            .background(if (selected) accent.copy(alpha = 0.06f) else Color(0xFF121212))
+            .background(if (selected) accent.copy(alpha = 0.06f) else MaterialTheme.colorScheme.surface)
             .border(borderWidth, borderColor, RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
             .padding(10.dp),
@@ -303,13 +327,13 @@ private fun LayoutPreviewTile(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = layout.displayName,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
                     text = layout.description,
-                    color = Color.White.copy(alpha = 0.55f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                     fontSize = 11.sp,
                     lineHeight = 14.sp,
                 )
@@ -411,6 +435,132 @@ private fun MiniBar(widthFraction: Float, alpha: Float, color: Color, heightDp: 
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
+ * THEME PILL — light / dark / system, with a mini swatch showing the
+ * canvas + onCanvas pair so the user sees what they'll get.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+@Composable
+private fun ThemePill(
+    theme: DreamTheme,
+    selected: Boolean,
+    accent: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val borderColor by animateColorAsState(
+        if (selected) accent else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.06f),
+        label = "theme_border",
+    )
+    val borderWidth by animateDpAsState(
+        if (selected) 2.dp else 1.dp,
+        label = "theme_border_width",
+    )
+
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) accent.copy(alpha = 0.06f) else MaterialTheme.colorScheme.surface)
+            .border(borderWidth, borderColor, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        ThemeSwatch(theme = theme)
+        Text(
+            text = theme.displayName,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.weight(1f),
+        )
+        // No trailing tick — the amber border + accent-tinted background
+        // already convey selection. The previous tick + swatch + label
+        // combined was too wide for "System" to fit on one line.
+    }
+}
+
+/**
+ * Mini swatch for a theme — shows canvas + a brand-amber arc so the user
+ * sees how the dream's signage colour reads against each theme's canvas.
+ * SYSTEM uses a diagonal split — the universal "follow system" symbol.
+ */
+@Composable
+private fun ThemeSwatch(theme: DreamTheme) {
+    Box(
+        modifier = Modifier
+            .size(28.dp)
+            .clip(CircleShape)
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.onBackground.copy(alpha = 0.18f),
+                CircleShape,
+            ),
+    ) {
+        when (theme) {
+            DreamTheme.LIGHT -> Canvas(modifier = Modifier.fillMaxSize()) {
+                val r = size.minDimension / 2f
+                drawCircle(LightDreamColors.canvas, radius = r)
+                // Brand-amber accent ring (deep amber in light theme).
+                drawCircle(
+                    color = LightDreamColors.brandAccent,
+                    radius = r * 0.55f,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()),
+                )
+            }
+            DreamTheme.DARK -> Canvas(modifier = Modifier.fillMaxSize()) {
+                val r = size.minDimension / 2f
+                drawCircle(DarkDreamColors.canvas, radius = r)
+                // Bright TfL amber ring on near-black.
+                drawCircle(
+                    color = DarkDreamColors.brandAccent,
+                    radius = r * 0.55f,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()),
+                )
+            }
+            DreamTheme.SYSTEM -> Canvas(modifier = Modifier.fillMaxSize()) {
+                // Diagonal split — top-left light, bottom-right dark.
+                // More universally readable than the vertical split.
+                val w = size.width
+                val h = size.height
+                drawRect(LightDreamColors.canvas)
+                drawPath(
+                    path = androidx.compose.ui.graphics.Path().apply {
+                        moveTo(w, 0f)
+                        lineTo(w, h)
+                        lineTo(0f, h)
+                        close()
+                    },
+                    color = DarkDreamColors.canvas,
+                )
+                // Two amber half-rings, one per side, hinting that both
+                // themes carry the same brand identity.
+                drawArc(
+                    color = LightDreamColors.brandAccent,
+                    startAngle = 135f,
+                    sweepAngle = 90f,
+                    useCenter = false,
+                    topLeft  = androidx.compose.ui.geometry.Offset(w * 0.225f, h * 0.225f),
+                    size     = androidx.compose.ui.geometry.Size(w * 0.55f, h * 0.55f),
+                    style    = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()),
+                )
+                drawArc(
+                    color = DarkDreamColors.brandAccent,
+                    startAngle = -45f,
+                    sweepAngle = 90f,
+                    useCenter = false,
+                    topLeft  = androidx.compose.ui.geometry.Offset(w * 0.225f, h * 0.225f),
+                    size     = androidx.compose.ui.geometry.Size(w * 0.55f, h * 0.55f),
+                    style    = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()),
+                )
+            }
+        }
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
  * CLOCK STYLE TILE — small visual card for digital vs analog
  * ───────────────────────────────────────────────────────────────────────── */
 
@@ -423,7 +573,7 @@ private fun ClockStyleTile(
     onClick: () -> Unit,
 ) {
     val borderColor by animateColorAsState(
-        if (selected) accent else Color.White.copy(alpha = 0.06f),
+        if (selected) accent else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.06f),
         label = "clock_tile_border",
     )
     val borderWidth by animateDpAsState(
@@ -434,7 +584,7 @@ private fun ClockStyleTile(
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) accent.copy(alpha = 0.06f) else Color(0xFF121212))
+            .background(if (selected) accent.copy(alpha = 0.06f) else MaterialTheme.colorScheme.surface)
             .border(borderWidth, borderColor, RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
             .padding(14.dp),
@@ -464,7 +614,7 @@ private fun ClockStyleTile(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = style.displayName,
-                color = Color.White,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -478,13 +628,14 @@ private fun ClockStyleTile(
 
 @Composable
 private fun MiniAnalogClock(accent: Color) {
-    val red = Color(0xFFE51E25)
+    val handFg = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.90f)
+    // Match the real AnalogClock — no dial fill, the picker tile shows
+    // through the open clock face.
     Canvas(modifier = Modifier.size(72.dp)) {
         val cx = size.width / 2f
         val cy = size.height / 2f
         val r = (size.minDimension / 2f) - 3.dp.toPx()
-        // Roundel ring
-        drawCircle(red, r, Offset(cx, cy), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+        drawCircle(accent, r, Offset(cx, cy), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
         // Hour hand
         val hourAngle = (-PI / 2 + PI / 6).toFloat()
         drawLine(
@@ -494,10 +645,10 @@ private fun MiniAnalogClock(accent: Color) {
             strokeWidth = 2.5.dp.toPx(),
             cap = StrokeCap.Round,
         )
-        // Minute hand
+        // Minute hand — themed onSurface so it reads on both light + dark.
         val minuteAngle = (-PI / 2 + PI * 1.4).toFloat()
         drawLine(
-            color = Color.White.copy(alpha = 0.9f),
+            color = handFg,
             start = Offset(cx, cy),
             end = Offset(cx + cos(minuteAngle) * r * 0.78f, cy + sin(minuteAngle) * r * 0.78f),
             strokeWidth = 2.dp.toPx(),
@@ -521,13 +672,14 @@ private fun StationCard(
     onClick: () -> Unit,
 ) {
     val borderColor by animateColorAsState(
-        if (selected) accent.copy(alpha = 0.45f) else Color.White.copy(alpha = 0.05f),
+        if (selected) accent.copy(alpha = 0.45f)
+        else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.05f),
         label = "station_border",
     )
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
-        color = if (selected) accent.copy(alpha = 0.06f) else Color(0xFF141414),
+        color = if (selected) accent.copy(alpha = 0.06f) else MaterialTheme.colorScheme.surface,
         border = BorderStroke(if (selected) 1.5.dp else 1.dp, borderColor),
     ) {
         Row(
@@ -542,19 +694,19 @@ private fun StationCard(
                     .size(10.dp)
                     .clip(CircleShape)
                     .background(lineColor)
-                    .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+                    .border(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.18f), CircleShape)
             )
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
                     text = subtitle,
-                    color = Color.White.copy(alpha = 0.55f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                     fontSize = 12.sp,
                 )
             }
@@ -572,8 +724,8 @@ private fun FooterHint(amber: Color) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        color = Color(0xFF141414),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.05f)),
     ) {
         Row(
             modifier = Modifier.padding(14.dp),
@@ -589,7 +741,7 @@ private fun FooterHint(amber: Color) {
             Text(
                 text = "Pick \"Stationly\" under Display → Screen saver to turn this on. " +
                     "It runs whenever your phone or tablet is charging or docked.",
-                color = Color.White.copy(alpha = 0.65f),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                 fontSize = 12.sp,
                 lineHeight = 17.sp,
             )
@@ -609,7 +761,7 @@ private fun SelectedTick(accent: Color, size: Dp = 22.dp) {
         Icon(
             Icons.Filled.Check,
             contentDescription = "Selected",
-            tint = Color.Black,
+            tint = MaterialTheme.colorScheme.onPrimary,
             modifier = Modifier.size(size - 8.dp),
         )
     }

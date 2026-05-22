@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark-mode overrides. System dark-mode users (or the SYSTEM theme
+         setting when the device is dark) see these values. Override pairs
+         must mirror values/colors.xml exactly. -->
+
+    <!-- Theme colors for activity-level theme attrs in themes.xml. -->
+    <color name="stationly_primary">#FFC819</color>           <!-- TfL amber — signage bright on near-black -->
+    <color name="stationly_primary_container">#1A1400</color>
+    <color name="stationly_secondary">#FFC819</color>
+    <color name="stationly_background">#0A0A0A</color>
+    <color name="stationly_surface">#161616</color>
+    <color name="stationly_error">#EF4444</color>
+
+    <!-- Splash screen background — near-black in dark mode. -->
+    <color name="splash_background">#0A0A0A</color>
+</resources>

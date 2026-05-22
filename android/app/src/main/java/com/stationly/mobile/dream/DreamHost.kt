@@ -1,11 +1,11 @@
 package com.stationly.mobile.dream
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
@@ -36,6 +36,7 @@ fun DreamHost(refreshTick: StateFlow<Long>) {
     val context = LocalContext.current
     val tick by refreshTick.collectAsState()
     val layout by remember { mutableStateOf(DreamSettings.getLayout(context)) }
+    val theme by remember { mutableStateOf(DreamSettings.getTheme(context)) }
     val clockStyle by remember { mutableStateOf(DreamSettings.getClockStyle(context)) }
     val preferredStation by remember { mutableStateOf(DreamSettings.getStationId(context)) }
 
@@ -45,17 +46,39 @@ fun DreamHost(refreshTick: StateFlow<Long>) {
         snapshot = withContext(Dispatchers.IO) { loadDreamSnapshot(preferredStation) }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF0A0A0A))
-            // Respect display cutouts (camera hole-punch) — the dream renders
-            // edge-to-edge so without this our content slides under the camera.
-            .windowInsetsPadding(WindowInsets.displayCutout)
-    ) {
-        when (layout) {
-            DreamLayout.FULLSCREEN_BOARD -> FullscreenBoardLayout(snapshot)
-            DreamLayout.CLOCK_AND_BOARD  -> ClockAndBoardHost(snapshot, clockStyle)
+    // Resolve the effective dark/light. The dream cascades:
+    //   DARK / LIGHT  → hard override (user explicitly picked for the dream)
+    //   SYSTEM        → follow the APP's theme choice (and if the app is
+    //                   also on SYSTEM, defer to the device's dark-mode
+    //                   setting). One setting at the top of the chain
+    //                   ("system") drives everything by default; users
+    //                   who want the dream to differ from the app can
+    //                   pick a specific theme for it.
+    val isDark = when (theme) {
+        DreamTheme.DARK   -> true
+        DreamTheme.LIGHT  -> false
+        DreamTheme.SYSTEM -> when (com.stationly.mobile.ui.theme.AppSettings.getTheme(context)) {
+            com.stationly.mobile.ui.theme.AppTheme.DARK   -> true
+            com.stationly.mobile.ui.theme.AppTheme.LIGHT  -> false
+            com.stationly.mobile.ui.theme.AppTheme.SYSTEM -> isSystemInDarkTheme()
+        }
+    }
+    val colors = if (isDark) DarkDreamColors else LightDreamColors
+
+    CompositionLocalProvider(LocalDreamColors provides colors) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(colors.canvas)
+                // Respect display cutouts (camera hole-punch) — the dream
+                // renders edge-to-edge so without this our content slides
+                // under the camera.
+                .windowInsetsPadding(WindowInsets.displayCutout)
+        ) {
+            when (layout) {
+                DreamLayout.FULLSCREEN_BOARD -> FullscreenBoardLayout(snapshot)
+                DreamLayout.CLOCK_AND_BOARD  -> ClockAndBoardHost(snapshot, clockStyle)
+            }
         }
     }
 }
@@ -124,7 +147,6 @@ internal data class DreamDims(
     val minSize: TextUnit,
     val analogClockDp: Dp,
     val digitalTimeSize: TextUnit,
-    val digitalLabelSize: TextUnit,
     val boardTextScale: Float,
 ) {
     companion object {
@@ -145,17 +167,21 @@ internal data class DreamDims(
             val digitalMaxSp = (shortEdgeDp * 0.12f + 50f).coerceIn(95f, 140f)
             val analogMaxDp  = (shortEdgeDp * 0.42f).coerceIn(180f, 320f)
             return DreamDims(
-                titleSize        = (22f * k).sp,
+                titleSize        = (20f * k).sp,
                 directionSize    = (12f * k).sp,
                 statusSize       = (12f * k).sp,
-                labelSize        = (11f * k).sp,
-                destSize         = (19f * k).sp,
-                platSize         = (15f * k).sp,
-                etaSize          = (28f * k).sp,
-                minSize          = (12f * k).sp,
+                // Next-departure card proportions — sized to be clearly
+                // subordinate to the station-name headline (titleSize 22sp)
+                // and to the dot-matrix board below. Previously the
+                // destination/ETA pulled focus from the title; these
+                // values keep the card legible without competing.
+                labelSize        = (9f * k).sp,
+                destSize         = (15f * k).sp,
+                platSize         = (11f * k).sp,
+                etaSize          = (22f * k).sp,
+                minSize          = (10f * k).sp,
                 analogClockDp    = analogMaxDp.dp,
                 digitalTimeSize  = digitalMaxSp.sp,
-                digitalLabelSize = (13f * k).sp,
                 // Widget rows: phone uses ~1.0×, tablet caps at ~1.2× so
                 // the text reads as "slightly bigger phone" rather than
                 // billboard.
@@ -242,7 +268,7 @@ private fun LandscapeLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim
                         showHeader = false,
                     )
                 } else {
-                    EmptyStatePanel(lineColor)
+                    EmptyStatePanel()
                 }
             }
         }
@@ -314,7 +340,7 @@ private fun PortraitLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim:
                         showHeader = false,
                     )
                 } else {
-                    EmptyStatePanel(lineColor)
+                    EmptyStatePanel()
                 }
             }
         }

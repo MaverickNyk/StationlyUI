@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark-mode theme overrides. Inherits Theme.Stationly from values/
+         and flips status/nav bar icon brightness for the near-black canvas.
+         windowLightStatusBar = true → icons are dark (correct on cream
+         in light mode); = false → icons are light (correct on near-black
+         in dark mode). -->
+    <style name="Theme.Stationly" parent="Theme.Material3.DayNight">
+        <item name="colorPrimary">@color/stationly_primary</item>
+        <item name="colorPrimaryContainer">@color/stationly_primary_container</item>
+        <item name="colorOnPrimary">@color/black</item>
+        <item name="colorSecondary">@color/stationly_secondary</item>
+        <item name="colorSurface">@color/stationly_surface</item>
+        <item name="colorSurfaceVariant">@color/stationly_surface</item>
+        <item name="android:colorBackground">@color/stationly_background</item>
+
+        <item name="android:statusBarColor">@color/stationly_background</item>
+        <item name="android:navigationBarColor">@color/stationly_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

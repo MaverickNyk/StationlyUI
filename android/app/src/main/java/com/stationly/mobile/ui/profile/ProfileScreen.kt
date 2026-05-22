@@ -4,8 +4,12 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.ui.res.painterResource
+import com.stationly.mobile.R
+import com.stationly.mobile.ui.theme.LocalThemeTokens
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -44,17 +48,23 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 /* ═══════════════════════════════════════════════════════════════
-   Palette
+   Palette — theme-aware. Each name is preserved so call sites stay
+   identical; the values now read from MaterialTheme.colorScheme so
+   the screen flips with the app theme. DangerRed stays semantic.
    ═══════════════════════════════════════════════════════════════ */
-private val Amber = Color(0xFFFFB81C)
-private val Surface0 = Color(0xFF0A0A0A)
-private val Surface1 = Color(0xFF141414)
-private val Surface2 = Color(0xFF1C1C1C)
-private val White90 = Color.White.copy(alpha = 0.90f)
-private val White55 = Color.White.copy(alpha = 0.55f)
-private val White25 = Color.White.copy(alpha = 0.25f)
-private val White08 = Color.White.copy(alpha = 0.08f)
-private val DangerRed = Color(0xFFFF4444)
+private val Amber    @Composable get() = MaterialTheme.colorScheme.primary
+private val Surface0 @Composable get() = MaterialTheme.colorScheme.background
+private val Surface1 @Composable get() = MaterialTheme.colorScheme.surface
+private val Surface2 @Composable get() = MaterialTheme.colorScheme.surfaceVariant
+private val White90  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.90f)
+private val White55  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
+private val White25  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.25f)
+private val White08  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f)
+// Danger stays a semantic constant — destructive actions read the same
+// in both themes so the user recognises the visual weight.
+// Semantic danger — sourced from the SDUI-driven theme token so a
+// backend palette tweak can soften / strengthen it without an app push.
+private val DangerRed @Composable get() = LocalThemeTokens.current.error
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -119,13 +129,28 @@ fun ProfileScreen(
         topBar = {
             CenterAlignedTopAppBar(
                 title = {
-                    Text(
-                        "Account",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = White90,
-                        letterSpacing = 0.3.sp
-                    )
+                    // Brand lockup — same logo + wordmark pattern as the
+                    // home top bar so the profile screen still feels like
+                    // part of Stationly, not a stock settings page.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.stationly_logo),
+                            contentDescription = "Stationly",
+                            modifier = Modifier.size(28.dp).clip(CircleShape)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "Stationly",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontFamily = com.stationly.mobile.ui.theme.DisplayFamily,
+                            fontWeight = FontWeight.Black,
+                            color = White90,
+                            letterSpacing = (-0.3).sp,
+                        )
+                    }
                 },
                 navigationIcon = {
                     IconButton(
@@ -197,6 +222,10 @@ fun ProfileScreen(
                     )
                 }
             }
+
+            // Theme picker moved to the top-bar `ThemeToggleButton` for
+            // one-tap access; the larger labelled picker that used to live
+            // here was redundant once that shortcut existed.
 
             // ── About Stationly Section (SDUI-driven) ──
             item {

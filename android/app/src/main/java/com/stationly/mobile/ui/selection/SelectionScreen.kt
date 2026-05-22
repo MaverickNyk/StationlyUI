@@ -55,14 +55,15 @@ import kotlinx.coroutines.delay
 /* ═══════════════════════════════════════════════════════════════
    Palette
    ═══════════════════════════════════════════════════════════════ */
-private val Amber     = Color(0xFFFFB81C)
-private val Surface0  = Color(0xFF0A0A0A)
-private val Surface1  = Color(0xFF141414)
-private val Surface2  = Color(0xFF1C1C1C)
-private val White90   = Color.White.copy(alpha = 0.90f)
-private val White55   = Color.White.copy(alpha = 0.55f)
-private val White25   = Color.White.copy(alpha = 0.25f)
-private val White08   = Color.White.copy(alpha = 0.08f)
+// Theme-aware palette — names preserved so call sites stay unchanged.
+private val Amber    @Composable get() = MaterialTheme.colorScheme.primary
+private val Surface0 @Composable get() = MaterialTheme.colorScheme.background
+private val Surface1 @Composable get() = MaterialTheme.colorScheme.surface
+private val Surface2 @Composable get() = MaterialTheme.colorScheme.surfaceVariant
+private val White90  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.90f)
+private val White55  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
+private val White25  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.25f)
+private val White08  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f)
 
 /* ═══════════════════════════════════════════════════════════════
    SDUI helpers
@@ -95,13 +96,12 @@ fun SelectionScreen(
     viewModel: SelectionViewModel = viewModel()
 ) {
     val st by viewModel.uiState.collectAsState()
-    val primary by remember(st.layout) {
-        derivedStateOf {
-            st.layout?.theme?.primaryColor?.let {
-                runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrDefault(Amber)
-            } ?: Amber
-        }
-    }
+    // App-wide themed primary — flips automatically with light/dark mode and
+    // any SDUI ThemeTokens override. Previously this screen parsed
+    // `st.layout?.theme?.primaryColor` from the per-layout SDUI theme, which
+    // hardcoded a bright TfL-amber that wrecked light-mode contrast (chips,
+    // CTA, border were all #FFB81C regardless of theme).
+    val primary = MaterialTheme.colorScheme.primary
 
     LaunchedEffect(st.showSuccessDialog) {
         if (st.showSuccessDialog) { onNavigateToSummary(); viewModel.dismissSuccessDialog() }
@@ -149,7 +149,12 @@ fun SelectionScreen(
 
     Box(
         Modifier.fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Surface0, Color.Black)))
+            // Subtle theme-aware fade: surface → background. Originally a
+            // hardcoded Surface0 → Black, which would be a near-black band
+            // in dark and ALSO a black band in light (jarring). Swapping
+            // both ends to theme colours keeps the gentle gradient feel
+            // in both modes.
+            .background(Brush.verticalGradient(listOf(Surface1, Surface0)))
             .imePadding()
     ) {
         Column(Modifier.fillMaxSize()) {
@@ -230,7 +235,10 @@ fun SelectionScreen(
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.95f), Color.Black)))
+                        // CTA backdrop fades from transparent up top into the
+                        // canvas background at the bottom so the floating CTA
+                        // doesn't sit on bare content.
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, Surface0.copy(0.95f), Surface0)))
                         .navigationBarsPadding()
                         .padding(horizontal = 20.dp)
                         .padding(top = 16.dp, bottom = 20.dp)
@@ -306,15 +314,25 @@ private fun ModeScreen(
         modes.isEmpty() -> Loader(primary)
         else -> Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.height(24.dp))
-            Text(layout?.sdText("screen_mode_title") ?: "Pick your\nchariot.",
+            // Title wraps naturally on narrow screens; the previous forced
+            // "Pick your\nchariot." line break looked off on tablets where
+            // there's plenty of horizontal room.
+            Text(layout?.sdText("screen_mode_title") ?: "Pick your chariot.",
                 color = White90, fontWeight = FontWeight.Bold, fontSize = 24.sp,
                 lineHeight = 30.sp, modifier = Modifier.padding(horizontal = 24.dp))
             Spacer(Modifier.height(6.dp))
             Text(layout?.sdText("screen_mode_subtitle") ?: "Bus, tube, or DLR — we're not judging.",
                 color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp))
             Spacer(Modifier.height(20.dp))
+            // Adaptive grid — auto-grows columns as the screen gets wider.
+            // Was hardcoded to Fixed(2), which produced phone-sized 2-up
+            // tiles even on a tablet (where the tiles ballooned to ~400dp
+            // tall with a tiny roundel floating in the middle). 170dp min
+            // gives 2 columns on a phone (~360dp wide) and 4-5 columns on
+            // a tablet (~800dp short edge).
             LazyVerticalGrid(
-                columns = GridCells.Fixed(2), modifier = Modifier.fillMaxSize(),
+                columns = GridCells.Adaptive(minSize = 170.dp),
+                modifier = Modifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp)
@@ -336,6 +354,10 @@ private fun ModeCard(mode: SduiDropdownOption, primary: Color, onClick: () -> Un
             Modifier.fillMaxSize().padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
         ) {
+            // White roundel container — always white because TfL line icons
+            // are designed to sit on a white field (transport branding
+            // convention). The fallback letter inside is forced to black
+            // for the same reason: black-on-white roundel typography.
             Box(contentAlignment = Alignment.Center) {
                 Box(Modifier.size(72.dp).background(primary.copy(0.08f), CircleShape))
                 Box(
@@ -346,7 +368,7 @@ private fun ModeCard(mode: SduiDropdownOption, primary: Color, onClick: () -> Un
                     if (!mode.iconUrl.isNullOrEmpty())
                         AsyncImage(mode.iconUrl, mode.label, Modifier.fillMaxSize())
                     else
-                        Text(mode.label.take(1), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Surface0)
+                        Text(mode.label.take(1), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.Black)
                 }
             }
             Spacer(Modifier.height(14.dp))
@@ -609,7 +631,11 @@ private fun OptRow(opt: SduiDropdownOption, sel: Boolean, primary: Color, modeIc
             }
 
             Column(Modifier.weight(1f)) {
-                Text(displayLabel, color = if (sel) primary else White90, fontWeight = FontWeight.Medium,
+                // Station name — always high-contrast onSurface. Selected
+                // state is indicated by the card's border + tick, not by
+                // recolouring the title (which made it disappear on light).
+                Text(displayLabel, color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Medium,
                     fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val hasDistance = opt.secondaryLabel != null
                 val hasTags = !opt.tags.isNullOrEmpty()
@@ -617,10 +643,18 @@ private fun OptRow(opt: SduiDropdownOption, sel: Boolean, primary: Color, modeIc
                     Spacer(Modifier.height(5.dp))
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         opt.secondaryLabel?.let { secondary ->
+                            // Distance/secondary label: muted onSurface so it
+                            // reads as supporting text in both themes. The
+                            // previous primary-tinted version disappeared on
+                            // light theme (amber on white = poor contrast).
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.NearMe, null, tint = primary.copy(0.6f), modifier = Modifier.size(11.dp))
+                                Icon(Icons.Rounded.NearMe, null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(11.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text(secondary, color = primary.copy(0.6f), fontSize = 12.sp)
+                                Text(secondary,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 12.sp)
                             }
                         }
                         opt.tags?.forEach { hex ->
@@ -629,7 +663,7 @@ private fun OptRow(opt: SduiDropdownOption, sel: Boolean, primary: Color, modeIc
                             }
                             if (dotColor != null) {
                                 Box(Modifier.size(8.dp).background(dotColor, CircleShape)
-                                    .border(0.5.dp, Color.White.copy(0.15f), CircleShape))
+                                    .border(0.5.dp, White25.copy(alpha = 0.6f), CircleShape))
                             }
                         }
                     }
@@ -639,7 +673,7 @@ private fun OptRow(opt: SduiDropdownOption, sel: Boolean, primary: Color, modeIc
             if (sel) {
                 Spacer(Modifier.width(8.dp))
                 Box(Modifier.size(22.dp).background(primary, CircleShape), Alignment.Center) {
-                    Icon(Icons.Rounded.Check, null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(14.dp))
                 }
             }
         }
@@ -704,19 +738,25 @@ private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, onCli
             )
             Column(Modifier.weight(1f).padding(start = 14.dp, end = 16.dp, top = 16.dp, bottom = 16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // INBOUND / OUTBOUND chip — uses primary as a SOLID chip
+                    // background with onPrimary text, so contrast holds in both
+                    // themes. The earlier faint-amber-on-faint-amber-tint
+                    // version disappeared on the warm light canvas.
                     Box(
                         Modifier
                             .background(
-                                if (sel) primary.copy(0.20f) else primary.copy(0.10f),
+                                if (sel) primary else primary.copy(0.85f),
                                 RoundedCornerShape(8.dp)
                             )
                             .padding(horizontal = 10.dp, vertical = 5.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Icon(dirIcon, null, tint = if (sel) primary else primary.copy(0.7f), modifier = Modifier.size(12.dp))
+                            Icon(dirIcon, null,
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(12.dp))
                             Text(
                                 dirName.uppercase(),
-                                color = if (sel) primary else primary.copy(0.7f),
+                                color = MaterialTheme.colorScheme.onPrimary,
                                 fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp
                             )
                         }
@@ -724,7 +764,7 @@ private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, onCli
                     Spacer(Modifier.weight(1f))
                     if (sel) {
                         Box(Modifier.size(24.dp).background(primary, CircleShape), Alignment.Center) {
-                            Icon(Icons.Rounded.Check, null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                            Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(14.dp))
                         }
                     }
                 }
@@ -733,9 +773,13 @@ private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, onCli
 
                 Text("towards", color = White25, fontSize = 11.sp, letterSpacing = 0.5.sp)
                 Spacer(Modifier.height(2.dp))
+                // Destination station — high-contrast onSurface so the name
+                // POPS as the headline of the card. Previously coloured with
+                // `primary` (golden amber) which was barely visible on the
+                // warm light canvas.
                 Text(
                     primaryDest,
-                    color = primary,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 21.sp,
                     maxLines = 1,
@@ -841,9 +885,9 @@ private fun Err(msg: String, primary: Color, onRetry: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             Button(onClick = onRetry, colors = ButtonDefaults.buttonColors(containerColor = primary),
                 shape = RoundedCornerShape(10.dp), modifier = Modifier.height(38.dp)) {
-                Icon(Icons.Rounded.Refresh, null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                Icon(Icons.Rounded.Refresh, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Retry", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text("Retry", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         }
     }
@@ -855,7 +899,11 @@ private fun Err(msg: String, primary: Color, onRetry: () -> Unit) {
 @Composable
 private fun ModernCtaButton(label: String, primary: Color, onClick: () -> Unit) {
     val shape    = RoundedCornerShape(20.dp)
-    val gradient = Brush.horizontalGradient(colors = listOf(primary, Color(0xFFFFD96A), primary))
+    // Solid primary background — the earlier 3-stop gradient had a bright
+    // lemon `#FFD96A` mid-stop. On light theme the white onPrimary text
+    // disappeared into the pale yellow band; on dark it shimmered but the
+    // contrast was inconsistent. Solid primary holds clean onPrimary
+    // contrast in both themes.
     var pressed by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (pressed) 0.97f else 1f, tween(100), label = "cta_scale")
 
@@ -863,7 +911,7 @@ private fun ModernCtaButton(label: String, primary: Color, onClick: () -> Unit) 
         modifier = Modifier
             .fillMaxWidth().height(60.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(shape).background(gradient)
+            .clip(shape).background(primary)
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
@@ -876,9 +924,9 @@ private fun ModernCtaButton(label: String, primary: Color, onClick: () -> Unit) 
         contentAlignment = Alignment.Center
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            Icon(Icons.Rounded.RocketLaunch, null, tint = Color.Black, modifier = Modifier.size(20.dp))
+            Icon(Icons.Rounded.RocketLaunch, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(10.dp))
-            Text(label, color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, letterSpacing = 0.3.sp)
+            Text(label, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, letterSpacing = 0.3.sp)
         }
     }
 }
@@ -893,7 +941,7 @@ private fun Saving(primary: Color, text: String) {
     Box(
         Modifier.fillMaxSize()
             .pointerInput(Unit) { awaitPointerEventScope { while (true) { awaitPointerEvent() } } }
-            .background(Color.Black.copy(0.97f)).padding(32.dp),
+            .background(MaterialTheme.colorScheme.scrim.copy(0.97f)).padding(32.dp),
         Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {

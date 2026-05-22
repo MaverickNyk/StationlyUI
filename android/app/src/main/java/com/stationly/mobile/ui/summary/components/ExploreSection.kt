@@ -48,7 +48,7 @@ fun StationExploreSection(
         Text(
             text = strings["explore.title"] ?: "Network",
             style = MaterialTheme.typography.titleMedium,
-            color = Color.White,
+            color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.Bold
         )
         Spacer(modifier = Modifier.height(12.dp))
@@ -64,14 +64,15 @@ fun StationExploreSection(
                         else "$disruptions $disruptionLabel${if (disruptions > 1) "s" else ""}",
                 subtitle = if (disruptions == 0) strings["explore.good_service_sub"] ?: "All lines running normally"
                            else strings["explore.disruptions_sub"] ?: "Delays on network",
-                accentColor = if (disruptions == 0) Color(0xFF4CAF50) else TflAmber,
+                accentColor = if (disruptions == 0) com.stationly.mobile.ui.theme.LocalThemeTokens.current.live
+                              else com.stationly.mobile.ui.theme.LocalThemeTokens.current.error,
                 modifier = Modifier.weight(1f)
             )
             ExploreCard(
                 icon = Icons.Outlined.Schedule,
                 title = travelPeriod,
                 subtitle = travelPeriodSub,
-                accentColor = Color.Gray,
+                accentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -88,9 +89,9 @@ private fun ExploreCard(
 ) {
     Surface(
         modifier = modifier,
-        color = Color(0xFF0F0F0F),
+        color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.06f))
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Icon(
@@ -102,14 +103,14 @@ private fun ExploreCard(
             Spacer(modifier = Modifier.height(10.dp))
             Text(
                 text = title,
-                color = Color.White,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.Bold,
                 style = MaterialTheme.typography.bodyMedium
             )
             Spacer(Modifier.height(2.dp))
             Text(
                 text = subtitle,
-                color = Color.Gray,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelSmall,
                 lineHeight = MaterialTheme.typography.labelSmall.lineHeight
             )

@@ -187,6 +187,36 @@ data class SduiAppTheme(
     val backgroundColor: String? = null
 )
 
+/**
+ * App-wide theme tokens returned by `GET /sdui/app/theme-tokens`. Each value
+ * is an optional hex string; missing keys fall back to the app's hardcoded
+ * defaults. The Android side caches the last successful response in
+ * SharedPrefs so the app boots with the latest known palette even offline.
+ *
+ * Three buckets:
+ *   - [light]     overrides applied when the app is in light theme
+ *   - [dark]      overrides applied when the app is in dark theme
+ *   - [constants] theme-independent tokens (logo red, the dot-matrix amber)
+ *
+ * Per-bucket keys (all optional, all hex `#RRGGBB`):
+ *   canvas, card, cardElevated, scrim,
+ *   textPrimary, textMuted, textSubtle,
+ *   borderSubtle, borderStrong,
+ *   primary, onPrimary, primaryContainer, onPrimaryContainer,
+ *   success, warning, error, info, due, live
+ *
+ * Constants bucket keys:
+ *   brandSignage, roundelRed
+ */
+@Serializable
+data class SduiThemeTokens(
+    val id: String = "app_theme_tokens",
+    val version: Int = 1,
+    val light: Map<String, String> = emptyMap(),
+    val dark: Map<String, String> = emptyMap(),
+    val constants: Map<String, String> = emptyMap(),
+)
+
 @Serializable
 data class SduiAppScreen(
     val id: String,

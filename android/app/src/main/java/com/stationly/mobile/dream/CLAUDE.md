@@ -34,9 +34,21 @@ dream/
 │                              fullscreen=true.
 ├── DreamData.kt               DreamSnapshot data class + loadDreamSnapshot()
 │                              (synchronous SQL read).
-├── DreamSettings.kt           SharedPrefs read/write for ClockStyle + station id.
-│                              Lives in its own prefs file (StationlyDreamPrefs)
-│                              so app-prefs clearAll() on logout doesn't reset it.
+├── DreamSettings.kt           Enums + SharedPrefs read/write for the user's
+│                              dream choices: DreamLayout (cluster vs fullscreen),
+│                              DreamTheme (light/dark/system), ClockStyle, and
+│                              an optional station-id override. Lives in its own
+│                              prefs file (StationlyDreamPrefs) so app-prefs
+│                              clearAll() on logout doesn't reset it.
+├── DreamTheme.kt              DreamColors data class (canvas + onCanvas +
+│                              brandAccent + danger + live) and the
+│                              LocalDreamColors CompositionLocal. DreamHost
+│                              resolves the user's DreamTheme to dark or light
+│                              colours and provides them to all composables
+│                              that draw on the canvas. The departure-board
+│                              card stays dot-matrix dark regardless.
+│                              DreamTheme enum order = SYSTEM, LIGHT, DARK
+│                              (System is the default + first picker tile).
 ├── DreamSettingsActivity.kt   Compose UI shown when the user taps the gear icon
 │                              next to "Stationly" in system screensaver
 │                              settings. Hero header + visual preview tiles for
@@ -128,6 +140,16 @@ walks the user through MainActivity instead of returning to Settings.
 **9. `ACTION_DREAM_REFRESH` registers with `RECEIVER_NOT_EXPORTED` on API 33+.**
 Don't drop the SDK_INT branch — older devices need the un-flagged
 registerReceiver.
+
+**10. Theme affects canvas, not the board.**
+`DreamTheme` (LIGHT / DARK / SYSTEM) only flips `DreamColors.canvas` and
+`onCanvas` — the colours of the dream's background plus text and faint
+shapes sitting on it. The departure-board card always renders in its
+dark dot-matrix style: it IS the signage, not the chrome. Likewise TfL
+amber and line colours stay constant in both themes — those are brand
+identity, not skin. New composables that draw text on the canvas should
+read `LocalDreamColors.current.onCanvas` instead of hardcoding
+`Color.White`.
 
 ## What is intentionally not here
 

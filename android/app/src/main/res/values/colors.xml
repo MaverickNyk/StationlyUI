@@ -8,16 +8,24 @@
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
     
-    <!-- Stationly Theme Colors -->
-    <color name="stationly_primary">#FF1976D2</color>
-    <color name="stationly_primary_container">#FFE3F2FD</color>
-    <color name="stationly_secondary">#FF03DAC5</color>
-    <color name="stationly_background">#FFFFFFFF</color>
-    <color name="stationly_surface">#FFF5F5F5</color>
-    <color name="stationly_error">#FFB00020</color>
+    <!-- Stationly Theme Colors — values used by themes.xml (the Compose
+         StationlyTheme defines its own brand-correct M3 colorScheme;
+         these are for the Activity-level theme attrs only). -->
+    <color name="stationly_primary">#8B5A0E</color>           <!-- Light-mode deep amber, matches Theme.kt LightColorScheme.primary -->
+    <color name="stationly_primary_container">#FAF1E0</color> <!-- Faint amber tint -->
+    <color name="stationly_secondary">#8B5A0E</color>
+    <color name="stationly_background">#FAF7F0</color>
+    <color name="stationly_surface">#FFFFFF</color>
+    <color name="stationly_error">#B42318</color>
     <color name="tfl_amber">#FFC819</color>
 
-    <!-- Flavor-overridable colors (staging/res overrides these) -->
+    <!-- Splash screen background (light variant — values-night/ defines
+         the dark variant). System dark-mode users see the dark splash;
+         users who manually override LIGHT/DARK in-app get whichever the
+         system was at app launch for those ~200ms then the activity's
+         StationlyThemeHost takes over. -->
+    <color name="splash_background">#FAF7F0</color>
+
+    <!-- Flavor-overridable launcher background (staging/res overrides). -->
     <color name="ic_launcher_background">#FFFFFFFF</color>
-    <color name="splash_background">#0F0F0F</color>
 </resources>
