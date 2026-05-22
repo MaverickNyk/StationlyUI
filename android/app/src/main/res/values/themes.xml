@@ -1,26 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Base application theme -->
+    <!-- Base application theme. Parent is Material3.DayNight so the
+         colour resources flip via the values-night/ overrides. The
+         Compose-level StationlyTheme defines a more granular M3 colour
+         scheme (Theme.kt); these activity-level attrs only need to be
+         right enough for system surfaces (splash, system bars, IME). -->
     <style name="Theme.Stationly" parent="Theme.Material3.DayNight">
-        <!-- Primary brand color -->
         <item name="colorPrimary">@color/stationly_primary</item>
         <item name="colorPrimaryContainer">@color/stationly_primary_container</item>
         <item name="colorOnPrimary">@color/white</item>
-        
-        <!-- Secondary brand color -->
         <item name="colorSecondary">@color/stationly_secondary</item>
-        
-        <!-- Status bar color -->
-        <item name="android:statusBarColor">#1E1E1E</item>
-        
-        <!-- Navigation bar color -->
-        <item name="android:navigationBarColor">#000000</item>
-        
-        <!-- App bar color -->
+        <item name="colorSurface">@color/stationly_surface</item>
         <item name="colorSurfaceVariant">@color/stationly_surface</item>
+        <item name="android:colorBackground">@color/stationly_background</item>
+
+        <!-- System bars match the canvas background so the app reads
+             edge-to-edge consistent. Both flip via values-night/. -->
+        <item name="android:statusBarColor">@color/stationly_background</item>
+        <item name="android:navigationBarColor">@color/stationly_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 
-    <!-- Splash screen — dark field with the red Stationly roundel centered. -->
+    <!-- Splash screen — Stationly roundel on a theme-aware background.
+         Light splash (cream) by default; values-night/colors.xml flips
+         the background to near-black for dark-mode devices. -->
     <style name="Theme.Stationly.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/splash_background</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>

@@ -16,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -30,11 +31,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val Amber    = Color(0xFFFFC819)
-private val AmberDark = Color(0xFF1A1400)
-private val BgColor  = Color(0xFF121212)
-private val White80  = Color.White.copy(alpha = 0.80f)
-private val White50  = Color.White.copy(alpha = 0.50f)
+// Theme-aware palette — names preserved so call sites stay unchanged.
+// AmberDark was a dark amber chip background in the original dark theme;
+// using primary.copy(alpha = 0.08f) gives the same "amber-tinted chip"
+// effect in both themes (faint primary tint over surface).
+private val Amber     @Composable get() = MaterialTheme.colorScheme.primary
+private val AmberDark @Composable get() = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+private val BgColor   @Composable get() = MaterialTheme.colorScheme.background
+private val White80   @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.80f)
+private val White50   @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.50f)
 
 private const val PREF_LAST_VERIFY_SENT_AT = "last_verify_send_at"
 private const val RESEND_COOLDOWN_SEC = 60
@@ -120,6 +125,28 @@ fun VerifyEmailScreen(
                 .padding(horizontal = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Subtle brand wink at the top — reminds the user which app
+            // sent the verification email when they switch back from Gmail.
+            Spacer(Modifier.height(12.dp))
+            androidx.compose.foundation.layout.Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.stationly.mobile.R.drawable.stationly_logo),
+                    contentDescription = "Stationly",
+                    modifier = Modifier.size(20.dp).clip(androidx.compose.foundation.shape.CircleShape),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "STATIONLY",
+                    color = Amber,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 2.5.sp,
+                )
+            }
+
             Spacer(Modifier.weight(0.4f))
 
             AnimatedMailIcon()
@@ -127,7 +154,7 @@ fun VerifyEmailScreen(
             Spacer(Modifier.height(24.dp))
             Text(
                 str("auth.verify.title", "Check your inbox"),
-                color = Color.White,
+                color = MaterialTheme.colorScheme.onBackground,
                 fontSize = 26.sp,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
@@ -157,7 +184,7 @@ fun VerifyEmailScreen(
                 Spacer(Modifier.height(12.dp))
                 Text(
                     err,
-                    color = Color(0xFFF06292), fontSize = 13.sp, textAlign = TextAlign.Center
+                    color = MaterialTheme.colorScheme.error, fontSize = 13.sp, textAlign = TextAlign.Center
                 )
             }
 

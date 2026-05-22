@@ -22,7 +22,7 @@ import com.stationly.mobile.ui.common.StagingBanner
 import com.stationly.mobile.ui.common.rememberFirebaseAuthState
 import com.stationly.mobile.ui.selection.SelectionScreen
 import com.stationly.mobile.ui.summary.SummaryScreen
-import com.stationly.mobile.ui.theme.StationlyTheme
+import com.stationly.mobile.ui.theme.StationlyThemeHost
 
 /**
  * MainActivity - Android Entry Point
@@ -50,7 +50,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         handleDeepLink(intent)
         setContent {
-            StationlyTheme {
+            StationlyThemeHost {
                 Box(Modifier.fillMaxSize()) {
                     AppNavigation(
                         passwordResetComplete = passwordResetComplete,

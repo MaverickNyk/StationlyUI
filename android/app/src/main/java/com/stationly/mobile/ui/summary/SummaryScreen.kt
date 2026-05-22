@@ -30,6 +30,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -80,39 +81,40 @@ fun SummaryScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 0.8f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulse_alpha"
-    )
-
     Scaffold(
-        containerColor = Color.Black,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             SummaryTopBar(
                 onNavigateToProfile = onNavigateToProfile,
                 onNavigateToSelection = onNavigateToSelection,
                 selectionsEmpty = selections.isEmpty(),
-                pulseAlpha = pulseAlpha,
-                liveLabel = homeConfig["topbar.live_label"] ?: "Live Network"
             )
         }
     ) { padding ->
+        // Flat canvas — earlier surface→background gradient created a
+        // visible band right under the TopAppBar (TopAppBar uses
+        // `background`, gradient top is `surface` which is a slightly
+        // different shade). Flat `background` blends both seamlessly.
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(Color(0xFF0A0A0A), Color.Black)
-                    )
-                )
+                .background(MaterialTheme.colorScheme.background)
                 .padding(padding)
         ) {
+            // Tiny theme toggle pinned to the screen's bottom-right,
+            // right above the system gesture-nav handle. Compact mode
+            // makes it small + low-alpha so it's discoverable without
+            // ever competing with the actual content above.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(end = 6.dp, bottom = 2.dp)
+                    .zIndex(2f),
+            ) {
+                com.stationly.mobile.ui.common.ThemeToggleButton(compact = true)
+            }
+
             AnimatedContent(
                 targetState = selections,
                 transitionSpec = {
@@ -130,18 +132,13 @@ fun SummaryScreen(
                     ) {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
                             verticalArrangement = Arrangement.spacedBy(20.dp)
                         ) {
-                            item {
-                                SummaryHeader(
-                                    count = currentSelections.size,
-                                    lastUpdated = uiState.lastUpdated,
-                                    userName = userName,
-                                    strings = homeConfig
-                                )
-                            }
-
+                            // SummaryHeader (greeting, clock, "Live · N board
+                            // active") intentionally removed — the brand
+                            // lockup in the top bar already establishes
+                            // context; the boards are what the user came for.
                             announcement?.let { banner ->
                                 item(key = "announcement_${banner.id}") {
                                     AnnouncementBanner(
@@ -231,11 +228,13 @@ private fun SummaryTopBar(
     onNavigateToProfile: () -> Unit,
     onNavigateToSelection: () -> Unit,
     selectionsEmpty: Boolean,
-    pulseAlpha: Float,
-    liveLabel: String = "Live Network"
 ) {
     CenterAlignedTopAppBar(
         title = {
+            // Single-line brand lockup: logo + wordmark, vertically
+            // centred. Previously a two-line "Stationly / Live Network"
+            // stack made the logo float between them; that was dropped
+            // when we removed the SummaryHeader greeting block.
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
@@ -245,31 +244,15 @@ private fun SummaryTopBar(
                     contentDescription = "Logo",
                     modifier = Modifier.size(32.dp).clip(CircleShape)
                 )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "Stationly", 
-                        color = Color.White, 
-                        fontWeight = FontWeight.Black, 
-                        fontSize = 20.sp,
-                        letterSpacing = (-0.5).sp
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .background(Color(0xFF4CAF50).copy(alpha = pulseAlpha), CircleShape)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = liveLabel,
-                            color = Color.Gray,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.5.sp
-                        )
-                    }
-                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "Stationly",
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontFamily = com.stationly.mobile.ui.theme.DisplayFamily,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 22.sp,
+                    letterSpacing = (-0.5).sp
+                )
             }
         },
         navigationIcon = {
@@ -287,12 +270,12 @@ private fun SummaryTopBar(
                         modifier = Modifier
                             .size(34.dp)
                             .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.05f), CircleShape)
+                            .background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.05f), CircleShape)
                     )
                 } else {
                     Surface(
                         shape = CircleShape,
-                        color = Color.White.copy(alpha = 0.05f),
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.05f),
                         modifier = Modifier.size(34.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -300,7 +283,7 @@ private fun SummaryTopBar(
                                 ?: firebaseUser?.email ?: "U").take(1).uppercase()
                             Text(
                                 initial,
-                                color = TflAmber,
+                                color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
                             )
@@ -310,28 +293,31 @@ private fun SummaryTopBar(
             }
         },
         actions = {
+            // Theme toggle moved to a floating mini-button at the screen's
+            // bottom-right so it no longer competes with the edit/add
+            // pencil for the same corner.
             IconButton(
                 onClick = onNavigateToSelection,
                 modifier = Modifier.padding(end = 8.dp)
             ) {
                 Surface(
                     shape = CircleShape,
-                    color = TflAmber.copy(alpha = 0.1f),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
                     modifier = Modifier.size(40.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             if (selectionsEmpty) Icons.Default.Add else Icons.Default.Edit,
                             contentDescription = "Action",
-                            tint = TflAmber
+                            tint = MaterialTheme.colorScheme.primary,
                         )
                     }
                 }
             }
         },
         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-            containerColor = Color.Black,
-            titleContentColor = Color.White
+            containerColor    = MaterialTheme.colorScheme.background,
+            titleContentColor = MaterialTheme.colorScheme.onBackground,
         )
     )
 }
@@ -348,12 +334,12 @@ private fun WidgetPromoCard(
 
     Surface(
         shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-        color = Color(0xFF111111),
+        color = MaterialTheme.colorScheme.surface,
         modifier = modifier
             .fillMaxWidth()
             .border(
                 width = 1.dp,
-                color = TflAmber.copy(alpha = 0.25f),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
             )
     ) {
@@ -365,14 +351,14 @@ private fun WidgetPromoCard(
             // Widget icon
             Surface(
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
-                color = TflAmber.copy(alpha = 0.12f),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
                 modifier = Modifier.size(44.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.Default.Add,
                         contentDescription = null,
-                        tint = TflAmber,
+                        tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp)
                     )
                 }
@@ -381,13 +367,13 @@ private fun WidgetPromoCard(
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     text = "Add to Home Screen",
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )
                 Text(
                     text = "Live departures one glance away",
-                    color = Color.Gray,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp
                 )
             }
@@ -409,7 +395,7 @@ private fun WidgetPromoCard(
                         manager.requestPinAppWidget(provider, null, goHome)
                         onAdd()
                     },
-                    colors = ButtonDefaults.textButtonColors(contentColor = TflAmber)
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)
                 ) {
                     Text("Add", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
@@ -419,7 +405,7 @@ private fun WidgetPromoCard(
                 Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = "Dismiss",
-                    tint = Color.Gray,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(16.dp)
                 )
             }
@@ -440,7 +426,7 @@ private fun UpdateNudgeDialog(
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         androidx.compose.material3.Surface(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
-            color = Color(0xFF1A1A1A),
+            color = MaterialTheme.colorScheme.surfaceVariant,
             tonalElevation = 0.dp
         ) {
             Column(
@@ -455,14 +441,14 @@ private fun UpdateNudgeDialog(
                 )
                 Text(
                     title,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
                 Text(
                     message,
-                    color = Color.White.copy(alpha = 0.55f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                     fontSize = 14.sp,
                     lineHeight = 20.sp,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -470,14 +456,21 @@ private fun UpdateNudgeDialog(
                 Spacer(androidx.compose.ui.Modifier.height(4.dp))
                 Button(
                     onClick = { uriHandler.openUri(storeUrl); onDismiss() },
-                    colors = ButtonDefaults.buttonColors(containerColor = TflAmber, contentColor = Color.Black),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor   = MaterialTheme.colorScheme.onPrimary,
+                    ),
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
                     modifier = androidx.compose.ui.Modifier.fillMaxWidth().height(50.dp)
                 ) {
                     Text(cta, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 }
                 TextButton(onClick = onDismiss, modifier = androidx.compose.ui.Modifier.fillMaxWidth()) {
-                    Text(dismiss, color = Color.White.copy(alpha = 0.40f), fontSize = 14.sp)
+                    Text(
+                        dismiss,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.40f),
+                        fontSize = 14.sp,
+                    )
                 }
             }
         }

@@ -74,13 +74,13 @@ fun FullscreenBoardLayout(snapshot: DreamSnapshot) {
         // amount of breathing room.
         val textScale = if (isLandscape) baseScale else baseScale * 0.90f
 
-        // Card dimensional caps. Landscape gets a generous 75% of the long
+        // Card dimensional caps. Landscape gets a generous ~88% of the long
         // edge so a tablet spreads horizontally enough for the text to
-        // breathe (the user's direct ask: "the length of the dream can be a
-        // bit bigger horizontally"). Portrait the card is naturally narrow
-        // already so we just keep it near-full short edge.
+        // breathe — the previous 0.75 left big canvas margins around the
+        // board. Portrait the card is naturally narrow already so we just
+        // keep it near-full short edge.
         val cardMaxWidth = if (isLandscape) {
-            (longEdgeDp * 0.75f).dp.coerceAtMost(1300.dp)
+            (longEdgeDp * 0.88f).dp.coerceAtMost(1400.dp)
         } else {
             (shortEdgeDp * 0.94f).dp.coerceAtMost(680.dp)
         }

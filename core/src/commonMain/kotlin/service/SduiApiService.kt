@@ -20,6 +20,12 @@ interface SduiApiService {
     suspend fun getAboutLayout(): SduiAppScreen
     suspend fun getHomeAnnouncement(): SduiAppScreen
     suspend fun getHomeConfig(): SduiStrings
+    /**
+     * App-wide theme tokens. Each call returns the canonical palette; the
+     * Android side caches the response in SharedPrefs so cold launches
+     * never block on this network call. See [SduiThemeTokens] docstring.
+     */
+    suspend fun getThemeTokens(): SduiThemeTokens
     suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption>
     suspend fun getNearbyStations(lat: Double, lon: Double, mode: String? = null): List<SduiDropdownOption>
 
@@ -80,6 +86,10 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
 
     override suspend fun getHomeConfig(): SduiStrings {
         return client.get("$baseUrl/sdui/app/home-config").body()
+    }
+
+    override suspend fun getThemeTokens(): SduiThemeTokens {
+        return client.get("$baseUrl/sdui/app/theme-tokens").body()
     }
 
     override suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption> {

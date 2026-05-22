@@ -29,6 +29,31 @@ enum class ClockStyle(val storedAs: String, val displayName: String) {
  *                      the bottom and the station header + Stationly logo at
  *                      the top.
  */
+/**
+ * User's theme preference for the dream's canvas + text-on-canvas. The
+ * departure board card always renders in its dot-matrix dark style (it's
+ * a signage panel, not a chrome surface) — this only affects what sits
+ * around it: outer canvas colour, date strip, hero text, empty state.
+ *
+ *   SYSTEM — follow the device's / app's current dark-mode setting (default)
+ *   LIGHT  — force light canvas / dark text on canvas
+ *   DARK   — force dark canvas / light text on canvas
+ *
+ * Order in this enum drives the order of the picker tiles — SYSTEM
+ * comes first because it's the recommended default and what most
+ * docked users want (dream just inherits the device's day/night).
+ */
+enum class DreamTheme(val storedAs: String, val displayName: String) {
+    SYSTEM ("system", "System"),
+    LIGHT  ("light",  "Light"),
+    DARK   ("dark",   "Dark");
+
+    companion object {
+        fun fromStored(value: String?): DreamTheme =
+            entries.firstOrNull { it.storedAs == value } ?: SYSTEM
+    }
+}
+
 enum class DreamLayout(val storedAs: String, val displayName: String, val description: String) {
     CLOCK_AND_BOARD(
         storedAs    = "clock_and_board",
@@ -56,6 +81,7 @@ enum class DreamLayout(val storedAs: String, val displayName: String, val descri
 object DreamSettings {
     private const val FILE = "StationlyDreamPrefs"
     private const val KEY_LAYOUT      = "layout"
+    private const val KEY_THEME       = "theme"
     private const val KEY_CLOCK_STYLE = "clock_style"
     private const val KEY_STATION_ID  = "station_id"  // optional override
 
@@ -67,6 +93,13 @@ object DreamSettings {
 
     fun setLayout(context: Context, layout: DreamLayout) {
         prefs(context).edit().putString(KEY_LAYOUT, layout.storedAs).apply()
+    }
+
+    fun getTheme(context: Context): DreamTheme =
+        DreamTheme.fromStored(prefs(context).getString(KEY_THEME, null))
+
+    fun setTheme(context: Context, theme: DreamTheme) {
+        prefs(context).edit().putString(KEY_THEME, theme.storedAs).apply()
     }
 
     fun getClockStyle(context: Context): ClockStyle =

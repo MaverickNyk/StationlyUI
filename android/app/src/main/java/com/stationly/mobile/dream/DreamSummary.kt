@@ -14,11 +14,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -49,6 +55,9 @@ internal fun StationHeader(
     val titleSize     = dim.titleSize
     val directionSize = dim.directionSize
     val statusSize    = dim.statusSize
+    val themeColors   = LocalDreamColors.current
+    val onCanvas      = themeColors.onCanvas
+    val brandAmber    = themeColors.brandAccent
 
     Column(modifier = Modifier.fillMaxWidth()) {
         // Line pill (left) + live status (right)
@@ -69,8 +78,12 @@ internal fun StationHeader(
                     )
                     Spacer(Modifier.width(7.dp))
                     Text(
-                        text = "${prettyLineName(selection.line)} · ${modeLabel(selection.mode)}",
-                        color = lineColor,
+                        // Format matches the home screen's line pill exactly
+                        // ("Piccadilly Line", "39 Line", etc.) so the same
+                        // station looks the same on the home card and on
+                        // the dream — no surprise re-formatting.
+                        text = "${prettyLineName(selection.line)} Line",
+                        color = onCanvas,
                         fontSize = directionSize,
                         fontWeight = FontWeight.Black,
                         letterSpacing = 1.2.sp,
@@ -96,14 +109,20 @@ internal fun StationHeader(
                         .size(7.dp)
                         .clip(CircleShape)
                         .background(
-                            (if (isDisrupted) lineColor else Color(0xFF4ADE80))
+                            (if (isDisrupted) lineColor else themeColors.live)
                                 .copy(alpha = pulse)
                         )
                 )
                 Spacer(Modifier.width(6.dp))
+                // Disrupted text picks the most legible "alert" tone for the
+                // current canvas — themeColors.danger flips per dream theme
+                // (deep red on cream / bright red on near-black). Cleaner
+                // than hardcoded reds; tracks the theme tokens centrally.
+                val disruptedColor =
+                    if (themeColors === LightDreamColors) themeColors.danger else lineColor
                 Text(
                     text = statusLine.substringAfter("· ").ifBlank { statusLine },
-                    color = if (isDisrupted) lineColor else Color.White.copy(alpha = 0.70f),
+                    color = if (isDisrupted) disruptedColor else onCanvas.copy(alpha = 0.70f),
                     fontSize = statusSize,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = 0.4.sp,
@@ -115,11 +134,13 @@ internal fun StationHeader(
 
         Spacer(Modifier.height(10.dp))
 
-        // Station name — the headline, painted in TfL amber to match the
-        // dot-matrix departure board text. Brand consistency with the widget.
+        // Station name — the headline, painted in the theme's brand
+        // amber. Dark theme uses the bright TfL amber that matches the
+        // dot-matrix board; light theme uses a deep amber that stays
+        // legible on warm off-white.
         Text(
             text = selection.stationName,
-            color = TflAmber,
+            color = brandAmber,
             fontWeight = FontWeight.ExtraBold,
             fontSize = titleSize,
             letterSpacing = (-0.4).sp,
@@ -127,38 +148,23 @@ internal fun StationHeader(
             overflow = TextOverflow.Ellipsis,
         )
 
-        if (selection.direction.isNotBlank()) {
-            Spacer(Modifier.height(6.dp))
-            // Direction in a line-coloured pill — distinct from the platform
-            // pill below (which is white). Together they create a clear
-            // visual rhythm: "station/direction" group (line colour) vs
-            // "next train/platform" group (white).
-            Surface(
-                color = lineColor.copy(alpha = 0.10f),
-                shape = RoundedCornerShape(6.dp),
-                border = BorderStroke(1.dp, lineColor.copy(alpha = 0.45f)),
-            ) {
-                Text(
-                    text = "→ ${selection.direction.replaceFirstChar { it.uppercase() }}",
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    color = lineColor,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = directionSize,
-                    letterSpacing = 0.5.sp,
-                )
-            }
-        }
+        // Direction (Inbound/Outbound) intentionally omitted from the dream
+        // header. The next-train card below already shows "→ Destination",
+        // which is the more meaningful cue for an at-a-glance screensaver —
+        // direction is redundant and was visual clutter the user flagged.
     }
 }
 
 /**
- * Two-line next-train block.
+ * Next-train card. Visually mirrors the home screen's NextDepartureRow:
+ * a line-tinted surface card with a pulsing live dot, "NEXT DEPARTURE"
+ * label, → destination + ETA on one line, a small platform subtitle pill,
+ * and an ETA depletion bar at the bottom that empties as the train
+ * approaches.
  *
- *   Line 1:  ● NEXT TRAIN → Destination               7 min
- *   Line 2:  Platform 1
- *
- * Designed to read like an indicator strip — quick scan from left (what
- * matters first) to right (when it's coming).
+ * Typography scales with [DreamDims] so it adapts from phone landscape
+ * (small slot) up to tablet portrait (chunky), keeping the same visual
+ * rhythm as the home card the user sees on their phone.
  */
 @Composable
 internal fun NextTrainHero(
@@ -166,96 +172,183 @@ internal fun NextTrainHero(
     lineColor: Color,
     dim: DreamDims,
 ) {
-    val labelSize = dim.labelSize
-    val destSize  = dim.destSize
-    val platSize  = dim.platSize
-    val etaSize   = dim.etaSize
-    val minSize   = dim.minSize
+    val labelSize  = dim.labelSize
+    val destSize   = dim.destSize
+    val platSize   = dim.platSize
+    val etaSize    = dim.etaSize
+    val minSize    = dim.minSize
+    val themeColors = LocalDreamColors.current
+    val onCanvas    = themeColors.onCanvas
+    val onCanvasMute = onCanvas.copy(alpha = 0.55f)
+    val isLightCanvas = themeColors === LightDreamColors
 
-    Column(modifier = Modifier.fillMaxWidth()) {
-        // Line 1 — label + destination + ETA on one line.
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
+    // Per-minute countdown so the ETA tile feels live, not stale. Mirrors
+    // home's Board.NextDepartureRow logic: tick once a minute, mark "Due"
+    // at 0, then mark as departed after 90s if no fresh prediction lands.
+    val initialMinutes = remember(prediction) {
+        when {
+            prediction.isDue -> 0
+            prediction.eta.trim().lowercase() == "due" -> 0
+            else -> prediction.eta.replace(" min", "").trim().toIntOrNull() ?: 0
+        }
+    }
+    var countdown by remember(prediction) { mutableIntStateOf(initialMinutes) }
+    var isDeparted by remember(prediction) { mutableStateOf(false) }
+    LaunchedEffect(prediction) {
+        while (countdown > 0) {
+            kotlinx.coroutines.delay(60_000L)
+            countdown = (countdown - 1).coerceAtLeast(0)
+        }
+        kotlinx.coroutines.delay(90_000L)
+        isDeparted = true
+    }
+    val isDue = countdown == 0 && !isDeparted
+
+    // ETA tile colour — semantic in dark theme (line colour as signage cue),
+    // brand amber in light (where line yellows/greys would vanish). Due
+    // always wins with a danger red, departed dims out.
+    val dueRed       = themeColors.danger
+    val brandHi      = themeColors.brandAccent
+    val etaBase      = if (isLightCanvas) brandHi else lineColor
+    val etaColor = when {
+        isDeparted   -> onCanvas.copy(alpha = 0.40f)
+        isDue        -> dueRed
+        countdown == 1 -> brandHi
+        else         -> etaBase
+    }
+
+    // Pulse for the live dot + a calmer pulse for the "Due" ETA. Both
+    // intentionally slow (1.4s cycle) with a narrow alpha range so the
+    // card breathes without flickering at the user from across the room.
+    val infiniteTransition = rememberInfiniteTransition(label = "dream_next_train")
+    val livePulse by infiniteTransition.animateFloat(
+        initialValue = 0.55f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            tween(1400, easing = EaseInOut), RepeatMode.Reverse,
+        ),
+        label = "live_dot_alpha",
+    )
+    val duePulse by infiniteTransition.animateFloat(
+        initialValue = 1f, targetValue = 0.65f,
+        animationSpec = infiniteRepeatable(
+            tween(1400, easing = EaseInOut), RepeatMode.Reverse,
+        ),
+        label = "due_alpha",
+    )
+
+    // Depletion bar progress — full at 10+ min, empty at 0.
+    val etaProgress = (countdown / 10f).coerceIn(0f, 1f)
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer { alpha = if (isDeparted) 0.45f else 1f },
+        color = onCanvas.copy(alpha = 0.04f),  // subtle "card" tint on canvas
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, lineColor.copy(alpha = 0.30f)),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(lineColor.copy(alpha = 0.06f))
+        ) {
+            Row(
                 modifier = Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(lineColor)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "NEXT TRAIN",
-                color = Color.White.copy(alpha = 0.55f),
-                fontSize = labelSize,
-                fontWeight = FontWeight.Black,
-                letterSpacing = 2.sp,
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(
-                text = "→",
-                color = Color.White.copy(alpha = 0.65f),
-                fontSize = destSize,
-                fontWeight = FontWeight.Medium,
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = prediction.destination,
-                color = Color.White,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = destSize,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                letterSpacing = (-0.3).sp,
-                modifier = Modifier.weight(1f),
-            )
-            // ETA — right-aligned, line-coloured.
-            Row(verticalAlignment = Alignment.Bottom) {
-                val etaText = if (prediction.isDue) "Due" else
-                    prediction.eta.replace(" min", "").trim()
-                Text(
-                    text = etaText,
-                    color = lineColor,
-                    fontWeight = FontWeight.Black,
-                    fontSize = etaSize,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = (-1).sp,
-                )
-                if (!prediction.isDue) {
-                    Spacer(Modifier.width(4.dp))
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Left column — live dot + label, destination, platform subtitle
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size((labelSize.value * 0.45f).dp.coerceAtLeast(5.dp))
+                                .graphicsLayer { alpha = livePulse }
+                                .background(lineColor, CircleShape)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "NEXT DEPARTURE",
+                            color = onCanvasMute,
+                            fontSize = labelSize,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.2.sp,
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "min",
-                        color = lineColor.copy(alpha = 0.70f),
-                        fontSize = minSize,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.8.sp,
-                        modifier = Modifier.padding(bottom = 4.dp),
+                        "→ ${prediction.destination}",
+                        color = onCanvas,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = destSize,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        letterSpacing = (-0.2).sp,
                     )
+                    // Platform subtitle — mirrors home logic: show the raw
+                    // platform value (e.g. "Stop not assigned", "Platform 2",
+                    // "12") without prefixing "Platform" ourselves.
+                    val platform = prediction.platform.takeIf {
+                        it.isNotBlank() && !it.equals("null", true)
+                    }
+                    if (platform != null) {
+                        Spacer(Modifier.height(5.dp))
+                        Surface(
+                            color = onCanvas.copy(alpha = 0.08f),
+                            shape = RoundedCornerShape(5.dp),
+                        ) {
+                            Text(
+                                text = platform,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                                color = onCanvas.copy(alpha = 0.75f),
+                                fontSize = platSize,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.3.sp,
+                            )
+                        }
+                    }
+                }
+
+                // Right column — ETA hero + min label
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = when {
+                            isDeparted -> "──"
+                            isDue      -> "Due"
+                            else       -> "$countdown"
+                        },
+                        color = etaColor.copy(alpha = if (isDue) duePulse else 1f),
+                        fontWeight = FontWeight.Black,
+                        fontSize = etaSize,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = (-1).sp,
+                    )
+                    if (!isDue && !isDeparted) {
+                        Text(
+                            "min",
+                            color = etaColor.copy(alpha = 0.60f),
+                            fontSize = minSize,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp,
+                        )
+                    }
                 }
             }
-        }
 
-        // Line 2 — platform in a clearly visible bordered box, white text,
-        // attached to the left edge (no indent).
-        val platform = prediction.platform.takeIf {
-            it.isNotBlank() && !it.equals("null", true) && !it.equals("Unknown", true)
-        }
-        if (platform != null) {
-            Spacer(Modifier.height(8.dp))
-            val label = if (platform.startsWith("Platform", ignoreCase = true)) platform
-                        else "Platform $platform"
-            Surface(
-                color = Color.White.copy(alpha = 0.08f),
-                shape = RoundedCornerShape(6.dp),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)),
-            ) {
-                Text(
-                    text = label,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-                    color = Color.White,
-                    fontSize = platSize,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.5.sp,
-                )
-            }
+            // Depletion bar — runs left-to-right along the card's bottom edge,
+            // shrinking as the train gets closer.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(etaProgress)
+                    .height(2.dp)
+                    .align(Alignment.BottomStart)
+                    .background(
+                        androidx.compose.ui.graphics.Brush.horizontalGradient(
+                            listOf(etaColor.copy(alpha = 0.85f), etaColor.copy(alpha = 0.20f))
+                        )
+                    )
+            )
         }
     }
 }
@@ -265,15 +358,21 @@ internal fun NextTrainHero(
  * broken on a fresh install.
  */
 @Composable
-internal fun EmptyStatePanel(lineColor: Color) {
+internal fun EmptyStatePanel() {
+    val themeColors = LocalDreamColors.current
+    val onCanvas    = themeColors.onCanvas
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        // Brand wordmark — theme-aware amber. Fresh-install empty state
+        // doesn't yet have a "line" to colour with, so the brand accent
+        // (deep amber on light, bright TfL amber on dark) is the right
+        // signage cue.
         Text(
             text = "STATIONLY",
-            color = lineColor.copy(alpha = 0.75f),
+            color = themeColors.brandAccent.copy(alpha = 0.85f),
             fontWeight = FontWeight.Black,
             fontSize = 36.sp,
             letterSpacing = 4.sp,
@@ -281,7 +380,7 @@ internal fun EmptyStatePanel(lineColor: Color) {
         Spacer(Modifier.height(12.dp))
         Text(
             text = "Add a board on the home screen\nto see live arrivals here.",
-            color = Color.White.copy(alpha = 0.50f),
+            color = onCanvas.copy(alpha = 0.50f),
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             letterSpacing = 0.4.sp,
@@ -291,9 +390,17 @@ internal fun EmptyStatePanel(lineColor: Color) {
 
 /* ─── helpers ────────────────────────────────────────────────────────────── */
 
+/**
+ * Theme-aware line colour for dream canvas composables. Reads the current
+ * [LocalDreamColors] to decide whether to use the canonical TfL palette
+ * (light canvas — dark lines like Piccadilly navy still pop) or the
+ * brightened dark-theme overrides (so Piccadilly/Suffragette/Metropolitan
+ * etc. don't muddy into a near-black canvas).
+ */
+@Composable
 internal fun lineColorOf(line: String?): Color {
-    val key = line?.lowercase() ?: return TflAmber
-    return TFL_LINE_COLORS[key] ?: TflAmber
+    val isDark = LocalDreamColors.current === DarkDreamColors
+    return com.stationly.mobile.ui.summary.components.lineColorForTheme(line, isDark)
 }
 
 private fun prettyLineName(line: String): String =

@@ -21,14 +21,12 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
-import com.stationly.mobile.R
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -58,17 +56,16 @@ internal fun rememberClockNow(): State<Date> {
 /**
  * Digital clock — signage-style amber numerals in a monospaced font. The
  * day-and-date is rendered separately by `DateAndWeatherStrip` so it appears
- * below both analog and digital variants identically. The `labelSize` param
- * is kept for API stability but unused.
+ * below both analog and digital variants identically.
  */
 @Composable
 fun DigitalClock(
     modifier: Modifier = Modifier,
     timeSize: androidx.compose.ui.unit.TextUnit,
-    @Suppress("UNUSED_PARAMETER") labelSize: androidx.compose.ui.unit.TextUnit,
 ) {
     val now by rememberClockNow()
-    val amber = colorResource(R.color.tfl_amber)
+    // Theme-aware brand colour — TfL amber on dark, deep amber on light.
+    val amber = LocalDreamColors.current.brandAccent
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.UK) }
 
     Text(
@@ -102,10 +99,21 @@ fun AnalogClock(
 ) {
     val now by rememberClockNow()
     val cal = remember(now) { Calendar.getInstance().apply { time = now } }
-    val amber = colorResource(R.color.tfl_amber)
-    val roundelRed = Color(0xFFE51E25)
-    val white90 = Color.White.copy(alpha = 0.90f)
-    val dimWhite = Color.White.copy(alpha = 0.18f)
+    // Theme-aware colours. The roundel red stays constant (it's the TfL
+    // brand mark). Everything else (dial fill, hour markers, minute hand,
+    // STATIONLY caption) flips with the canvas so an analog clock on a
+    // light dream actually reads light.
+    val themeColors = LocalDreamColors.current
+    val amber = themeColors.brandAccent
+    val onCanvas = themeColors.onCanvas
+    // No dial fill — the canvas IS the dial. The brand-amber ring frames
+    // the hour markers and hands directly on the canvas, so the clock
+    // feels integrated with the dream rather than punching a separate
+    // panel through it.
+    val ringColor    = amber
+    val secondsColor = amber.copy(alpha = 0.80f)
+    val minuteHandColor = onCanvas.copy(alpha = 0.90f)
+    val tickDim = onCanvas.copy(alpha = 0.18f)
     val px = with(LocalDensity.current) { size.toPx() }
 
     val seconds = cal.get(Calendar.SECOND) + cal.get(Calendar.MILLISECOND) / 1000f
@@ -120,20 +128,14 @@ fun AnalogClock(
             val center = Offset(this.size.width / 2f, this.size.height / 2f)
             val radius = (this.size.minDimension / 2f) - 8.dp.toPx()
 
-            // Outer ring (red roundel)
+            // Outer ring only — no dial fill. The canvas shows through,
+            // so the clock reads as a brand-amber circle drawn on the
+            // dream's surface rather than a separate panel.
             drawCircle(
-                color = roundelRed,
+                color = ringColor,
                 radius = radius,
                 center = center,
                 style = Stroke(width = 6.dp.toPx())
-            )
-
-            // Inner dial fill — keep it the dream background so it doesn't
-            // fight with the parent's background colour.
-            drawCircle(
-                color = Color(0xFF0A0A0A),
-                radius = radius - 3.dp.toPx(),
-                center = center,
             )
 
             // Hour markers — 12 short ticks, with the four cardinal ones longer/amber
@@ -143,7 +145,7 @@ fun AnalogClock(
                 val tickInner = if (isCardinal) radius - 18.dp.toPx() else radius - 10.dp.toPx()
                 val tickOuter = radius - 4.dp.toPx()
                 drawLine(
-                    color = if (isCardinal) amber else dimWhite,
+                    color = if (isCardinal) amber else tickDim,
                     start = Offset(
                         center.x + cos(a) * tickInner,
                         center.y + sin(a) * tickInner
@@ -170,12 +172,12 @@ fun AnalogClock(
                 )
             }
 
-            // Minute hand — longer, white
+            // Minute hand — longer, themed onCanvas
             run {
                 val a = (minutes * 6 - 90) * PI.toFloat() / 180f
                 val len = radius * 0.78f
                 drawLine(
-                    color = white90,
+                    color = minuteHandColor,
                     start = center,
                     end = Offset(center.x + cos(a) * len, center.y + sin(a) * len),
                     strokeWidth = 4.dp.toPx(),
@@ -183,12 +185,13 @@ fun AnalogClock(
                 )
             }
 
-            // Seconds hand — thinnest, red
+            // Seconds hand — thinnest, brand amber tinted down so it
+            // doesn't compete with the cardinal markers and hour hand.
             run {
                 val a = (seconds * 6 - 90) * PI.toFloat() / 180f
                 val len = radius * 0.85f
                 drawLine(
-                    color = roundelRed,
+                    color = secondsColor,
                     start = center,
                     end = Offset(center.x + cos(a) * len, center.y + sin(a) * len),
                     strokeWidth = 1.5.dp.toPx(),
@@ -196,15 +199,11 @@ fun AnalogClock(
                 )
             }
 
-            // Centre cap
+            // Centre cap — simple amber dot, no pin-hole (the cap reads
+            // cleanly without one now that the dial is the canvas).
             drawCircle(
                 color = amber,
                 radius = 5.dp.toPx(),
-                center = center
-            )
-            drawCircle(
-                color = Color(0xFF0A0A0A),
-                radius = 2.dp.toPx(),
                 center = center
             )
         }
@@ -287,10 +286,7 @@ internal fun ClockPanel(style: ClockStyle, dim: DreamDims) {
                 val safeSp = fillSp
                     .coerceAtMost(dim.digitalTimeSize.value)
                     .coerceAtLeast(56f)
-                DigitalClock(
-                    timeSize  = safeSp.sp,
-                    labelSize = dim.digitalLabelSize,
-                )
+                DigitalClock(timeSize = safeSp.sp)
             }
             ClockStyle.ANALOG -> {
                 // Analog dial fills 85% of the slot's shorter side (so it
