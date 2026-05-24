@@ -9,11 +9,13 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardActions
@@ -79,14 +81,21 @@ private fun SduiCondition.isSatisfied(inputs: Map<String, String>): Boolean {
 }
 
 // ── Palette ────────────────────────────────────────────────────────────────────
-private val Amber     = Color(0xFFFFC819)
-private val AmberDark = Color(0xFF1A1400)
-private val AmberDim  = Amber.copy(alpha = 0.50f)
-private val BgColor   = Color(0xFF121212)
-private val White80   = Color.White.copy(alpha = 0.80f)
-private val White50   = Color.White.copy(alpha = 0.50f)
-private val White20   = Color.White.copy(alpha = 0.20f)
-private val White10   = Color.White.copy(alpha = 0.10f)
+// Theme-aware — names preserved so every call site stays unchanged. Each
+// `@Composable get()` reads from MaterialTheme.colorScheme so swapping
+// AppTheme flips the whole screen with no per-callsite work.
+private val Amber     @Composable get() = MaterialTheme.colorScheme.primary
+// AmberDark is always used as a foreground on an Amber background (button
+// text, checkmark, brand letter), so it maps to onPrimary — Compose
+// MaterialTheme guarantees this pair has accessible contrast in both
+// themes (Black on bright amber in dark, White on deep amber in light).
+private val AmberDark @Composable get() = MaterialTheme.colorScheme.onPrimary
+private val AmberDim  @Composable get() = MaterialTheme.colorScheme.primary.copy(alpha = 0.50f)
+private val BgColor   @Composable get() = MaterialTheme.colorScheme.background
+private val White80   @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.80f)
+private val White50   @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.50f)
+private val White20   @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.20f)
+private val White10   @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.10f)
 
 // ── Background ─────────────────────────────────────────────────────────────────
 // Clean dark with a soft amber radial glow behind the brand area. One static element,
@@ -136,6 +145,9 @@ private fun PrimaryButton(text: String, enabled: Boolean = true, modifier: Modif
 
 @Composable
 private fun GoogleButton(label: String, onClick: () -> Unit) {
+    // Google brand button colours are fixed by their brand guidelines —
+    // white background, near-black text, neutral grey border in both
+    // themes. Do not theme these or Google's brand compliance breaks.
     Button(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().height(54.dp),
@@ -217,7 +229,7 @@ private fun AuthField(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = if (fieldError != null) Color(0xFFF06292) else White50,
+                    tint = if (fieldError != null) MaterialTheme.colorScheme.error else White50,
                     modifier = Modifier.size(20.dp)
                 )
             },
@@ -227,31 +239,32 @@ private fun AuthField(
                         Icon(
                             if (showPassword) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
                             contentDescription = if (showPassword) "Hide password" else "Show password",
-                            tint = if (fieldError != null) Color(0xFFF06292) else White50,
+                            tint = if (fieldError != null) MaterialTheme.colorScheme.error else White50,
                             modifier = Modifier.size(20.dp)
                         )
                     }
                 }
             } else null,
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor   = if (fieldError != null) Color(0xFFE91E63) else Amber,
-                unfocusedBorderColor = if (fieldError != null) Color(0xFFE91E63).copy(0.60f) else White20,
+                focusedBorderColor   = if (fieldError != null) MaterialTheme.colorScheme.error else Amber,
+                unfocusedBorderColor = if (fieldError != null) MaterialTheme.colorScheme.error.copy(0.60f) else White20,
                 focusedContainerColor   = Color.Transparent,
                 unfocusedContainerColor = Color.Transparent,
-                focusedTextColor   = Color.White, unfocusedTextColor = Color.White,
-                focusedLabelColor  = if (fieldError != null) Color(0xFFF06292) else Amber,
-                unfocusedLabelColor = if (fieldError != null) Color(0xFFF06292).copy(0.70f) else White50,
+                focusedTextColor   = MaterialTheme.colorScheme.onBackground,
+                unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                focusedLabelColor  = if (fieldError != null) MaterialTheme.colorScheme.error else Amber,
+                unfocusedLabelColor = if (fieldError != null) MaterialTheme.colorScheme.error.copy(0.70f) else White50,
                 cursorColor = Amber,
-                errorBorderColor = Color(0xFFE91E63),
-                errorLabelColor  = Color(0xFFF06292),
-                errorCursorColor = Color(0xFFE91E63)
+                errorBorderColor = MaterialTheme.colorScheme.error,
+                errorLabelColor  = MaterialTheme.colorScheme.error,
+                errorCursorColor = MaterialTheme.colorScheme.error
             ),
             shape = RoundedCornerShape(12.dp)
         )
         if (fieldError != null) {
             Text(
                 fieldError,
-                color = Color(0xFFF06292), fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.error, fontSize = 12.sp,
                 modifier = Modifier.padding(start = 14.dp, top = 4.dp)
             )
         } else if (helpText != null) {
@@ -268,13 +281,13 @@ private fun AuthField(
 private fun ErrorBanner(message: String) {
     Surface(
         Modifier.fillMaxWidth(),
-        color = Color(0xFFE91E63).copy(0.10f),
+        color = MaterialTheme.colorScheme.error.copy(0.10f),
         shape = RoundedCornerShape(10.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE91E63).copy(0.22f))
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(0.22f))
     ) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(Icons.Filled.Info, null, tint = Color(0xFFF06292), modifier = Modifier.size(16.dp))
-            Text(message, color = Color(0xFFF06292), fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Icon(Icons.Filled.Info, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+            Text(message, color = MaterialTheme.colorScheme.error, fontSize = 13.sp, modifier = Modifier.weight(1f))
         }
     }
 }
@@ -282,7 +295,7 @@ private fun ErrorBanner(message: String) {
 @Composable
 private fun BackButton(onClick: () -> Unit) {
     IconButton(onClick, Modifier.size(44.dp).background(White10, CircleShape)) {
-        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(20.dp))
+        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = MaterialTheme.colorScheme.onBackground, modifier = Modifier.size(20.dp))
     }
 }
 
@@ -310,7 +323,7 @@ private fun TermsCheckbox(accepted: Boolean, showError: Boolean, onToggle: () ->
                 checked = accepted,
                 onCheckedChange = { onToggle() },
                 colors = CheckboxDefaults.colors(
-                    checkedColor = Amber, uncheckedColor = if (showError) Color(0xFFE91E63) else White50,
+                    checkedColor = Amber, uncheckedColor = if (showError) MaterialTheme.colorScheme.error else White50,
                     checkmarkColor = AmberDark
                 )
             )
@@ -326,7 +339,7 @@ private fun TermsCheckbox(accepted: Boolean, showError: Boolean, onToggle: () ->
         if (showError) {
             Text(
                 "Please accept the terms to continue",
-                color = Color(0xFFF06292), fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.error, fontSize = 12.sp,
                 modifier = Modifier.padding(start = 14.dp)
             )
         }
@@ -614,7 +627,7 @@ private fun ResetSuccessContent(email: String, onBack: () -> Unit, modifier: Mod
         ) {
             Icon(Icons.Filled.CheckCircle, null, tint = Amber, modifier = Modifier.size(44.dp))
         }
-        Text("Check your inbox", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Text("Check your inbox", color = MaterialTheme.colorScheme.onBackground, fontSize = 26.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
         Text(
             "We've sent a reset link to",
             color = White50, fontSize = 14.sp, textAlign = TextAlign.Center
@@ -683,7 +696,7 @@ private fun FormScreenContent(
         }
         Spacer(Modifier.height(20.dp))
         Column(Modifier.padding(horizontal = 28.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title,    color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
+            Text(title,    color = MaterialTheme.colorScheme.onBackground, fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
             Text(subtitle, color = White50,     fontSize = 14.sp)
         }
         Spacer(Modifier.height(24.dp))
@@ -797,14 +810,17 @@ private fun LivePill() {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .background(Color(0xFF1A1A1A).copy(alpha = 0.6f), RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f), RoundedCornerShape(50))
             .border(1.dp, White10, RoundedCornerShape(50))
             .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
         Box(
             modifier = Modifier
                 .size(8.dp)
-                .background(Color(0xFF4CAF50).copy(alpha = pulse), CircleShape)
+                .background(
+                    com.stationly.mobile.ui.theme.LocalThemeTokens.current.live.copy(alpha = pulse),
+                    CircleShape
+                )
         )
         Spacer(Modifier.width(8.dp))
         Text(
@@ -840,7 +856,7 @@ private fun FeatureRow(icon: ImageVector, title: String, subtitle: String) {
         }
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(title, color = MaterialTheme.colorScheme.onBackground, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             Text(subtitle, color = White50, fontSize = 12.sp, lineHeight = 16.sp)
         }
     }
@@ -896,7 +912,19 @@ private fun AuthenticatingOverlay(message: String = "Signing you in…") {
     val pulse by rememberInfiniteTransition(label = "pulse").animateFloat(
         0.88f, 1.08f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), "s"
     )
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(0.86f)), Alignment.Center) {
+    // Scrim — uses M3's scrim slot (defaults to Black in both themes,
+    // which is the correct overlay regardless of background).
+    // pointerInput consumes every tap/drag so the form behind doesn't
+    // remain interactive while sign-in / register / forgot-pw is in flight.
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.86f))
+            .pointerInput(Unit) {
+                detectTapGestures { /* swallowed */ }
+            },
+        Alignment.Center,
+    ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Box(Modifier.size(72.dp).scale(pulse).background(Amber, CircleShape).border(2.dp, White20, CircleShape), Alignment.Center) {
                 Text("S", color = AmberDark, fontSize = 32.sp, fontWeight = FontWeight.Black)
@@ -951,7 +979,7 @@ private fun ResetConfirmContent(
         }
         Spacer(Modifier.height(20.dp))
         Column(Modifier.padding(horizontal = 28.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Set new password", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
+            Text("Set new password", color = MaterialTheme.colorScheme.onBackground, fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
             Text("Choose something you'll actually remember.", color = White50, fontSize = 14.sp)
         }
         Spacer(Modifier.height(28.dp))

@@ -93,6 +93,11 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+    // Downloadable Google Fonts — used for the Stationly brand wordmark
+    // (Inter Tight). Fetched via Google Play Services Fonts provider so
+    // we don't ship a TTF and fonts can be added/swapped without an
+    // APK update. See ui/theme/Type.kt for the FontFamily declaration.
+    implementation("androidx.compose.ui:ui-text-google-fonts")
 
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.7.5")

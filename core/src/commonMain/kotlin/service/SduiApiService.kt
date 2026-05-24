@@ -20,6 +20,12 @@ interface SduiApiService {
     suspend fun getAboutLayout(): SduiAppScreen
     suspend fun getHomeAnnouncement(): SduiAppScreen
     suspend fun getHomeConfig(): SduiStrings
+    /**
+     * App-wide theme tokens. Each call returns the canonical palette; the
+     * Android side caches the response in SharedPrefs so cold launches
+     * never block on this network call. See [SduiThemeTokens] docstring.
+     */
+    suspend fun getThemeTokens(): SduiThemeTokens
     suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption>
     suspend fun getNearbyStations(lat: Double, lon: Double, mode: String? = null): List<SduiDropdownOption>
 
@@ -44,6 +50,16 @@ interface SduiApiService {
     suspend fun getUserProfile(uid: String): UserProfileResponse
     suspend fun logOut(uid: String): Boolean
     suspend fun deleteAccount(uid: String): Boolean
+
+    /**
+     * Register / unregister this device's FCM token under the user's
+     * profile. Required for `uid`-targeted admin notifications — the
+     * server resolves UIDs to tokens via Firestore `users/{uid}/fcm_tokens`.
+     * Both calls are idempotent; the client invokes register on cold
+     * launch + on token rotation, and unregister on logout.
+     */
+    suspend fun registerFcmToken(token: String, platform: String = "android", appVersion: String? = null): Boolean
+    suspend fun unregisterFcmToken(token: String): Boolean
 }
 
 /**
@@ -80,6 +96,10 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
 
     override suspend fun getHomeConfig(): SduiStrings {
         return client.get("$baseUrl/sdui/app/home-config").body()
+    }
+
+    override suspend fun getThemeTokens(): SduiThemeTokens {
+        return client.get("$baseUrl/sdui/app/theme-tokens").body()
     }
 
     override suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption> {
@@ -165,6 +185,26 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
         val response = client.post("$baseUrl/user/delete-account") {
             contentType(ContentType.Application.Json)
             setBody(DeleteAccountRequest(uid))
+        }
+        return response.status == HttpStatusCode.OK
+    }
+
+    override suspend fun registerFcmToken(token: String, platform: String, appVersion: String?): Boolean {
+        @kotlinx.serialization.Serializable
+        data class RegisterFcmTokenRequest(val token: String, val platform: String, val appVersion: String?)
+        val response = client.post("$baseUrl/user/fcm/register") {
+            contentType(ContentType.Application.Json)
+            setBody(RegisterFcmTokenRequest(token, platform, appVersion))
+        }
+        return response.status == HttpStatusCode.OK
+    }
+
+    override suspend fun unregisterFcmToken(token: String): Boolean {
+        @kotlinx.serialization.Serializable
+        data class UnregisterFcmTokenRequest(val token: String)
+        val response = client.post("$baseUrl/user/fcm/unregister") {
+            contentType(ContentType.Application.Json)
+            setBody(UnregisterFcmTokenRequest(token))
         }
         return response.status == HttpStatusCode.OK
     }

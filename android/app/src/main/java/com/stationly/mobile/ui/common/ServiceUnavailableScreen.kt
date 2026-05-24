@@ -13,12 +13,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.stationly.mobile.ui.theme.TflAmber
 
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.remember
@@ -36,14 +36,39 @@ fun ServiceUnavailableScreen(
     onRetry: () -> Unit = {},
     onDismiss: (() -> Unit)? = null
 ) {
+    val onCanvas = MaterialTheme.colorScheme.onBackground
+    val amber    = MaterialTheme.colorScheme.primary
     // Elegant error state: Minimalistic, clean typography, soft colors
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF121212))
+            .background(MaterialTheme.colorScheme.background)
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
         contentAlignment = Alignment.Center
     ) {
+        // Brand wink at the top of the screen — reassures the user this
+        // is still Stationly even when the network's gone wrong.
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 56.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            androidx.compose.foundation.Image(
+                painter = androidx.compose.ui.res.painterResource(id = com.stationly.mobile.R.drawable.stationly_logo),
+                contentDescription = "Stationly",
+                modifier = Modifier.size(20.dp).clip(CircleShape),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "STATIONLY",
+                color = amber,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = 2.5.sp,
+            )
+        }
+
         if (onDismiss != null) {
             IconButton(
                 onClick = onDismiss,
@@ -54,14 +79,14 @@ fun ServiceUnavailableScreen(
             ) {
                 Surface(
                     shape = CircleShape,
-                    color = Color.White.copy(alpha = 0.05f),
+                    color = onCanvas.copy(alpha = 0.05f),
                     modifier = Modifier.size(40.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Default.Close, 
-                            contentDescription = "Close", 
-                            tint = Color.White.copy(alpha = 0.6f),
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = onCanvas.copy(alpha = 0.6f),
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -74,18 +99,18 @@ fun ServiceUnavailableScreen(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth()
         ) {
-            
+
             // Soft, non-aggressive icon
             Surface(
                 shape = CircleShape,
-                color = Color.White.copy(alpha = 0.03f),
+                color = onCanvas.copy(alpha = 0.03f),
                 modifier = Modifier.size(96.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.Outlined.CloudOff,
                         contentDescription = "Offline",
-                        tint = Color(0xFFB3B3B3), // Premium gray
+                        tint = onCanvas.copy(alpha = 0.45f),
                         modifier = Modifier.size(42.dp)
                     )
                 }
@@ -95,17 +120,17 @@ fun ServiceUnavailableScreen(
 
             Text(
                 "Can't reach servers",
-                color = Color.White,
+                color = onCanvas,
                 fontWeight = FontWeight.Bold,
                 fontSize = 24.sp,
                 textAlign = TextAlign.Center
             )
-            
+
             Spacer(Modifier.height(16.dp))
 
             Text(
                 overridingErrorMessage ?: messageForContext(context),
-                color = Color(0xFFA0A0A0),
+                color = onCanvas.copy(alpha = 0.65f),
                 fontSize = 15.sp,
                 textAlign = TextAlign.Center,
                 lineHeight = 22.sp,
@@ -117,8 +142,8 @@ fun ServiceUnavailableScreen(
             Button(
                 onClick = onRetry,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.White,
-                    contentColor = Color.Black
+                    containerColor = onCanvas,
+                    contentColor   = MaterialTheme.colorScheme.background,
                 ),
                 shape = RoundedCornerShape(32.dp),
                 modifier = Modifier.height(52.dp).padding(horizontal = 32.dp),
@@ -157,23 +182,29 @@ fun OfflineBanner(
         enter = slideInVertically(tween(300)) { -it } + fadeIn(tween(300)),
         exit  = slideOutVertically(tween(200)) { -it } + fadeOut(tween(200))
     ) {
+        // Amber-warning banner styling. Background and muted text are
+        // theme-aware tints around the brand primary so the banner reads
+        // as a warning chip in both themes without losing the "amber"
+        // signal — primary is amber in dark and deep amber in light, so
+        // a faint alpha tint of it works as background in both.
+        val primary = MaterialTheme.colorScheme.primary
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color(0xFF1A1208))
+                .background(primary.copy(alpha = 0.10f))
                 .padding(start = 14.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
                 imageVector = Icons.Outlined.CloudOff,
                 contentDescription = null,
-                tint = TflAmber,
+                tint = primary,
                 modifier = Modifier.size(15.dp)
             )
             Spacer(Modifier.width(8.dp))
             Text(
                 "Can't reach Stationly servers",
-                color = Color(0xFFCCAA44),
+                color = primary.copy(alpha = 0.85f),
                 fontSize = 13.sp,
                 modifier = Modifier.weight(1f)
             )
@@ -181,13 +212,13 @@ fun OfflineBanner(
                 onClick = onRetry,
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
             ) {
-                Text("Retry", color = TflAmber, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("Retry", color = primary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
             IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
                 Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = "Dismiss",
-                    tint = Color(0xFF886633),
+                    tint = primary.copy(alpha = 0.55f),
                     modifier = Modifier.size(15.dp)
                 )
             }

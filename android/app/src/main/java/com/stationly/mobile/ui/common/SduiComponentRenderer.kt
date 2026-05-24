@@ -20,13 +20,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.stationly.core.model.sdui.SduiAppComponent
-import com.stationly.mobile.ui.theme.TflAmber
 
-private val Surface1 = Color(0xFF141414)
-private val White90 = Color.White.copy(alpha = 0.90f)
-private val White55 = Color.White.copy(alpha = 0.55f)
-private val White25 = Color.White.copy(alpha = 0.25f)
-private val White08 = Color.White.copy(alpha = 0.08f)
+// Theme-aware palette — names preserved so call sites stay unchanged.
+private val Surface1 @Composable get() = MaterialTheme.colorScheme.surface
+private val White90  @Composable get() = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.90f)
+private val White55  @Composable get() = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+private val White25  @Composable get() = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f)
+private val White08  @Composable get() = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
 
 /**
  * Renders a list of SDUI components for non-form screens (Profile, Summary).
@@ -35,15 +35,13 @@ private val White08 = Color.White.copy(alpha = 0.08f)
 @Composable
 fun SduiComponentRenderer(
     components: List<SduiAppComponent>,
-    primaryColor: Color = TflAmber
+    primaryColor: Color = MaterialTheme.colorScheme.primary
 ) {
-    val context = LocalContext.current
-
-    fun openUrl(url: String) {
-        runCatching {
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        }
-    }
+    // Open URLs through the LocalOpenUrl callback so HTTP(S) links land
+    // in the in-app WebView instead of Chrome. Non-web schemes (mailto,
+    // tel) fall through to the system default automatically.
+    val openUrlFn = LocalOpenUrl.current
+    fun openUrl(url: String) = openUrlFn(url, null)
 
     components.forEach { component ->
         when (component) {
@@ -64,7 +62,7 @@ fun SduiComponentRenderer(
 }
 
 @Composable
-fun SduiCard(component: SduiAppComponent.Card, primaryColor: Color = TflAmber) {
+fun SduiCard(component: SduiAppComponent.Card, primaryColor: Color = MaterialTheme.colorScheme.primary) {
     val isSubtle = component.style == "subtle"
     val isBrand = component.style == "brand"
     val title = component.title
@@ -115,7 +113,7 @@ fun SduiCard(component: SduiAppComponent.Card, primaryColor: Color = TflAmber) {
 @Composable
 fun SduiSection(
     component: SduiAppComponent.Section,
-    primaryColor: Color = TflAmber,
+    primaryColor: Color = MaterialTheme.colorScheme.primary,
     onOpenUrl: (String) -> Unit
 ) {
     Surface(
@@ -203,10 +201,23 @@ fun AnnouncementBanner(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    // Theme-aware variant palette. Each variant uses a faint colour-tint
+    // background so the chip reads as the variant's signal in both themes:
+    //   - warning → primary amber tint
+    //   - tip     → semantic green tint (constant — green is "go" everywhere)
+    //   - info    → secondary tint (or tertiary if you prefer the blue cue)
+    // Source tints from the theme tokens so backend can tune the
+    // announcement palette via SDUI. Warning piggybacks on the brand
+    // primary (amber is our brand cue); tip uses the semantic live-data
+    // green; info uses the semantic info blue.
+    val tokens      = com.stationly.mobile.ui.theme.LocalThemeTokens.current
+    val warningTint = MaterialTheme.colorScheme.primary
+    val tipTint     = tokens.live
+    val infoTint    = tokens.info
     val (bgColor, borderColor, iconColor) = when (announcement.variant) {
-        "warning" -> Triple(Color(0xFF1A0E00), TflAmber.copy(alpha = 0.4f), TflAmber)
-        "tip"     -> Triple(Color(0xFF001A0A), Color(0xFF4CAF50).copy(alpha = 0.4f), Color(0xFF4CAF50))
-        else      -> Triple(Color(0xFF0A0E1A), Color(0xFF4A90D9).copy(alpha = 0.4f), Color(0xFF4A90D9))
+        "warning" -> Triple(warningTint.copy(alpha = 0.10f), warningTint.copy(alpha = 0.40f), warningTint)
+        "tip"     -> Triple(tipTint.copy(alpha = 0.10f),     tipTint.copy(alpha = 0.40f),     tipTint)
+        else      -> Triple(infoTint.copy(alpha = 0.10f),    infoTint.copy(alpha = 0.40f),    infoTint)
     }
 
     Surface(
@@ -246,13 +257,16 @@ fun AnnouncementBanner(
                 )
                 if (announcement.url != null) {
                     Spacer(Modifier.height(6.dp))
+                    val openUrl = LocalOpenUrl.current
+                    val url = announcement.url ?: ""
+                    val title = announcement.title
                     Text(
                         "Learn more",
                         color = iconColor,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.clickable {
-                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(announcement.url))) }
+                            if (url.isNotBlank()) openUrl(url, title)
                         }
                     )
                 }

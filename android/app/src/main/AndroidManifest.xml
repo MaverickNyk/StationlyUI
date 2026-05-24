@@ -65,6 +65,45 @@
             </intent-filter>
         </service>
 
+        <!-- Daydream / Screensaver — appears in Settings → Display → Screensaver
+             as "Stationly". exported=true + BIND_DREAM_SERVICE permission are
+             required by the system so only the OS can bind us. -->
+        <service
+            android:name=".dream.StationlyDreamService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_DREAM_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.dreams.DreamService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.dream"
+                android:resource="@xml/stationly_dream_info" />
+        </service>
+
+        <!-- Configuration screen for the Daydream. Reached via the gear icon
+             next to "Stationly" in Settings → Display → Screensaver.
+
+             - taskAffinity="" + launchMode="singleTask": isolate from the
+               main app task. Without this, system Settings stacks this
+               activity onto Stationly's existing task, and swiping back
+               navigates through MainActivity and the rest of the app
+               history instead of returning to Settings. Empty affinity
+               keeps it in its own task; singleTask makes Android open it
+               cleanly even if the app is already running in the background.
+             - excludeFromRecents="true": this is a config screen invoked
+               by system Settings, not user-facing app navigation. Shouldn't
+               appear as its own recents entry. -->
+        <activity
+            android:name=".dream.DreamSettingsActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.Stationly"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:excludeFromRecents="true" />
+
         <!-- Widget Provider -->
         <receiver
             android:name=".widget.DepartureWidgetProvider"

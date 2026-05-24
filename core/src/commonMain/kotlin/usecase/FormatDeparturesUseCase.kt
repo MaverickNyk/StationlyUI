@@ -71,12 +71,14 @@ class FormatDeparturesUseCase {
     private fun formatPrediction(prediction: PredictionItem): PredictionDisplay {
         val etaString = com.stationly.core.util.StationlyFormatters.formatETA(prediction.eta)
         val isDue = etaString == "Due"
-        
+
         return PredictionDisplay(
             destination = com.stationly.core.util.StationlyFormatters.formatDestination(prediction.displayName),
             platform = prediction.platform,
             eta = etaString,
-            isDue = isDue
+            isDue = isDue,
+            // Capture the absolute arrival timestamp so the UI can self-tick.
+            targetEpochMs = com.stationly.core.util.StationlyFormatters.parseTargetEpochMs(prediction.eta),
         )
     }
 }
