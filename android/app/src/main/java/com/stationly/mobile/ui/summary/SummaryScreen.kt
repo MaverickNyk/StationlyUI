@@ -172,7 +172,6 @@ fun SummaryScreen(
                                         sduiPayload = sduiPayloads[selection.station],
                                         lastUpdated = stationUpdates[selection.station] ?: 0L,
                                         onDelete = { if (deletingBoardId == null) viewModel.deleteSelection(selection) },
-                                        nextPrediction = selectionPredictions.firstOrNull(),
                                         homeConfig = homeConfig,
                                         isDeleting = deletingBoardId == selection.station
                                     )

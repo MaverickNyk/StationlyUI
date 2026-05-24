@@ -196,6 +196,29 @@ fun AppNavigation(
         }
     }
 
+    // Provide an in-app WebView opener for every screen below — SDUI link
+    // rows, profile "Visit Website", announcement CTAs, etc. all route
+    // through `LocalOpenUrl` and end up at the in-app WebViewScreen
+    // instead of bouncing the user out to Chrome. Falls back to the
+    // external opener if the URL is non-HTTP (mailto:, tel:, market:).
+    androidx.compose.runtime.CompositionLocalProvider(
+        com.stationly.mobile.ui.common.LocalOpenUrl provides { url, title ->
+            val isWeb = url.startsWith("http://", ignoreCase = true) ||
+                        url.startsWith("https://", ignoreCase = true)
+            if (isWeb) {
+                val encodedUrl = java.net.URLEncoder.encode(url, "UTF-8")
+                val route = if (title.isNullOrBlank()) {
+                    "webview/$encodedUrl"
+                } else {
+                    val encodedTitle = java.net.URLEncoder.encode(title, "UTF-8")
+                    "webview/$encodedUrl?title=$encodedTitle"
+                }
+                navController.navigate(route) { launchSingleTop = true }
+            } else {
+                com.stationly.mobile.ui.common.defaultExternalOpener(context).invoke(url, title)
+            }
+        }
+    ) {
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -319,17 +342,56 @@ fun AppNavigation(
             )
         }
         
-        // Selection Screen - Station Selection Flow
+        // In-app WebView — first-party links open inside Stationly instead of
+        // bouncing the user out to Chrome. URL is path-encoded so query
+        // strings / fragments survive the round-trip. Title is an optional
+        // query-style nav arg; if omitted the screen falls back to the
+        // WebView's own resolved <title>.
+        composable(
+            route = "webview/{url}?title={title}",
+            arguments = listOf(
+                androidx.navigation.navArgument("url") { type = androidx.navigation.NavType.StringType },
+                androidx.navigation.navArgument("title") {
+                    type = androidx.navigation.NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) { entry ->
+            val rawUrl   = entry.arguments?.getString("url").orEmpty()
+            val rawTitle = entry.arguments?.getString("title")
+            val url   = runCatching { java.net.URLDecoder.decode(rawUrl, "UTF-8") }
+                .getOrDefault(rawUrl)
+            val title = rawTitle
+                ?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it) }
+                ?.takeIf { it.isNotBlank() }
+            com.stationly.mobile.ui.common.WebViewScreen(
+                url = url,
+                title = title,
+                onClose = { navController.popBackStack() },
+            )
+        }
+
+        // Selection Screen - Station Selection Flow.
+        // popUpTo("selection") { inclusive = true } so that after a save, the
+        // selection screen is removed from the back stack. Previously it was
+        // inclusive=false which left selection lingering — pressing back from
+        // summary later (post profile-visit, etc.) would unexpectedly return
+        // the user to the selection flow they thought they'd finished.
+        // launchSingleTop ensures we don't stack a duplicate summary on top
+        // when there's already one underneath.
         composable("selection") {
             SelectionScreen(
                 onNavigateToSummary = {
                     navController.navigate("summary") {
-                        popUpTo("selection") { inclusive = false }
+                        popUpTo("selection") { inclusive = true }
+                        launchSingleTop = true
                     }
                 }
             )
         }
     }
+    } // close CompositionLocalProvider for LocalOpenUrl
 }
 
 /**

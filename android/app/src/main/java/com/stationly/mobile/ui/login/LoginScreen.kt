@@ -9,11 +9,13 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardActions
@@ -912,7 +914,17 @@ private fun AuthenticatingOverlay(message: String = "Signing you in…") {
     )
     // Scrim — uses M3's scrim slot (defaults to Black in both themes,
     // which is the correct overlay regardless of background).
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.86f)), Alignment.Center) {
+    // pointerInput consumes every tap/drag so the form behind doesn't
+    // remain interactive while sign-in / register / forgot-pw is in flight.
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.86f))
+            .pointerInput(Unit) {
+                detectTapGestures { /* swallowed */ }
+            },
+        Alignment.Center,
+    ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Box(Modifier.size(72.dp).scale(pulse).background(Amber, CircleShape).border(2.dp, White20, CircleShape), Alignment.Center) {
                 Text("S", color = AmberDark, fontSize = 32.sp, fontWeight = FontWeight.Black)

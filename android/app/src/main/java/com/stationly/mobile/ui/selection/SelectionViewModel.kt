@@ -287,9 +287,17 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 val lat = state.userLat
                 val lon = state.userLon
+                // URL-encode the query so multi-word searches like "Bond Street"
+                // or queries with special chars (& ? = #) reach the server
+                // intact instead of being parsed as additional parameters.
+                // The backend already does case-insensitive substring matching
+                // (see DataCacheService.searchStationsByQuery) so client-side
+                // we only need to pass the raw query through cleanly.
+                val encodedQuery = java.net.URLEncoder.encode(query.trim(), "UTF-8")
+                val encodedMode  = java.net.URLEncoder.encode(mode, "UTF-8")
                 val locationSuffix = if (lat != null && lon != null) "&lat=$lat&lon=$lon" else ""
                 val results = sduiService.getDropdownData(
-                    "/stations/search?searchKey=${query.trim()}&mode=${mode}${locationSuffix}"
+                    "/stations/search?searchKey=$encodedQuery&mode=$encodedMode$locationSuffix"
                 )
                 val updatedData = state.dropdownData.toMutableMap()
                 updatedData["station"] = results

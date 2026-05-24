@@ -41,6 +41,7 @@ import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.model.sdui.SubscribedStation
 import com.stationly.core.service.SduiApiServiceFactory
 import com.stationly.mobile.service.FirebaseAuthManager
+import com.stationly.mobile.ui.common.LoadingOverlay
 import com.stationly.mobile.ui.common.SduiCard
 import com.stationly.mobile.ui.common.SduiSection
 import com.stationly.mobile.ui.common.rememberFirebaseAuthState
@@ -172,10 +173,9 @@ fun ProfileScreen(
             )
         }
     ) { padding ->
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -297,8 +297,12 @@ fun ProfileScreen(
                                     SduiCard(component)
                                 }
                             }
-                            is SduiAppComponent.Section -> SduiSection(component, Amber) { url ->
-                                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                            is SduiAppComponent.Section -> {
+                                // Route Section's child link rows through the
+                                // app-wide LocalOpenUrl so they land in the
+                                // in-app WebView rather than Chrome.
+                                val openUrl = com.stationly.mobile.ui.common.LocalOpenUrl.current
+                                SduiSection(component, Amber) { url -> openUrl(url, null) }
                             }
                             else -> {}
                         }
@@ -360,6 +364,19 @@ fun ProfileScreen(
                 }
                 Spacer(Modifier.height(40.dp))
             }
+        }
+        // Modal scrim while sign-out or delete-account is in flight.
+        // Both are destructive auth ops that absolutely must not be
+        // interrupted by a stray tap on a station card or back press
+        // resolving mid-call.
+        LoadingOverlay(
+            visible = isSigningOut,
+            label = "Signing out…",
+        )
+        LoadingOverlay(
+            visible = isDeletingAccount,
+            label = "Deleting account…",
+        )
         }
     }
 

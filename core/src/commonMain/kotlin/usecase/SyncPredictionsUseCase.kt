@@ -43,26 +43,38 @@ class SyncPredictionsUseCase(
             !it.platform.equals("Unknown", ignoreCase = true) && it.platform.isNotBlank() 
         }?.platform ?: "Unknown"
 
-        // 4. Format predictions for display
+        // 4. Format predictions for display. Capture the absolute arrival
+        //    time (parsed from the FCM's ISO timestamp) alongside the
+        //    formatted string so downstream consumers can re-derive
+        //    minutes-remaining on their own clock between FCM pushes.
         val formattedPredictions = rawPreds.map { pred ->
             val etaString = StationlyFormatters.formatETA(pred.eta)
             val displayPlatform = if (pred.platform.equals("Unknown", ignoreCase = true) || pred.platform.isBlank()) knownPlatform else pred.platform
-            
+
             PredictionDisplay(
                 destination = StationlyFormatters.formatDestination(pred.displayName),
                 platform = displayPlatform,
                 eta = etaString,
                 isDue = etaString == "Due",
-                stopLetter = pred.stopLetter
+                stopLetter = pred.stopLetter,
+                targetEpochMs = StationlyFormatters.parseTargetEpochMs(pred.eta),
             )
         }.distinctBy { "${it.destination}_${it.platform}_${it.eta}" }
         
-        // 5. Use unified processor for sorting and platform grouping
-        val processedPredictions = GlobalBoardProcessor.processPredictions(formattedPredictions)
-        
+        // 5. Use unified processor for sorting and platform grouping.
+        //    Cap at 8 per platform (not 3) so the in-memory tick layer
+        //    has a buffer of upcoming trains to shift into the visible
+        //    3-row window once the current top row has departed. The
+        //    display layer still caps at 3 — these are reserves, not
+        //    everything shown.
+        val processedPredictions = GlobalBoardProcessor.processPredictions(
+            predictions = formattedPredictions,
+            perPlatformCap = 8,
+        )
+
         // 6. Save to SQL storage
         sqlStorage.savePredictions(selection.station, selection.line, processedPredictions)
-        
+
         return processedPredictions
     }
 }

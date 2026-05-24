@@ -100,6 +100,13 @@ sqldelight {
     databases {
         create("StationlyDatabase") {
             packageName.set("com.stationly.db")
+            // Schema lives in commonMain/sqldelight/.../StationlyDatabase.sq.
+            // No `migrations/` directory yet — the app hasn't shipped, so
+            // every install starts fresh on the current schema. When we
+            // DO ship and later evolve the schema, add `N.sqm` files in a
+            // `migrations/` directory next to the `.sq` file; SQLDelight
+            // infers the current schema version from the migration count
+            // (e.g. one migration → version 2).
         }
     }
 }

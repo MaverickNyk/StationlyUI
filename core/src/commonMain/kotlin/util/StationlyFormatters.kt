@@ -62,7 +62,7 @@ object StationlyFormatters {
             val etaTime = Instant.parse(etaIso)
             val now = Clock.System.now()
             val duration = etaTime - now
-            
+
             when {
                 duration.inWholeSeconds < 30 -> "Due"
                 duration.inWholeSeconds < 60 -> "1 min"
@@ -70,6 +70,41 @@ object StationlyFormatters {
             }
         } catch (e: Exception) {
             "Due"
+        }
+    }
+
+    /**
+     * Parse the FCM/TfL ISO timestamp into an absolute epoch-millis value
+     * so the UI can self-tick the minutes-remaining label without
+     * re-deriving from the now-stale formatted string. Returns null when
+     * the input isn't a parseable ISO instant (legacy strings like "Due"
+     * or "5 min" that arrive pre-formatted).
+     */
+    fun parseTargetEpochMs(etaIso: String): Long? = try {
+        Instant.parse(etaIso).toEpochMilliseconds()
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * Re-format a `PredictionDisplay`'s ETA given the *current* wall
+     * clock. Used by the per-minute ticker on the widget / dot-matrix
+     * surfaces — preserves the same "Due / 1 min / N min" rounding the
+     * receive-time formatter uses, so a row labelled "5 min" at FCM
+     * receipt ticks cleanly down to "4 min", "3 min", ..., "Due".
+     *
+     * If targetEpochMs is null (FCM ISO timestamp failed to parse),
+     * returns [staleFallback] verbatim — typically the row's
+     * receive-time `eta` string, which is at least as fresh as the
+     * last FCM push.
+     */
+    fun formatMinutesRemaining(targetEpochMs: Long?, nowMs: Long, staleFallback: String): String {
+        if (targetEpochMs == null) return staleFallback
+        val secondsRemaining = (targetEpochMs - nowMs) / 1000
+        return when {
+            secondsRemaining < 30 -> "Due"
+            secondsRemaining < 60 -> "1 min"
+            else -> "${(secondsRemaining + 30) / 60} min"
         }
     }
 
