@@ -11,15 +11,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Warning
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -104,25 +103,35 @@ internal fun StationHeader(
                 label = "pulse_alpha"
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(7.dp)
-                        .clip(CircleShape)
-                        .background(
-                            (if (isDisrupted) lineColor else themeColors.live)
-                                .copy(alpha = pulse)
-                        )
-                )
+                // Disrupted states get the small warning glyph + danger
+                // colour — same affordance as the home Board's disruption
+                // banner. Good Service renders the live-pulse dot, matching
+                // the "we're listening, everything's normal" cue used on
+                // the home next-departure card.
+                if (isDisrupted) {
+                    Icon(
+                        imageVector = Icons.Outlined.Warning,
+                        contentDescription = null,
+                        tint = themeColors.danger,
+                        modifier = Modifier.size(statusSize.value.dp + 2.dp),
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(themeColors.live.copy(alpha = pulse))
+                    )
+                }
                 Spacer(Modifier.width(6.dp))
-                // Disrupted text picks the most legible "alert" tone for the
-                // current canvas — themeColors.danger flips per dream theme
-                // (deep red on cream / bright red on near-black). Cleaner
-                // than hardcoded reds; tracks the theme tokens centrally.
-                val disruptedColor =
-                    if (themeColors === LightDreamColors) themeColors.danger else lineColor
                 Text(
                     text = statusLine.substringAfter("· ").ifBlank { statusLine },
-                    color = if (isDisrupted) disruptedColor else onCanvas.copy(alpha = 0.70f),
+                    // Always use the theme's `danger` token on disruption so
+                    // the colour-semantics match the home Board exactly —
+                    // "Severe Delays / Part Closure" reads as red on either
+                    // theme, not as Piccadilly navy or Central red, which
+                    // would read as "fine" alongside the line pill.
+                    color = if (isDisrupted) themeColors.danger else onCanvas.copy(alpha = 0.70f),
                     fontSize = statusSize,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = 0.4.sp,
@@ -182,36 +191,41 @@ internal fun NextTrainHero(
     val onCanvasMute = onCanvas.copy(alpha = 0.55f)
     val isLightCanvas = themeColors === LightDreamColors
 
-    // Per-minute countdown so the ETA tile feels live, not stale. Mirrors
-    // home's Board.NextDepartureRow logic: tick once a minute, mark "Due"
-    // at 0, then mark as departed after 90s if no fresh prediction lands.
-    val initialMinutes = remember(prediction) {
-        when {
-            prediction.isDue -> 0
-            prediction.eta.trim().lowercase() == "due" -> 0
-            else -> prediction.eta.replace(" min", "").trim().toIntOrNull() ?: 0
+    // Drive the countdown from the prediction's absolute target time
+    // plus a minute-aligned wall-clock tick — shared with the home
+    // hero and the dot-matrix rows so all surfaces flip from 5→4 at
+    // the same instant. A local `delay(60_000)` loop seeded from the
+    // eta string used to reset every time the Syncer republished
+    // (every ~30s), keeping the visible number frozen.
+    val nowMs by com.stationly.mobile.ui.util.rememberMinuteTick()
+    val secondsRemaining: Long = prediction.targetEpochMs?.let { (it - nowMs) / 1000 }
+        ?: run {
+            val parsed = when {
+                prediction.isDue -> 0
+                prediction.eta.trim().equals("Due", ignoreCase = true) -> 0
+                else -> prediction.eta.replace(" min", "").trim().toIntOrNull() ?: 0
+            }
+            parsed.toLong() * 60
         }
+    val countdown = when {
+        secondsRemaining < 30 -> 0
+        secondsRemaining < 60 -> 1
+        else -> ((secondsRemaining + 30) / 60).toInt()
     }
-    var countdown by remember(prediction) { mutableIntStateOf(initialMinutes) }
-    var isDeparted by remember(prediction) { mutableStateOf(false) }
-    LaunchedEffect(prediction) {
-        while (countdown > 0) {
-            kotlinx.coroutines.delay(60_000L)
-            countdown = (countdown - 1).coerceAtLeast(0)
-        }
-        kotlinx.coroutines.delay(90_000L)
-        isDeparted = true
-    }
-    val isDue = countdown == 0 && !isDeparted
+    // Upstream tick layer (PredictionTicker.tickPredictions) drops
+    // departed predictions before they reach this composable — DreamHost
+    // resolves the hero from the post-tick list. So a "departed" branch
+    // here is unreachable; the hero simply shifts to the next upcoming
+    // train when the current one is gone.
+    val isDue = countdown == 0
 
     // ETA tile colour — semantic in dark theme (line colour as signage cue),
     // brand amber in light (where line yellows/greys would vanish). Due
-    // always wins with a danger red, departed dims out.
+    // always wins with a danger red.
     val dueRed       = themeColors.danger
     val brandHi      = themeColors.brandAccent
     val etaBase      = if (isLightCanvas) brandHi else lineColor
     val etaColor = when {
-        isDeparted   -> onCanvas.copy(alpha = 0.40f)
         isDue        -> dueRed
         countdown == 1 -> brandHi
         else         -> etaBase
@@ -240,9 +254,7 @@ internal fun NextTrainHero(
     val etaProgress = (countdown / 10f).coerceIn(0f, 1f)
 
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .graphicsLayer { alpha = if (isDeparted) 0.45f else 1f },
+        modifier = Modifier.fillMaxWidth(),
         color = onCanvas.copy(alpha = 0.04f),  // subtle "card" tint on canvas
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(1.dp, lineColor.copy(alpha = 0.30f)),
@@ -313,18 +325,14 @@ internal fun NextTrainHero(
                 // Right column — ETA hero + min label
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = when {
-                            isDeparted -> "──"
-                            isDue      -> "Due"
-                            else       -> "$countdown"
-                        },
+                        text = if (isDue) "Due" else "$countdown",
                         color = etaColor.copy(alpha = if (isDue) duePulse else 1f),
                         fontWeight = FontWeight.Black,
                         fontSize = etaSize,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = (-1).sp,
                     )
-                    if (!isDue && !isDeparted) {
+                    if (!isDue) {
                         Text(
                             "min",
                             color = etaColor.copy(alpha = 0.60f),
@@ -417,7 +425,3 @@ private fun modeLabel(mode: String): String = when (mode.lowercase()) {
     "river-bus"      -> "RIVER"
     else             -> mode.uppercase()
 }
-
-/** First non-empty prediction the snapshot can show in the headline strip. */
-internal val DreamSnapshot.nextDeparture: PredictionDisplay?
-    get() = predictions.firstOrNull { it.destination.isNotBlank() && it.eta.isNotBlank() }

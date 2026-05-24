@@ -37,13 +37,11 @@ fun SduiComponentRenderer(
     components: List<SduiAppComponent>,
     primaryColor: Color = MaterialTheme.colorScheme.primary
 ) {
-    val context = LocalContext.current
-
-    fun openUrl(url: String) {
-        runCatching {
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        }
-    }
+    // Open URLs through the LocalOpenUrl callback so HTTP(S) links land
+    // in the in-app WebView instead of Chrome. Non-web schemes (mailto,
+    // tel) fall through to the system default automatically.
+    val openUrlFn = LocalOpenUrl.current
+    fun openUrl(url: String) = openUrlFn(url, null)
 
     components.forEach { component ->
         when (component) {
@@ -259,13 +257,16 @@ fun AnnouncementBanner(
                 )
                 if (announcement.url != null) {
                     Spacer(Modifier.height(6.dp))
+                    val openUrl = LocalOpenUrl.current
+                    val url = announcement.url ?: ""
+                    val title = announcement.title
                     Text(
                         "Learn more",
                         color = iconColor,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.clickable {
-                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(announcement.url))) }
+                            if (url.isNotBlank()) openUrl(url, title)
                         }
                     )
                 }

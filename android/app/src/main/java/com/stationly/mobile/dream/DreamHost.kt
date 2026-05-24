@@ -200,6 +200,20 @@ internal data class DreamDims(
 @Composable
 private fun LandscapeLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim: DreamDims) {
     val lineColor = lineColorOf(snapshot.selection?.line)
+    // Resolve the hero's prediction through the shared tick layer — so it
+    // shifts to the next upcoming train as soon as the current top row's
+    // train has departed (60s past target), without waiting for the next
+    // FCM. Identical filter applied on home + widget for cross-surface
+    // consistency. See PredictionTicker.tickPredictions.
+    //
+    // Sort by ETA AFTER ticking so the hero picks the soonest train ACROSS
+    // ALL platforms — list order from SQL is "platforms by earliest train
+    // at last FCM" which goes stale as rows depart and platforms re-rank.
+    val tickedNextDeparture = com.stationly.core.util.StationlyFormatters
+        .sortPredictions(
+            com.stationly.mobile.ui.util.rememberTickedPredictions(snapshot.predictions)
+        )
+        .firstOrNull { it.destination.isNotBlank() && it.eta.isNotBlank() }
     Row(
         modifier = Modifier.fillMaxSize(),
         horizontalArrangement = Arrangement.spacedBy(48.dp),
@@ -252,7 +266,7 @@ private fun LandscapeLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim
                         statusLine = snapshot.statusLine,
                         dim = dim,
                     )
-                    snapshot.nextDeparture?.let {
+                    tickedNextDeparture?.let {
                         NextTrainHero(
                             prediction = it,
                             lineColor = lineColor,
@@ -278,6 +292,14 @@ private fun LandscapeLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim
 @Composable
 private fun PortraitLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim: DreamDims) {
     val lineColor = lineColorOf(snapshot.selection?.line)
+    // Same tick-aware hero resolution as the landscape layout — drops
+    // departed rows, sorts by ETA across all platforms, picks the next
+    // upcoming train.
+    val tickedNextDeparture = com.stationly.core.util.StationlyFormatters
+        .sortPredictions(
+            com.stationly.mobile.ui.util.rememberTickedPredictions(snapshot.predictions)
+        )
+        .firstOrNull { it.destination.isNotBlank() && it.eta.isNotBlank() }
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(20.dp)
@@ -324,7 +346,7 @@ private fun PortraitLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim:
                         statusLine = snapshot.statusLine,
                         dim = dim,
                     )
-                    snapshot.nextDeparture?.let {
+                    tickedNextDeparture?.let {
                         NextTrainHero(
                             prediction = it,
                             lineColor = lineColor,

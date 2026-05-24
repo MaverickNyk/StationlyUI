@@ -18,6 +18,14 @@ CREATE TABLE PredictionEntity (
     isDue INTEGER NOT NULL DEFAULT 0,
     stopLetter TEXT,
     timestamp INTEGER NOT NULL,
+    -- Absolute wall-clock time the train is expected to arrive, in epoch
+    -- millis. Stored alongside the formatted `eta` string so every consumer
+    -- can derive an accurate minutes-remaining on its own clock without
+    -- waiting for the next FCM tick. Nullable as a defensive fallback —
+    -- if the FCM payload's ISO timestamp fails to parse, the column is
+    -- null and consumers fall back to the stored `eta` string rather than
+    -- dropping the row entirely.
+    targetEpochMs INTEGER,
     PRIMARY KEY (stationId, lineId, destination, platform, eta)
 );
 
@@ -48,11 +56,14 @@ deleteSelection:
 DELETE FROM UserSelectionEntity WHERE station = ? AND line = ?;
 
 insertPrediction:
-INSERT OR REPLACE INTO PredictionEntity(stationId, lineId, destination, platform, eta, isDue, stopLetter, timestamp)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO PredictionEntity(stationId, lineId, destination, platform, eta, isDue, stopLetter, timestamp, targetEpochMs)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 getPredictionsForStation:
 SELECT * FROM PredictionEntity WHERE stationId = ? AND lineId = ?;
+
+getPredictionsTimestamp:
+SELECT MAX(timestamp) AS lastTimestamp FROM PredictionEntity WHERE stationId = ? AND lineId = ?;
 
 clearPredictionsForStation:
 DELETE FROM PredictionEntity WHERE stationId = ? AND lineId = ?;

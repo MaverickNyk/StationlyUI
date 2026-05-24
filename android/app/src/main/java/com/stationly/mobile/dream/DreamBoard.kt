@@ -72,7 +72,10 @@ fun DreamBoard(
     fullscreen: Boolean = false,
 ) {
     val sel = snapshot.selection
-    val predictions = snapshot.predictions
+    // Self-tick row ETAs once per minute so a row labelled "5 min" visibly
+    // drops to "4 min" without waiting for the next FCM push. Rows whose
+    // targetEpochMs is null (FCM ISO parse fallback) fall through unchanged.
+    val predictions = com.stationly.mobile.ui.util.rememberTickedPredictions(snapshot.predictions)
     val lineStatus = snapshot.lineStatus
     val lastUpdated = snapshot.lastUpdatedMs
 
@@ -100,14 +103,21 @@ fun DreamBoard(
                 sel?.stationName ?: "Stationly"
 
             // "X ago" timer. Compute base from real last-updated wall-time so the
-            // counter is honest even on the first paint of the dream.
+            // counter is honest even on the first paint of the dream. Only
+            // reset when fresh data actually landed — the per-minute self-tick
+            // re-fires this lambda but must NOT make the counter jump back to
+            // zero.
             val chrono = view.findViewById<Chronometer>(R.id.last_updated_timer)
             chrono.visibility = View.VISIBLE
             chrono.format = "%s ago"
-            chrono.stop()
-            chrono.base = SystemClock.elapsedRealtime() -
-                (System.currentTimeMillis() - lastUpdated).coerceAtLeast(0L)
-            chrono.start()
+            val previousLastUpdated = chrono.tag as? Long
+            if (previousLastUpdated != lastUpdated) {
+                chrono.stop()
+                chrono.base = SystemClock.elapsedRealtime() -
+                    (System.currentTimeMillis() - lastUpdated).coerceAtLeast(0L)
+                chrono.start()
+                chrono.tag = lastUpdated
+            }
 
             // Status row + marquee.
             val statusContainer = view.findViewById<View>(R.id.status_container)

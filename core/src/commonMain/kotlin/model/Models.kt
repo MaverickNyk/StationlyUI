@@ -164,9 +164,19 @@ data class WidgetState(
 data class PredictionDisplay(
     val destination: String,
     val platform: String,
-    val eta: String, // "Due", "X min", etc.
+    val eta: String, // "Due", "X min", etc. — formatted at receipt time.
     val isDue: Boolean,
-    val stopLetter: String? = null
+    val stopLetter: String? = null,
+    /**
+     * Absolute arrival time as epoch millis. Lets the UI tick the
+     * minutes-remaining label locally between FCM pushes — at 12:25 with
+     * targetEpochMs=12:30 the row reads "5 min", at 12:26 it ticks to
+     * "4 min" without waiting for a new FCM. Nullable as a defensive
+     * fallback: if the FCM payload's ISO timestamp fails to parse,
+     * consumers fall through to the stored `eta` string instead of
+     * dropping the row.
+     */
+    val targetEpochMs: Long? = null,
 )
 
 /**
