@@ -45,11 +45,37 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         }
     }
     
+    override fun onDisabled(context: Context) {
+        super.onDisabled(context)
+        // Last widget removed from the home screen — drop the watchdog
+        // so we're not waking the device for a UI surface that no
+        // longer exists. (Other alarms — timer-colour, etc. — fire
+        // once and self-terminate; only the rescheduling watchdog
+        // would leak.)
+        cancelEtaTickWatchdog(context)
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         when (intent.action) {
             ACTION_TIMER_DIM -> { setTimerColor(context, COLOR_DIM); return }
             ACTION_TIMER_RED -> { setTimerColor(context, COLOR_RED); return }
+            ACTION_ETA_TICK -> {
+                // Watchdog fired — FCM has been silent for ≥ 90s.
+                // Re-render from SQL so the ETAs catch up to the wall
+                // clock, then reschedule the next watchdog (handled
+                // automatically by updateFromStorage → updateAppWidget
+                // → scheduleEtaTickWatchdog).
+                val pendingResult = goAsync()
+                CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                    try {
+                        updateFromStorage(context)
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+                return
+            }
         }
         val actions = listOf(ACTION_UPDATE_WIDGET, ACTION_MANUAL_REFRESH)
         if (intent.action in actions) {
@@ -83,6 +109,17 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         const val ACTION_MANUAL_REFRESH = "com.stationly.mobile.ACTION_MANUAL_REFRESH"
         const val ACTION_TIMER_DIM = "com.stationly.mobile.ACTION_TIMER_DIM"
         const val ACTION_TIMER_RED = "com.stationly.mobile.ACTION_TIMER_RED"
+        /**
+         * Watchdog tick — fires only when FCM has gone silent for
+         * [ETA_TICK_DEBOUNCE_MS]. On fire, re-renders the widget so the
+         * row ETAs catch up to the wall clock (5 min → 4 min etc) and
+         * reschedules another watchdog. Every render (FCM-driven OR
+         * watchdog-driven OR manual) calls [scheduleEtaTickWatchdog],
+         * so a healthy FCM stream (≈ every 30s) keeps pushing the
+         * deadline forward and the alarm never actually fires — zero
+         * wake-ups in steady state.
+         */
+        const val ACTION_ETA_TICK = "com.stationly.mobile.ACTION_ETA_TICK"
 
         private const val COLOR_AMBER = 0xFFFFB300.toInt()
         private const val COLOR_DIM   = 0xFF888888.toInt()
@@ -105,6 +142,67 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             views.setTextColor(com.stationly.mobile.R.id.last_updated_timer, color)
             for (id in ids) mgr.partiallyUpdateAppWidget(id, views)
         }
+
+        /**
+         * Schedule (or replace) the ETA watchdog. The alarm fires at
+         * the next wall-clock minute boundary so the widget ticks at
+         * the same instant as the home + dream rows — visual parity is
+         * the whole point. Same PendingIntent + FLAG_UPDATE_CURRENT
+         * means every render cancels any pending alarm and installs a
+         * fresh one (debounce semantics): a healthy FCM stream (every
+         * ~30s) keeps pushing the deadline past the next FCM render,
+         * so the alarm rarely fires in steady state.
+         *
+         * Uses inexact `set()` rather than `setExact*` for two reasons:
+         *   - `setExactAndAllowWhileIdle` and `setExact` require the
+         *     `SCHEDULE_EXACT_ALARM` permission on API 31+, which we
+         *     deliberately don't request — minute-precision is a UX
+         *     polish, not a clinical-grade trigger.
+         *   - Inexact alarms get batched with other system alarms, so
+         *     the OS coalesces wake-ups. On modern Android this lands
+         *     within a few seconds of the requested time, which is
+         *     well under the user's "is it ticking?" perception
+         *     threshold.
+         */
+        private fun scheduleEtaTickWatchdog(context: Context) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+            val pendingIntent = etaTickPendingIntent(context)
+            val fireAtRtc = nextWatchdogFireRtc()
+            val deltaMs = (fireAtRtc - System.currentTimeMillis()).coerceAtLeast(1_000L)
+            alarmManager.set(
+                android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                SystemClock.elapsedRealtime() + deltaMs,
+                pendingIntent,
+            )
+        }
+
+        /**
+         * Next wall-clock minute boundary that's at least 30s in the
+         * future. If we're already within 30s of the next minute, skip
+         * to the one after — that gives FCM a debounce window to land
+         * before the watchdog fires (the typical Syncer cadence is
+         * ~30s). Result is always between 30s and 90s out, always on
+         * a round minute.
+         */
+        private fun nextWatchdogFireRtc(): Long {
+            val now = System.currentTimeMillis()
+            val nextMinute = ((now / 60_000L) + 1L) * 60_000L
+            return if (nextMinute - now >= 30_000L) nextMinute else nextMinute + 60_000L
+        }
+
+        private fun cancelEtaTickWatchdog(context: Context) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+            alarmManager.cancel(etaTickPendingIntent(context))
+        }
+
+        private fun etaTickPendingIntent(context: Context): android.app.PendingIntent =
+            android.app.PendingIntent.getBroadcast(
+                context, 12,
+                Intent(context, DepartureWidgetProvider::class.java).apply {
+                    action = ACTION_ETA_TICK
+                },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+            )
 
         private fun scheduleTimerColorAlarms(context: Context) {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
@@ -165,9 +263,29 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 lineStatusReason = cachedStatus.reason
             }
             
-            val predictions = com.stationly.core.util.StationlyFormatters.sortPredictions(
-                com.stationly.core.platform.Platform.sqlStorage.getPredictions(selection.station, selection.line)
+            // Re-derive each row's `eta` from its absolute `targetEpochMs`
+            // against the current wall clock AND drop rows whose train
+            // has already departed (more than 60s past target). Single
+            // helper shared with the Compose-side tick layer so home +
+            // dream + widget cannot drift — same formula, same threshold,
+            // same source of truth. See PredictionTicker.tickPredictions.
+            val nowMs = System.currentTimeMillis()
+            val rawPredictions = com.stationly.core.platform.Platform.sqlStorage
+                .getPredictions(selection.station, selection.line)
+            val tickedPredictions = com.stationly.core.util.StationlyFormatters.sortPredictions(
+                com.stationly.mobile.ui.util.tickPredictions(rawPredictions, nowMs)
             )
+            // After dropping departed rows the visible window may need
+            // upcoming trains shifted into it — re-cap at the display
+            // limit of 3 per platform here, matching the home/dream
+            // dot-matrix layout.
+            val predictions = com.stationly.core.util.GlobalBoardProcessor
+                .processPredictions(tickedPredictions, perPlatformCap = 3)
+            // Pull the SQL row timestamp so the chronometer reflects when
+            // FCM/REST last gave us this data — not when this redraw fired.
+            val lastUpdatedMs = com.stationly.core.platform.Platform.sqlStorage
+                .getPredictionsTimestamp(selection.station, selection.line)
+                ?: System.currentTimeMillis()
             
             var sduiPayload: com.stationly.core.model.sdui.SduiWidgetPayload? = null
             val sduiJson = prefs.getString("sdui_layout_${selection.station}", null)
@@ -199,7 +317,8 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 lineStatusSeverity,
                 lineStatusReason,
                 sduiPayload,
-                hasLoadedData
+                hasLoadedData,
+                lastUpdatedMs,
             )
         }
         
@@ -217,7 +336,15 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             lineStatusSeverity: String? = null,
             lineStatusReason: String? = null,
             sduiPayload: com.stationly.core.model.sdui.SduiWidgetPayload? = null,
-            hasLoadedData: Boolean = true
+            hasLoadedData: Boolean = true,
+            /**
+             * Wall-clock millis when the data was last synced from the
+             * backend. Drives the "X ago" timer. Defaults to "now" for
+             * the empty/initial-render path; real refreshes pass the SQL
+             * row timestamp so the counter stays honest even if the
+             * widget was redrawn long after the last FCM landed.
+             */
+            lastUpdatedMs: Long = System.currentTimeMillis(),
         ) {
             android.util.Log.d("Widget", "Updating widget $appWidgetId for $stationName with ${predictions.size} departures")
             
@@ -232,9 +359,25 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             views.setViewVisibility(R.id.last_updated_timer, if (hasSelection) android.view.View.VISIBLE else android.view.View.INVISIBLE)
 
             if (hasSelection) {
-                views.setChronometer(R.id.last_updated_timer, SystemClock.elapsedRealtime(), "%s ago", true)
+                // "X ago" = time since the backend gave us this data, NOT
+                // since this widget redraw fired. Anchor the chronometer
+                // base so its zero point sits at the wall-clock moment
+                // the SQL row was persisted.
+                val ageMs = (System.currentTimeMillis() - lastUpdatedMs).coerceAtLeast(0L)
+                views.setChronometer(
+                    R.id.last_updated_timer,
+                    SystemClock.elapsedRealtime() - ageMs,
+                    "%s ago",
+                    true,
+                )
                 views.setTextColor(R.id.last_updated_timer, COLOR_AMBER)
                 scheduleTimerColorAlarms(context)
+                // Re-arm the watchdog. Whatever path got us here (FCM
+                // push, manual refresh, prior watchdog fire), we just
+                // produced an up-to-date render — so the next forced
+                // re-render is 90s out unless an FCM lands first and
+                // re-arms us closer.
+                scheduleEtaTickWatchdog(context)
             }
 
             when {
@@ -414,13 +557,14 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             lineStatusSeverity: String? = null,
             lineStatusReason: String? = null,
             sduiPayload: com.stationly.core.model.sdui.SduiWidgetPayload? = null,
-            hasLoadedData: Boolean = true
+            hasLoadedData: Boolean = true,
+            lastUpdatedMs: Long = System.currentTimeMillis(),
         ) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
             val appWidgetIds = appWidgetManager.getAppWidgetIds(
                 android.content.ComponentName(context, DepartureWidgetProvider::class.java)
             )
-            
+
             for (appWidgetId in appWidgetIds) {
                 updateAppWidget(
                     context,
@@ -432,7 +576,8 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     lineStatusSeverity,
                     lineStatusReason,
                     sduiPayload,
-                    hasLoadedData
+                    hasLoadedData,
+                    lastUpdatedMs,
                 )
             }
         }

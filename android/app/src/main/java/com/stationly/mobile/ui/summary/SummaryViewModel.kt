@@ -186,9 +186,15 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 val rawPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line)
                 val dbPreds = com.stationly.core.util.GlobalBoardProcessor.processPredictions(rawPreds)
                 
-                // Also get when it was updated if we had a generic timestamp method, 
-                // but since it's not exposed easily, we'll just check if there's any prediction.
-                val predsTimestamp = if (dbPreds.isNotEmpty()) System.currentTimeMillis() else 0L
+                // Honest "last updated" time — the SQL row's persistence
+                // timestamp (set when the FCM payload or REST sync was
+                // saved). Falls back to "now" only as a safety net for
+                // empty-state; the caller treats 0L as "no data yet" so
+                // the chronometer doesn't display in that case.
+                val predsTimestamp = if (dbPreds.isNotEmpty()) {
+                    Platform.sqlStorage.getPredictionsTimestamp(selection.station, selection.line)
+                        ?: System.currentTimeMillis()
+                } else 0L
                 val currentMap = _predictions.value.toMutableMap()
                 currentMap[selection.station] = dbPreds
                 _predictions.value = currentMap

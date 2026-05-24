@@ -20,11 +20,23 @@ object GlobalBoardProcessor {
     
     /**
      * Common sorting and filtering for all departure lists.
-     * Groups by platform and takes the top 3 earliest arrivals PER platform.
-     * Orders platforms by whichever platform has the earliest overall train.
+     * Groups by platform and takes the top [perPlatformCap] earliest arrivals
+     * PER platform. Orders platforms by whichever platform has the earliest
+     * overall train.
+     *
+     * - Display layer calls with the default cap of 3 (matches the
+     *   dot-matrix board's 3-rows-per-platform layout).
+     * - Storage layer ([SyncPredictionsUseCase]) calls with a larger cap
+     *   (e.g. 8) so the in-memory tick layer has buffer rows to shift into
+     *   the visible 3-row window once the top row's train has departed.
      */
-    fun processPredictions(predictions: List<PredictionDisplay>): List<PredictionDisplay> =
-        groupByPlatformSorted(predictions).flatMap { (_, platformPreds) -> platformPreds.take(3) }
+    fun processPredictions(
+        predictions: List<PredictionDisplay>,
+        perPlatformCap: Int = 3,
+    ): List<PredictionDisplay> =
+        groupByPlatformSorted(predictions).flatMap { (_, platformPreds) ->
+            platformPreds.take(perPlatformCap)
+        }
 
     private fun groupByPlatformSorted(predictions: List<PredictionDisplay>): List<Map.Entry<String, List<PredictionDisplay>>> {
         val sorted = StationlyFormatters.sortPredictions(predictions)

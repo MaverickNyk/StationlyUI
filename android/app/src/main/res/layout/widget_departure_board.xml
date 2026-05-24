@@ -17,35 +17,23 @@
         android:paddingTop="2dp"
         android:paddingBottom="2dp">
 
-        <!-- Icon + name: wrap_content group centered — icon stays touching the text -->
-        <LinearLayout
+        <!-- Station name centered in header. Brand logo lives on the
+             footer row (bottom-left of the board) so the header stays
+             clean and the station name has more space. -->
+        <TextView
+            android:id="@+id/line_name"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:layout_marginStart="68dp"
             android:layout_marginEnd="68dp"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-
-            <ImageView
-                android:layout_width="16dp"
-                android:layout_height="16dp"
-                android:layout_marginEnd="6dp"
-                android:src="@drawable/stationly_logo"
-                android:contentDescription="Stationly" />
-
-            <TextView
-                android:id="@+id/line_name"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:maxLines="1"
-                android:ellipsize="end"
-                android:maxEms="16"
-                android:textColor="@color/tfl_amber"
-                android:textSize="15sp"
-                android:textStyle="bold"
-                tools:text="Arsenal Underground Station" />
-        </LinearLayout>
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:maxEms="18"
+            android:textColor="@color/tfl_amber"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            tools:text="Arsenal Underground Station" />
 
         <!-- Buttons pinned to right -->
         <LinearLayout
@@ -195,6 +183,20 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp">
+
+        <!-- Stationly maker mark on the left, vertically centred on the
+             footer row alongside the ticking clock + chronometer. Drawn
+             at full opacity so the brand reads crisply against the dark
+             dot-matrix panel; size bumped to 22dp so the disc has enough
+             pixel weight to look intentional rather than smudged. -->
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_alignParentStart="true"
+            android:layout_centerVertical="true"
+            android:layout_marginStart="6dp"
+            android:src="@drawable/stationly_logo"
+            android:contentDescription="Stationly" />
 
         <TextClock
             android:id="@+id/clock"

@@ -61,7 +61,8 @@ class SqlStorage(private val database: StationlyDatabase) {
                     eta = it.eta,
                     isDue = if (it.isDue) 1L else 0L,
                     stopLetter = it.stopLetter,
-                    timestamp = timestamp
+                    timestamp = timestamp,
+                    targetEpochMs = it.targetEpochMs,
                 )
             }
         }
@@ -70,28 +71,46 @@ class SqlStorage(private val database: StationlyDatabase) {
     fun getPredictions(stationId: String, lineId: String): List<PredictionDisplay> {
         val results = queries.getPredictionsForStation(stationId, lineId.lowercase()).executeAsList()
         if (results.isEmpty()) return emptyList()
-        
+
         val now = Clock.System.now().toEpochMilliseconds()
         val timestamp = results.first().timestamp
-        
-        // If data is older than 2 minutes, don't return it
-        if (now - timestamp > 120_000) {
+
+        // Drop stale data. Widened from 2 min → 8 min now that the UI
+        // self-ticks per-minute via targetEpochMs — between FCM pushes
+        // we want the rows to keep counting down instead of disappearing.
+        // 8 min covers a comfortable buffer for the longest "X min" rows
+        // we'd want to show; past that, the data is genuinely stale.
+        if (now - timestamp > 8 * 60 * 1000) {
             return emptyList()
         }
-        
+
         return results.map {
             PredictionDisplay(
                 destination = it.destination,
                 platform = it.platform,
                 eta = it.eta,
                 isDue = it.isDue == 1L,
-                stopLetter = it.stopLetter
+                stopLetter = it.stopLetter,
+                targetEpochMs = it.targetEpochMs,
             )
         }
     }
 
     fun hasPredictionsInDatabase(stationId: String, lineId: String): Boolean {
         return queries.getPredictionsForStation(stationId, lineId.lowercase()).executeAsList().isNotEmpty()
+    }
+
+    /**
+     * Wall-clock millis (epoch) when the most recent prediction row for
+     * this station+line was persisted to SQL. Returns null if there are
+     * no rows. Used to drive the "X ago" timer honestly — that label is
+     * supposed to mean "time since the last FCM / REST sync gave us
+     * fresh data", and this is the only value that knows that.
+     */
+    fun getPredictionsTimestamp(stationId: String, lineId: String): Long? {
+        return queries.getPredictionsTimestamp(stationId, lineId.lowercase())
+            .executeAsOneOrNull()
+            ?.lastTimestamp
     }
 
     fun saveLineStatus(status: LineStatus) {

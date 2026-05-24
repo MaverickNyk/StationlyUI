@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Metadata for StationlyDreamService.
+
+  - settingsActivity: gear icon next to "Stationly" in Settings → Display →
+    Screensaver opens our DreamSettingsActivity (clock style + station picker).
+  - previewImage: the launcher icon stands in until we ship a dedicated
+    preview asset. Appears next to "Stationly" in the screensaver picker.
+-->
+<dream xmlns:android="http://schemas.android.com/apk/res/android"
+    android:previewImage="@mipmap/ic_launcher"
+    android:settingsActivity="com.stationly.mobile/.dream.DreamSettingsActivity" />
