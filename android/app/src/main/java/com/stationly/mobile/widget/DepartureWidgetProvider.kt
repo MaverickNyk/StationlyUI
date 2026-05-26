@@ -380,18 +380,21 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 scheduleEtaTickWatchdog(context)
             }
 
-            when {
-                lineStatusSeverity != null -> {
+            // Status row: hidden entirely when there's no selection (a
+            // "Good Service" default would be a lie since there's no line
+            // to report on). Otherwise always visible to keep the widget
+            // size stable across selected-board states; real status when
+            // available, "Good Service" as the default.
+            if (!hasSelection) {
+                views.setViewVisibility(R.id.status_container, android.view.View.GONE)
+            } else {
+                views.setViewVisibility(R.id.status_container, android.view.View.VISIBLE)
+                if (lineStatusSeverity != null) {
                     views.setTextViewText(R.id.status_severity, lineStatusSeverity)
                     views.setTextViewText(R.id.status_reason, StationlyFormatters.formatStatusReason(lineStatusReason ?: ""))
-                }
-                hasSelection -> {
-                    views.setTextViewText(R.id.status_severity, "Status")
-                    views.setTextViewText(R.id.status_reason, "Connecting to TfL signals...")
-                }
-                else -> {
-                    views.setTextViewText(R.id.status_severity, "Stationly")
-                    views.setTextViewText(R.id.status_reason, "Open the app to get started")
+                } else {
+                    views.setTextViewText(R.id.status_severity, "Good Service")
+                    views.setTextViewText(R.id.status_reason, "")
                 }
             }
             
@@ -534,8 +537,62 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 }
             }
             
-            applyRowsToWidget(views, rowViews)
-            
+            // Shared fallback message — when there's nothing real to render
+            // we swap `rowViews` for `widget_departure_row` rows (bold
+            // title + normal-weight detail lines + filler padding) so the
+            // message sits inline with the dot-matrix, looking identical
+            // to home + dream. Going through the same `applyRowsToWidget`
+            // plumbing means it correctly lands in `rows_list` on API ≥ 31
+            // and `rows_container` below — no double-rendering / phantom
+            // empty container above.
+            val finalRowViews = run {
+                val nowMs = System.currentTimeMillis()
+                val londonTime = java.time.Instant.ofEpochMilli(nowMs)
+                    .atZone(java.time.ZoneId.of("Europe/London"))
+                    .toLocalTime()
+                val fallbackState = if (!hasSelection) {
+                    com.stationly.mobile.ui.util.BoardFallbackState(
+                        com.stationly.mobile.ui.util.BoardFallbackKind.CONNECTING, 0L
+                    )
+                } else {
+                    com.stationly.mobile.ui.util.computeBoardFallbackState(
+                        hasPredictions = predictions.isNotEmpty(),
+                        isOnline = com.stationly.mobile.ui.util.NetworkState.isOnline.value,
+                        lastUpdatedMs = lastUpdatedMs,
+                        nowMs = nowMs,
+                        londonTime = londonTime,
+                        lineStatusSeverity = lineStatusSeverity,
+                        lineStatusReason = lineStatusReason,
+                    )
+                }
+                if (fallbackState != null) {
+                    // No-selection state piggybacks on the CONNECTING kind
+                    // but overrides the copy so it doesn't duplicate the
+                    // "Stationly" header above; instead the title nudges
+                    // the user toward adding a board.
+                    val widgetStrings = if (!hasSelection) mapOf(
+                        "board.fallback.connecting.title"  to "No boards yet",
+                        "board.fallback.connecting.detail" to "Tap to add your first board",
+                    ) else emptyMap()
+                    com.stationly.mobile.ui.util.buildFallbackRowRemoteViews(
+                        context, fallbackState, widgetStrings,
+                    )
+                } else if (rowViews.isEmpty()) {
+                    // Edge case: hasSelection && hasPredictions logically true, but
+                    // the row list ended up empty (cap=0 or filter drop). Pad with
+                    // an empty 4-row placeholder so the widget doesn't collapse.
+                    com.stationly.mobile.ui.util.buildFallbackRowRemoteViews(
+                        context,
+                        com.stationly.mobile.ui.util.BoardFallbackState(
+                            com.stationly.mobile.ui.util.BoardFallbackKind.NO_UPCOMING
+                        ),
+                        emptyMap(),
+                    )
+                } else rowViews
+            }
+
+            applyRowsToWidget(views, finalRowViews)
+
             // Important: Handle appWidgetId correctly if updating all from invalid
             if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
                 appWidgetManager.updateAppWidget(appWidgetId, views)

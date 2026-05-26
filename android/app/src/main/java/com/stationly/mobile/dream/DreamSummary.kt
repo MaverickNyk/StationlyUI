@@ -387,7 +387,7 @@ internal fun EmptyStatePanel() {
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            text = "Add a board on the home screen\nto see live arrivals here.",
+            text = "Add a board on the home screen\nto see live departures here.",
             color = onCanvas.copy(alpha = 0.50f),
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
