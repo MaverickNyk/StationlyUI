@@ -22,6 +22,7 @@ class StationlyApplication : Application() {
         val env = if (BuildConfig.FLAVOR == "staging") AppEnvironment.STAGING else AppEnvironment.PRODUCTION
         Platform.initialize(this, BuildConfig.STATIONLY_API_KEY, env)
         AuthLog.init(this)
+        com.stationly.mobile.ui.util.NetworkState.init(this)
         // Register every Stationly notification channel up front so the
         // first FCM-driven status change has a channel to land in
         // without an extra round-trip into the dispatcher's lazy setup.

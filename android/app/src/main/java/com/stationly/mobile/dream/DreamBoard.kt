@@ -144,8 +144,31 @@ fun DreamBoard(
             view.findViewById<Chronometer>(R.id.last_updated_timer)
                 ?.setBaselineSp(ROW_BASE_SP * 0.8f)
 
-            // Waiting / "wrangling pigeons" container — we never use it on the dream.
-            view.findViewById<View>(R.id.waiting_container).visibility = View.GONE
+            // The waiting_container is now the shared fallback panel —
+            // applyBoardFallback at the end of this lambda decides its
+            // visibility based on the computed BoardFallbackState. No more
+            // unconditional GONE here.
+
+            // Same fallback rules as home + widget so the three surfaces
+            // never disagree about why the board is empty. Skipped when
+            // `sel == null` (DreamHost normally shows EmptyStatePanel in
+            // that case; the defensive "Add a board" header below should
+            // win if we ever get here).
+            val fallbackState = if (sel == null) null else {
+                val nowMs = System.currentTimeMillis()
+                val londonTime = java.time.Instant.ofEpochMilli(nowMs)
+                    .atZone(java.time.ZoneId.of("Europe/London"))
+                    .toLocalTime()
+                com.stationly.mobile.ui.util.computeBoardFallbackState(
+                    hasPredictions = predictions.isNotEmpty(),
+                    isOnline = com.stationly.mobile.ui.util.NetworkState.isOnline.value,
+                    lastUpdatedMs = lastUpdated,
+                    nowMs = nowMs,
+                    londonTime = londonTime,
+                    lineStatusSeverity = lineStatus?.statusSeverityDescription,
+                    lineStatusReason = lineStatus?.reason,
+                )
+            }
 
             // Rows. The widget XML declares the container as `0dp + weight=1`
             // — that only works when the parent has a fixed height. We wrap it
@@ -242,6 +265,27 @@ fun DreamBoard(
                         (rowView.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin = rowGapPx
                     }
                     rowsContainer.addView(rowView)
+                }
+            }
+
+            // Shared fallback rows — applied BEFORE scaleAllText so the
+            // new TextViews participate in dream's text-scale multiplier
+            // (otherwise they'd render at XML 15sp while real rows are at
+            // 14sp × textScale ≈ 24sp+ — visibly tiny). The apply call's
+            // rows_container reset wins over the diff-update / re-inflate
+            // branches above; if no fallback is active it's a no-op.
+            com.stationly.mobile.ui.util.applyBoardFallbackToRows(view, fallbackState, emptyMap())
+
+            // Re-baseline any fallback rows we just added so they match
+            // real-row sizing (real rows set ROW_BASE_SP inline during
+            // inflation; fallback rows come from the surface-agnostic
+            // helper which doesn't know about dream's baseline). Idempotent
+            // on real rows that were already baselined.
+            if (fallbackState != null) {
+                for (i in 0 until rowsContainer.childCount) {
+                    val child = rowsContainer.getChildAt(i)
+                    child.findViewById<TextView>(R.id.destination_text)?.setBaselineSp(ROW_BASE_SP)
+                    child.findViewById<TextView>(R.id.eta_text)?.setBaselineSp(ROW_BASE_SP)
                 }
             }
 
