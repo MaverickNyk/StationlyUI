@@ -146,6 +146,48 @@ fun Board(
     // so home/dream/widget all flip at the same wall-clock minute boundary
     // even when FCM goes silent.
     val tickedPredictions = com.stationly.mobile.ui.util.rememberTickedPredictions(predictions)
+
+    // Fallback message (Offline / Live-updates-paused / Service-ended-for-tonight
+    // etc.) — shared across home, dream, and widget. Re-evaluated on every
+    // minute tick so "Live updates paused · last refresh 6 min ago" stays
+    // honest without the user touching the screen.
+    val isOnline by com.stationly.mobile.ui.util.NetworkState.isOnline.collectAsState()
+    val nowMs by com.stationly.mobile.ui.util.rememberMinuteTick()
+    val fallbackState = remember(tickedPredictions, isOnline, lastUpdated, nowMs, homeConfig, lineStatus) {
+        val londonTime = java.time.Instant.ofEpochMilli(nowMs)
+            .atZone(java.time.ZoneId.of("Europe/London"))
+            .toLocalTime()
+        // Split TfL's "Severity: Reason" into the two parts the fallback
+        // computation cares about, so a disruption can produce a DISRUPTED
+        // state instead of the generic "Nothing departing right now".
+        val statusSeverity = lineStatus
+            ?.let { if (it.contains(":")) it.substringBefore(":") else it }?.trim()
+        val statusReason = lineStatus
+            ?.takeIf { it.contains(":") }?.substringAfter(":")?.trim()
+        com.stationly.mobile.ui.util.computeBoardFallbackState(
+            hasPredictions = tickedPredictions.isNotEmpty(),
+            isOnline = isOnline,
+            lastUpdatedMs = lastUpdated,
+            nowMs = nowMs,
+            londonTime = londonTime,
+            lineStatusSeverity = statusSeverity,
+            lineStatusReason = statusReason,
+            signalLostMin = homeConfig["board.fallback.signalLostMin"]?.toLongOrNull()
+                ?: com.stationly.mobile.ui.util.BoardFallbackDefaults.SIGNAL_LOST_MIN,
+            lateNightStart = com.stationly.mobile.ui.util.parseHHmm(
+                homeConfig["board.fallback.lateNightStart"],
+                com.stationly.mobile.ui.util.BoardFallbackDefaults.LATE_NIGHT_START,
+            ),
+            lateNightEnd = com.stationly.mobile.ui.util.parseHHmm(
+                homeConfig["board.fallback.lateNightEnd"],
+                com.stationly.mobile.ui.util.BoardFallbackDefaults.LATE_NIGHT_END,
+            ),
+            earlyMorningEnd = com.stationly.mobile.ui.util.parseHHmm(
+                homeConfig["board.fallback.earlyMorningEnd"],
+                com.stationly.mobile.ui.util.BoardFallbackDefaults.EARLY_MORNING_END,
+            ),
+        )
+    }
     // The hero card should always point at the actual NEXT train across
     // ALL platforms — not at whichever row happens to be first in SQL
     // insertion order. After enough ticking, that first row may no longer
@@ -212,7 +254,7 @@ fun Board(
     // Without remember(), infiniteTransition recompositions recreate this reference
     // ~60fps, causing AndroidView to call update() continuously and reset the
     // Chronometer base and marquee scroll on every frame.
-    val boardUpdate: (View) -> Unit = remember(tickedPredictions, lineStatus, lineStatusFailed, tickedSduiPayload, lastUpdated, homeConfig) { { view ->
+    val boardUpdate: (View) -> Unit = remember(tickedPredictions, lineStatus, lineStatusFailed, tickedSduiPayload, lastUpdated, homeConfig, fallbackState) { { view ->
         val context = view.context
         view.findViewById<View>(R.id.btn_settings).visibility = View.GONE
         view.findViewById<View>(R.id.btn_refresh).visibility = View.GONE
@@ -242,6 +284,9 @@ fun Board(
             chrono.tag = lastUpdated
         }
 
+        // Status row: always visible to keep the board size stable across
+        // surfaces. Reason text follows: real line status > "Status unavailable"
+        // on fetch failure > "Good Service" as the default.
         val statusContainer = view.findViewById<View>(R.id.status_container)
         val severityText = view.findViewById<TextView>(R.id.status_severity)
         val reasonText = view.findViewById<TextView>(R.id.status_reason)
@@ -255,12 +300,12 @@ fun Board(
             newSeverity = homeConfig["board.status_label"] ?: "Status"
             newReason = homeConfig["board.status_failed_label"] ?: "Status unavailable — pull down to retry"
         } else {
-            newSeverity = homeConfig["board.status_label"] ?: "Status"
-            newReason = homeConfig["board.connecting_label"] ?: "Connecting to TfL signals..."
+            newSeverity = homeConfig["board.good_service_label"] ?: "Good Service"
+            newReason = ""
         }
         severityText.text = newSeverity
-        // Only reset marquee scroll when the text changes — continuous refreshes (e.g. during
-        // a "Due" blink cycle) would otherwise interrupt the scroll on every update.
+        // Only reset marquee scroll when the text changes — continuous refreshes
+        // would otherwise interrupt the scroll on every update.
         if (reasonText.text.toString() != newReason) {
             reasonText.text = newReason
             reasonText.isSelected = false
@@ -376,6 +421,13 @@ fun Board(
                 }
             }
         }
+
+        // Shared fallback rows — called LAST so its rows_container.removeAllViews()
+        // wins over whatever the SDUI/legacy rendering branches just inflated.
+        // Renders inside the existing rows stream using `widget_departure_row`
+        // (title in bold, detail in normal weight, both centred) so the
+        // dot-matrix look stays consistent across home + dream + widget.
+        com.stationly.mobile.ui.util.applyBoardFallbackToRows(view, fallbackState, homeConfig)
     } }
 
     // ── Outer column ──
@@ -454,7 +506,9 @@ fun Board(
         // the user sees the status disclaimer BEFORE the live train info,
         // not as a footnote after the board. Uses the danger token
         // (deep amber-red), NOT the brand primary, so "Severe Delays"
-        // reads as bad-news rather than brand-news.
+        // reads as bad-news rather than brand-news. Always renders when
+        // the line is disrupted — the dot-matrix fallback rows only show
+        // a short summary, this banner carries the full reason.
         if (isDisrupted) {
             val danger = LocalThemeTokens.current.error
             Surface(

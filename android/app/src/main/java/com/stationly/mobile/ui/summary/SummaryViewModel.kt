@@ -188,13 +188,18 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 
                 // Honest "last updated" time — the SQL row's persistence
                 // timestamp (set when the FCM payload or REST sync was
-                // saved). Falls back to "now" only as a safety net for
-                // empty-state; the caller treats 0L as "no data yet" so
-                // the chronometer doesn't display in that case.
-                val predsTimestamp = if (dbPreds.isNotEmpty()) {
-                    Platform.sqlStorage.getPredictionsTimestamp(selection.station, selection.line)
-                        ?: System.currentTimeMillis()
-                } else 0L
+                // saved). Read regardless of whether `dbPreds` is empty
+                // RIGHT NOW: empty predictions doesn't mean we never had
+                // any. A station whose last train departed an hour ago
+                // still has a real SQL timestamp from the FCM that
+                // delivered that train — and the home Board's chronometer
+                // + BoardFallbackState rely on that value to distinguish
+                // "service ended" / "live updates paused" from "fresh
+                // install, no data yet". 0L is now only returned when
+                // SQL genuinely has no timestamp for this station/line.
+                val predsTimestamp = Platform.sqlStorage
+                    .getPredictionsTimestamp(selection.station, selection.line)
+                    ?: 0L
                 val currentMap = _predictions.value.toMutableMap()
                 currentMap[selection.station] = dbPreds
                 _predictions.value = currentMap
