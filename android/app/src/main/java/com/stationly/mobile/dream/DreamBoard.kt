@@ -6,6 +6,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Chronometer
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -23,6 +24,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.stationly.core.util.GlobalBoardProcessor
 import com.stationly.core.util.LegacyRow
+import com.stationly.core.util.StationlyFormatters
+import com.stationly.mobile.util.HomeConfigStore
+import com.stationly.mobile.util.ModeColors
+import com.stationly.mobile.util.ModeIconCache
 import com.stationly.mobile.R
 
 /**
@@ -84,6 +89,10 @@ fun DreamBoard(
     val updater: (View) -> Unit = remember(sel, predictions, lineStatus, lastUpdated, textScale, showHeader, showClock, fullscreen) {
         update@{ view ->
             val context = view.context
+            // SDUI string map — used by the mode-icon contentDescription
+            // and the platform-header line prefix below. Read once per
+            // updater fire so we don't hit disk on every label substitution.
+            val sduiStrings = HomeConfigStore.read(context)
 
             // Hide buttons — dream is non-interactive.
             view.findViewById<View>(R.id.btn_settings).visibility = View.GONE
@@ -101,6 +110,41 @@ fun DreamBoard(
                 if (showHeader) View.VISIBLE else View.GONE
             view.findViewById<TextView>(R.id.line_name).text =
                 sel?.stationName ?: "Stationly"
+
+            // Mode roundel on the station strip — same source-of-truth as
+            // the widget: prefer the backend icon cached by ModeIconCache
+            // during board setup; fall back to the tinted generic roundel
+            // when nothing's cached yet.
+            view.findViewById<ImageView>(R.id.mode_icon)?.apply {
+                if (showHeader && sel != null) {
+                    visibility = View.VISIBLE
+                    // TalkBack — announce mode for the dream's signage strip.
+                    contentDescription = StationlyFormatters.formatModeName(sel.mode, sduiStrings)
+                    val cached = ModeIconCache.cachedBitmap(context, sel.mode)
+                    if (cached != null) {
+                        clearColorFilter()
+                        setImageBitmap(cached)
+                    } else {
+                        // Tint precedence: backend-shipped tintHex (via /modes)
+                        // > hardcoded ModeColors fallback for offline safety.
+                        val tint = ModeIconCache.tintFor(context, sel.mode)
+                            ?: ModeColors.forMode(sel.mode)
+                        setImageResource(R.drawable.mode_roundel)
+                        setColorFilter(tint)
+                    }
+                } else {
+                    visibility = View.GONE
+                }
+            }
+
+            // Line prefix is applied to the FIRST platform header below —
+            // only in fullscreen mode (cluster mode draws a Compose
+            // line-pill above the board, so the dot-matrix doesn't need
+            // to repeat it). Empty when no selection / cluster mode, in
+            // which case the prefix block is a no-op.
+            val linePrefix = if (fullscreen && sel != null) {
+                StationlyFormatters.formatLinePrefix(sel.mode, sel.line, sduiStrings)
+            } else ""
 
             // "X ago" timer. Compute base from real last-updated wall-time so the
             // counter is honest even on the first paint of the dream. Only
@@ -212,7 +256,12 @@ fun DreamBoard(
                 legacyRows.forEachIndexed { i, row ->
                     val child = rowsContainer.getChildAt(i)
                     when (row) {
-                        is LegacyRow.Header  -> (child as TextView).text = row.title
+                        is LegacyRow.Header  -> {
+                            (child as TextView).text =
+                                if (linePrefix.isNotEmpty())
+                                    "$linePrefix: ${row.title}"
+                                else row.title
+                        }
                         is LegacyRow.Message -> (child as TextView).text = row.text
                         is LegacyRow.Departure -> {
                             child.findViewById<TextView>(R.id.destination_text).text = row.destination
@@ -236,7 +285,9 @@ fun DreamBoard(
                             R.layout.widget_platform_header, rowsContainer, false
                         ).also {
                             it.findViewById<TextView>(R.id.platform_name).apply {
-                                text = row.title
+                                text = if (linePrefix.isNotEmpty())
+                                    "$linePrefix: ${row.title}"
+                                else row.title
                                 setBaselineSp(ROW_BASE_SP)
                             }
                         }
@@ -261,7 +312,12 @@ fun DreamBoard(
                             }
                         }
                     }
-                    if (rowGapPx > 0 && index > 0) {
+                    // Apply the extra dream rowGap to every row (incl. the
+                    // first) so the vertical rhythm is steady — earlier the
+                    // first row kept the XML's 2dp marginTop while subsequent
+                    // rows jumped to 6dp, which read as a small visual hitch
+                    // after the station strip.
+                    if (rowGapPx > 0) {
                         (rowView.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin = rowGapPx
                     }
                     rowsContainer.addView(rowView)

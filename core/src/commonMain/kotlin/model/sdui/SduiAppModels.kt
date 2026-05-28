@@ -234,7 +234,13 @@ data class SduiDropdownOption(
     val iconUrl: String? = null,
     val secondaryLabel: String? = null,
     val color: String? = null,
-    val tags: List<String>? = null  // TfL line brand colors (hex) for the lines serving this station
+    val tags: List<String>? = null,  // TfL line brand colors (hex) for the lines serving this station
+    // Mode-only fields — populated when /modes is the data source.
+    // tintHex backs the widget + dream station-row roundel tint when no
+    // cached icon is present yet. iconVersion is used by ModeIconCache
+    // to invalidate stale icons when the backend bumps its asset bundle.
+    val tintHex: String? = null,
+    val iconVersion: String? = null,
 )
 
 @Serializable
