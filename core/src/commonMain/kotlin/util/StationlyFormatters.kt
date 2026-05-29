@@ -22,6 +22,99 @@ object StationlyFormatters {
         return " $text"
     }
 
+    /**
+     * Format the line prefix shown alongside the station name on the
+     * widget + fullscreen-dream station strip.
+     *
+     *   Bus 39           ← bus, line is the route number (uppercased for N30 etc.)
+     *   DLR              ← DLR
+     *   Elizabeth        ← Elizabeth line
+     *   Piccadilly       ← Tube / Overground / Tram — capitalised line name
+     *
+     * Templates can be overridden via homeConfig under `station.label.<mode>`
+     * (with `{line}` placeholder, substituted with the formatted line name).
+     * Bus line ids are uppercased before substitution. Falls back to
+     * hardcoded defaults when the homeConfig is empty (offline / first
+     * launch) so the strip never renders blank.
+     *
+     * Empty mode/line returns an empty string so callers can fall back
+     * gracefully to just the station name.
+     */
+    fun formatLinePrefix(
+        mode: String?,
+        line: String?,
+        strings: Map<String, String> = emptyMap(),
+    ): String {
+        val m = mode?.lowercase()?.trim().orEmpty()
+        val l = line?.trim().orEmpty()
+        if (m.isEmpty() && l.isEmpty()) return ""
+
+        // Bus line ids are uppercased ("n30" → "N30"); everything else
+        // gets the line name formatted (e.g. "elizabeth-line" → "Elizabeth Line").
+        val formattedLine = if (m == "bus") l.uppercase()
+        else l.split('-')
+            .filter { it.isNotEmpty() }
+            .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+
+        // Look up the per-mode template first, then the global default.
+        // Hardcoded fallbacks mirror the original switch behaviour so the
+        // formatter still works without any SDUI data loaded.
+        val template = strings["station.label.$m"]
+            ?: strings["station.label.default"]
+            ?: defaultTemplateForMode(m)
+        return template.replace("{line}", formattedLine).trim()
+    }
+
+    private fun defaultTemplateForMode(mode: String): String = when (mode) {
+        "bus" -> "Bus {line}"
+        "dlr" -> "DLR"
+        "elizabeth", "elizabeth-line" -> "Elizabeth"
+        else -> "{line}"
+    }
+
+    /**
+     * Format "{Line}: {Station}" — used on the widget + fullscreen-dream
+     * station strip. Falls back to the station name alone when the prefix
+     * can't be derived (e.g. no selection yet).
+     */
+    fun formatStationLabel(
+        mode: String?,
+        line: String?,
+        stationName: String,
+        strings: Map<String, String> = emptyMap(),
+    ): String {
+        val prefix = formatLinePrefix(mode, line, strings)
+        return if (prefix.isEmpty()) stationName else "$prefix: $stationName"
+    }
+
+    /**
+     * Human-readable mode name — used by the line-status dialog and any
+     * other surface that needs to display a mode label. Reads from
+     * `station.mode.<mode>` in homeConfig, with sensible defaults.
+     */
+    fun formatModeName(
+        mode: String?,
+        strings: Map<String, String> = emptyMap(),
+    ): String {
+        val m = mode?.lowercase()?.trim().orEmpty()
+        if (m.isEmpty()) return ""
+        strings["station.mode.$m"]?.let { return it }
+        return when (m) {
+            "tube"                          -> "Tube"
+            "overground"                    -> "Overground"
+            "dlr"                           -> "DLR"
+            "elizabeth", "elizabeth-line"   -> "Elizabeth line"
+            "tram"                          -> "Tram"
+            "national-rail", "national_rail"-> "National Rail"
+            "bus"                           -> "Bus"
+            "river-bus", "river_bus"        -> "River Bus"
+            "cable-car", "cable_car"        -> "Cable Car"
+            else -> m.split('-', '_')
+                .filter { it.isNotEmpty() }
+                .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+        }
+    }
+
     fun formatDestination(name: String): String {
         val cleanName = name.replace(" Underground Station", "")
             .replace(" DLR Station", "")

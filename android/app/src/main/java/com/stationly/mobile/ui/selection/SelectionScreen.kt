@@ -941,7 +941,7 @@ private fun Saving(primary: Color, text: String) {
     Box(
         Modifier.fillMaxSize()
             .pointerInput(Unit) { awaitPointerEventScope { while (true) { awaitPointerEvent() } } }
-            .background(MaterialTheme.colorScheme.scrim.copy(0.97f)).padding(32.dp),
+            .background(MaterialTheme.colorScheme.background.copy(0.97f)).padding(32.dp),
         Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {

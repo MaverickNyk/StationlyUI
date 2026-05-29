@@ -22,7 +22,11 @@ import com.stationly.core.platform.Platform
 import com.stationly.core.platform.AndroidStorageManager
 import com.stationly.core.platform.AndroidNotificationManager
 import com.stationly.core.platform.AndroidWidgetManager
+import com.stationly.mobile.util.HomeConfigStore
+import com.stationly.mobile.util.ModeIconCache
 import com.stationly.mobile.util.PREFS_NAME
+import com.stationly.mobile.widget.DepartureWidgetProvider
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -118,6 +122,18 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     // True when widget hasn't been pinned yet and user hasn't dismissed the promo
     private val _showWidgetPromo = MutableStateFlow(false)
     val showWidgetPromo: StateFlow<Boolean> = _showWidgetPromo.asStateFlow()
+
+    // True when Stationly is NOT the current screensaver. Re-evaluated on
+    // every ON_RESUME so the banner disappears as soon as the user picks
+    // it in system Settings.
+    private val _showDreamPromo = MutableStateFlow(false)
+    val showDreamPromo: StateFlow<Boolean> = _showDreamPromo.asStateFlow()
+
+    // One-shot guard for the mode-icon warmup. Set after the first
+    // `/modes` fetch attempt regardless of success — without it, a
+    // failed download (anyMissing stays true) would re-hit the API on
+    // every selectionRepository emit.
+    private var iconWarmupAttempted = false
     
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key != null && key.startsWith("predictions_")) {
@@ -150,6 +166,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { fetchAnnouncement() }
         viewModelScope.launch { fetchHomeConfig() }
         checkWidgetPromo()
+        checkDreamPromo()
 
         viewModelScope.launch {
             selectionRepository.initialize()
@@ -159,6 +176,52 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             selectionRepository.selections.collect { selections ->
                 _selections.value = selections
+
+                // Prune _lineStatuses + _failedLineStatusKeys to entries that
+                // match a current selection. Without this, switching the
+                // active board (or having a selection removed by sync from
+                // another device) leaves a stale entry in the map — and the
+                // Network section's disclaimer dialog ends up listing lines
+                // the user isn't actually watching anymore.
+                val validKeys = selections.map { "${it.mode}_${it.line}".lowercase() }.toSet()
+                _lineStatuses.value = _lineStatuses.value.filterKeys { it in validKeys }
+                _failedLineStatusKeys.value = _failedLineStatusKeys.value.intersect(validKeys)
+
+                // Warm the mode-icon cache for the modes the user is actually
+                // using. Only triggers if at least one of those modes has no
+                // cached icon yet — typical case: user installs, restores a
+                // selection from the cloud without entering Selection, so
+                // loadModes() never fires. The widget + dream's station-row
+                // roundel reads from this cache.
+                val anyMissing = selections.any { sel ->
+                    ModeIconCache.cachedFile(context, sel.mode) == null
+                }
+                if (anyMissing && selections.isNotEmpty() && !iconWarmupAttempted) {
+                    iconWarmupAttempted = true
+                    viewModelScope.launch(Dispatchers.IO) {
+                        try {
+                            val modes = sduiService.getDropdownData("/modes")
+                            val entries = modes.map { opt ->
+                                ModeIconCache.ModeSyncEntry(
+                                    modeName = opt.id,
+                                    iconUrl  = opt.iconUrl,
+                                    tintHex  = opt.tintHex,
+                                )
+                            }
+                            val iconVersion = modes.firstOrNull { !it.iconVersion.isNullOrBlank() }?.iconVersion
+                            if (entries.isNotEmpty()) {
+                                ModeIconCache.sync(context, entries, iconVersion)
+                                // Re-push the widget so it picks up the
+                                // newly-cached icon without waiting for the
+                                // next FCM tick / minute alarm.
+                                DepartureWidgetProvider.updateFromStorage(context)
+                            }
+                        } catch (e: Exception) {
+                            Log.w("SummaryVM", "Mode icon warmup failed", e)
+                        }
+                    }
+                }
+
                 selections.forEach { selection ->
                     loadPredictions(selection)
                     loadLineStatus(selection)
@@ -456,6 +519,10 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         try {
             val config = sduiService.getHomeConfig().strings
             _homeConfig.value = config
+            // Persist so the widget, dream, and DreamSettingsActivity
+            // (launched from system Settings, no ViewModel) all read the
+            // latest SDUI copy without re-fetching.
+            HomeConfigStore.write(context, config)
             config["app.minVersion"]?.let { minVer ->
                 _forceUpdate.value = isVersionBelow(com.stationly.mobile.BuildConfig.VERSION_NAME, minVer)
             }
@@ -500,6 +567,63 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         _showWidgetPromo.value = false
     }
 
+    /**
+     * Detect whether Stationly is the user's active screensaver. The banner
+     * shows whenever ANY of these is true:
+     *
+     *   1. Screensavers are disabled system-wide (`screensaver_enabled = 0`).
+     *      Toggling "Off" in system Settings leaves `screensaver_components`
+     *      pointing at the last-picked dream, so we MUST also check the
+     *      enabled flag — otherwise the banner stays hidden after the user
+     *      sets us and then disables screensavers.
+     *   2. Screensavers are enabled but `screensaver_components` doesn't
+     *      contain our `StationlyDreamService`.
+     *
+     * Called from `init` and again on every ON_RESUME via
+     * `reloadSelectionsFromDb()`, so the banner re-appears the moment the
+     * user backs out of system Settings having toggled us off.
+     */
+    fun checkDreamPromo() {
+        val enabled = try {
+            android.provider.Settings.Secure.getInt(
+                context.contentResolver,
+                "screensaver_enabled",
+                1,
+            ) == 1
+        } catch (e: Exception) { true }
+
+        val components = try {
+            android.provider.Settings.Secure.getString(
+                context.contentResolver,
+                "screensaver_components",
+            )
+        } catch (e: Exception) { null }
+
+        val ours = ComponentName(
+            context,
+            com.stationly.mobile.dream.StationlyDreamService::class.java,
+        )
+        val oursLong  = ours.flattenToString()
+        val oursShort = ours.flattenToShortString()
+
+        val isOurs = components
+            ?.split(',')
+            ?.any { it.trim().let { c -> c == oursLong || c == oursShort } } == true
+
+        _showDreamPromo.value = !(enabled && isOurs)
+    }
+
+    // X button — hides until next ON_RESUME re-checks the system setting.
+    fun dismissDreamPromo() {
+        _showDreamPromo.value = false
+    }
+
+    // Called by "Set up" button after we open system dream settings —
+    // hide until next ON_RESUME confirms whether the user actually picked us.
+    fun hideDreamPromoForSession() {
+        _showDreamPromo.value = false
+    }
+
     fun dismissAnnouncement() {
         val current = _announcement.value ?: return
         val key = current.dismissKey ?: current.id
@@ -517,6 +641,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
             selectionRepository.initialize()
         }
         checkWidgetPromo()
+        checkDreamPromo()
     }
 
     /**

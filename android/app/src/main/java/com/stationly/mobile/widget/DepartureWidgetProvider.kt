@@ -8,11 +8,14 @@ import android.os.SystemClock
 import android.widget.RemoteViews
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.util.StationlyFormatters
+import com.stationly.mobile.R
+import com.stationly.mobile.util.HomeConfigStore
+import com.stationly.mobile.util.ModeColors
+import com.stationly.mobile.util.ModeIconCache
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import com.stationly.mobile.R
 
 /**
  * DepartureWidgetProvider - Android Home Screen Widget
@@ -349,10 +352,53 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             android.util.Log.d("Widget", "Updating widget $appWidgetId for $stationName with ${predictions.size} departures")
             
             val views = RemoteViews(context.packageName, R.layout.widget_departure_board)
-            val hasSelection = com.stationly.core.platform.Platform.sqlStorage.getAllSelections().isNotEmpty()
-            
-            // Set station name in header
+            val allSelections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
+            val hasSelection = allSelections.isNotEmpty()
+
+            // Resolve the active selection's mode so we can prefix the
+            // first platform-header row with the line context the home
+            // line-pill provides. (Widget only shows one line at a time.)
+            val resolvedMode = allSelections
+                .firstOrNull { it.line.equals(lineName, ignoreCase = true) }
+                ?.mode
+                ?: allSelections.firstOrNull()?.mode
+            val sduiStrings = HomeConfigStore.read(context)
+            val linePrefix = StationlyFormatters.formatLinePrefix(resolvedMode, lineName, sduiStrings)
+
+            // Station strip stays as just the station name — line context
+            // belongs on the platform row per the agreed signage layout.
             views.setTextViewText(R.id.line_name, stationName)
+
+            // Mode roundel on the station strip. Preferred path: the
+            // backend-shipped icon cached locally by ModeIconCache during
+            // board setup — those are the proper TfL mode marks (tube
+            // roundel, bus roundel, DLR train, etc.). Fall back to a
+            // tinted generic roundel if the cache isn't populated yet
+            // (e.g. user installed and hasn't run selection setup).
+            if (hasSelection && resolvedMode != null) {
+                views.setViewVisibility(R.id.mode_icon, android.view.View.VISIBLE)
+                // TalkBack — announce the mode so the station strip is
+                // legible without sight ("Tube", "DLR", "Bus", …).
+                views.setContentDescription(
+                    R.id.mode_icon,
+                    StationlyFormatters.formatModeName(resolvedMode, sduiStrings),
+                )
+                val cached = ModeIconCache.cachedBitmap(context, resolvedMode)
+                if (cached != null) {
+                    views.setImageViewBitmap(R.id.mode_icon, cached)
+                    // Clear any leftover tint from a prior render pass.
+                    views.setInt(R.id.mode_icon, "setColorFilter", 0)
+                } else {
+                    // Tint precedence: backend-shipped tintHex (via /modes)
+                    // > hardcoded ModeColors fallback for offline safety.
+                    val tint = ModeIconCache.tintFor(context, resolvedMode)
+                        ?: ModeColors.forMode(resolvedMode)
+                    views.setImageViewResource(R.id.mode_icon, R.drawable.mode_roundel)
+                    views.setInt(R.id.mode_icon, "setColorFilter", tint)
+                }
+            } else {
+                views.setViewVisibility(R.id.mode_icon, android.view.View.GONE)
+            }
             
             // Status and timer always visible — layout never shifts
             views.setViewVisibility(R.id.status_container, android.view.View.VISIBLE)
@@ -457,7 +503,14 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     when (component) {
                         is com.stationly.core.model.sdui.SduiWidgetComponent.Header -> {
                             val header = RemoteViews(context.packageName, R.layout.widget_platform_header)
-                            header.setTextViewText(R.id.platform_name, component.title)
+                            // Prefix every platform header with the line
+                            // context so each platform row carries the
+                            // same identity ("Piccadilly: Platform 1",
+                            // "Piccadilly: Platform 2", …).
+                            val title = if (linePrefix.isNotEmpty())
+                                "$linePrefix: ${component.title}"
+                            else component.title
+                            header.setTextViewText(R.id.platform_name, title)
                              val headerColor = com.stationly.mobile.util.SduiThemeManager.parseColor(component.color, dynTextColor)
                              header.setTextColor(R.id.platform_name, headerColor)
                             rowViews.add(header)
@@ -515,7 +568,13 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     when (row) {
                         is com.stationly.core.util.LegacyRow.Header -> {
                             val header = RemoteViews(context.packageName, R.layout.widget_platform_header)
-                            header.setTextViewText(R.id.platform_name, row.title)
+                            // Prefix every platform header with the line
+                            // context — same line, but each platform row
+                            // carries its own identity.
+                            val title = if (linePrefix.isNotEmpty())
+                                "$linePrefix: ${row.title}"
+                            else row.title
+                            header.setTextViewText(R.id.platform_name, title)
                             rowViews.add(header)
                         }
                         is com.stationly.core.util.LegacyRow.Departure -> {

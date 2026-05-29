@@ -98,6 +98,23 @@ class StationlyDreamService : DreamService(),
         isFullscreen   = true
         isScreenBright = true
 
+        // Render edge-to-edge through the display cutout. Combined with the
+        // FullscreenBoardLayout's symmetric cutout-mirror padding, this lets
+        // the dream draw across the entire screen while the board itself is
+        // visually centred — the camera-side cutout is mirrored by a
+        // matching padding on the opposite side. We also clear
+        // decorFitsSystemWindows so Compose receives the full insets
+        // (including DisplayCutout) on every render.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            window?.let { w ->
+                val attrs = w.attributes
+                attrs.layoutInDisplayCutoutMode =
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                w.attributes = attrs
+                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(w, false)
+            }
+        }
+
         // Listen for the dedicated dream-refresh broadcast that the FCM service
         // fires after writing fresh predictions / line status to SQL. (We can't
         // reuse the widget broadcast — it's component-targeted to the widget

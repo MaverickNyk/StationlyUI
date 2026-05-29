@@ -18,10 +18,12 @@ import com.stationly.core.service.SduiApiServiceFactory
 import com.stationly.core.service.TflApiServiceFactory
 import com.stationly.core.platform.Platform
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.stationly.mobile.util.ModeIconCache
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import android.Manifest
@@ -156,6 +158,26 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                     modes = modes, dropdownData = updatedData,
                     failedFetches = _uiState.value.failedFetches - "mode"
                 )
+
+                // Sync the mode-icon cache with the backend payload. This
+                // pre-downloads icons (so widget + fullscreen dream's
+                // station-row roundel can blit them without a network
+                // round-trip), persists tint colours (replaces the
+                // hardcoded ModeColors fallback), and invalidates stale
+                // PNGs when the backend bumps iconVersion.
+                val entries = modes.map { opt ->
+                    ModeIconCache.ModeSyncEntry(
+                        modeName = opt.id,
+                        iconUrl  = opt.iconUrl,
+                        tintHex  = opt.tintHex,
+                    )
+                }
+                val iconVersion = modes.firstOrNull { !it.iconVersion.isNullOrBlank() }?.iconVersion
+                if (entries.isNotEmpty()) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        ModeIconCache.sync(context, entries, iconVersion)
+                    }
+                }
             } catch (e: Exception) {
                 Log.e("SDUI", "Failed to fetch modes", e)
                 _uiState.value = _uiState.value.copy(failedFetches = _uiState.value.failedFetches + "mode")
