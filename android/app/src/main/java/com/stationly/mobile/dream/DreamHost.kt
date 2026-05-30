@@ -281,6 +281,11 @@ private fun LandscapeLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim
             // caps and the inner ScrollView gets a real fixed viewport — so
             // scrolling actually works on multi-platform stations.
             val boardMaxHeight = maxHeight * 0.75f
+            // 0.88f matches the Column's fillMaxWidth below — that's the
+            // effective slot the DreamBoard inflates into. Passing this
+            // sizes its station-strip `maxEms` to the actual width
+            // instead of falling back to the widget's default cap.
+            val boardSlotWidthDp = (maxWidth.value * 0.88f).toInt()
             Column(
                 modifier = Modifier
                     .fillMaxWidth(0.88f)
@@ -309,7 +314,8 @@ private fun LandscapeLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim
                             .fillMaxWidth()
                             .heightIn(max = boardMaxHeight),
                         textScale = dim.boardTextScale,
-                        showHeader = false,
+                        showHeader = true,
+                        slotWidthDp = boardSlotWidthDp,
                     )
                 } else {
                     EmptyStatePanel()
@@ -363,6 +369,9 @@ private fun PortraitLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim:
             // when there's only a handful of rows (no stretch); caps when
             // content overflows so the inner ScrollView can actually scroll.
             val boardMaxHeight = maxHeight * 0.65f
+            // Portrait — DreamBoard's Column is `fillMaxWidth()`, so it
+            // gets the full panel width. That's the strip's effective slot.
+            val boardSlotWidthDp = maxWidth.value.toInt()
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -389,7 +398,8 @@ private fun PortraitLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim:
                             .fillMaxWidth()
                             .heightIn(max = boardMaxHeight),
                         textScale = dim.boardTextScale,
-                        showHeader = false,
+                        showHeader = true,
+                        slotWidthDp = boardSlotWidthDp,
                     )
                 } else {
                     EmptyStatePanel()

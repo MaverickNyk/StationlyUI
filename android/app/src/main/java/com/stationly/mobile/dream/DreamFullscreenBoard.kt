@@ -159,6 +159,10 @@ fun FullscreenBoardLayout(snapshot: DreamSnapshot) {
                 showHeader = true,
                 showClock  = true,
                 fullscreen = true,
+                // Card width is the BoxWithConstraints' bounds (already
+                // measured INSIDE the symmetric cutout pad), so that's
+                // the strip's effective slot.
+                slotWidthDp = cardMaxWidth.value.toInt(),
             )
         }
     }

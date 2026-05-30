@@ -135,13 +135,15 @@ class FcmMessagingService : FirebaseMessagingService() {
                 CoroutineScope(Dispatchers.IO).launch {
                     if (extractedPredictions.isNotEmpty()) {
                         Platform.sqlStorage.savePredictions(selection.station, selection.line, extractedPredictions)
-                        
-                        // Ping the app to refresh
-                        prefs.edit().putString("predictions_${selection.station}_${selection.line}", System.currentTimeMillis().toString()).apply()
                     }
-                    
+                    // Single fan-out (SharedPrefs ping + dream broadcast +
+                    // widget redraw). See FreshDataNotifier.
                     launch(Dispatchers.Main) {
-                        updateWidgetFromStorage(this@FcmMessagingService, selection)
+                        com.stationly.mobile.util.FreshDataNotifier.notify(
+                            this@FcmMessagingService,
+                            stationId = selection.station,
+                            lineId = selection.line,
+                        )
                     }
                 }
             }
@@ -181,7 +183,11 @@ class FcmMessagingService : FirebaseMessagingService() {
                 if (subscribedToThisLine.isEmpty()) return@launch
 
                 subscribedToThisLine.forEach { selection ->
-                    updateWidgetFromStorage(this@FcmMessagingService, selection)
+                    com.stationly.mobile.util.FreshDataNotifier.notify(
+                        this@FcmMessagingService,
+                        stationId = selection.station,
+                        lineId = selection.line,
+                    )
                 }
 
                 // Build + dispatch one notification IF this is a
@@ -332,15 +338,19 @@ class FcmMessagingService : FirebaseMessagingService() {
             matchingSelections.forEach { selection ->
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        val processedPredictions = syncPredictionsUseCase.execute(payload, selection)
-                        
-                        // Ping SharedPreferences to trigger UI updates without sending the payload
-                        val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-                        prefs.edit().putString("predictions_${selection.station}_${selection.line}", System.currentTimeMillis().toString()).apply()
-                        
-                        // Update widget with current data from storage (immediate)
+                        syncPredictionsUseCase.execute(payload, selection)
+                        // Single fan-out point: SharedPrefs ping (home VM
+                        // listener fires → re-reads SQL), dream broadcast,
+                        // widget redraw. Same helper is called from the
+                        // home pull-to-refresh and the widget refresh button
+                        // — guarantees identical surface coverage regardless
+                        // of which trigger originated the fetch.
                         launch(Dispatchers.Main) {
-                            updateWidgetFromStorage(this@FcmMessagingService, selection)
+                            com.stationly.mobile.util.FreshDataNotifier.notify(
+                                this@FcmMessagingService,
+                                stationId = selection.station,
+                                lineId = selection.line,
+                            )
                         }
                     } catch (e: Exception) {
                         Log.e("FCM", "Error syncing predictions for ${selection.stationName}", e)
@@ -353,77 +363,12 @@ class FcmMessagingService : FirebaseMessagingService() {
         }
     }
     
-    /**
-     * Tell the Daydream (and any other dynamically-registered refresh listeners)
-     * that fresh data has landed in SQL. Uses its own action — the widget
-     * broadcast is component-targeted and never reaches dynamic receivers.
-     */
-    private fun broadcastDreamRefresh(context: Context) {
-        val intent = android.content.Intent(
-            com.stationly.mobile.dream.StationlyDreamService.ACTION_DREAM_REFRESH
-        ).setPackage(context.packageName)
-        context.sendBroadcast(intent)
-    }
+    // updateWidgetFromStorage + broadcastDreamRefresh helpers used to live
+    // here. They were merged into `util.FreshDataNotifier.notify(...)` so
+    // every refresh trigger (FCM, home pull-to-refresh, widget refresh
+    // button) goes through the same fan-out path.
 
-    private fun updateWidgetFromStorage(context: Context, selection: UserSelection) {
-        val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-        val now = System.currentTimeMillis()
-        
-        // Load line status from SQL
-        var lineStatusSeverity: String? = null
-        var lineStatusReason: String? = null
-        
-        val cachedStatus = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
-        if (cachedStatus != null) {
-            lineStatusSeverity = cachedStatus.statusSeverityDescription
-            lineStatusReason = cachedStatus.reason
-        }
-        
-        // Load predictions from SQL
-        val predictions = Platform.sqlStorage.getPredictions(selection.station, selection.line)
-        
-        // Load SDUI template if it exists for this station
-        var sduiPayload: com.stationly.core.model.sdui.SduiWidgetPayload? = null
-        val sduiJson = prefs.getString("sdui_layout_${selection.station}", null)
-        if (sduiJson != null) {
-            try {
-                val format = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
-                sduiPayload = format.decodeFromString<com.stationly.core.model.sdui.SduiWidgetPayload>(sduiJson)
-                Log.d("FCM", "Loaded valid SDUI template from storage")
-            } catch (e: Exception) {
-                Log.e("FCM", "Error loading SDUI template from storage", e)
-            }
-        }
-        
-        // Use unified binding logic to inject live data into the template
-        if (sduiPayload != null && predictions.isNotEmpty()) {
-             sduiPayload = com.stationly.core.util.GlobalBoardProcessor.bindSduiTemplate(
-                 sduiPayload,
-                 predictions,
-                 lineStatusSeverity,
-                 lineStatusReason
-             )
-        }
-        
-        val hasLoadedData = predictions.isNotEmpty()
 
-        // Update widget with whatever data we have
-        DepartureWidgetProvider.updateWidgetContent(
-            context,
-            selection.stationName,
-            selection.line.replaceFirstChar { it.uppercase() },
-            predictions,
-            lineStatusSeverity,
-            lineStatusReason,
-            sduiPayload,
-            hasLoadedData
-        )
-
-        // Notify the Daydream too — it has its own dynamic receiver since the
-        // widget broadcast is component-targeted and won't reach it.
-        broadcastDreamRefresh(context)
-    }
-    
     private fun getAllSelections(): List<UserSelection> {
         return Platform.sqlStorage.getAllSelections()
     }

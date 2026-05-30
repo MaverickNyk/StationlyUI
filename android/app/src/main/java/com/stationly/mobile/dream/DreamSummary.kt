@@ -191,32 +191,24 @@ internal fun NextTrainHero(
     val onCanvasMute = onCanvas.copy(alpha = 0.55f)
     val isLightCanvas = themeColors === LightDreamColors
 
-    // Drive the countdown from the prediction's absolute target time
-    // plus a minute-aligned wall-clock tick — shared with the home
-    // hero and the dot-matrix rows so all surfaces flip from 5→4 at
-    // the same instant. A local `delay(60_000)` loop seeded from the
-    // eta string used to reset every time the Syncer republished
-    // (every ~30s), keeping the visible number frozen.
-    val nowMs by com.stationly.mobile.ui.util.rememberMinuteTick()
-    val secondsRemaining: Long = prediction.targetEpochMs?.let { (it - nowMs) / 1000 }
-        ?: run {
-            val parsed = when {
-                prediction.isDue -> 0
-                prediction.eta.trim().equals("Due", ignoreCase = true) -> 0
-                else -> prediction.eta.replace(" min", "").trim().toIntOrNull() ?: 0
-            }
-            parsed.toLong() * 60
-        }
+    // Read the label directly from `prediction.eta` — already through
+    // `tickPredictions` (minute-aligned re-derive + per-platform bump)
+    // upstream in DreamHost. Re-running the rounding here would miss
+    // the bump (hero "5 min" vs dot-matrix "6 min" for the same train
+    // when the rule fires on a collision).
+    //
+    // The parent DreamHost subscribes to `rememberMinuteTick` via
+    // `rememberTickedPredictions`; when the minute flips it re-emits a
+    // fresh `prediction` so this composable recomposes — no second
+    // subscription needed.
+    //
+    // Upstream tick layer drops departed rows before they reach here,
+    // so no "departed" branch is needed.
     val countdown = when {
-        secondsRemaining < 30 -> 0
-        secondsRemaining < 60 -> 1
-        else -> ((secondsRemaining + 30) / 60).toInt()
+        prediction.isDue -> 0
+        prediction.eta.trim().equals("Due", ignoreCase = true) -> 0
+        else -> prediction.eta.replace(" min", "").trim().toIntOrNull() ?: 0
     }
-    // Upstream tick layer (PredictionTicker.tickPredictions) drops
-    // departed predictions before they reach this composable — DreamHost
-    // resolves the hero from the post-tick list. So a "departed" branch
-    // here is unreachable; the hero simply shifts to the next upcoming
-    // train when the current one is gone.
     val isDue = countdown == 0
 
     // ETA tile colour — semantic in dark theme (line colour as signage cue),

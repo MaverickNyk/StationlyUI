@@ -7,6 +7,8 @@ import com.stationly.core.usecase.SyncPredictionsUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Departure Repository
@@ -33,39 +35,63 @@ class DepartureRepository(
     
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
-    
+
+    /**
+     * Per-station mutex so a single station never has two concurrent
+     * `fetchInitialData` calls in flight. Different stations can still
+     * fetch in parallel (independent mutex per key).
+     *
+     * Why: the FCM listener, the home pull-to-refresh, and the widget
+     * refresh button can ALL trigger a fetch for the same station at
+     * overlapping moments — they'd all write to SQL concurrently. SQLite
+     * itself is serialised so there's no corruption, but the "winning"
+     * write determines what surfaces see, and the in-flight `_lineStatus`
+     * / `_isLoading` flow updates race each other. One-at-a-time per
+     * station eliminates that flapping without blocking parallelism
+     * across stations.
+     */
+    private val fetchMutexes = mutableMapOf<String, Mutex>()
+    private val fetchMutexesLock = Mutex()
+
+    private suspend fun mutexFor(stationId: String): Mutex =
+        fetchMutexesLock.withLock {
+            fetchMutexes.getOrPut(stationId.lowercase()) { Mutex() }
+        }
+
     /**
      * Fetch initial data for a user selection
      * This is called when a user saves a new station
      */
     suspend fun fetchInitialData(selection: UserSelection) {
-        _isLoading.value = true
-        
-        try {
-            // Fetch line status
-            val statusList = apiService.getLineStatuses(selection.line.lowercase(), selection.mode.lowercase())
-            statusList.firstOrNull()?.let { status ->
-                _lineStatus.value = status
-                sqlStorage.saveLineStatus(status)
-            }
-            
-            
-            // Eagerly fetch prediction data
+        mutexFor(selection.station).withLock {
+            _isLoading.value = true
+
             try {
-                val fcmPayload = apiService.getPredictions(selection.station)
-                syncPredictionsUseCase.execute(fcmPayload, selection)
+                // Fetch line status
+                val statusList = apiService.getLineStatuses(selection.line.lowercase(), selection.mode.lowercase())
+                statusList.firstOrNull()?.let { status ->
+                    _lineStatus.value = status
+                    sqlStorage.saveLineStatus(status)
+                }
+
+
+                // Eagerly fetch prediction data
+                try {
+                    val fcmPayload = apiService.getPredictions(selection.station)
+                    syncPredictionsUseCase.execute(fcmPayload, selection)
+                } catch (e: Exception) {
+                    println("DepartureRepository: prediction fetch failed for ${selection.station} — ${e::class.simpleName}: ${e.message}")
+                }
+
             } catch (e: Exception) {
-                println("DepartureRepository: prediction fetch failed for ${selection.station} — ${e::class.simpleName}: ${e.message}")
+                // Try to load from cache
+                val cachedStatus = sqlStorage.getLineStatus(selection.mode, selection.line)
+                if (cachedStatus != null) {
+                    _lineStatus.value = cachedStatus
+                }
+            } finally {
+                _isLoading.value = false
             }
-            
-        } catch (e: Exception) {
-            // Try to load from cache
-            val cachedStatus = sqlStorage.getLineStatus(selection.mode, selection.line)
-            if (cachedStatus != null) {
-                _lineStatus.value = cachedStatus
-            }
-        } finally {
-            _isLoading.value = false
         }
     }
     
