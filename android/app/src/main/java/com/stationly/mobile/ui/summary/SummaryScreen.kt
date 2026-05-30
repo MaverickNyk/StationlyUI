@@ -39,6 +39,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.stationly.mobile.R
 import com.stationly.mobile.ui.common.AnnouncementBanner
+import com.stationly.mobile.ui.common.NotificationPermissionEffect
 import com.stationly.mobile.ui.common.rememberFirebaseAuthState
 import com.stationly.mobile.ui.summary.components.*
 import com.stationly.mobile.ui.theme.TflAmber
@@ -63,10 +64,25 @@ fun SummaryScreen(
     val deletingBoardId by viewModel.isDeletingBoard.collectAsState()
     val showWidgetPromo by viewModel.showWidgetPromo.collectAsState()
     val showDreamPromo by viewModel.showDreamPromo.collectAsState()
+    val showNotificationDeniedBanner by viewModel.showNotificationDeniedBanner.collectAsState()
 
     val firebaseUser by rememberFirebaseAuthState()
     val userName = firebaseUser?.displayName?.split(" ")?.firstOrNull()
         ?: firebaseUser?.email?.substringBefore('@')
+
+    // Ask the user for POST_NOTIFICATIONS (API 33+) on first arrival to the
+    // home screen. Without this prompt the device default `importance=NONE`
+    // sticks and every notification — admin push, line-status auto-alert,
+    // future alarms — silently no-ops inside `NotificationDispatcher.dispatch`.
+    // The effect itself is idempotent and a no-op on older Android, on
+    // already-granted state, and after the first ask. See its docstring.
+    //
+    // On decision (grant OR deny), re-evaluate the "notifications off"
+    // banner so the user sees it immediately on denial without waiting
+    // for the next ON_RESUME.
+    NotificationPermissionEffect(
+        onDecision = { viewModel.checkNotificationDeniedBanner() }
+    )
 
     // Reload selections from SQLite whenever this screen resumes.
     // Handles the case where ProfileScreen (or any other screen) deleted a station
@@ -154,6 +170,26 @@ fun SummaryScreen(
                             // local detection. Defaults to true for back-compat.
                             val widgetPromoEnabled = (homeConfig["home.promo.widget.show"] ?: "true").equals("true", ignoreCase = true)
                             val dreamPromoEnabled  = (homeConfig["home.promo.dream.show"]  ?: "true").equals("true", ignoreCase = true)
+
+                            // SDUI kill-switch for the banner — same shape as
+                            // `home.promo.widget.show` / `home.promo.dream.show`.
+                            // Defaults true; backend can set "false" to
+                            // suppress the banner entirely (e.g. during a
+                            // notification-platform outage when "enable
+                            // notifications" wouldn't actually help).
+                            val notifBannerEnabled = (homeConfig["home.notif_denied.show"] ?: "true")
+                                .equals("true", ignoreCase = true)
+
+                            if (showNotificationDeniedBanner && notifBannerEnabled) {
+                                item(key = "notification_denied") {
+                                    NotificationDeniedBanner(
+                                        strings = homeConfig,
+                                        onDismiss = { viewModel.dismissNotificationDeniedBanner() },
+                                        onEnable = { viewModel.dismissNotificationDeniedBanner() },
+                                        modifier = Modifier.animateItem()
+                                    )
+                                }
+                            }
 
                             if (showWidgetPromo && widgetPromoEnabled) {
                                 item(key = "widget_promo") {
@@ -453,6 +489,59 @@ private fun WidgetPromoCard(
             )
             manager.requestPinAppWidget(provider, null, goHome)
             onAdd()
+        },
+        onDismiss = onDismiss,
+        modifier = modifier,
+    )
+}
+
+/**
+ * Surfaces when the user has denied (or never granted) the
+ * `POST_NOTIFICATIONS` runtime permission. Without notifications enabled,
+ * line-status auto-alerts and admin pushes silently no-op inside
+ * `NotificationDispatcher` — without this banner the user has no way to
+ * know they're missing them.
+ *
+ * Tap "Enable" → opens the app-specific notification settings screen.
+ * The banner reflows on next `ON_RESUME` (via `checkNotificationDeniedBanner`)
+ * so flipping the permission back on in Settings makes it disappear without
+ * another nudge.
+ */
+@Composable
+private fun NotificationDeniedBanner(
+    strings: Map<String, String>,
+    onDismiss: () -> Unit,
+    onEnable: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    PromoBanner(
+        icon = Icons.Default.Notifications,
+        title    = strings["home.notif_denied.title"]
+            ?: "Turn on notifications",
+        subtitle = strings["home.notif_denied.subtitle"]
+            ?: "Stationly can alert you when your line has delays, closures, or recovers.",
+        cta      = strings["home.notif_denied.cta"] ?: "Enable",
+        onCta    = {
+            // System app-notification settings deep-link. Available on
+            // API 26+; we're already API 33+ if this banner is showing
+            // (NotificationPermissionEffect is a no-op below TIRAMISU).
+            val intent = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            try {
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                // Fallback: generic app settings page.
+                runCatching {
+                    context.startActivity(
+                        Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                            .setData(android.net.Uri.parse("package:${context.packageName}"))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }
+            }
+            onEnable()
         },
         onDismiss = onDismiss,
         modifier = modifier,

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -67,6 +68,15 @@ fun DreamBoard(
      */
     showClock: Boolean = false,
     /**
+     * Effective dp width the dot-matrix card occupies on this surface.
+     * Used to size the station strip's `line_name` `maxEms` so the name
+     * uses the room available (full screen on fullscreen dream; 70%
+     * of the right column on cluster landscape; full width on cluster
+     * portrait). Defaults to 320dp — a reasonable mid-size estimate for
+     * surfaces that haven't measured their slot.
+     */
+    slotWidthDp: Int = 320,
+    /**
      * Fullscreen-board styling:
      *  - rows centred vertically in their ScrollView viewport (no top/bottom
      *    gap when few rows; scrolls when many)
@@ -83,10 +93,17 @@ fun DreamBoard(
     val predictions = com.stationly.mobile.ui.util.rememberTickedPredictions(snapshot.predictions)
     val lineStatus = snapshot.lineStatus
     val lastUpdated = snapshot.lastUpdatedMs
+    // Subscribe to the same wall-clock minute tick that drives the rows so
+    // the chronometer's stale-colour (amber → grey → red) recomputes in
+    // lockstep with the home Board and the widget. Adding it as a `remember`
+    // key on the updater below guarantees the lambda re-runs at xx:00
+    // boundaries even if the prediction list happens to be unchanged that
+    // minute (e.g. board has fallen back to the empty-state).
+    val nowMs by com.stationly.mobile.ui.util.rememberMinuteTick()
 
     // Stable lambda — only recreated when data changes, so AndroidView.update()
     // doesn't fire on every recomposition (which would reset Chronometer + marquee).
-    val updater: (View) -> Unit = remember(sel, predictions, lineStatus, lastUpdated, textScale, showHeader, showClock, fullscreen) {
+    val updater: (View) -> Unit = remember(sel, predictions, lineStatus, lastUpdated, textScale, showHeader, showClock, fullscreen, nowMs, slotWidthDp) {
         update@{ view ->
             val context = view.context
             // SDUI string map — used by the mode-icon contentDescription
@@ -108,8 +125,15 @@ fun DreamBoard(
             // and rely on the Compose layer drawn above the board.
             view.findViewById<View>(R.id.header_row)?.visibility =
                 if (showHeader) View.VISIBLE else View.GONE
-            view.findViewById<TextView>(R.id.line_name).text =
-                sel?.stationName ?: "Stationly"
+            view.findViewById<TextView>(R.id.line_name).apply {
+                text = sel?.stationName ?: "Stationly"
+                // Size to the actual slot the caller reported, not the
+                // widget's XML default of 18 ems. On fullscreen dream
+                // that's the full card width; on cluster landscape it
+                // shrinks to ~70% of the screen.
+                maxEms = com.stationly.mobile.ui.util.StationStripFitter
+                    .maxEmsForWidthDp(slotWidthDp)
+            }
 
             // Mode roundel on the station strip — same source-of-truth as
             // the widget: prefer the backend icon cached by ModeIconCache
@@ -137,12 +161,13 @@ fun DreamBoard(
                 }
             }
 
-            // Line prefix is applied to the FIRST platform header below —
-            // only in fullscreen mode (cluster mode draws a Compose
-            // line-pill above the board, so the dot-matrix doesn't need
-            // to repeat it). Empty when no selection / cluster mode, in
-            // which case the prefix block is a no-op.
-            val linePrefix = if (fullscreen && sel != null) {
+            // Line prefix applied to every platform header below in BOTH
+            // dream layouts now. Previously cluster mode skipped it on
+            // the theory that the Compose line-pill above the board
+            // carried the context — but that diverged from the home Board
+            // + widget + fullscreen-dream, which all show "Piccadilly:
+            // Platform 1 (Eastbound)". Cross-surface consistency wins.
+            val linePrefix = if (sel != null) {
                 StationlyFormatters.formatLinePrefix(sel.mode, sel.line, sduiStrings)
             } else ""
 
@@ -161,6 +186,20 @@ fun DreamBoard(
                     (System.currentTimeMillis() - lastUpdated).coerceAtLeast(0L)
                 chrono.start()
                 chrono.tag = lastUpdated
+            }
+
+            // Chronometer colour — shared `StaleColor` palette + thresholds
+            // with home + widget. Recomputed every minute via `nowMs` in
+            // the updater's `remember` key. Anchored to lastUpdated, so the
+            // amber → grey at 60s and grey → red at 180s transitions
+            // reflect the true age of the SQL row regardless of when the
+            // dream first composed. Sentinel `lastUpdated == 0` stays amber
+            // (no real data to age).
+            if (lastUpdated > 0L) {
+                val ageMs = (nowMs - lastUpdated).coerceAtLeast(0L)
+                chrono.setTextColor(com.stationly.core.util.StaleColor.colorForAge(ageMs))
+            } else {
+                chrono.setTextColor(com.stationly.core.util.StaleColor.AMBER)
             }
 
             // Status row + marquee.
@@ -396,63 +435,16 @@ fun DreamBoard(
 }
 
 /**
- * Drop-in wrap: replaces the widget's plain rows_container LinearLayout with a
- * ScrollView containing the same LinearLayout. The user drags it directly —
- * isInteractive=true on the dream service makes that work. The scrollbar is
- * visible (only when content overflows, per Android's default) so people know
- * there's more.
+ * Dream-specific scroll wrap. Delegates to the shared
+ * [com.stationly.mobile.ui.util.ensureRowsScrollWrapped] for the
+ * actual re-parenting + scrollbar styling, then layers on the
+ * fullscreen-mode tweaks (centre-vertical gravity + `fillViewport`
+ * so a short list doesn't pin to the top of a tall card).
  *
- * Safe to call repeatedly — only wraps the first time.
+ * Safe to call on every update — the inner helper is idempotent.
  */
 private fun ensureScrollWrapped(rowsContainer: LinearLayout, fullscreen: Boolean): ScrollView {
-    val existingParent = rowsContainer.parent
-    val scroll: ScrollView = if (existingParent is ScrollView) {
-        existingParent
-    } else {
-        val parent = existingParent as ViewGroup
-        val idx = parent.indexOfChild(rowsContainer)
-        val originalParams = rowsContainer.layoutParams as LinearLayout.LayoutParams
-        parent.removeView(rowsContainer)
-
-        val s = ScrollView(rowsContainer.context).apply {
-            // 0dp + weight=1 is the idiomatic LinearLayout pattern for
-            // weighted height — same pattern the widget XML's `rows_list`
-            // uses to claim leftover vertical space inside the board card.
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-            ).apply {
-                weight = originalParams.weight.takeIf { it > 0f } ?: 1f
-            }
-            // Match the widget's rows_list scrollbar styling — thin (3dp),
-            // amber tapered thumb (drawable/scrollbar_thumb.xml), fades
-            // after 600ms idle then over 1500ms. Same affordance as the
-            // home-screen widget.
-            isVerticalScrollBarEnabled = true
-            scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
-            isScrollbarFadingEnabled = true
-            scrollBarFadeDuration = 1500
-            scrollBarDefaultDelayBeforeFade = 600
-            scrollBarSize = (3f * resources.displayMetrics.density).toInt()
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                verticalScrollbarThumbDrawable =
-                    androidx.core.content.ContextCompat.getDrawable(context, R.drawable.scrollbar_thumb)
-            }
-            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-        }
-        parent.addView(s, idx)
-        s.addView(
-            rowsContainer,
-            ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ),
-        )
-        // Inside the scroll the LinearLayout must be wrap_content, not 0+weight.
-        (rowsContainer.layoutParams as ViewGroup.LayoutParams).height =
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        s
-    }
+    val scroll = com.stationly.mobile.ui.util.ensureRowsScrollWrapped(rowsContainer)
 
     // Apply orientation-dependent behaviour every time — on rotation or
     // layout-change we re-enter this with the same ScrollView and need to

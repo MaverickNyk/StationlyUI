@@ -59,7 +59,16 @@ class SyncPredictionsUseCase(
                 stopLetter = pred.stopLetter,
                 targetEpochMs = StationlyFormatters.parseTargetEpochMs(pred.eta),
             )
-        }.distinctBy { "${it.destination}_${it.platform}_${it.eta}" }
+        // Dedupe on absolute arrival time, NOT the formatted eta string.
+        // The earlier string-based dedup ("dest_platform_eta") silently
+        // dropped a legitimate second train when both rounded to the same
+        // minute bucket — e.g. two Cockfosters trains 40s apart, both
+        // formatted "1 min", collapsed to one. The per-platform bump rule
+        // in PredictionTicker.tickPredictions now handles the visible
+        // duplicate problem at render time without losing the row from
+        // SQL. Dedup by exact target catches genuine TfL duplicates
+        // (same train returned twice in one /arrivals payload).
+        }.distinctBy { "${it.destination}_${it.platform}_${it.targetEpochMs ?: it.eta}" }
         
         // 5. Use unified processor for sorting and platform grouping.
         //    Cap at 8 per platform (not 3) so the in-memory tick layer

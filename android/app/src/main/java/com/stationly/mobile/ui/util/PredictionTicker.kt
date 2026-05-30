@@ -68,15 +68,31 @@ fun rememberTickedPredictions(predictions: List<PredictionDisplay>): List<Predic
 
 /**
  * How long after a train's [PredictionDisplay.targetEpochMs] before we
- * consider it departed and drop it from the visible board. 60s is a
- * Londoner-friendly grace window: the "Due" row stays on screen long
- * enough for the user to act (boarding takes ~30s, doors close ~30s
- * later), then disappears so the next upcoming train moves up.
+ * consider it departed and drop it from the visible board.
+ *
+ * Set to 30s — matches the dwell time of a tube train at a London
+ * platform (doors open ~10s, boarding ~15-25s, doors close ~5s).
+ * The board keeps showing "Due" through that window, mirroring what
+ * the rider sees on the physical platform indicator at the station:
+ * the "Next train: Due" line stays up while the train is actually
+ * sitting there with its doors open.
+ *
+ * NOT matched to tfl.gov.uk's web display, which drops trains the
+ * moment their target passes — that page shows arrivals, not station
+ * dwell. We're matching the platform sign, which is what the rider
+ * cross-checks against.
+ *
+ * Note: the practical drop time is also bounded by
+ * `rememberMinuteTick`'s minute cadence — a train whose grace
+ * window closes mid-minute lingers until the next tick. Up to ~60s
+ * of additional visual lag is unavoidable without ticking
+ * sub-minute; combined with the 30s grace, max-visible-after-target
+ * is ~90s.
  *
  * Public + const so the widget (which can't call composables) can
  * apply the same threshold for cross-surface consistency.
  */
-const val DEPARTED_GRACE_MS: Long = 60_000L
+const val DEPARTED_GRACE_MS: Long = 30_000L
 
 /**
  * Filter+tick step shared by the Compose `rememberTickedPredictions`
@@ -101,16 +117,71 @@ fun tickPredictions(
 ): List<PredictionDisplay> {
     if (predictions.isEmpty()) return predictions
     val departedBefore = nowMs - DEPARTED_GRACE_MS
-    return predictions.mapNotNull { p ->
-        val target = p.targetEpochMs ?: return@mapNotNull p
-        if (target < departedBefore) return@mapNotNull null
-        p.copy(
-            eta = StationlyFormatters.formatMinutesRemaining(
-                targetEpochMs = target,
-                nowMs = nowMs,
-                staleFallback = p.eta,
-            ),
-            isDue = (target - nowMs) / 1000 < 30,
-        )
+
+    // Step 1: drop departed rows; keep targetEpochMs-null rows untouched so
+    // they fall through the bump step too (they have no target to bump from).
+    val survivors = predictions.filter { p ->
+        val target = p.targetEpochMs ?: return@filter true
+        target >= departedBefore
     }
+    if (survivors.isEmpty()) return survivors
+
+    // Step 2: per-platform monotonic bump. Two trains on the same platform
+    // cannot share a label — if the rounding collides them, the later one
+    // shifts up by 1. Bump propagates ("Due, Due, Due" → "Due, 1 min, 2 min").
+    // Cross-platform is fine: Platform 1 "1 min" + Platform 2 "1 min" stays.
+    //
+    // Why here and not in the formatter: the rule is platform-aware and
+    // sibling-aware; the canonical formatter operates on one row at a time.
+    // tickPredictions already runs per render, has all sibling rows in
+    // scope, and is shared across home/widget/dream, so this is the one
+    // place we can guarantee identical bumping across surfaces.
+    return survivors
+        .groupBy { it.platform }
+        .flatMap { (_, group) -> bumpPlatformGroup(group, nowMs) }
+}
+
+/**
+ * Per-platform monotonic bump. Sorts the group by `targetEpochMs`
+ * ascending so the earliest train keeps its raw label, then walks the
+ * list enforcing `label[i] >= label[i-1] + 1`.
+ *
+ * Rows with null `targetEpochMs` (defensive ISO-parse fallback) are
+ * pinned to the end of the group and passed through unchanged — we can't
+ * bump what we can't compute.
+ */
+private fun bumpPlatformGroup(
+    group: List<PredictionDisplay>,
+    nowMs: Long,
+): List<PredictionDisplay> {
+    if (group.size <= 1) {
+        // Single row still needs re-derive against current `now`.
+        return group.map { p ->
+            val target = p.targetEpochMs ?: return@map p
+            p.copy(
+                eta = StationlyFormatters.formatMinutesRemaining(target, nowMs, p.eta),
+                isDue = (target - nowMs) / 1000 < 30,
+            )
+        }
+    }
+
+    val (withTarget, withoutTarget) = group.partition { it.targetEpochMs != null }
+    val sorted = withTarget.sortedBy { it.targetEpochMs }
+    var prevMin = -1   // "Due" == 0; -1 means nothing taken yet
+    val bumped = sorted.map { p ->
+        val secs = (p.targetEpochMs!! - nowMs) / 1000
+        // Same TfL-style floor rounding as StationlyFormatters.formatMinutesRemaining —
+        // duplicated inline only because we need the raw INT minutes to feed the
+        // bump comparison; the canonical function returns a String. Keep them
+        // in lockstep: secs<60 → 0 (Due), else floor(secs/60).
+        val raw = when {
+            secs < 60 -> 0   // Due
+            else      -> (secs / 60).toInt()
+        }
+        val effective = maxOf(raw, prevMin + 1)
+        prevMin = effective
+        val label = if (effective == 0) "Due" else "$effective min"
+        p.copy(eta = label, isDue = effective == 0)
+    }
+    return bumped + withoutTarget
 }

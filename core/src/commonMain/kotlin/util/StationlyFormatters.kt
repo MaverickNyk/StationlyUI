@@ -150,16 +150,29 @@ object StationlyFormatters {
         }
     }
 
+    /**
+     * Convert an ISO arrival timestamp into a board label using the same
+     * rules TfL's own countdown indicators use:
+     *
+     *   secs < 60s   → "Due"           // train is arriving / at the platform
+     *   secs ≥ 60s   → "${secs / 60} min"     // floor (truncate, NOT round)
+     *
+     * Floor rounding matches what riders see on the TfL platform signs and
+     * tfl.gov.uk: a train 90s away reads "1 min", a train 119s away reads
+     * "1 min", a train 120s away reads "2 min". TfL deliberately
+     * under-promises so the rider gets to the platform on time.
+     *
+     * Past-target seconds also land in the "Due" bucket; callers that want
+     * to drop departed trains do so upstream (see PredictionTicker).
+     */
     fun formatETA(etaIso: String): String {
         return try {
             val etaTime = Instant.parse(etaIso)
             val now = Clock.System.now()
-            val duration = etaTime - now
-
+            val secs = (etaTime - now).inWholeSeconds
             when {
-                duration.inWholeSeconds < 30 -> "Due"
-                duration.inWholeSeconds < 60 -> "1 min"
-                else -> "${(duration.inWholeSeconds + 30) / 60} min"
+                secs < 60 -> "Due"
+                else      -> "${secs / 60} min"
             }
         } catch (e: Exception) {
             "Due"
@@ -181,10 +194,14 @@ object StationlyFormatters {
 
     /**
      * Re-format a `PredictionDisplay`'s ETA given the *current* wall
-     * clock. Used by the per-minute ticker on the widget / dot-matrix
-     * surfaces — preserves the same "Due / 1 min / N min" rounding the
-     * receive-time formatter uses, so a row labelled "5 min" at FCM
-     * receipt ticks cleanly down to "4 min", "3 min", ..., "Due".
+     * clock. Used by the per-minute ticker on every Android surface
+     * (home, dream, widget) — uses the same TfL-style floor rounding
+     * as [formatETA] so a row labelled "5 min" at FCM receipt ticks
+     * cleanly down to "4 min", "3 min", ..., "Due" matching what the
+     * rider sees on the platform sign.
+     *
+     *   secs < 60s   → "Due"
+     *   secs ≥ 60s   → "${secs / 60} min"     // floor
      *
      * If targetEpochMs is null (FCM ISO timestamp failed to parse),
      * returns [staleFallback] verbatim — typically the row's
@@ -193,21 +210,34 @@ object StationlyFormatters {
      */
     fun formatMinutesRemaining(targetEpochMs: Long?, nowMs: Long, staleFallback: String): String {
         if (targetEpochMs == null) return staleFallback
-        val secondsRemaining = (targetEpochMs - nowMs) / 1000
+        val secs = (targetEpochMs - nowMs) / 1000
         return when {
-            secondsRemaining < 30 -> "Due"
-            secondsRemaining < 60 -> "1 min"
-            else -> "${(secondsRemaining + 30) / 60} min"
+            secs < 60 -> "Due"
+            else      -> "${secs / 60} min"
         }
     }
 
+    /**
+     * Sort predictions by actual arrival time. Falls back to parsing the
+     * eta string when `targetEpochMs` is null (defensive: pre-formatted
+     * SDUI rows, malformed FCM timestamps).
+     *
+     * Was previously string-only — parsing "1 min" / "Due" back to a sort
+     * key. That broke once the per-platform bump rule started lying about
+     * minute labels: a bumped "3 min" row would sort after a real "2 min"
+     * row from a different platform even though its train is actually
+     * closer. Sorting by absolute target keeps the cross-platform hero
+     * picker honest regardless of what the row label says.
+     */
     fun sortPredictions(predictions: List<com.stationly.core.model.PredictionDisplay>): List<com.stationly.core.model.PredictionDisplay> {
-        return predictions.sortedWith(compareBy { 
-            val raw = it.eta.lowercase().trim()
-            when {
-                raw.contains("due") -> 0
-                raw.contains("min") -> raw.replace(" min", "").toIntOrNull() ?: 999
-                else -> raw.toIntOrNull() ?: 999
+        return predictions.sortedWith(compareBy {
+            it.targetEpochMs ?: run {
+                val raw = it.eta.lowercase().trim()
+                when {
+                    raw.contains("due") -> 0L
+                    raw.contains("min") -> (raw.replace(" min", "").toLongOrNull() ?: 999L) * 60_000L
+                    else -> (raw.toLongOrNull() ?: 999L) * 60_000L
+                }
             }
         })
     }

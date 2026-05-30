@@ -129,6 +129,16 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     private val _showDreamPromo = MutableStateFlow(false)
     val showDreamPromo: StateFlow<Boolean> = _showDreamPromo.asStateFlow()
 
+    // True when the user has been asked for POST_NOTIFICATIONS (so the
+    // system permission prompt has fired at least once) and the result
+    // was denial. Drives a soft banner that opens app notification
+    // settings — without this nudge the user wouldn't know that line
+    // status alerts are silently no-op'd by the dispatcher. Re-evaluated
+    // on every ON_RESUME so the banner disappears as soon as the user
+    // toggles notifications back on in Settings.
+    private val _showNotificationDeniedBanner = MutableStateFlow(false)
+    val showNotificationDeniedBanner: StateFlow<Boolean> = _showNotificationDeniedBanner.asStateFlow()
+
     // One-shot guard for the mode-icon warmup. Set after the first
     // `/modes` fetch attempt regardless of success — without it, a
     // failed download (anyMissing stays true) would re-hit the API on
@@ -167,6 +177,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { fetchHomeConfig() }
         checkWidgetPromo()
         checkDreamPromo()
+        checkNotificationDeniedBanner()
 
         viewModelScope.launch {
             selectionRepository.initialize()
@@ -247,7 +258,18 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val rawPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line)
-                val dbPreds = com.stationly.core.util.GlobalBoardProcessor.processPredictions(rawPreds)
+                // Keep the FULL per-platform buffer (up to 8 rows, the storage
+                // cap set by SyncPredictionsUseCase). Earlier this defaulted
+                // to perPlatformCap = 3 — which meant the home Board's
+                // cached list only held the visible 3 rows, with no buffer
+                // to slide up when the first row passed grace. Result: when
+                // a Due train departed, the board shrunk to 2 rows and stayed
+                // that way until the next FCM, instead of pulling in the next
+                // upcoming train. The display cap of 3 is applied at render
+                // time by `prepareLegacyRows` — the storage layer must not
+                // pre-cap.
+                val dbPreds = com.stationly.core.util.GlobalBoardProcessor
+                    .processPredictions(rawPreds, perPlatformCap = Int.MAX_VALUE)
                 
                 // Honest "last updated" time — the SQL row's persistence
                 // timestamp (set when the FCM payload or REST sync was
@@ -374,10 +396,22 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
 
             if (existingPreds.isEmpty() || existingStatus == null || isStale) {
                 departureRepository.fetchInitialData(selection)
-                
+
                 // Refresh local UI state flows from the updated database
                 loadPredictions(selection)
                 loadLineStatus(selection)
+
+                // Fan out the fresh-data signal to every surface — same
+                // helper FCM and pull-to-refresh use. Without this, the
+                // dream's chronometer would stay anchored to its old
+                // lastUpdatedMs if it happens to be active during app
+                // launch (rare but possible when phone is docked while
+                // the user re-opens the app).
+                com.stationly.mobile.util.FreshDataNotifier.notify(
+                    context,
+                    stationId = selection.station,
+                    lineId = selection.line,
+                )
             }
         }
     }
@@ -432,8 +466,23 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
             try {
                 _selections.value.forEach { selection ->
                     departureRepository.fetchInitialData(selection)
+                    // Update our own VM state synchronously so the home
+                    // Board reflects fresh data immediately on this
+                    // coroutine path; don't wait for the SharedPrefs
+                    // listener round-trip.
                     loadPredictions(selection)
                     loadLineStatus(selection)
+                    // Fan out to the dream + widget. The home is already
+                    // updated above, so the SharedPrefs ping that
+                    // FreshDataNotifier fires is mostly a defensive
+                    // duplicate for us — it costs one redundant
+                    // loadPredictions call, harmless. The dream broadcast
+                    // and widget redraw are what matter here.
+                    com.stationly.mobile.util.FreshDataNotifier.notify(
+                        context,
+                        stationId = selection.station,
+                        lineId = selection.line,
+                    )
                 }
                 _uiState.value = _uiState.value.copy(
                     isRefreshing = false,
@@ -568,6 +617,44 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
+     * Decide whether to surface the "notifications are off" banner.
+     *
+     * `NotificationPermissionEffect` is what fires the system permission
+     * dialog and persists `post_notifications_asked` + `_granted` in
+     * SharedPrefs. We read those here:
+     *   - `asked == true` AND `granted == false`  → show banner
+     *   - anything else  → hide
+     *
+     * Idempotent — re-running this after the user has flipped the
+     * permission in system Settings will flip the banner off. The
+     * banner itself just dismisses session-locally via
+     * `dismissNotificationDeniedBanner` until the next ON_RESUME.
+     *
+     * No-op on API < 33 (the legacy auto-grant model).
+     */
+    fun checkNotificationDeniedBanner() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+            _showNotificationDeniedBanner.value = false
+            return
+        }
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val asked = prefs.getBoolean("post_notifications_asked", false)
+        // The system is the truth — the user can flip the permission
+        // via Settings without our SharedPrefs flag knowing. So we
+        // ignore our own `granted` cache here and just ask the OS.
+        // The `asked` flag is still load-bearing: until the user has
+        // seen at least one prompt, the banner would be premature.
+        val systemGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.POST_NOTIFICATIONS,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        _showNotificationDeniedBanner.value = asked && !systemGranted
+    }
+
+    fun dismissNotificationDeniedBanner() {
+        _showNotificationDeniedBanner.value = false
+    }
+
+    /**
      * Detect whether Stationly is the user's active screensaver. The banner
      * shows whenever ANY of these is true:
      *
@@ -642,6 +729,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         }
         checkWidgetPromo()
         checkDreamPromo()
+        checkNotificationDeniedBanner()
     }
 
     /**

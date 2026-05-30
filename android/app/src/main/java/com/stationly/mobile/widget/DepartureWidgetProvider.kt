@@ -61,8 +61,6 @@ class DepartureWidgetProvider : AppWidgetProvider() {
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         when (intent.action) {
-            ACTION_TIMER_DIM -> { setTimerColor(context, COLOR_DIM); return }
-            ACTION_TIMER_RED -> { setTimerColor(context, COLOR_RED); return }
             ACTION_ETA_TICK -> {
                 // Watchdog fired — FCM has been silent for ≥ 90s.
                 // Re-render from SQL so the ETAs catch up to the wall
@@ -82,6 +80,25 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         }
         val actions = listOf(ACTION_UPDATE_WIDGET, ACTION_MANUAL_REFRESH)
         if (intent.action in actions) {
+            // Debounce the user-tap path. The btn_refresh PendingIntent
+            // fires this action on every tap with no spam protection of
+            // its own — and TfL rate-limits aggressive callers — so we
+            // gate the refresh on at least MANUAL_REFRESH_DEBOUNCE_MS
+            // since the last successful one. ACTION_UPDATE_WIDGET (the
+            // programmatic-redraw path from AndroidWidgetManager) is
+            // exempt because it doesn't hit the backend.
+            if (intent.action == ACTION_MANUAL_REFRESH) {
+                val prefs = context.getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
+                val lastRefresh = prefs.getLong("last_refresh_ms", 0L)
+                if (System.currentTimeMillis() - lastRefresh < MANUAL_REFRESH_DEBOUNCE_MS) {
+                    android.util.Log.d(
+                        "Widget",
+                        "Manual refresh debounced — last fired ${(System.currentTimeMillis() - lastRefresh) / 1000}s ago"
+                    )
+                    return
+                }
+                prefs.edit().putLong("last_refresh_ms", System.currentTimeMillis()).apply()
+            }
             val pendingResult = goAsync()
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                 try {
@@ -94,9 +111,29 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                             com.stationly.core.platform.Platform.sqlStorage,
                             com.stationly.core.usecase.SyncPredictionsUseCase(com.stationly.core.platform.Platform.sqlStorage)
                         )
-                        selections.forEach { repo.fetchInitialData(it) }
+                        selections.forEach { selection ->
+                            repo.fetchInitialData(selection)
+                            // Same fan-out the FCM service and home pull-to-
+                            // refresh use — pings the home VM and the dream
+                            // so they re-read SQL, then redraws the widget.
+                            // Without this, tapping the widget's refresh
+                            // button would update only the widget; an open
+                            // app or active dream would stay on stale data
+                            // until the next FCM landed.
+                            com.stationly.mobile.util.FreshDataNotifier.notify(
+                                context,
+                                stationId = selection.station,
+                                lineId = selection.line,
+                            )
+                        }
+                    } else {
+                        // ACTION_UPDATE_WIDGET path: someone (typically the
+                        // SummaryViewModel via AndroidWidgetManager) wants
+                        // us to redraw from the current SQL state. No
+                        // backend fetch involved, no other surfaces to
+                        // notify — just paint.
+                        updateFromStorage(context)
                     }
-                    updateFromStorage(context)
                 } catch (e: Exception) {
                     android.util.Log.e("Widget", "Error during refresh", e)
                     updateFromStorage(context)
@@ -110,8 +147,17 @@ class DepartureWidgetProvider : AppWidgetProvider() {
     companion object {
         const val ACTION_UPDATE_WIDGET = "com.stationly.mobile.ACTION_UPDATE_WIDGET"
         const val ACTION_MANUAL_REFRESH = "com.stationly.mobile.ACTION_MANUAL_REFRESH"
-        const val ACTION_TIMER_DIM = "com.stationly.mobile.ACTION_TIMER_DIM"
-        const val ACTION_TIMER_RED = "com.stationly.mobile.ACTION_TIMER_RED"
+
+        /**
+         * Minimum gap between two `ACTION_MANUAL_REFRESH` broadcasts that
+         * will actually round-trip to the backend. A user tapping the
+         * widget's refresh button repeatedly used to hit TfL each time
+         * — fine until the tenth tap pushed us past the rate-limit cap
+         * for the device's outbound IP. 15s is long enough to discourage
+         * spam-tapping, short enough that a legitimate "I want fresh
+         * data right now" retry isn't ignored.
+         */
+        const val MANUAL_REFRESH_DEBOUNCE_MS: Long = 15_000L
         /**
          * Watchdog tick — fires only when FCM has gone silent for
          * [ETA_TICK_DEBOUNCE_MS]. On fire, re-renders the widget so the
@@ -124,28 +170,21 @@ class DepartureWidgetProvider : AppWidgetProvider() {
          */
         const val ACTION_ETA_TICK = "com.stationly.mobile.ACTION_ETA_TICK"
 
-        private const val COLOR_AMBER = 0xFFFFB300.toInt()
-        private const val COLOR_DIM   = 0xFF888888.toInt()
-        private const val COLOR_RED   = 0xFFFF3B30.toInt()
-
+        /**
+         * Programmatic-trigger entry point used by callers outside the
+         * widget receiver (boot-completed receiver, timezone-changed
+         * receiver, etc.). Sends `ACTION_MANUAL_REFRESH`; the receiver's
+         * own debounce ([MANUAL_REFRESH_DEBOUNCE_MS]) is the single
+         * source of truth for "did we actually round-trip to the
+         * backend". Don't duplicate the debounce here — they'd race on
+         * the SharedPrefs key and one would always win.
+         */
         fun triggerRefresh(context: Context) {
-            val prefs = context.getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
-            val lastRefresh = prefs.getLong("last_refresh_ms", 0L)
-            if (System.currentTimeMillis() - lastRefresh < 60_000L) return
-            prefs.edit().putLong("last_refresh_ms", System.currentTimeMillis()).apply()
             context.sendBroadcast(Intent(context, DepartureWidgetProvider::class.java).apply {
                 action = ACTION_MANUAL_REFRESH
             })
         }
         
-        private fun setTimerColor(context: Context, color: Int) {
-            val mgr = AppWidgetManager.getInstance(context)
-            val ids = mgr.getAppWidgetIds(android.content.ComponentName(context, DepartureWidgetProvider::class.java))
-            val views = RemoteViews(context.packageName, com.stationly.mobile.R.layout.widget_departure_board)
-            views.setTextColor(com.stationly.mobile.R.id.last_updated_timer, color)
-            for (id in ids) mgr.partiallyUpdateAppWidget(id, views)
-        }
-
         /**
          * Schedule (or replace) the ETA watchdog. The alarm fires at
          * the next wall-clock minute boundary so the widget ticks at
@@ -206,26 +245,6 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 },
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
             )
-
-        private fun scheduleTimerColorAlarms(context: Context) {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
-            val now = SystemClock.elapsedRealtime()
-
-            val dimIntent = android.app.PendingIntent.getBroadcast(
-                context, 10,
-                Intent(context, DepartureWidgetProvider::class.java).apply { action = ACTION_TIMER_DIM },
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-            )
-            val redIntent = android.app.PendingIntent.getBroadcast(
-                context, 11,
-                Intent(context, DepartureWidgetProvider::class.java).apply { action = ACTION_TIMER_RED },
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-            )
-            alarmManager.cancel(dimIntent)
-            alarmManager.cancel(redIntent)
-            alarmManager.set(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, now + 60_000L, dimIntent)
-            alarmManager.set(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, now + 180_000L, redIntent)
-        }
 
         fun showRefreshSpinner(context: Context) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
@@ -369,6 +388,20 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // belongs on the platform row per the agreed signage layout.
             views.setTextViewText(R.id.line_name, stationName)
 
+            // Size the strip's `maxEms` to the widget cell's actual width.
+            // The XML default (18) is calibrated for the smallest 2-cell
+            // case; on a 4-cell or fold-out cell we want the station name
+            // to use the room it has instead of truncating "Highbury &
+            // Islington Underground" mid-word. AppWidgetManager returns
+            // the system-measured cell width in dp via
+            // `OPTION_APPWIDGET_MIN_WIDTH` — that's our budget.
+            val widgetOptions = appWidgetManager.getAppWidgetOptions(appWidgetId)
+            val cellWidthDp = widgetOptions
+                .getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 250)
+            val lineNameMaxEms = com.stationly.mobile.ui.util.StationStripFitter
+                .maxEmsForWidthDp(cellWidthDp)
+            views.setInt(R.id.line_name, "setMaxEms", lineNameMaxEms)
+
             // Mode roundel on the station strip. Preferred path: the
             // backend-shipped icon cached locally by ModeIconCache during
             // board setup — those are the proper TfL mode marks (tube
@@ -416,8 +449,22 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     "%s ago",
                     true,
                 )
-                views.setTextColor(R.id.last_updated_timer, COLOR_AMBER)
-                scheduleTimerColorAlarms(context)
+                // Paint the chronometer colour for the data's true age.
+                // The watchdog (`scheduleEtaTickWatchdog` below) re-renders
+                // the widget every wall-clock minute boundary, so the
+                // colour transitions amber → grey → red ride on the same
+                // tick that drives the row re-derivation. No separate
+                // colour alarms — one tick mechanism, two outputs.
+                //
+                // Trade-off: the transition fires at the next minute
+                // boundary after the threshold, not exactly at +60s/+180s.
+                // 0-60s of slop, but the widget, home Board, and dream
+                // Board all align to the same boundary so they never
+                // disagree on colour at any wall-clock moment.
+                views.setTextColor(
+                    R.id.last_updated_timer,
+                    com.stationly.core.util.StaleColor.colorForAge(ageMs),
+                )
                 // Re-arm the watchdog. Whatever path got us here (FCM
                 // push, manual refresh, prior watchdog fire), we just
                 // produced an up-to-date render — so the next forced

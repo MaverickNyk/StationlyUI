@@ -456,6 +456,17 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                 stationLifecycleUseCase.cleanupAll()
                 stationLifecycleUseCase.setupStation(userSelection, isFirstTime = true)
 
+                // setupStation writes fresh SQL + updates the widget but
+                // doesn't fan out the ACTION_DREAM_REFRESH broadcast. Fire
+                // FreshDataNotifier explicitly so the dream's chronometer
+                // resets if it's somehow active (e.g. user added a station
+                // while the phone was docked and is about to re-dock).
+                com.stationly.mobile.util.FreshDataNotifier.notify(
+                    getApplication(),
+                    stationId = userSelection.station,
+                    lineId = userSelection.line,
+                )
+
                 try {
                     com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.let { user ->
                         sduiService.syncStations(user.uid, listOf(SubscribedStation(

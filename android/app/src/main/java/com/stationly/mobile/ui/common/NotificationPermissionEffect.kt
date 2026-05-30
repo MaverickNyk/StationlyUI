@@ -43,7 +43,15 @@ import androidx.core.content.ContextCompat
  * call would then be gated on the user confirming the soft prompt.
  */
 @Composable
-fun NotificationPermissionEffect() {
+fun NotificationPermissionEffect(
+    /**
+     * Fired whenever the user makes a permission decision — grant or
+     * deny — so observers can re-evaluate state that depends on the
+     * outcome (e.g. the home's "notifications off" banner). Defaults to
+     * no-op for callers that don't need the signal.
+     */
+    onDecision: (granted: Boolean) -> Unit = {},
+) {
     val context = LocalContext.current
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
 
@@ -62,6 +70,7 @@ fun NotificationPermissionEffect() {
             .putBoolean(KEY_ASKED, true)
             .putBoolean(KEY_LAST_GRANTED, granted)
             .apply()
+        onDecision(granted)
     }
 
     LaunchedEffect(Unit) {

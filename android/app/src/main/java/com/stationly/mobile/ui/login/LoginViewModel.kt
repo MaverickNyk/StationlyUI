@@ -553,6 +553,16 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                         ),
                         isFirstTime = true
                     )
+                    // Fan out to every surface so the dream's chronometer
+                    // resets too (setupStation already updates the home
+                    // VM via SharedPrefs ping + the widget via
+                    // widgetManager.updateWidget, but skips the dream
+                    // broadcast).
+                    com.stationly.mobile.util.FreshDataNotifier.notify(
+                        getApplication(),
+                        stationId = primary.id,
+                        lineId = primary.line,
+                    )
                 } else {
                     // No saved stations — redraw widget so it exits the login placeholder
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {

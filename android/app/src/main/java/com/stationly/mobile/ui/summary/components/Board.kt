@@ -3,8 +3,11 @@ package com.stationly.mobile.ui.summary.components
 import android.os.SystemClock
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Chronometer
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
@@ -30,6 +33,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -48,6 +52,13 @@ import com.stationly.core.model.sdui.SduiWidgetPayload
 import com.stationly.mobile.R
 import com.stationly.mobile.ui.theme.LocalThemeTokens
 import com.stationly.mobile.ui.theme.TflAmber
+import com.stationly.core.util.GlobalBoardProcessor
+import com.stationly.core.util.LegacyRow
+import com.stationly.core.util.StaleColor
+import com.stationly.core.util.StationlyFormatters
+import com.stationly.mobile.util.HomeConfigStore
+import com.stationly.mobile.util.ModeColors
+import com.stationly.mobile.util.ModeIconCache
 import com.stationly.mobile.util.SduiThemeManager
 
 // Official TfL line colours — canonical palette as published by TfL. Use
@@ -197,7 +208,7 @@ fun Board(
     // ordering so the hero stays honest. Null when the ticked list is
     // empty (no upcoming trains right now), in which case the hero is
     // hidden by the `if` block below.
-    val effectiveNextPrediction = com.stationly.core.util.StationlyFormatters
+    val effectiveNextPrediction = StationlyFormatters
         .sortPredictions(tickedPredictions)
         .firstOrNull()
     // Re-bind the SDUI template with ticked predictions so SDUI-driven
@@ -205,7 +216,7 @@ fun Board(
     // walks the components and copies eta from the matching prediction.
     val tickedSduiPayload = remember(sduiPayload, tickedPredictions, lineStatus) {
         sduiPayload?.let {
-            com.stationly.core.util.GlobalBoardProcessor.bindSduiTemplate(
+            GlobalBoardProcessor.bindSduiTemplate(
                 template = it,
                 predictions = tickedPredictions,
                 lineStatusSeverity = lineStatus?.substringBefore(":")?.trim(),
@@ -254,7 +265,22 @@ fun Board(
     // Without remember(), infiniteTransition recompositions recreate this reference
     // ~60fps, causing AndroidView to call update() continuously and reset the
     // Chronometer base and marquee scroll on every frame.
-    val boardUpdate: (View) -> Unit = remember(tickedPredictions, lineStatus, lineStatusFailed, tickedSduiPayload, lastUpdated, homeConfig, fallbackState) { { view ->
+    //
+    // `nowMs` is in the key list so the lambda re-runs at every wall-clock
+    // minute tick — that's what drives the chronometer colour transitions
+    // (amber → grey at 60s, → red at 180s) without needing alarms on the
+    // Compose surface. Widget uses AlarmManager for the same job; we share
+    // the thresholds + palette via `StaleColor`.
+
+    // Effective width the dot-matrix card occupies inside the LazyColumn's
+    // 20dp horizontal padding. Used by the station strip's `maxEms` so the
+    // name uses all the room it has on this device class (small phone
+    // ~330dp, Pixel ~380dp, 10" tablet ~760dp). Recomputes when the
+    // Configuration changes (rotation, fold), since LocalConfiguration is
+    // a Compose state itself.
+    val boardSlotWidthDp = (LocalConfiguration.current.screenWidthDp - 40).coerceAtLeast(200)
+
+    val boardUpdate: (View) -> Unit = remember(tickedPredictions, lineStatus, lineStatusFailed, tickedSduiPayload, lastUpdated, homeConfig, fallbackState, nowMs, boardSlotWidthDp) { { view ->
         val context = view.context
         view.findViewById<View>(R.id.btn_settings).visibility = View.GONE
         view.findViewById<View>(R.id.btn_refresh).visibility = View.GONE
@@ -283,6 +309,35 @@ fun Board(
             chrono.start()
             chrono.tag = lastUpdated
         }
+
+        // Chronometer colour — recomputed on every minute tick (nowMs is
+        // a `remember` key, so the lambda re-runs at xx:00:00 wall-clock
+        // boundaries). Anchored to lastUpdated, so the amber → grey at
+        // 60s and grey → red at 180s transitions reflect the SQL row's
+        // true age regardless of how many times this composable has
+        // re-rendered. Sentinel `lastUpdated == 0` stays amber (no real
+        // data to age).
+        if (lastUpdated > 0L) {
+            val ageMs = (nowMs - lastUpdated).coerceAtLeast(0L)
+            chrono.setTextColor(StaleColor.colorForAge(ageMs))
+        } else {
+            chrono.setTextColor(StaleColor.AMBER)
+        }
+
+        // SDUI string overrides — used by the mode-icon contentDescription
+        // below AND by the line-prefix template just below that. Read once
+        // per lambda fire so we don't hit disk on every label substitution.
+        val sduiStrings = HomeConfigStore.read(context)
+
+        // Platform-header line prefix — same shape the widget + dream use:
+        // "Piccadilly: Platform 1 (Eastbound)". Cross-surface consistency
+        // requirement; without this the home Board's platform headers read
+        // just "Platform 1 (Eastbound)" while every other surface carries
+        // the line context. Falls back to "" so the prefix block is a
+        // no-op when the selection's mode/line can't produce a prefix
+        // (rare — only an empty UserSelection).
+        val linePrefix = StationlyFormatters
+            .formatLinePrefix(selection.mode, selection.line, sduiStrings)
 
         // Status row: always visible to keep the board size stable across
         // surfaces. Reason text follows: real line status > "Status unavailable"
@@ -313,12 +368,53 @@ fun Board(
         }
 
         val rowsContainer = view.findViewById<LinearLayout>(R.id.rows_container)
+        // Wrap rows_container in a ScrollView so platform headers + dep
+        // rows scroll independently while the station strip stays pinned
+        // at top and the status row + clock stay pinned at bottom. Same
+        // helper the cluster + fullscreen dreams use; idempotent so it's
+        // safe to call on every update lambda fire.
+        com.stationly.mobile.ui.util.ensureRowsScrollWrapped(rowsContainer)
         val waitingContainer = view.findViewById<LinearLayout>(R.id.waiting_container)
         rowsContainer.removeAllViews()
         var dynTextColor = context.getColor(R.color.tfl_amber)
 
-        // Hide entire header row — station name is shown in the Compose layer above
-        view.findViewById<View>(R.id.header_row)?.visibility = View.GONE
+        // Dot-matrix station strip — same row the widget and the fullscreen
+        // dream show. Per cross-surface consistency feedback, the rider sees
+        // the same station + mode lockup on every Stationly surface; the
+        // Compose chrome above (line pill / delete button) carries additional
+        // app-canvas info but the dot-matrix strip is the constant.
+        // Refresh/settings buttons inside the strip stay hidden on home —
+        // the canvas already provides pull-to-refresh + the delete affordance.
+        view.findViewById<View>(R.id.header_row)?.visibility = View.VISIBLE
+        view.findViewById<TextView>(R.id.line_name).apply {
+            text = selection.stationName
+            // Size `maxEms` to the home Board's actual width — the XML's
+            // hardcoded 18 was calibrated for the widget's smallest cell
+            // and truncates station names with room to spare on phones
+            // and especially tablets. The board card is the screen width
+            // minus the LazyColumn's 20dp horizontal padding on each side.
+            maxEms = com.stationly.mobile.ui.util.StationStripFitter
+                .maxEmsForWidthDp(boardSlotWidthDp)
+        }
+
+        // Mode roundel — uses the `sduiStrings` already read above.
+        view.findViewById<ImageView>(R.id.mode_icon)?.apply {
+            visibility = View.VISIBLE
+            contentDescription = StationlyFormatters
+                .formatModeName(selection.mode, sduiStrings)
+            val cached = ModeIconCache
+                .cachedBitmap(context, selection.mode)
+            if (cached != null) {
+                clearColorFilter()
+                setImageBitmap(cached)
+            } else {
+                // Tint precedence: backend-shipped tintHex via /modes → hardcoded fallback.
+                val tint = ModeIconCache.tintFor(context, selection.mode)
+                    ?: ModeColors.forMode(selection.mode)
+                setImageResource(R.drawable.mode_roundel)
+                setColorFilter(tint)
+            }
+        }
 
         if (tickedSduiPayload != null) {
             val sduiPayload = tickedSduiPayload
@@ -341,7 +437,12 @@ fun Board(
                             R.layout.widget_platform_header, rowsContainer, false
                         )
                         val pTv = header.findViewById<TextView>(R.id.platform_name)
-                        pTv.text = component.title
+                        // Prefix every platform header with the line
+                        // context so the home reads "Piccadilly: Platform
+                        // 1 (Eastbound)" — same as widget + dream.
+                        pTv.text = if (linePrefix.isNotEmpty())
+                            "$linePrefix: ${component.title}"
+                        else component.title
                         pTv.setTextColor(SduiThemeManager.parseColor(component.color, dynTextColor))
                         rowsContainer.addView(header)
                     }
@@ -384,7 +485,7 @@ fun Board(
             val legacyReason = lineStatus?.let {
                 if (it.contains(":")) it.substringAfter(":").trim().takeIf { r -> r.isNotBlank() } else null
             }
-            val legacyRows = com.stationly.core.util.GlobalBoardProcessor.prepareLegacyRows(
+            val legacyRows = GlobalBoardProcessor.prepareLegacyRows(
                 tickedPredictions, selection.line, true,
                 lineStatusSeverity = legacySeverity,
                 lineStatusReason = legacyReason,
@@ -392,14 +493,18 @@ fun Board(
             )
             legacyRows.forEach { row ->
                 when (row) {
-                    is com.stationly.core.util.LegacyRow.Header -> {
+                    is LegacyRow.Header -> {
                         val header = LayoutInflater.from(context).inflate(
                             R.layout.widget_platform_header, rowsContainer, false
                         )
-                        header.findViewById<TextView>(R.id.platform_name).text = row.title
+                        // Same "Line: Platform" prefix as widget + dream.
+                        header.findViewById<TextView>(R.id.platform_name).text =
+                            if (linePrefix.isNotEmpty())
+                                "$linePrefix: ${row.title}"
+                            else row.title
                         rowsContainer.addView(header)
                     }
-                    is com.stationly.core.util.LegacyRow.Departure -> {
+                    is LegacyRow.Departure -> {
                         val dep = LayoutInflater.from(context).inflate(
                             R.layout.widget_departure_row, rowsContainer, false
                         )
@@ -411,7 +516,7 @@ fun Board(
                         }
                         rowsContainer.addView(dep)
                     }
-                    is com.stationly.core.util.LegacyRow.Message -> {
+                    is LegacyRow.Message -> {
                         val header = LayoutInflater.from(context).inflate(
                             R.layout.widget_platform_header, rowsContainer, false
                         )
@@ -592,8 +697,30 @@ fun Board(
                     )
             )
 
+            // Cap the dark card's height so the page never has to scroll
+            // ONLY because of a many-platform station. Without a cap, a
+            // station like Bank with 4-6 platforms produces a card that
+            // pushes the Network section off-screen and dominates the
+            // home page.
+            //
+            // The cap is responsive: 50% of the screen height, clamped
+            // between 380dp (small phone — keep ≥ 3 dep rows + status
+            // + clock visible without forcing scroll on a tiny screen)
+            // and 720dp (large tablet — past this the board starts to
+            // feel billboard-rather-than-signage). On Pixel 11 Pro this
+            // lands ≈ 400dp; on a 12" tablet ≈ 720dp.
+            //
+            // Inside the card, the XML rows_container gets wrapped in a
+            // ScrollView (see boardUpdate lambda) so the station strip
+            // + status row + clock stay pinned while the platform rows
+            // scroll independently. Same pattern the dream uses.
+            val screenHeightDp = LocalConfiguration.current.screenHeightDp.dp
+            val maxBoardHeight = (screenHeightDp * 0.50f).coerceIn(380.dp, 720.dp)
+
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = maxBoardHeight),
                 color = Color(0xFF0C0C0C),
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(
@@ -692,31 +819,25 @@ private fun parseFallbackMinutes(prediction: PredictionDisplay): Int = when {
 // ── Compact next departure strip ──
 @Composable
 private fun NextDepartureRow(prediction: PredictionDisplay, lineColor: Color) {
-    // Drive the countdown from the prediction's absolute target time
-    // plus a minute-aligned wall-clock tick. Earlier versions used a
-    // local `delay(60_000)` loop seeded from the parsed eta string,
-    // which RESET every time a fresh FCM landed (the Syncer publishes
-    // every ~30s, so `targetEpochMs` drifts by a handful of ms and the
-    // `remember(prediction)` key buster fires) — that's why the visible
-    // number used to sit frozen instead of ticking down.
-    val nowMs by com.stationly.mobile.ui.util.rememberMinuteTick()
-    val secondsRemaining = remember(prediction.targetEpochMs, nowMs) {
-        prediction.targetEpochMs?.let { (it - nowMs) / 1000 }
-            ?: parseFallbackMinutes(prediction).toLong() * 60
-    }
-    val countdown = remember(secondsRemaining) {
-        when {
-            secondsRemaining < 30 -> 0           // "Due"
-            secondsRemaining < 60 -> 1           // round up under a minute
-            else -> ((secondsRemaining + 30) / 60).toInt()
-        }
-    }
-    // No "departed" state needed here: the upstream tick layer
-    // (PredictionTicker.tickPredictions) filters out any prediction
-    // whose targetEpochMs is past DEPARTED_GRACE_MS, so the hero
-    // shifts to the next upcoming train before a row ever reaches
-    // this composable in a departed state.
-    val isDue = countdown == 0
+    // Read the label directly from `prediction.eta` — that string has
+    // already been through `tickPredictions` (minute-aligned re-derive
+    // + per-platform bump) by the time the parent recomposed and passed
+    // this prediction down. Re-running the rounding formula here would
+    // miss the bump (so the hero could read "1 min" while the board
+    // shows "2 min" for the very same train).
+    //
+    // The parent Board already subscribes to `rememberMinuteTick` via
+    // `rememberTickedPredictions`, so when the wall-clock minute flips
+    // the parent re-emits a fresh `prediction` and this composable
+    // recomposes — no need for a second minute-tick subscription here.
+    //
+    // No "departed" branch: the upstream tick layer drops any prediction
+    // whose targetEpochMs is past DEPARTED_GRACE_MS, so the hero shifts
+    // to the next upcoming train before a row ever reaches this
+    // composable in a departed state.
+    val countdown = parseFallbackMinutes(prediction)
+    val isDue = prediction.isDue ||
+        prediction.eta.trim().equals("Due", ignoreCase = true)
     val infiniteTransition = rememberInfiniteTransition(label = "due_pulse")
     val pulseAlpha by infiniteTransition.animateFloat(
         initialValue = 1f, targetValue = 0.4f,
@@ -861,3 +982,7 @@ private fun BoardDeleteBullet(text: String, dangerRed: Color, white55: Color) {
         Text(text, color = white55, fontSize = 14.sp)
     }
 }
+
+// Scroll-wrap helper moved to `ui/util/ScrollWrap.ensureRowsScrollWrapped`
+// — shared with `dream/DreamBoard`'s scroll path so both surfaces stay in
+// lockstep on scrollbar styling + layout-param surgery.
