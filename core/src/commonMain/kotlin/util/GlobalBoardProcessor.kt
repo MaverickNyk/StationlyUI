@@ -131,11 +131,12 @@ object GlobalBoardProcessor {
 
         val platformGroups = groupByPlatformSorted(predictions)
         platformGroups.forEach { (platform, platformPreds) ->
-            val stopLetter = platformPreds.firstOrNull()?.stopLetter
-            val platformLabel = if (!stopLetter.isNullOrBlank()) "Stop $stopLetter" else platform
-            
-            // Add Platform Header
-            rows.add(LegacyRow.Header(platformLabel))
+            // The platform label is fully backend-owned (formatPlatform /
+            // getPresentablePlatform): "Stop C" for assigned buses, "" for
+            // unassigned, "Platform 8" / "Platform not assigned" for rail.
+            // Display it verbatim — no client-side relabel. A blank value is
+            // rendered as just the line prefix by platformHeaderText().
+            rows.add(LegacyRow.Header(platform))
             
             // Take up to 3 predictions per platform
             val platformTop3 = platformPreds.take(3)

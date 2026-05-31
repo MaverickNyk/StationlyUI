@@ -554,9 +554,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                             // context so each platform row carries the
                             // same identity ("Piccadilly: Platform 1",
                             // "Piccadilly: Platform 2", …).
-                            val title = if (linePrefix.isNotEmpty())
-                                "$linePrefix: ${component.title}"
-                            else component.title
+                            val title = StationlyFormatters.platformHeaderText(linePrefix, component.title)
                             header.setTextViewText(R.id.platform_name, title)
                              val headerColor = com.stationly.mobile.util.SduiThemeManager.parseColor(component.color, dynTextColor)
                              header.setTextColor(R.id.platform_name, headerColor)
@@ -618,9 +616,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                             // Prefix every platform header with the line
                             // context — same line, but each platform row
                             // carries its own identity.
-                            val title = if (linePrefix.isNotEmpty())
-                                "$linePrefix: ${row.title}"
-                            else row.title
+                            val title = StationlyFormatters.platformHeaderText(linePrefix, row.title)
                             header.setTextViewText(R.id.platform_name, title)
                             rowViews.add(header)
                         }

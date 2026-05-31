@@ -48,7 +48,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -302,7 +301,8 @@ private fun BackButton(onClick: () -> Unit) {
 // ── Terms & Privacy checkbox ───────────────────────────────────────────────────
 @Composable
 private fun TermsCheckbox(accepted: Boolean, showError: Boolean, onToggle: () -> Unit) {
-    val uriHandler = LocalUriHandler.current
+    // Open Terms/Privacy in the in-app WebView, not the external browser.
+    val openUrl = com.stationly.mobile.ui.common.LocalOpenUrl.current
     val annotatedText = buildAnnotatedString {
         withStyle(SpanStyle(color = White50, fontSize = 13.sp)) { append("I agree to the ") }
         pushStringAnnotation("URL", "${AppConfig.webBaseUrl}/terms/")
@@ -332,7 +332,7 @@ private fun TermsCheckbox(accepted: Boolean, showError: Boolean, onToggle: () ->
                 text = annotatedText,
                 onClick = { offset ->
                     annotatedText.getStringAnnotations("URL", offset, offset)
-                        .firstOrNull()?.let { uriHandler.openUri(it.item) }
+                        .firstOrNull()?.let { openUrl(it.item, null) }
                 }
             )
         }
@@ -349,7 +349,8 @@ private fun TermsCheckbox(accepted: Boolean, showError: Boolean, onToggle: () ->
 // ── Terms & Privacy inline disclaimer (no checkbox — for social sign-in paths) ─
 @Composable
 private fun TermsDisclaimer(modifier: Modifier = Modifier) {
-    val uriHandler = LocalUriHandler.current
+    // Open Terms/Privacy in the in-app WebView, not the external browser.
+    val openUrl = com.stationly.mobile.ui.common.LocalOpenUrl.current
     val text = buildAnnotatedString {
         withStyle(SpanStyle(color = White50, fontSize = 12.sp)) { append("By continuing, you agree to our ") }
         pushStringAnnotation("URL", "${AppConfig.webBaseUrl}/terms/")
@@ -370,7 +371,7 @@ private fun TermsDisclaimer(modifier: Modifier = Modifier) {
         modifier = modifier,
         style = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, lineHeight = 18.sp),
         onClick = { offset ->
-            text.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { uriHandler.openUri(it.item) }
+            text.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { openUrl(it.item, null) }
         }
     )
 }

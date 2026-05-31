@@ -253,13 +253,9 @@ fun Board(
         label = "glow"
     )
 
-    // Border urgency pulse (fast when urgent)
-    val borderPulse by infiniteTransition.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(700, easing = EaseInOut), RepeatMode.Reverse),
-        label = "border_pulse"
-    )
-    val borderAlpha = if (isUrgent) 0.35f + borderPulse * 0.55f else 0.22f
+    // Static border — no urgency pulse (the fast flash read as alarming). The
+    // slightly thicker border width when urgent (below) is enough emphasis.
+    val borderAlpha = 0.22f
 
     // Stable lambda — only recreated when data changes, not on every animation frame.
     // Without remember(), infiniteTransition recompositions recreate this reference
@@ -440,9 +436,7 @@ fun Board(
                         // Prefix every platform header with the line
                         // context so the home reads "Piccadilly: Platform
                         // 1 (Eastbound)" — same as widget + dream.
-                        pTv.text = if (linePrefix.isNotEmpty())
-                            "$linePrefix: ${component.title}"
-                        else component.title
+                        pTv.text = StationlyFormatters.platformHeaderText(linePrefix, component.title)
                         pTv.setTextColor(SduiThemeManager.parseColor(component.color, dynTextColor))
                         rowsContainer.addView(header)
                     }
@@ -497,11 +491,10 @@ fun Board(
                         val header = LayoutInflater.from(context).inflate(
                             R.layout.widget_platform_header, rowsContainer, false
                         )
-                        // Same "Line: Platform" prefix as widget + dream.
+                        // Same "Line: Platform" prefix as widget + dream
+                        // (blank platform → just the line, via the shared helper).
                         header.findViewById<TextView>(R.id.platform_name).text =
-                            if (linePrefix.isNotEmpty())
-                                "$linePrefix: ${row.title}"
-                            else row.title
+                            StationlyFormatters.platformHeaderText(linePrefix, row.title)
                         rowsContainer.addView(header)
                     }
                     is LegacyRow.Departure -> {
@@ -578,16 +571,9 @@ fun Board(
                         )
                     }
                 }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = selection.stationName,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 19.sp,
-                    letterSpacing = (-0.3).sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                // Station name intentionally omitted here — the dot-matrix
+                // board below already shows it (its line_name strip), so a
+                // second copy above the hero was redundant chrome.
             }
 
             // Delete button — outlined trash icon at very low alpha. The
@@ -836,19 +822,14 @@ private fun NextDepartureRow(prediction: PredictionDisplay, lineColor: Color) {
     val countdown = parseFallbackMinutes(prediction)
     val isDue = prediction.isDue ||
         prediction.eta.trim().equals("Due", ignoreCase = true)
-    val infiniteTransition = rememberInfiniteTransition(label = "due_pulse")
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 0.4f,
-        animationSpec = infiniteRepeatable(tween(700, easing = EaseInOut), RepeatMode.Reverse),
-        label = "due_alpha"
-    )
     val onSurface  = MaterialTheme.colorScheme.onSurface
     val onSurfMute = MaterialTheme.colorScheme.onSurfaceVariant
-    val tokens = LocalThemeTokens.current
+    // "Due" and "1 min" both use the brand primary (amber) — NOT the alarming
+    // red. No alpha pulse on "Due" either (the flashing read as stressful).
     val etaColor = when {
-        isDue        -> tokens.due
+        isDue          -> MaterialTheme.colorScheme.primary
         countdown == 1 -> MaterialTheme.colorScheme.primary
-        else         -> onSurface
+        else           -> onSurface
     }
 
     // ETA depletion progress (0 = empty/due, 1 = 10+ min)
@@ -934,7 +915,7 @@ private fun NextDepartureRow(prediction: PredictionDisplay, lineColor: Color) {
                             isDue -> "Due"
                             else  -> "$countdown"
                         },
-                        color = etaColor.copy(alpha = if (isDue) pulseAlpha else 1f),
+                        color = etaColor,
                         fontWeight = FontWeight.Black,
                         fontSize = 28.sp,
                         fontFamily = FontFamily.Monospace
