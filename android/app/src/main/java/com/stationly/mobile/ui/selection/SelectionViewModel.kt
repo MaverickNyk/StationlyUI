@@ -166,17 +166,13 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
      * [loadModes] refreshes silently in the background.
      */
     private fun loadCachedModes() {
-        val json = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-            .getString("cached_modes", null) ?: return
-        try {
-            val cached = Json { ignoreUnknownKeys = true }
-                .decodeFromString<List<SduiDropdownOption>>(json)
-            if (cached.isNotEmpty()) {
-                val updated = _uiState.value.dropdownData.toMutableMap()
-                updated["mode"] = cached
-                _uiState.value = _uiState.value.copy(modes = cached, dropdownData = updated)
-            }
-        } catch (_: Exception) {}
+        val cached = com.stationly.mobile.util.SduiCache
+            .read<List<SduiDropdownOption>>(context, "modes") ?: return
+        if (cached.isNotEmpty()) {
+            val updated = _uiState.value.dropdownData.toMutableMap()
+            updated["mode"] = cached
+            _uiState.value = _uiState.value.copy(modes = cached, dropdownData = updated)
+        }
     }
 
     private fun loadModes() {
@@ -191,10 +187,7 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                 )
 
                 // Persist for the next cold open (stale-while-revalidate).
-                try {
-                    context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-                        .edit().putString("cached_modes", Json.encodeToString(modes)).apply()
-                } catch (_: Exception) {}
+                com.stationly.mobile.util.SduiCache.write(context, "modes", modes)
 
                 // Sync the mode-icon cache with the backend payload. This
                 // pre-downloads icons (so widget + fullscreen dream's

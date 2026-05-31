@@ -20,8 +20,11 @@ the backend remains the source of truth on every open, so any server-side change
 
 ## The `SduiCache` helper
 
-`com.stationly.mobile.util.SduiCache` is the generic SWR cache for SDUI payloads
-(SharedPreferences-backed, namespaced `sdui_cache_<key>`):
+`com.stationly.mobile.util.SduiCache` is the generic SWR cache for SDUI payloads.
+It is backed by a **dedicated SharedPreferences file (`StationlySduiCache`)**, namespaced
+`sdui_cache_<key>` — deliberately **not** `StationlyPrefs` (which `logout()` wipes),
+because SDUI layouts/configs are public, non-user data and should survive logout (so the
+auth screen, hit right after sign-out, still paints instantly):
 
 ```kotlin
 // 1. instant first paint
@@ -52,7 +55,7 @@ Rules when adding a new SWR-cached payload:
 | Payload | Where | Mechanism |
 |---|---|---|
 | Selection layout | Selection | `loadCachedLayout` (`cached_app_layout`) |
-| `/modes` | Selection | `loadCachedModes` (`cached_modes`) — SWR |
+| `/modes` | Selection | `loadCachedModes` via **`SduiCache`** (`modes`) — SWR |
 | Cascading dropdowns | Selection | `fetchDropdownData` (`cached_dropdown_*`, 24h then refresh) |
 | Theme tokens | App-wide | `ThemeRepository` (cached overrides + refresh) |
 | **Auth layouts** (login/register/forgot) | Auth | **`SduiCache`** (`auth_layout_*`) |

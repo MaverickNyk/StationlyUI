@@ -86,6 +86,8 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
             layout = cached ?: _uiState.value.layout,
             // Only show the full-screen loader when we have nothing to paint yet.
             isLoading = cached == null,
+            // We have content to show — clear any stale offline state.
+            isBackendOffline = if (cached != null) false else _uiState.value.isBackendOffline,
             error = null,
             inputs = emptyMap()
         )
