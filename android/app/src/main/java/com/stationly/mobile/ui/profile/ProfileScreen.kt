@@ -67,6 +67,31 @@ private val White08  @Composable get() = MaterialTheme.colorScheme.onBackground.
 // backend palette tweak can soften / strengthen it without an app push.
 private val DangerRed @Composable get() = LocalThemeTokens.current.error
 
+// Hardcoded About-section layout shown instantly while the SDUI
+// `getAboutLayout()` fetch is in flight or unreachable. Mirrors the backend
+// `sduiService.getAboutLayout()` so the links (Visit Website / Privacy / etc.)
+// are present immediately and never block on a network connection. The server
+// layout replaces this the moment it arrives.
+private const val STATIONLY_WEB_URL = "https://stationly.co.uk"
+private val ProfileAboutFallback: List<SduiAppComponent> = listOf(
+    SduiAppComponent.Card(
+        id = "about_info",
+        title = "Stationly",
+        body = "Real-time London transport departures at your fingertips. Track buses, tubes, DLR, and Overground — all from one board.",
+        style = "brand"
+    ),
+    SduiAppComponent.Section(
+        id = "links_section",
+        components = listOf(
+            SduiAppComponent.LinkRow(id = "website", title = "Visit Website", subtitle = "stationly.co.uk", url = STATIONLY_WEB_URL, icon = "public"),
+            SduiAppComponent.LinkRow(id = "privacy", title = "Privacy Policy", subtitle = "How we handle your data", url = "$STATIONLY_WEB_URL/privacy", icon = "privacy_tip"),
+            SduiAppComponent.LinkRow(id = "terms", title = "Terms of Service", subtitle = "Usage terms and conditions", url = "$STATIONLY_WEB_URL/terms", icon = "description"),
+            SduiAppComponent.LinkRow(id = "contact", title = "Contact Us", subtitle = "Questions or feedback", url = "mailto:hello@stationly.co.uk", icon = "email"),
+            SduiAppComponent.LinkRow(id = "rate", title = "Rate Stationly", subtitle = "Love the app? Let us know", url = "market://details?id=com.stationly.mobile", icon = "star"),
+        )
+    )
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
@@ -233,35 +258,16 @@ fun ProfileScreen(
                 SectionHeader(homeConfig["profile.about.title"] ?: "About Stationly", Icons.Rounded.Info)
             }
 
-            if (aboutComponents.isEmpty()) {
-                // Fallback while loading or if server unreachable
-                item {
-                    Surface(
-                        color = Surface1,
-                        shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(1.dp, White08)
-                    ) {
-                        Column(Modifier.fillMaxWidth().padding(20.dp)) {
-                            Text("Stationly", color = Amber, fontWeight = FontWeight.Black, fontSize = 20.sp)
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                "Real-time London transport departures at your fingertips.",
-                                color = White55, fontSize = 13.sp, lineHeight = 19.sp
-                            )
-                            Spacer(Modifier.height(14.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                InfoChip("v$appVersion")
-                                InfoChip("TfL Powered")
-                                InfoChip("Made in London")
-                            }
-                        }
-                    }
-                }
-            } else {
-                // SDUI-rendered About content
-                aboutComponents.forEach { component ->
-                    item(key = "sdui_${component.id}") {
-                        when (component) {
+            // Always render the About section. Fall back to a hardcoded layout
+            // (brand card + standard links) so links like Visit Website /
+            // Privacy Policy appear INSTANTLY without waiting for the SDUI
+            // fetch or a network connection — tapping while offline just lands
+            // on an empty WebView. The server layout overrides this the moment
+            // it arrives.
+            val aboutToRender = aboutComponents.ifEmpty { ProfileAboutFallback }
+            aboutToRender.forEach { component ->
+                item(key = "sdui_${component.id}") {
+                    when (component) {
                             is SduiAppComponent.Card -> {
                                 // Inject local app version chip into the brand card
                                 if (component.style == "brand") {
@@ -308,7 +314,6 @@ fun ProfileScreen(
                         }
                     }
                 }
-            }
 
             // ── Sign Out ──
             item {
@@ -466,6 +471,18 @@ fun ProfileScreen(
 
     // ── Delete Station Confirmation Dialog ──
     showDeleteStationDialog?.let { station ->
+        val isDeletingThis = deletingStationId == station.id
+        // Keep the dialog open (showing the loader) for the whole delete, then
+        // auto-dismiss when it finishes — same pattern as the home board dialog.
+        var wasDeleting by remember { mutableStateOf(false) }
+        LaunchedEffect(isDeletingThis) {
+            if (isDeletingThis) {
+                wasDeleting = true
+            } else if (wasDeleting) {
+                wasDeleting = false
+                showDeleteStationDialog = null
+            }
+        }
         val dsTitle   = homeConfig["profile.delete_station.title"]   ?: "Delete This Board?"
         val dsBody    = (homeConfig["profile.delete_station.body"]   ?: "You\u2019re about to remove your {name} board.")
             .replace("{name}", station.name)
@@ -477,7 +494,7 @@ fun ProfileScreen(
         val dsCancel  = homeConfig["profile.delete_station.cancel"]  ?: "Keep It"
 
         AlertDialog(
-            onDismissRequest = { showDeleteStationDialog = null },
+            onDismissRequest = { if (!isDeletingThis) showDeleteStationDialog = null },
             containerColor = Surface2,
             titleContentColor = White90,
             textContentColor = White55,
@@ -493,19 +510,28 @@ fun ProfileScreen(
             },
             confirmButton = {
                 TextButton(
-                    onClick = {
-                        val stationToDelete = station
-                        showDeleteStationDialog = null
-                        profileViewModel.deleteStation(stationToDelete)
-                    },
+                    // Keep the dialog open and show the loader while deleting;
+                    // the LaunchedEffect above dismisses it once it completes.
+                    onClick = { if (!isDeletingThis) profileViewModel.deleteStation(station) },
+                    enabled = !isDeletingThis,
                     colors = ButtonDefaults.textButtonColors(contentColor = DangerRed)
-                ) { Text(dsConfirm, fontWeight = FontWeight.Bold) }
+                ) {
+                    if (isDeletingThis) {
+                        CircularProgressIndicator(
+                            color = DangerRed, strokeWidth = 2.dp, modifier = Modifier.size(16.dp)
+                        )
+                    } else {
+                        Text(dsConfirm, fontWeight = FontWeight.Bold)
+                    }
+                }
             },
             dismissButton = {
-                TextButton(
-                    onClick = { showDeleteStationDialog = null },
-                    colors = ButtonDefaults.textButtonColors(contentColor = White55)
-                ) { Text(dsCancel) }
+                if (!isDeletingThis) {
+                    TextButton(
+                        onClick = { showDeleteStationDialog = null },
+                        colors = ButtonDefaults.textButtonColors(contentColor = White55)
+                    ) { Text(dsCancel) }
+                }
             }
         )
     }

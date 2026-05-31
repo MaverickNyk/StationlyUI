@@ -54,6 +54,18 @@ class FcmMessagingService : FirebaseMessagingService() {
         }
 
         when {
+            remoteMessage.data["type"] == "user_sync" -> {
+                // Silent cross-device sync signal — no notification, just
+                // reconcile local state (or force-logout on account deletion).
+                // Pass the target uid so the coordinator can ignore a push that
+                // isn't for the currently signed-in user (stale token on a
+                // device that's since switched accounts).
+                UserSyncCoordinator.handleUserSync(
+                    applicationContext,
+                    remoteMessage.data["reason"],
+                    remoteMessage.data["uid"]
+                )
+            }
             remoteMessage.data.containsKey("sdui_payload") -> {
                 handleSduiUpdate(remoteMessage)
             }

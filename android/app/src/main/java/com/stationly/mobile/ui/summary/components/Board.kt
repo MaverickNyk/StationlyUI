@@ -754,7 +754,11 @@ fun Board(
         val onSurfMute = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
         val onSurfDim  = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f)
         AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
+            onDismissRequest = { if (!isDeleting) showDeleteDialog = false },
+            // NB: the in-flight loader lives in the screen-level LoadingOverlay
+            // (driven by isDeletingBoard), not in this dialog — the board card
+            // (and this dialog with it) unmounts the moment the selection is
+            // removed from the list, so an in-dialog spinner never renders.
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = onSurface,
             textContentColor = onSurfMute,
@@ -780,19 +784,13 @@ fun Board(
             },
             confirmButton = {
                 TextButton(
+                    // Dismiss immediately and let the screen-level
+                    // LoadingOverlay show the in-flight state.
                     onClick = { showDeleteDialog = false; onDelete() },
                     enabled = !isDeleting,
                     colors = ButtonDefaults.textButtonColors(contentColor = dangerRed)
                 ) {
-                    if (isDeleting) {
-                        CircularProgressIndicator(
-                            color = dangerRed,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    } else {
-                        Text("Delete Board", fontWeight = FontWeight.Bold)
-                    }
+                    Text("Delete Board", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {

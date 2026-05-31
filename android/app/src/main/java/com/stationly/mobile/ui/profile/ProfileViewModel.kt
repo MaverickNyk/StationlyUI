@@ -140,7 +140,9 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                         displayName   = trimmed,
                         photoURL      = user.photoUrl?.toString(),
                         signInProvider = user.providerData.find { it.providerId != "firebase" }?.providerId
-                            ?: "email"
+                            ?: "email",
+                        deviceId      = com.stationly.mobile.service.DeviceIdProvider.get(context),
+                        deviceInfo    = com.stationly.mobile.service.DeviceIdProvider.info(context)
                     )
                 )
                 onComplete(Result.success(trimmed))

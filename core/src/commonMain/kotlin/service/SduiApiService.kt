@@ -10,6 +10,14 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 
 /**
+ * Thrown when the backend reports a user profile no longer exists (HTTP 404).
+ * Distinct from transient errors so callers (e.g. cross-device reconcile) can
+ * react to a remote account deletion by forcing a logout, while treating
+ * 429/5xx as "retry later" and leaving local state intact.
+ */
+class UserNotFoundException(message: String) : Exception(message)
+
+/**
  * SDUI API Service Interface
  */
 interface SduiApiService {
@@ -48,7 +56,7 @@ interface SduiApiService {
     suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse
     suspend fun syncStations(uid: String, stations: List<SubscribedStation>): Boolean
     suspend fun getUserProfile(uid: String): UserProfileResponse
-    suspend fun logOut(uid: String): Boolean
+    suspend fun logOut(uid: String, deviceId: String? = null): Boolean
     suspend fun deleteAccount(uid: String): Boolean
 
     /**
@@ -164,16 +172,28 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
     }
 
     override suspend fun getUserProfile(uid: String): UserProfileResponse {
-        return client.get("$baseUrl/user/sync/profile?uid=$uid").body()
+        val response = client.get("$baseUrl/user/sync/profile?uid=$uid")
+        // Distinguish "account gone" (404) from transient failures so callers
+        // can force-logout on the former but safely retry the latter. Never
+        // deserialize a non-200 body as a profile — a 401 "Unauthorized" JSON
+        // has none of the required fields and would throw a confusing
+        // MissingFieldException.
+        return when (response.status) {
+            HttpStatusCode.OK -> response.body()
+            HttpStatusCode.NotFound ->
+                throw UserNotFoundException("User profile not found — account deleted?")
+            else ->
+                throw IllegalStateException("getUserProfile failed: HTTP ${response.status.value}")
+        }
     }
 
-    override suspend fun logOut(uid: String): Boolean {
+    override suspend fun logOut(uid: String, deviceId: String?): Boolean {
         @kotlinx.serialization.Serializable
-        data class LogOutRequest(val uid: String)
+        data class LogOutRequest(val uid: String, val deviceId: String? = null)
 
         val response = client.post("$baseUrl/user/logout") {
             contentType(ContentType.Application.Json)
-            setBody(LogOutRequest(uid))
+            setBody(LogOutRequest(uid, deviceId))
         }
         return response.status == HttpStatusCode.OK
     }

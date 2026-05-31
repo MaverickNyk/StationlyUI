@@ -39,6 +39,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.stationly.mobile.R
 import com.stationly.mobile.ui.common.AnnouncementBanner
+import com.stationly.mobile.ui.common.LoadingOverlay
 import com.stationly.mobile.ui.common.NotificationPermissionEffect
 import com.stationly.mobile.ui.common.rememberFirebaseAuthState
 import com.stationly.mobile.ui.summary.components.*
@@ -118,6 +119,18 @@ fun SummaryScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding)
         ) {
+            // Modal loader while a board delete is in flight. Lives here at
+            // the screen level (not inside the board card) because the card
+            // unmounts the instant its selection is removed from the list —
+            // any spinner inside it would vanish before the backend
+            // unsubscribe + sync completes. zIndex keeps it above content
+            // regardless of declaration order within this Box.
+            LoadingOverlay(
+                visible = deletingBoardId != null,
+                label = "Deleting board…",
+                modifier = Modifier.zIndex(10f),
+            )
+
             // Tiny theme toggle pinned to the screen's bottom-right,
             // right above the system gesture-nav handle. Compact mode
             // makes it small + low-alpha so it's discoverable without
