@@ -165,7 +165,11 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
         } else if (key == "selections") {
-            // Handled by repository flow
+            // A cross-device reconcile (UserSyncCoordinator) or another
+            // screen mutated the saved selections through a DIFFERENT
+            // SelectionRepository instance, so our in-memory flow is stale.
+            // Re-read from SQL to pick up the change live.
+            reloadSelectionsFromDb()
         }
     }
     
@@ -506,6 +510,13 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
      */
     fun deleteSelection(selection: UserSelection) {
         viewModelScope.launch {
+            // Minimum on-screen time for the delete overlay. The actual
+            // teardown is mostly fast local work (FCM unsubscribe + SQL), so
+            // without a floor it can finish in ~100ms — too fast for the
+            // overlay's fade to render a single frame, making it look like
+            // "nothing happened". 650ms reads as a deliberate action.
+            val startMs = System.currentTimeMillis()
+            val minVisibleMs = 650L
             _isDeletingBoard.value = selection.station
             try {
                 stationLifecycleUseCase.discardStation(selection, clearSelectionInRepo = true)
@@ -544,11 +555,14 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 Log.e("SummaryViewModel", "Error deleting selection", e)
                 _uiState.value = _uiState.value.copy(error = "Failed to delete: ${e.message}")
             } finally {
+                // Hold the overlay until the minimum visible window elapses.
+                val elapsed = System.currentTimeMillis() - startMs
+                if (elapsed < minVisibleMs) delay(minVisibleMs - elapsed)
                 _isDeletingBoard.value = null
             }
         }
     }
-    
+
     private suspend fun fetchAnnouncement() {
         try {
             val screen = sduiService.getHomeAnnouncement()

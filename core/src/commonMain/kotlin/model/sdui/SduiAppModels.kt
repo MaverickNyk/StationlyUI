@@ -253,12 +253,25 @@ data class SubscribedStation(
 )
 
 @Serializable
+data class DeviceInfo(
+    val platform: String? = null,    // "android" | "ios" | "web"
+    val osVersion: String? = null,   // e.g. "Android 14 (SDK 34)"
+    val model: String? = null,       // e.g. "Google Pixel 8"
+    val appVersion: String? = null   // e.g. "1.0-staging"
+)
+
+@Serializable
 data class SyncProfileRequest(
     val uid: String,
     val email: String,
     val displayName: String? = null,
     val photoURL: String? = null,
-    val signInProvider: String? = null
+    val signInProvider: String? = null,
+    // Stable per-install device id — lets the backend track active device
+    // sessions so subscription counts only release on the last device's logout.
+    val deviceId: String? = null,
+    // Optional device metadata stored alongside the session for that deviceId.
+    val deviceInfo: DeviceInfo? = null
 )
 
 @Serializable

@@ -284,7 +284,9 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                             email       = result.user.email ?: email,
                             displayName = result.user.displayName ?: displayName.ifBlank { null },
                             photoURL    = result.user.photoUrl?.toString(),
-                            provider    = provider
+                            provider    = provider,
+                            deviceId    = com.stationly.mobile.service.DeviceIdProvider.get(getApplication()),
+                            deviceInfo  = com.stationly.mobile.service.DeviceIdProvider.info(getApplication())
                         )
                     }.isSuccess
                     if (!syncOk) {
@@ -536,7 +538,9 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                     email       = user.email ?: "",
                     displayName = user.displayName,
                     photoURL    = user.photoUrl?.toString(),
-                    provider    = provider
+                    provider    = provider,
+                    deviceId    = com.stationly.mobile.service.DeviceIdProvider.get(getApplication()),
+                    deviceInfo  = com.stationly.mobile.service.DeviceIdProvider.info(getApplication())
                 )
                 stationLifecycleUseCase.cleanupAll()
                 val primary = stations.firstOrNull()
@@ -569,6 +573,16 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                         com.stationly.mobile.widget.DepartureWidgetProvider.updateFromStorage(getApplication())
                     }
                 }
+                // Register this device's FCM token under the just-signed-in
+                // account NOW. FcmTokenRegistrar otherwise only runs on app
+                // launch and token rotation, so logging in within an already-
+                // running process left the token unregistered for the new uid —
+                // which meant every `user_sync` push (incl. the account-deleted
+                // force-logout) reached 0 devices. This is what made cross-device
+                // logout fall back to the foreground/lock-unlock path instead of
+                // being instant.
+                com.stationly.mobile.service.FcmTokenRegistrar.ensureRegistered(getApplication())
+
                 _uiState.value = _uiState.value.copy(isAuthenticating = false)
                 onAuthSuccess()
             } catch (e: Exception) {

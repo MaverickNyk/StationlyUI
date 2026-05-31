@@ -69,6 +69,15 @@ class MainActivity : ComponentActivity() {
         handleDeepLink(intent)
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Foreground re-sync fallback (#5): if the device missed a `user_sync`
+        // FCM push (e.g. was offline), reconcile local state with the cloud
+        // profile when the app comes back to the foreground. Debounced + a
+        // no-op when signed out, inside the coordinator.
+        com.stationly.mobile.service.UserSyncCoordinator.reconcile(this)
+    }
+
     private fun handleDeepLink(intent: Intent?) {
         val uri = intent?.data ?: return
         when {
@@ -166,6 +175,17 @@ fun AppNavigation(
                     popUpTo(0) { inclusive = true }
                     launchSingleTop = true
                 }
+            }
+
+            // If this sign-out was triggered by a remote account deletion
+            // (another device deleted the account → user_sync push), show a
+            // brief notice so the user understands why they're back at login.
+            if (com.stationly.mobile.service.UserSyncCoordinator.consumeAccountRemovedFlag(context)) {
+                android.widget.Toast.makeText(
+                    context,
+                    "Your account was removed.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
             }
         }
     }

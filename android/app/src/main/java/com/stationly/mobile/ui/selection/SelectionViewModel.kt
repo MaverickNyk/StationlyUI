@@ -18,7 +18,9 @@ import com.stationly.core.service.SduiApiServiceFactory
 import com.stationly.core.service.TflApiServiceFactory
 import com.stationly.core.platform.Platform
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -77,6 +79,14 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _uiState = MutableStateFlow(SduiUiState())
     val uiState: StateFlow<SduiUiState> = _uiState.asStateFlow()
+
+    companion object {
+        // App-level scope for fire-and-forget post-setup work (eager fetch,
+        // backend sync) that must survive this ViewModel being cleared when
+        // the user navigates to the board. SupervisorJob so one failure
+        // doesn't cancel sibling jobs.
+        private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    }
 
     init {
         viewModelScope.launch {
@@ -443,7 +453,11 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             _uiState.value = state.copy(isLoading = true, isSaving = true)
             try {
-                // Resolve the exact physical stop within the station group
+                // ── Essential, fast path ──────────────────────────────────
+                // Resolve the exact physical stop within the station group,
+                // then do the local setup (SQL save + FCM subscribe +
+                // connecting-widget state). fetchData=false skips the slow
+                // REST fetch so we can navigate to the board immediately.
                 val resolvedId = sduiService.resolveStation(stationId, mode, line, direction)
                 Log.d("SDUI", "Station resolved: $stationId → $resolvedId")
 
@@ -454,29 +468,46 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                 )
 
                 stationLifecycleUseCase.cleanupAll()
-                stationLifecycleUseCase.setupStation(userSelection, isFirstTime = true)
 
-                // setupStation writes fresh SQL + updates the widget but
-                // doesn't fan out the ACTION_DREAM_REFRESH broadcast. Fire
-                // FreshDataNotifier explicitly so the dream's chronometer
-                // resets if it's somehow active (e.g. user added a station
-                // while the phone was docked and is about to re-dock).
-                com.stationly.mobile.util.FreshDataNotifier.notify(
-                    getApplication(),
-                    stationId = userSelection.station,
-                    lineId = userSelection.line,
-                )
+                // Await the essential path: persist the selection + fetch its
+                // first predictions + line status into SQL. This means the board
+                // renders POPULATED instead of flashing a "no departures yet"
+                // empty state while a backgrounded fetch catches up. The fetch is
+                // best-effort inside persistAndFetch, so a network hiccup still
+                // lets us navigate (board falls back to empty + FCM fills in).
+                stationLifecycleUseCase.persistAndFetch(userSelection)
 
-                try {
-                    com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.let { user ->
-                        sduiService.syncStations(user.uid, listOf(SubscribedStation(
-                            id = userSelection.station, name = userSelection.stationName,
-                            line = userSelection.line, mode = userSelection.mode, direction = userSelection.direction
-                        )))
-                    }
-                } catch (_: Exception) {}
-
+                // Board now has data — navigate.
                 _uiState.value = state.copy(isLoading = false, isSaving = false, showSuccessDialog = true)
+
+                // ── Non-essential tail (detached) ─────────────────────────
+                // FCM topic subscription, widget population, dream broadcast,
+                // and backend sync run on an app-level scope so they complete
+                // even after this VM is cleared on navigation. None of these
+                // gate the board appearing.
+                backgroundScope.launch {
+                    try {
+                        stationLifecycleUseCase.completeSetupAsync(userSelection)
+                        com.stationly.mobile.util.FreshDataNotifier.notify(
+                            context,
+                            stationId = userSelection.station,
+                            lineId = userSelection.line,
+                        )
+                    } catch (e: Exception) {
+                        Log.e("SDUI", "Background completeSetupAsync failed", e)
+                    }
+
+                    try {
+                        com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.let { user ->
+                            sduiService.syncStations(user.uid, listOf(SubscribedStation(
+                                id = userSelection.station, name = userSelection.stationName,
+                                line = userSelection.line, mode = userSelection.mode, direction = userSelection.direction
+                            )))
+                        }
+                    } catch (e: Exception) {
+                        Log.e("SDUI", "Background syncStations failed", e)
+                    }
+                }
             } catch (e: Exception) {
                 _uiState.value = state.copy(isLoading = false, isSaving = false, error = "Failed to save: ${e.message}")
             }
