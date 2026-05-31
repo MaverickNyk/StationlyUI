@@ -51,12 +51,10 @@ internal fun StationHeader(
     statusLine: String,
     dim: DreamDims,
 ) {
-    val titleSize     = dim.titleSize
     val directionSize = dim.directionSize
     val statusSize    = dim.statusSize
     val themeColors   = LocalDreamColors.current
     val onCanvas      = themeColors.onCanvas
-    val brandAmber    = themeColors.brandAccent
 
     Column(modifier = Modifier.fillMaxWidth()) {
         // Line pill (left) + live status (right)
@@ -141,21 +139,9 @@ internal fun StationHeader(
             }
         }
 
-        Spacer(Modifier.height(10.dp))
-
-        // Station name — the headline, painted in the theme's brand
-        // amber. Dark theme uses the bright TfL amber that matches the
-        // dot-matrix board; light theme uses a deep amber that stays
-        // legible on warm off-white.
-        Text(
-            text = selection.stationName,
-            color = brandAmber,
-            fontWeight = FontWeight.ExtraBold,
-            fontSize = titleSize,
-            letterSpacing = (-0.4).sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        // Station name intentionally omitted here — the dot-matrix board
+        // below already shows it (its station strip), so the headline copy
+        // above the next-train hero was redundant chrome (user-flagged).
 
         // Direction (Inbound/Outbound) intentionally omitted from the dream
         // header. The next-train card below already shows "→ Destination",
@@ -212,20 +198,18 @@ internal fun NextTrainHero(
     val isDue = countdown == 0
 
     // ETA tile colour — semantic in dark theme (line colour as signage cue),
-    // brand amber in light (where line yellows/greys would vanish). Due
-    // always wins with a danger red.
-    val dueRed       = themeColors.danger
+    // brand amber in light (where line yellows/greys would vanish). "Due" and
+    // "1 min" use the brand amber — NOT an alarming red, and with no pulse.
     val brandHi      = themeColors.brandAccent
     val etaBase      = if (isLightCanvas) brandHi else lineColor
     val etaColor = when {
-        isDue        -> dueRed
+        isDue          -> brandHi
         countdown == 1 -> brandHi
-        else         -> etaBase
+        else           -> etaBase
     }
 
-    // Pulse for the live dot + a calmer pulse for the "Due" ETA. Both
-    // intentionally slow (1.4s cycle) with a narrow alpha range so the
-    // card breathes without flickering at the user from across the room.
+    // Slow live-dot pulse only (1.4s, narrow alpha) so the card breathes
+    // without flickering. No "Due" pulse — it read as stressful from afar.
     val infiniteTransition = rememberInfiniteTransition(label = "dream_next_train")
     val livePulse by infiniteTransition.animateFloat(
         initialValue = 0.55f, targetValue = 1f,
@@ -233,13 +217,6 @@ internal fun NextTrainHero(
             tween(1400, easing = EaseInOut), RepeatMode.Reverse,
         ),
         label = "live_dot_alpha",
-    )
-    val duePulse by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 0.65f,
-        animationSpec = infiniteRepeatable(
-            tween(1400, easing = EaseInOut), RepeatMode.Reverse,
-        ),
-        label = "due_alpha",
     )
 
     // Depletion bar progress — full at 10+ min, empty at 0.
@@ -318,7 +295,7 @@ internal fun NextTrainHero(
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
                         text = if (isDue) "Due" else "$countdown",
-                        color = etaColor.copy(alpha = if (isDue) duePulse else 1f),
+                        color = etaColor,
                         fontWeight = FontWeight.Black,
                         fontSize = etaSize,
                         fontFamily = FontFamily.Monospace,

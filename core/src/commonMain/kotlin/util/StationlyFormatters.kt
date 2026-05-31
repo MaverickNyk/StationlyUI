@@ -65,6 +65,22 @@ object StationlyFormatters {
         return template.replace("{line}", formattedLine).trim()
     }
 
+    /**
+     * Compose the platform-header text shown on every surface (home board,
+     * widget, dream): "<linePrefix>: <platform>" — e.g. "Piccadilly: Platform 1".
+     *
+     * When [platform] is blank — which the backend now emits for bus arrivals
+     * with no assigned stop (instead of a confusing "Stop not assigned") — we
+     * keep the row but show just the line prefix, dropping the ": " suffix.
+     * The platform string itself is fully backend-owned (formatPlatform /
+     * getPresentablePlatform); the client never derives it.
+     */
+    fun platformHeaderText(linePrefix: String, platform: String): String = when {
+        platform.isBlank()      -> linePrefix
+        linePrefix.isEmpty()    -> platform
+        else                    -> "$linePrefix: $platform"
+    }
+
     private fun defaultTemplateForMode(mode: String): String = when (mode) {
         "bus" -> "Bus {line}"
         "dlr" -> "DLR"

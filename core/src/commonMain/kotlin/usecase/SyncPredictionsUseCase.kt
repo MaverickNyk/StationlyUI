@@ -37,19 +37,19 @@ class SyncPredictionsUseCase(
             ?: lineData.dirs.entries.find { it.key.lowercase() == dirIdLower }?.value
         
         val rawPreds = dirData?.preds ?: emptyList()
-        
-        // 3. Determine a valid platform to fallback to if "Unknown" is encountered
-        val knownPlatform = rawPreds.firstOrNull { 
-            !it.platform.equals("Unknown", ignoreCase = true) && it.platform.isNotBlank() 
-        }?.platform ?: "Unknown"
 
-        // 4. Format predictions for display. Capture the absolute arrival
+        // 3. Format predictions for display. Capture the absolute arrival
         //    time (parsed from the FCM's ISO timestamp) alongside the
         //    formatted string so downstream consumers can re-derive
         //    minutes-remaining on their own clock between FCM pushes.
         val formattedPredictions = rawPreds.map { pred ->
             val etaString = StationlyFormatters.formatETA(pred.eta)
-            val displayPlatform = if (pred.platform.equals("Unknown", ignoreCase = true) || pred.platform.isBlank()) knownPlatform else pred.platform
+            // Platform is backend-owned (formatPlatform / getPresentablePlatform):
+            // "Platform 8", "Platform not assigned", "Stop C", or "" for an
+            // unassigned bus stop. Trust it verbatim — do NOT fill a blank from a
+            // sibling prediction (that masked genuinely-unassigned stops). A stray
+            // legacy "Unknown" is treated as unassigned ("").
+            val displayPlatform = if (pred.platform.equals("Unknown", ignoreCase = true)) "" else pred.platform
 
             PredictionDisplay(
                 destination = StationlyFormatters.formatDestination(pred.displayName),

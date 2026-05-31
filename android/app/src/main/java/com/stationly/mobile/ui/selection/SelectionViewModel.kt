@@ -95,7 +95,8 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         }
         loadCachedLayout()
         loadServerLayout()
-        loadModes()
+        loadCachedModes()   // instant first paint from last good /modes…
+        loadModes()         // …then always refresh from the backend (source of truth)
         loadRecentStations()
         silentlyFetchLocation()
     }
@@ -158,6 +159,22 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         fetchDropdownData(component, state.selections)
     }
 
+    /**
+     * Instant-render modes from the last good /modes payload (stale-while-
+     * revalidate). Mirrors [loadCachedLayout] — the mode picker shows
+     * immediately on repeat opens instead of waiting on the network, then
+     * [loadModes] refreshes silently in the background.
+     */
+    private fun loadCachedModes() {
+        val cached = com.stationly.mobile.util.SduiCache
+            .read<List<SduiDropdownOption>>(context, "modes") ?: return
+        if (cached.isNotEmpty()) {
+            val updated = _uiState.value.dropdownData.toMutableMap()
+            updated["mode"] = cached
+            _uiState.value = _uiState.value.copy(modes = cached, dropdownData = updated)
+        }
+    }
+
     private fun loadModes() {
         viewModelScope.launch {
             try {
@@ -168,6 +185,9 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                     modes = modes, dropdownData = updatedData,
                     failedFetches = _uiState.value.failedFetches - "mode"
                 )
+
+                // Persist for the next cold open (stale-while-revalidate).
+                com.stationly.mobile.util.SduiCache.write(context, "modes", modes)
 
                 // Sync the mode-icon cache with the backend payload. This
                 // pre-downloads icons (so widget + fullscreen dream's

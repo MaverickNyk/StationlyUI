@@ -579,6 +579,9 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private suspend fun fetchHomeConfig() {
+        // Instant paint from the on-disk store (last good config) before the
+        // network refresh — same store the widget/dream/board already read.
+        HomeConfigStore.read(context).takeIf { it.isNotEmpty() }?.let { _homeConfig.value = it }
         try {
             val config = sduiService.getHomeConfig().strings
             _homeConfig.value = config

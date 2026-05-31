@@ -218,12 +218,11 @@ fun DreamBoard(
                 reasonText.isSelected = false
                 reasonText.post { reasonText.isSelected = true }
             }
-            // Force the status row to the uniform baseline so it doesn't read
-            // smaller than the departure rows. (Widget XML puts it at 13sp,
-            // departure rows at 15sp — looks visually inconsistent at dream
-            // sizes.)
-            severityText.setBaselineSp(ROW_BASE_SP)
-            reasonText.setBaselineSp(ROW_BASE_SP)
+            // Status row sits a notch BELOW the departure rows (it's secondary
+            // info), consistent with home + widget where the XML now puts the
+            // status at 12sp vs the 15sp departure rows (~0.8 ratio).
+            severityText.setBaselineSp(ROW_BASE_SP * 0.9f)
+            reasonText.setBaselineSp(ROW_BASE_SP * 0.9f)
             view.findViewById<Chronometer>(R.id.last_updated_timer)
                 ?.setBaselineSp(ROW_BASE_SP * 0.8f)
 
@@ -297,9 +296,7 @@ fun DreamBoard(
                     when (row) {
                         is LegacyRow.Header  -> {
                             (child as TextView).text =
-                                if (linePrefix.isNotEmpty())
-                                    "$linePrefix: ${row.title}"
-                                else row.title
+                                StationlyFormatters.platformHeaderText(linePrefix, row.title)
                         }
                         is LegacyRow.Message -> (child as TextView).text = row.text
                         is LegacyRow.Departure -> {
@@ -324,9 +321,7 @@ fun DreamBoard(
                             R.layout.widget_platform_header, rowsContainer, false
                         ).also {
                             it.findViewById<TextView>(R.id.platform_name).apply {
-                                text = if (linePrefix.isNotEmpty())
-                                    "$linePrefix: ${row.title}"
-                                else row.title
+                                text = StationlyFormatters.platformHeaderText(linePrefix, row.title)
                                 setBaselineSp(ROW_BASE_SP)
                             }
                         }

@@ -168,7 +168,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:textColor="@color/tfl_amber"
-            android:textSize="15sp"
+            android:textSize="12sp"
             android:textStyle="bold"
             tools:text="Part Closure" />
 
@@ -177,7 +177,7 @@
             android:layout_height="wrap_content"
             android:text=" : "
             android:textColor="@color/tfl_amber"
-            android:textSize="15sp" />
+            android:textSize="12sp" />
 
         <TextView
             android:id="@+id/status_reason"
@@ -194,7 +194,7 @@
             android:requiresFadingEdge="horizontal"
             android:fadingEdgeLength="16dp"
             android:textColor="@color/tfl_amber"
-            android:textSize="15sp"
+            android:textSize="12sp"
             tools:text="Service status reason text goes here...">
             <requestFocus />
         </TextView>
