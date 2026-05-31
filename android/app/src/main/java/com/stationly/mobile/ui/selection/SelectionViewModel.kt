@@ -95,7 +95,8 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         }
         loadCachedLayout()
         loadServerLayout()
-        loadModes()
+        loadCachedModes()   // instant first paint from last good /modes…
+        loadModes()         // …then always refresh from the backend (source of truth)
         loadRecentStations()
         silentlyFetchLocation()
     }
@@ -158,6 +159,26 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         fetchDropdownData(component, state.selections)
     }
 
+    /**
+     * Instant-render modes from the last good /modes payload (stale-while-
+     * revalidate). Mirrors [loadCachedLayout] — the mode picker shows
+     * immediately on repeat opens instead of waiting on the network, then
+     * [loadModes] refreshes silently in the background.
+     */
+    private fun loadCachedModes() {
+        val json = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+            .getString("cached_modes", null) ?: return
+        try {
+            val cached = Json { ignoreUnknownKeys = true }
+                .decodeFromString<List<SduiDropdownOption>>(json)
+            if (cached.isNotEmpty()) {
+                val updated = _uiState.value.dropdownData.toMutableMap()
+                updated["mode"] = cached
+                _uiState.value = _uiState.value.copy(modes = cached, dropdownData = updated)
+            }
+        } catch (_: Exception) {}
+    }
+
     private fun loadModes() {
         viewModelScope.launch {
             try {
@@ -168,6 +189,12 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                     modes = modes, dropdownData = updatedData,
                     failedFetches = _uiState.value.failedFetches - "mode"
                 )
+
+                // Persist for the next cold open (stale-while-revalidate).
+                try {
+                    context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+                        .edit().putString("cached_modes", Json.encodeToString(modes)).apply()
+                } catch (_: Exception) {}
 
                 // Sync the mode-icon cache with the backend payload. This
                 // pre-downloads icons (so widget + fullscreen dream's

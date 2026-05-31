@@ -75,8 +75,21 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadLayout(type: String) {
+        val cacheKey = "auth_layout_$type"
+        // Instant first paint from the last good layout (stale-while-revalidate);
+        // the network refresh below always runs and replaces it. Auth is the
+        // first screen for logged-out users, so this kills the cold-launch blank.
+        val cached = com.stationly.mobile.util.SduiCache.read<com.stationly.core.model.sdui.SduiAppScreen>(
+            getApplication(), cacheKey
+        )
+        _uiState.value = _uiState.value.copy(
+            layout = cached ?: _uiState.value.layout,
+            // Only show the full-screen loader when we have nothing to paint yet.
+            isLoading = cached == null,
+            error = null,
+            inputs = emptyMap()
+        )
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null, inputs = emptyMap())
             try {
                 val layout = when (type) {
                     "login"            -> apiService.getLoginLayout()
@@ -85,13 +98,20 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                     else               -> apiService.getLoginLayout()
                 }
                 _uiState.value = _uiState.value.copy(layout = layout, isLoading = false)
+                com.stationly.mobile.util.SduiCache.write(getApplication(), cacheKey, layout)
             } catch (e: Exception) {
                 Log.e("LoginViewModel", "Failed to load $type screen.", e)
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    isBackendOffline = true,
-                    error = com.stationly.mobile.util.BackendErrorUtil.getFriendlyMessage(e)
-                )
+                // If we already painted a cached layout, stay on it silently;
+                // only surface the offline error when there's nothing to show.
+                if (_uiState.value.layout == null) {
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        isBackendOffline = true,
+                        error = com.stationly.mobile.util.BackendErrorUtil.getFriendlyMessage(e)
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(isLoading = false)
+                }
             }
         }
     }
