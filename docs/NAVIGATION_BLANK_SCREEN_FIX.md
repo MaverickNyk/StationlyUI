@@ -40,26 +40,39 @@ containing only the banner `TextView`; `dumpsys window` showed
 `mCurrentFocus = …/MainActivity` (alive). So: activity healthy, NavHost
 back stack empty.
 
-## Fix
+## Mitigations applied (two)
 
-`AndroidManifest.xml` — `MainActivity`:
+1. **`AndroidManifest.xml` — `MainActivity` `android:launchMode="singleTask"`.**
+   Guarantees one instance in one task; every launch (icon, deep link) routes
+   into the existing instance via `onNewIntent`, so tasks can't pile up.
+   Confirmed active in the running build (`LAUNCH_SINGLE_TASK` in logcat).
+2. **`MainActivity.kt` — `startDestination` uses `rememberSaveable`** (not
+   `remember`), so a restore can't recompute a different start destination than
+   the one the saved NavHost back stack was rooted at.
 
-```xml
-android:launchMode="singleTask"
-```
+## Status — mitigated, NOT fully closed
 
-`singleTask` guarantees **one** instance in **one** task. Every launch
-(icon, deep link) is routed into the existing instance via `onNewIntent`
-(already implemented in `MainActivity`), so tasks can't pile up and the nav
-state is never duplicated or orphaned by a task removal.
+After both mitigations, a **clean cold launch renders correctly** (verified: the
+Summary board comes up normally). But the blank **recurred** when the process is
+**killed while backgrounded and then resumed** (observed via `adj 905` memory
+trims and `killDueToPackageUpdate` from reinstalls — "app died, no saved state",
+then a relaunch into an empty NavHost). No crash/exception in any buffer.
+
+So the remaining suspicion is narrowed to the **process-kill → restore** path:
+Compose Navigation appears to restore an empty back stack in some kill scenarios.
+**Repro to resume with:** open app → background → `adb shell am kill
+com.stationly.mobile` → reopen, then inspect the NavHost back stack on restore.
+Candidate next steps: log `navController.currentBackStack` on resume; consider a
+guard that re-asserts the start destination if the back stack restores empty.
 
 ## Secondary, unrelated alignment (kept, but NOT the cause)
 
 While investigating, the navigation-compose version was bumped to match
 Compose 1.7 — see `nav_compose_version_lockstep` memory. It is a legitimate
 fix in its own right (nav 2.7.5 on Compose 1.7 has stuck transitions) and
-was kept, but **it did NOT fix this blank screen** — the launchMode change
-did. `android/app/build.gradle.kts`:
+was kept, but **it did NOT fix this blank screen** (and neither fully did the
+launchMode/rememberSaveable mitigations — see Status above).
+`android/app/build.gradle.kts`:
 
 | Dependency | Was | Now |
 |---|---|---|
