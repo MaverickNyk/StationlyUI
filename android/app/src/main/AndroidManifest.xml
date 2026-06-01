@@ -20,10 +20,22 @@
         android:theme="@style/Theme.Stationly"
         tools:targetApi="31">
 
-        <!-- Main Activity -->
+        <!-- Main Activity.
+             launchMode="singleTask": this is BOTH the LAUNCHER entry and the
+             stationly:// deep-link target. With the default "standard" mode,
+             a relaunch (deep link, or the OS killing the cached process with
+             "remove task" then restoring) spawns a NEW task + fresh MainActivity
+             instead of resuming the existing one. Those tasks pile up (observed:
+             t5239 / t5250 / t5251 simultaneously), and returning to a freshly-
+             restored instance left the Compose NavHost back stack empty — a blank
+             screen showing only the (NavHost-external) staging banner. singleTask
+             guarantees one instance in one task; every launch is funnelled through
+             onNewIntent (already implemented) so the nav state is never duplicated
+             or lost. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.Stationly.Splash">
             <intent-filter>

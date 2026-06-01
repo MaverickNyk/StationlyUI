@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.*
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -123,7 +124,14 @@ fun AppNavigation(
     //     (closes the cold-start verify-bypass: previously a user who signed up via
     //      email then killed the app could re-open straight into summary)
     //   - Anyone else (Google, Apple, verified email) → summary
-    val startDestination = remember {
+    // rememberSaveable (NOT remember): the NavHost saves/restores its back stack
+    // across process death, and that restore requires the SAME startDestination it
+    // was created with. Plain remember re-evaluates authManager.currentUser on
+    // recreation — if Firebase hasn't rehydrated the user yet it would flip to
+    // "auth/login", mismatching the saved "summary"-rooted stack and leaving the
+    // NavHost unable to restore → blank. Persisting the original value keeps the
+    // start destination stable so the back stack always restores cleanly.
+    val startDestination = rememberSaveable {
         val u = authManager.currentUser
         when {
             u == null -> "auth/login"

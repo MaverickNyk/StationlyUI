@@ -241,6 +241,10 @@ data class SduiDropdownOption(
     // to invalidate stale icons when the backend bumps its asset bundle.
     val tintHex: String? = null,
     val iconVersion: String? = null,
+    val upcomingStations: List<String>? = null,
+    val directionName: String? = null,
+    val towards: String? = null,
+    val destinations: List<SduiDropdownOption>? = null,
 )
 
 @Serializable

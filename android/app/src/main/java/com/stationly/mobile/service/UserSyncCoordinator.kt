@@ -48,12 +48,16 @@ object UserSyncCoordinator {
     private const val FLAGS_PREFS = "StationlySyncFlags"
     private const val FLAG_ACCOUNT_REMOVED = "pending_account_removed"
 
-    // Foreground reconcile is only a FALLBACK for missed `user_sync` pushes, and
-    // GET /user/sync/profile draws from the strict /user/* limiter (20 / 15 min,
-    // keyed by the shared client key). Keep it infrequent so it doesn't compete
-    // with login sync + FCM registration for that budget. Push-triggered syncs
-    // pass force=true and bypass this.
-    private const val RECONCILE_DEBOUNCE_MS = 120_000L
+    // Foreground reconcile is only a FALLBACK for a missed `user_sync` push, so
+    // it's deliberately infrequent: each run costs one Firestore read of the
+    // user doc (GET /user/sync/profile), and that scales with users × app-opens.
+    // 15 min is plenty because:
+    //   • cold start always reconciles (lastReconcileAt starts at 0),
+    //   • a resume after >15 min backgrounded — the case where a push may have
+    //     been dropped (Doze/OEM kill) — still reconciles,
+    //   • rapid glance-away/return resumes are suppressed (nothing was missed),
+    //   • real-time pushes pass force=true and bypass this entirely.
+    private const val RECONCILE_DEBOUNCE_MS = 15 * 60_000L  // 15 min
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 

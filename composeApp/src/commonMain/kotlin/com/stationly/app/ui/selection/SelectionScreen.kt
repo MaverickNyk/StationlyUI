@@ -692,32 +692,20 @@ private fun SectionHeader(label: String) {
 
 @Composable
 private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, onClick: () -> Unit) {
-    val lbl  = opt.label
-    val tIdx = lbl.indexOf(" towards", ignoreCase = true)
-    val dirName: String
-    val rawDests: List<String>
-    if (tIdx > 0) {
-        dirName  = lbl.substring(0, tIdx).trim()
-        rawDests = lbl.substring(tIdx + 8).trim()
-            .split("\n").map { it.trim() }.filter { it.isNotBlank() }
-    } else {
-        dirName  = lbl.trim()
-        rawDests = emptyList()
-    }
+    val dirName     = opt.directionName ?: opt.label
+    val primaryDest = opt.towards ?: dirName
+    val branchDests = opt.destinations ?: emptyList()
+    val stops       = opt.upcomingStations
 
     val dirIcon: ImageVector = when {
-        opt.id.contains("inbound",  true) || lbl.contains("inbound",  true) -> Icons.Filled.CallReceived
-        opt.id.contains("outbound", true) || lbl.contains("outbound", true) -> Icons.Filled.CallMade
-        lbl.contains("north", true) -> Icons.Filled.North
-        lbl.contains("south", true) -> Icons.Filled.South
-        lbl.contains("east",  true) -> Icons.Filled.East
-        lbl.contains("west",  true) -> Icons.Filled.West
-        else                        -> Icons.Filled.Explore
+        opt.id.contains("inbound",  true) || dirName.contains("inbound",  true) -> Icons.Filled.CallReceived
+        opt.id.contains("outbound", true) || dirName.contains("outbound", true) -> Icons.Filled.CallMade
+        dirName.contains("north", true) -> Icons.Filled.North
+        dirName.contains("south", true) -> Icons.Filled.South
+        dirName.contains("east",  true) -> Icons.Filled.East
+        dirName.contains("west",  true) -> Icons.Filled.West
+        else                            -> Icons.Filled.Explore
     }
-
-    val primaryDest = rawDests.firstOrNull() ?: dirName
-    val branchDests = rawDests.drop(1)
-    val nextStops   = opt.secondaryLabel
 
     Surface(
         onClick = onClick,
@@ -769,16 +757,13 @@ private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, onCli
                                     .border(0.5.dp, White25, RoundedCornerShape(6.dp))
                                     .padding(horizontal = 8.dp, vertical = 3.dp)
                             ) {
-                                Text(dest, color = White55, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(dest.label, color = White55, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
                 }
 
-                if (!nextStops.isNullOrBlank()) {
-                    val stops = remember(nextStops) {
-                        nextStops.split(" · ").map { it.trim() }.filter { it.isNotBlank() }
-                    }
+                if (!stops.isNullOrEmpty()) {
                     Spacer(Modifier.height(12.dp))
                     Box(
                         Modifier.fillMaxWidth().background(White08, RoundedCornerShape(10.dp))
