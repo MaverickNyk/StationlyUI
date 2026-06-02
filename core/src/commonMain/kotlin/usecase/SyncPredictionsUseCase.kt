@@ -6,6 +6,7 @@ import com.stationly.core.util.GlobalBoardProcessor
 import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.datetime.Clock
 
 /**
  * Sync Predictions Use Case
@@ -24,9 +25,19 @@ class SyncPredictionsUseCase(
      * @return Formatted predictions for display
      */
     suspend fun execute(payload: FcmPayload, selection: UserSelection): List<PredictionDisplay> {
+        // ONE timestamp for this whole sync. We stamp the board's "last
+        // backend update" time the moment the payload lands — BEFORE we know
+        // whether it even contains rows for this line/direction — so a 0-row
+        // update still resets the "X ago" timer. The same value is later
+        // handed to savePredictions, so the sync stamp and the prediction
+        // rows agree to the millisecond and all three surfaces (home, widget,
+        // dream) read one consistent time via getLastUpdatedTimestamp.
+        val syncMs = Clock.System.now().toEpochMilliseconds()
+        sqlStorage.saveSyncTimestamp(selection.station, selection.line, syncMs)
+
         // 1. Extract line data (Loose matching for casing)
         val lineIdLower = selection.line.lowercase()
-        val lineData = payload.lines[lineIdLower] 
+        val lineData = payload.lines[lineIdLower]
             ?: payload.lines.entries.find { it.key.lowercase() == lineIdLower }?.value
             ?: return emptyList()
         
@@ -81,8 +92,9 @@ class SyncPredictionsUseCase(
             perPlatformCap = 8,
         )
 
-        // 6. Save to SQL storage
-        sqlStorage.savePredictions(selection.station, selection.line, processedPredictions)
+        // 6. Save to SQL storage — same `syncMs` so the row timestamps match
+        //    the sync stamp recorded above.
+        sqlStorage.savePredictions(selection.station, selection.line, processedPredictions, syncMs)
 
         return processedPredictions
     }

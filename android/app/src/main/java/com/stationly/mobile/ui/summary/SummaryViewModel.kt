@@ -287,7 +287,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 // install, no data yet". 0L is now only returned when
                 // SQL genuinely has no timestamp for this station/line.
                 val predsTimestamp = Platform.sqlStorage
-                    .getPredictionsTimestamp(selection.station, selection.line)
+                    .getLastUpdatedTimestamp(selection.station, selection.line)
                     ?: 0L
                 val currentMap = _predictions.value.toMutableMap()
                 currentMap[selection.station] = dbPreds

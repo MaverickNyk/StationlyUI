@@ -897,9 +897,19 @@ private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, layou
                 // it's a small muted label with no solid fill. Skipped entirely
                 // when neither is present (unselected bus card) so "towards …"
                 // sits flush at the top. ──
-                if (compassIcon != null || sel) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (badgeText != null && compassIcon != null) {
+                // Compass cue + tick header — RAIL ONLY (compassIcon != null).
+                // Gated purely on compass presence, NEVER on `sel`, and pinned
+                // to the tick's height so selecting a card only fades the tick
+                // in/out *inside* an already-reserved row — the card never
+                // changes height. Bus cards have no compass so they skip this
+                // row entirely and instead carry the tick on the headline row
+                // below, where it likewise costs no extra vertical space.
+                if (compassIcon != null) {
+                    Row(
+                        Modifier.fillMaxWidth().heightIn(min = 22.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (badgeText != null) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Icon(compassIcon, null, tint = White55, modifier = Modifier.size(13.dp))
                                 Text(badgeText.uppercase(), color = White55,
@@ -932,6 +942,22 @@ private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, layou
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f).alignByBaseline()
                     )
+                    // Bus cards have no compass header, so the selected tick
+                    // rides at the end of the headline row instead. The 18sp
+                    // headline is already ~tick-tall, so toggling it in/out
+                    // doesn't grow the row — the card keeps its exact shape
+                    // whether selected or not. (Rail shows its tick in the
+                    // compass header above, so we skip it here for those.)
+                    if (sel && compassIcon == null) {
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier.align(Alignment.CenterVertically)
+                                .size(22.dp).background(primary, CircleShape),
+                            Alignment.Center
+                        ) {
+                            Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(13.dp))
+                        }
+                    }
                 }
 
                 // ── Destination chips. With >1 destination they're TAPPABLE:

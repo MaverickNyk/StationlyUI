@@ -306,7 +306,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // Pull the SQL row timestamp so the chronometer reflects when
             // FCM/REST last gave us this data — not when this redraw fired.
             val lastUpdatedMs = com.stationly.core.platform.Platform.sqlStorage
-                .getPredictionsTimestamp(selection.station, selection.line)
+                .getLastUpdatedTimestamp(selection.station, selection.line)
                 ?: System.currentTimeMillis()
             
             var sduiPayload: com.stationly.core.model.sdui.SduiWidgetPayload? = null
