@@ -85,8 +85,15 @@ class WeatherStation private constructor(private val appContext: Context) {
     }
 
     private suspend fun refreshOnce() {
-        val location = readLastKnownLocation() ?: return
-        val fetched = fetchForecast(location.latitude, location.longitude) ?: return
+        // Prefer the device's last-known fix; if location is unavailable
+        // (permission denied, or nothing has populated a cached fix yet) fall
+        // back to central London so the strip always shows a temperature
+        // instead of vanishing. London is Stationly's home network, so it's a
+        // sensible default for the screensaver.
+        val location = readLastKnownLocation()
+        val lat = location?.latitude ?: LONDON_LAT
+        val lon = location?.longitude ?: LONDON_LON
+        val fetched = fetchForecast(lat, lon) ?: return
         lastFetchMs = System.currentTimeMillis()
         _temperatureC.value = fetched.tempC
         _symbolCode.value = fetched.symbolCode
@@ -96,9 +103,17 @@ class WeatherStation private constructor(private val appContext: Context) {
 
     @SuppressLint("MissingPermission")
     private fun readLastKnownLocation(): Location? {
+        // Accept EITHER fine or coarse. On Android 12+ the user can grant
+        // "Approximate" location only, which yields COARSE but not FINE. We
+        // only read a cached last-known fix here, so coarse is plenty. When
+        // neither is granted we return null and the caller falls back to
+        // London rather than showing nothing.
         val granted = ContextCompat.checkSelfPermission(
             appContext, Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
+        ) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                appContext, Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
         if (!granted) return null
 
         val lm = appContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
@@ -157,6 +172,11 @@ class WeatherStation private constructor(private val appContext: Context) {
         private const val REFRESH_INTERVAL_MS = 30L * 60L * 1000L  // 30 min
         private const val USER_AGENT =
             "Stationly/1.0 (https://stationly.co.uk; contact@stationly.co.uk)"
+
+        // Central London — fallback coordinates when no device location is
+        // available, so the dream's weather chip always renders.
+        private const val LONDON_LAT = 51.5074
+        private const val LONDON_LON = -0.1278
 
         @Volatile private var INSTANCE: WeatherStation? = null
         fun of(context: Context): WeatherStation =

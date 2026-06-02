@@ -50,7 +50,7 @@ fun loadDreamSnapshot(preferredStationId: String?): DreamSnapshot {
     // "X ago" should reflect when the data was last synced from the
     // backend (FCM landed / REST returned), NOT when this snapshot was
     // loaded from SQL — those differ by minutes after a cold dream start.
-    val lastUpdatedMs = Platform.sqlStorage.getPredictionsTimestamp(selection.station, selection.line)
+    val lastUpdatedMs = Platform.sqlStorage.getLastUpdatedTimestamp(selection.station, selection.line)
         ?: System.currentTimeMillis()
     return DreamSnapshot(selection, predictions, lineStatus, lastUpdatedMs)
 }
