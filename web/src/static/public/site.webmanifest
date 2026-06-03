@@ -1,0 +1,16 @@
+{
+  "name": "Stationly: Live London Departure Boards",
+  "short_name": "Stationly",
+  "description": "Live London TfL departure boards on your home screen. Real-time Tube, train and bus times.",
+  "lang": "en-GB",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#080D1A",
+  "theme_color": "#080D1A",
+  "categories": ["travel", "navigation", "utilities"],
+  "icons": [
+    { "src": "/assets/stationly_logo_web.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/stationly_logo_final.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

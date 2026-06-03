@@ -28,13 +28,24 @@ export default defineConfig({
                 terms: 'src/static/terms/index.html',
             },
             output: {
-                entryFileNames: 'js/[name].bundle.js',
-                assetFileNames: 'assets/[name].[ext]',
+                // Content-hashed JS so a new deploy never serves stale cached code.
+                entryFileNames: 'js/[name]-[hash].js',
+                chunkFileNames: 'js/[name]-[hash].js',
+                // Hash CSS + content images so changes cache-bust under the server's
+                // immutable asset caching. Keep brand/icon files (logo, favicon) on
+                // STABLE names because the web manifest references them by fixed path.
+                assetFileNames: (assetInfo) => {
+                    const name = assetInfo.name || '';
+                    if (/stationly_logo|favicon/.test(name)) {
+                        return 'assets/[name][extname]';
+                    }
+                    return 'assets/[name]-[hash][extname]';
+                },
             }
         }
     },
     server: {
-        port: 8080,
+        port: 3000,
         open: true
     }
 });
