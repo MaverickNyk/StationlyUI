@@ -1,5 +1,8 @@
 window.toggleMenu = function () {
-    document.querySelector('.header').classList.toggle('nav-open');
+    const header = document.querySelector('.header');
+    const open = header.classList.toggle('nav-open');
+    const btn = header.querySelector('.hamburger');
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
 window.switchTab = function (tabId) {

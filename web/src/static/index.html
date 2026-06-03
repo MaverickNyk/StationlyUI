@@ -1,19 +1,36 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-GB">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stationly — Don't Be Late.</title>
-    <meta name="description" content="Real-time London departure boards on your home screen. Live TfL data, 270+ stations, 20k+ bus stops. Home screen widget for iOS and Android.">
+    <title>Stationly: Live London Departure Board Widget | TfL Tube, Bus &amp; Train Times</title>
+    <meta name="description" content="Live London departure boards on your home screen and lock screen. Real-time TfL Tube, Overground, Elizabeth line, DLR, train and bus times across 270+ stations and 20,000+ bus stops. Free widget for iOS and Android.">
+    <meta name="keywords" content="London departure board, TfL live times, tube times, bus times London, live train times London, next train widget, London Underground times, Elizabeth line times, Overground times, DLR times, bus countdown London, home screen departure board">
+    <link rel="canonical" href="https://stationly.co.uk/">
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+    <link rel="manifest" href="/site.webmanifest">
+
+    <!-- Google Search Console: paste your verification token below (Settings > Ownership verification > HTML tag) -->
+    <!-- <meta name="google-site-verification" content="REPLACE_WITH_YOUR_TOKEN"> -->
+
+    <!-- Geo targeting: London, UK -->
+    <meta name="geo.region" content="GB-LND">
+    <meta name="geo.placename" content="London">
+    <meta name="geo.position" content="51.5074;-0.1278">
+    <meta name="ICBM" content="51.5074, -0.1278">
 
     <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Stationly">
+    <meta property="og:locale" content="en_GB">
     <meta property="og:url" content="https://stationly.co.uk/">
-    <meta property="og:title" content="Stationly — Don't Be Late.">
-    <meta property="og:description" content="Real-time London departure boards on your home screen. Live TfL data, 270+ stations, 20k+ bus stops. Home screen widget for iOS and Android.">
-    <meta property="og:image" content="https://stationly.co.uk/assets/widget_demo.png">
+    <meta property="og:title" content="Stationly: Live London Departure Boards on Your Home Screen">
+    <meta property="og:description" content="Real-time TfL Tube, train and bus times on your home screen widget and lock-screen departure board. 270+ stations, 20,000+ bus stops. iOS and Android.">
+    <meta property="og:image" content="https://stationly.co.uk/og-image.png">
     <meta property="twitter:card" content="summary_large_image">
-    <meta property="twitter:image" content="https://stationly.co.uk/assets/widget_demo.png">
+    <meta property="twitter:title" content="Stationly: Live London Departure Boards on Your Home Screen">
+    <meta property="twitter:description" content="Real-time TfL Tube, train and bus times on your home screen widget and lock-screen departure board. 270+ stations, 20,000+ bus stops.">
+    <meta property="twitter:image" content="https://stationly.co.uk/og-image.png">
 
     <meta name="theme-color" content="#080D1A">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -26,6 +43,64 @@
     <link rel="icon" type="image/png" sizes="192x192" href="assets/stationly_logo_web.png">
     <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon.png">
     <link rel="apple-touch-icon" href="assets/stationly_logo_web.png">
+
+    <!-- Structured data for London transport / app search -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://stationly.co.uk/#organization",
+          "name": "Stationly",
+          "legalName": "Stationly Limited",
+          "url": "https://stationly.co.uk/",
+          "logo": "https://stationly.co.uk/assets/stationly_logo_web.png",
+          "areaServed": { "@type": "City", "name": "London", "containedInPlace": { "@type": "Country", "name": "United Kingdom" } },
+          "email": "support@stationly.co.uk"
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://stationly.co.uk/#website",
+          "url": "https://stationly.co.uk/",
+          "name": "Stationly",
+          "description": "Live London departure boards on your home screen. Real-time TfL Tube, train and bus times.",
+          "publisher": { "@id": "https://stationly.co.uk/#organization" },
+          "inLanguage": "en-GB"
+        },
+        {
+          "@type": "MobileApplication",
+          "@id": "https://stationly.co.uk/#app",
+          "name": "Stationly",
+          "applicationCategory": "TravelApplication",
+          "applicationSubCategory": "Public transport departure board",
+          "operatingSystem": "iOS, Android",
+          "description": "Live London departure boards on your home screen and lock screen. Real-time TfL Tube, Overground, Elizabeth line, DLR, train and bus times across 270+ stations and 20,000+ bus stops, plus a full-screen departure board for charging and docked devices.",
+          "url": "https://stationly.co.uk/",
+          "image": "https://stationly.co.uk/og-image.png",
+          "publisher": { "@id": "https://stationly.co.uk/#organization" },
+          "areaServed": { "@type": "City", "name": "London" },
+          "offers": { "@type": "Offer", "price": "0", "priceCurrency": "GBP" }
+        },
+        {
+          "@type": "FAQPage",
+          "@id": "https://stationly.co.uk/#faq",
+          "mainEntity": [
+            { "@type": "Question", "name": "Which lines does Stationly support?",
+              "acceptedAnswer": { "@type": "Answer", "text": "All of them. Stationly covers the full TfL network: London Underground, Overground, DLR, Elizabeth line, National Rail services within London, and buses. If TfL has live data for it, Stationly shows it." } },
+            { "@type": "Question", "name": "Does it work for buses?",
+              "acceptedAnswer": { "@type": "Answer", "text": "Yes. Stationly covers over 20,000 TfL bus stops across London with live countdowns, route numbers, and destination boards, right on your home screen." } },
+            { "@type": "Question", "name": "Can I use it as a full-screen departure board?",
+              "acceptedAnswer": { "@type": "Answer", "text": "Yes. On Android, Stationly offers a full-screen screen saver that turns on when your phone is docked or charging, so any old device becomes a real-time departure board on your desk or by the door." } },
+            { "@type": "Question", "name": "How accurate is the departure data?",
+              "acceptedAnswer": { "@type": "Answer", "text": "Stationly pulls data directly from TfL Open Data, the same source used by official TfL apps and journey planners. Every board shows exactly when the data was last refreshed." } },
+            { "@type": "Question", "name": "Which platforms will Stationly be on?",
+              "acceptedAnswer": { "@type": "Answer", "text": "Stationly is mobile-first, on iOS and Android. Join the waitlist and we will let you know the moment it is available to download." } }
+          ]
+        }
+      ]
+    }
+    </script>
 </head>
 
 <body>
@@ -42,11 +117,11 @@
                 <button class="nav-btn" onclick="switchTab('developer')">Developers</button>
                 <button class="nav-btn" onclick="switchTab('support')">Support</button>
             </nav>
-            <div class="hamburger" onclick="toggleMenu()">
+            <button class="hamburger" type="button" onclick="toggleMenu()" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="mobile-menu">
                 <span></span><span></span><span></span>
-            </div>
+            </button>
         </div>
-        <div class="mobile-menu">
+        <div class="mobile-menu" id="mobile-menu">
             <button class="nav-btn" onclick="switchTab('home')">Home</button>
             <button class="nav-btn" onclick="switchTab('developer')">Developers</button>
             <button class="nav-btn" onclick="switchTab('support')">Support</button>
@@ -70,27 +145,27 @@
                         <div class="hero-text">
                             <div class="launch-badge">
                                 <span class="launch-dot"></span>
-                                Launching 2026
+                                Launching Summer 2026
                             </div>
                             <h1 class="gradient-text">The only departure<br>board you need.</h1>
-                            <p class="hero-subtitle">Live TfL departures on your home screen widget. Just glance at your phone — no tapping, no unlocking, no apps to open.</p>
+                            <p class="hero-subtitle">Live TfL departures on your home screen. Just glance at your phone. No tapping, no unlocking, no apps to open.</p>
                             <div class="store-badges">
-                                <a href="#" class="store-badge" onclick="scrollToWaitlist(event)">
-                                    <svg class="store-badge-icon" viewBox="0 0 24 24" fill="currentColor">
-                                        <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
-                                    </svg>
-                                    <div class="store-badge-text">
-                                        <span class="store-badge-label">Coming Soon</span>
-                                        <span class="store-badge-name">App Store</span>
-                                    </div>
-                                </a>
-                                <a href="#" class="store-badge" onclick="scrollToWaitlist(event)">
+                                <a href="#" class="store-badge" onclick="openWaitlist(event, 'Google Play')">
                                     <svg class="store-badge-icon" viewBox="0 0 24 24" fill="currentColor">
                                         <path d="M3.18 23.76c.37.2.8.22 1.2.06l11.4-6.58-2.5-2.5-10.1 9.02zM.5 1.5C.19 1.88 0 2.42 0 3.1v17.8c0 .68.19 1.22.5 1.6l.08.08 9.97-9.97v-.24L.58 1.42.5 1.5zM20.3 10.37l-2.65-1.53-2.8 2.8 2.8 2.8 2.67-1.54c.76-.44.76-1.09-.02-1.53zM4.38.18L15.78 6.76l-2.5 2.5L3.18.24C3.58.08 4.01.1 4.38.18z"/>
                                     </svg>
                                     <div class="store-badge-text">
-                                        <span class="store-badge-label">Coming Soon</span>
+                                        <span class="store-badge-label">Summer 2026</span>
                                         <span class="store-badge-name">Google Play</span>
+                                    </div>
+                                </a>
+                                <a href="#" class="store-badge" onclick="openWaitlist(event, 'App Store')">
+                                    <svg class="store-badge-icon" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+                                    </svg>
+                                    <div class="store-badge-text">
+                                        <span class="store-badge-label">Summer 2026</span>
+                                        <span class="store-badge-name">App Store</span>
                                     </div>
                                 </a>
                             </div>
@@ -98,7 +173,7 @@
 
                         <div class="hero-visual">
                             <div class="widget-glow"></div>
-                            <img src="assets/widget_demo.png" alt="Stationly Widget" class="widget-hero-img">
+                            <img src="assets/widget_board_wide.png" alt="The Stationly home screen widget: a live Oxford Circus departure board for the Victoria line to Brixton, with next trains in 1, 9 and 11 minutes" class="widget-hero-img" width="1500" height="535" fetchpriority="high" decoding="async">
                         </div>
                     </div>
                 </div>
@@ -177,27 +252,34 @@
                         <h2>No faff. No filler.<br>Just your next train.</h2>
                         <p>Everything a London commuter actually needs. Nothing that gets in the way.</p>
                     </div>
-                    <div class="grid grid-3">
-                        <div class="glass feature-card reveal">
-                            <div class="feature-icon-wrap">
-                                <svg viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <div class="feature-bento">
+                        <div class="glass feature-card feature-card-lg reveal">
+                            <div class="feature-card-copy">
+                                <div class="feature-icon-wrap">
+                                    <svg viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                </div>
+                                <h3>Every TfL line, live</h3>
+                                <p>Real-time departures across Tube, Overground, DLR, Elizabeth line, National Rail and bus. Refreshed every few seconds, straight from TfL.</p>
                             </div>
-                            <h3>Your platform. Right now.</h3>
-                            <p>Live departure times across every TfL line — Tube, Overground, DLR, Elizabeth line, bus. Updated every few seconds from the source.</p>
+                            <div class="feature-card-shot">
+                                <img src="assets/app_main.png" alt="Stationly app showing live Victoria line departures to Brixton from Oxford Circus, with platform, countdown and a minor-delays status" loading="lazy" width="448" height="1000">
+                            </div>
                         </div>
-                        <div class="glass feature-card reveal" style="transition-delay: 0.1s;">
-                            <div class="feature-icon-wrap">
-                                <svg viewBox="0 0 24 24" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                        <div class="feature-col">
+                            <div class="glass feature-card reveal" style="transition-delay: 0.08s;">
+                                <div class="feature-icon-wrap">
+                                    <svg viewBox="0 0 24 24" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                                </div>
+                                <h3>Lives on your home screen</h3>
+                                <p>Your board shows up before you even unlock your phone. Set it once and forget it. It just works, every morning.</p>
                             </div>
-                            <h3>Lives on your home screen</h3>
-                            <p>The widget shows your board before you even unlock your phone. Set it once, forget about it. It just works, every morning.</p>
-                        </div>
-                        <div class="glass feature-card reveal" style="transition-delay: 0.2s;">
-                            <div class="feature-icon-wrap">
-                                <svg viewBox="0 0 24 24" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                            <div class="glass feature-card reveal" style="transition-delay: 0.16s;">
+                                <div class="feature-icon-wrap">
+                                    <svg viewBox="0 0 24 24" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                                </div>
+                                <h3>Know before you leave</h3>
+                                <p>Disruption on your line? You will know before you have put your shoes on, not when you are already at the gates.</p>
                             </div>
-                            <h3>Know before you leave</h3>
-                            <p>Disruption on your line? You'll know before you've put your shoes on — not when you're already at the gates.</p>
                         </div>
                     </div>
                 </div>
@@ -208,21 +290,49 @@
                 <div class="container">
                     <div class="spotlight-inner">
                         <div class="spotlight-text reveal">
-                            <div class="spotlight-label">The Widget</div>
                             <h2>Your station. Always visible. Never in the way.</h2>
-                            <p>Pick your station once. From that moment it just shows up — platform, time, how long you've got. No app to open, no button to tap. Just look at your phone and go.</p>
+                            <p>Pick your station once. From that moment it just shows up: platform, time, and how long you have got. No app to open, no button to tap. Just look at your phone and go.</p>
                             <ul class="spotlight-features">
                                 <li><span class="sf-check">✓</span> Multiple stations tracked at once</li>
-                                <li><span class="sf-check">✓</span> Resizable — compact to full-width</li>
+                                <li><span class="sf-check">✓</span> Resizable, from compact to full-width</li>
                                 <li><span class="sf-check">✓</span> Background updates, always fresh</li>
                                 <li><span class="sf-check">✓</span> Works on any home screen launcher</li>
                             </ul>
                         </div>
                         <div class="spotlight-visual reveal" style="transition-delay: 0.15s;">
                             <div class="spotlight-glow"></div>
-                            <img src="assets/widget_demo.png" alt="Stationly Widget" class="spotlight-img">
+                            <img src="assets/widget_board.png" alt="A Stationly widget showing live Victoria line departures from Oxford Circus: next trains Due, 2 and 5 minutes, with a minor-delays note and a last-updated timestamp" class="spotlight-img" width="1143" height="539">
                         </div>
                     </div>
+                </div>
+            </section>
+
+            <!-- ── Screen Saver / Docked Board ── -->
+            <section class="section screensaver-section" aria-labelledby="screensaver-heading">
+                <div class="container">
+                    <div class="section-header reveal">
+                        <div class="ss-eyebrow">Android screen saver</div>
+                        <h2 id="screensaver-heading">Dock it, and your phone<br>becomes the board.</h2>
+                        <p>Put your Android phone on charge or in a stand and Stationly takes over the whole screen. A real, always-on departure board for your desk, your hallway, or the kitchen counter.</p>
+                    </div>
+                    <div class="screensaver-stage reveal">
+                        <div class="screensaver-glow"></div>
+                        <div class="device-landscape">
+                            <div class="device-screen">
+                                <img class="screensaver-img"
+                                     src="assets/screensaver_dock.png"
+                                     alt="Stationly full-screen screen saver on a docked Android phone: a large 20:02 clock beside a live Oxford Circus departure board for the Victoria line to Brixton"
+                                     loading="lazy" width="1600" height="717">
+                            </div>
+                            <span class="device-cam" aria-hidden="true"></span>
+                        </div>
+                    </div>
+                    <ul class="screensaver-chips reveal">
+                        <li class="ss-chip">Turns on when charging or docked</li>
+                        <li class="ss-chip">Full-screen clock and live board</li>
+                        <li class="ss-chip">Give an old phone a second life</li>
+                        <li class="ss-chip">Real-time TfL, refreshed in the background</li>
+                    </ul>
                 </div>
             </section>
 
@@ -239,7 +349,7 @@
                             </div>
                             <div class="step-num">01</div>
                             <h3>Pick your station</h3>
-                            <p>Search 270+ tube and rail stations, or 20,000+ bus stops. Choose your line, platform, and direction — every TfL mode covered.</p>
+                            <p>Search 270+ tube and rail stations, or 20,000+ bus stops. Choose your line, platform, and direction. Every TfL mode is covered.</p>
                         </div>
                         <div class="step-connector">→</div>
                         <div class="step-card reveal" style="transition-delay: 0.1s;">
@@ -257,19 +367,19 @@
                             </div>
                             <div class="step-num">03</div>
                             <h3>Just glance</h3>
-                            <p>Look at your home screen. See the next departure. No tapping, no unlocking. Sprint or stroll — your choice.</p>
+                            <p>Look at your home screen. See the next departure. No tapping, no unlocking. Sprint or stroll, your choice.</p>
                         </div>
                     </div>
                 </div>
             </section>
 
             <!-- ── Quote ── -->
-            <section class="section reveal" style="padding-top: 1.5rem; padding-bottom: 3.5rem;">
+            <section class="section reveal">
                 <div class="container">
                     <div class="quote-block">
                         <span class="quote-marks">"</span>
-                        <p class="quote-text">We're not trying to be the next big super-app. We just want to know if the Northern line is suspended again before we've already walked to the station.</p>
-                        <p class="quote-attribution">— The Stationly team, speaking for every London commuter ever</p>
+                        <p class="quote-text">We are not trying to be the next big super-app. We just want to know if the Northern line is suspended again before we have already walked to the station.</p>
+                        <p class="quote-attribution">The Stationly team, speaking for every London commuter ever</p>
                     </div>
                 </div>
             </section>
@@ -279,14 +389,14 @@
                 <div class="container">
                     <div class="notify-inner reveal">
                         <div class="notify-glow"></div>
-                        <div class="notify-label">Coming Soon · 2026</div>
+                        <div class="notify-label">Coming Summer 2026</div>
                         <h2>Be the first to board.</h2>
-                        <p>Stationly is launching in 2026. Drop your email and we'll let you know the moment doors open.</p>
+                        <p>Stationly is launching in Summer 2026. Drop your email and we'll let you know the moment doors open.</p>
                         <form class="notify-form" id="notify-form">
                             <input type="email" placeholder="your@email.com" class="notify-input" required>
                             <button type="submit" class="notify-btn">Notify Me</button>
                         </form>
-                        <p class="notify-fine" id="notify-success" style="display:none; color: var(--amber);">You're on the list — we'll be in touch!</p>
+                        <p class="notify-fine" id="notify-success" style="display:none; color: var(--amber);">You're on the list. We'll be in touch!</p>
                     </div>
                 </div>
             </section>
@@ -309,7 +419,7 @@
                                 API v1 · Live
                             </div>
                             <h2 style="font-size: 2.5rem; margin-bottom: 0.5rem;">Stationly Developer API</h2>
-                            <p style="max-width: 520px; margin-bottom: 0;">Real-time TfL departure data — clean JSON, no wrappers, no nonsense. Base URL: <code class="dev-code-inline">api.stationly.co.uk</code></p>
+                            <p style="max-width: 520px; margin-bottom: 0;">Real-time TfL departure data. Clean JSON, no wrappers, no nonsense. Base URL: <code class="dev-code-inline">api.stationly.co.uk</code></p>
                         </div>
                         <div class="dev-stats">
                             <div class="dev-stat">
@@ -344,7 +454,7 @@
                     <div style="margin-top: 1.5rem; padding: 1.1rem 1.4rem; background: rgba(221,44,51,0.07); border: 1px solid rgba(221,44,51,0.2); border-radius: 10px; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
                         <span style="font-size: 1.2rem;">🔑</span>
                         <p style="margin: 0; font-size: 0.9rem; color: var(--text-muted); line-height: 1.6;">
-                            <strong style="color: var(--text-main);">Want to use our API?</strong> The public endpoints are open to explore. For dedicated access, higher rate limits, or integration support — just reach out at <a href="mailto:support@stationly.co.uk" style="color: var(--primary); text-decoration: none;">support@stationly.co.uk</a> and we'll get you sorted.
+                            <strong style="color: var(--text-main);">Want to use our API?</strong> The public endpoints are open to explore. For dedicated access, higher rate limits, or integration support, just reach out at <a href="mailto:support@stationly.co.uk" style="color: var(--primary); text-decoration: none;">support@stationly.co.uk</a> and we'll get you sorted.
                         </p>
                     </div>
                 </div>
@@ -371,7 +481,7 @@
         <div id="support" class="tab-content">
             <div class="container">
                 <div class="support-hero">
-                    <h1>Got a question?</h1>
+                    <h2 class="support-title">Got a question?</h2>
                     <p>Widget playing up? Something not showing right? Or just want to tell us what you think? We're one email away.</p>
                 </div>
 
@@ -393,25 +503,34 @@
                     <h2 style="text-align:center; margin-bottom: 2.5rem;">Common questions</h2>
                     <div class="faq-list">
                         <div class="faq-item">
-                            <button class="faq-question" onclick="toggleFaq(this)">
+                            <button class="faq-question" onclick="toggleFaq(this)" aria-expanded="false">
                                 <span>Which lines does Stationly support?</span>
                                 <span class="faq-chevron">+</span>
                             </button>
                             <div class="faq-answer">
-                                <p>All of them. Stationly covers the full TfL network — London Underground, Overground, DLR, Elizabeth line, National Rail services within London, and buses. If TfL has live data for it, Stationly shows it.</p>
+                                <p>All of them. Stationly covers the full TfL network: London Underground, Overground, DLR, Elizabeth line, National Rail services within London, and buses. If TfL has live data for it, Stationly shows it.</p>
                             </div>
                         </div>
                         <div class="faq-item">
-                            <button class="faq-question" onclick="toggleFaq(this)">
+                            <button class="faq-question" onclick="toggleFaq(this)" aria-expanded="false">
                                 <span>Does it work for buses?</span>
                                 <span class="faq-chevron">+</span>
                             </button>
                             <div class="faq-answer">
-                                <p>Yes — Stationly covers over 20,000 TfL bus stops across London. Live countdowns, route numbers, and destination boards. Just like at the real stop, but on your home screen.</p>
+                                <p>Yes. Stationly covers over 20,000 TfL bus stops across London with live countdowns, route numbers, and destination boards, right on your home screen.</p>
                             </div>
                         </div>
                         <div class="faq-item">
-                            <button class="faq-question" onclick="toggleFaq(this)">
+                            <button class="faq-question" onclick="toggleFaq(this)" aria-expanded="false">
+                                <span>Can I use it as a full-screen departure board?</span>
+                                <span class="faq-chevron">+</span>
+                            </button>
+                            <div class="faq-answer">
+                                <p>Yes. On Android, Stationly offers a full-screen screen saver that turns on when your phone is docked or charging, so any old device becomes a real-time departure board on your desk or by the door.</p>
+                            </div>
+                        </div>
+                        <div class="faq-item">
+                            <button class="faq-question" onclick="toggleFaq(this)" aria-expanded="false">
                                 <span>Why isn't my widget updating?</span>
                                 <span class="faq-chevron">+</span>
                             </button>
@@ -420,34 +539,34 @@
                             </div>
                         </div>
                         <div class="faq-item">
-                            <button class="faq-question" onclick="toggleFaq(this)">
+                            <button class="faq-question" onclick="toggleFaq(this)" aria-expanded="false">
                                 <span>How accurate is the departure data?</span>
                                 <span class="faq-chevron">+</span>
                             </button>
                             <div class="faq-answer">
-                                <p>Stationly pulls data directly from TfL's Open Data APIs — the same source used by official TfL apps and journey planners. Departure times are as accurate as TfL's own systems. The timestamp on every board shows exactly when the data was last refreshed.</p>
+                                <p>Stationly pulls data directly from TfL Open Data, the same source used by official TfL apps and journey planners. Departure times are as accurate as TfL's own systems, and every board shows exactly when the data was last refreshed.</p>
                             </div>
                         </div>
                         <div class="faq-item">
-                            <button class="faq-question" onclick="toggleFaq(this)">
+                            <button class="faq-question" onclick="toggleFaq(this)" aria-expanded="false">
                                 <span>Does Stationly work offline?</span>
                                 <span class="faq-chevron">+</span>
                             </button>
                             <div class="faq-answer">
-                                <p>Departure times require a live connection — there's no way around that, since the data is real-time. If you go offline, the widget shows the last known times with a timestamp so you know how old the data is.</p>
+                                <p>Departure times require a live connection. There is no way around that, since the data is real-time. If you go offline, the widget shows the last known times with a timestamp so you know how old the data is.</p>
                             </div>
                         </div>
                         <div class="faq-item">
-                            <button class="faq-question" onclick="toggleFaq(this)">
+                            <button class="faq-question" onclick="toggleFaq(this)" aria-expanded="false">
                                 <span>Which platforms will Stationly be on?</span>
                                 <span class="faq-chevron">+</span>
                             </button>
                             <div class="faq-answer">
-                                <p>Stationly is mobile-first — iOS and Android. Sign up on the home page and we'll notify you the moment it's available to download.</p>
+                                <p>Stationly is mobile-first, on iOS and Android. Join the waitlist and we will let you know the moment it is available to download.</p>
                             </div>
                         </div>
                         <div class="faq-item">
-                            <button class="faq-question" onclick="toggleFaq(this)">
+                            <button class="faq-question" onclick="toggleFaq(this)" aria-expanded="false">
                                 <span>How do I add multiple stations to the widget?</span>
                                 <span class="faq-chevron">+</span>
                             </button>
@@ -467,7 +586,7 @@
     <!-- Footer -->
     <footer class="footer">
         <div class="container">
-            <div style="height: 1px; background: rgba(255,255,255,0.07); margin-bottom: 2.5rem;"></div>
+            <div style="height: 1px; background: rgba(255,255,255,0.07); margin-bottom: 1.75rem;"></div>
             <div class="footer-content">
                 <div class="footer-brand">
                     <div style="font-weight: 800; font-size: 1.2rem; color: white; letter-spacing: -0.02em;">Stationly</div>
@@ -477,17 +596,44 @@
                     <a href="#" onclick="switchTab('support')">Contact Us</a>
                     <a href="/privacy/">Privacy Policy</a>
                     <a href="/terms/">Terms of Service</a>
+                    <a href="#" onclick="manageCookies(event)">Cookie settings</a>
                 </div>
             </div>
-            <div style="margin-top: 2.5rem; text-align: center; opacity: 0.3; font-size: 0.82rem;">
+            <div style="margin-top: 1.75rem; text-align: center; opacity: 0.3; font-size: 0.82rem;">
                 &copy; 2026 Stationly Limited. All rights reserved.
             </div>
         </div>
     </footer>
 
+    <!-- ══════════════════════════════════════
+         WAITLIST MODAL
+    ══════════════════════════════════════ -->
+    <div class="wl-overlay" id="waitlist-modal" hidden>
+        <div class="wl-dialog" role="dialog" aria-modal="true" aria-labelledby="wl-title" aria-describedby="wl-desc">
+            <button class="wl-close" type="button" aria-label="Close" onclick="closeWaitlist()">&times;</button>
+            <div class="wl-badge"><span class="launch-dot"></span><span id="wl-store-label">Summer 2026</span></div>
+            <h2 class="wl-title" id="wl-title">Be first on board.</h2>
+            <p class="wl-desc" id="wl-desc">Stationly lands on <span id="wl-store-name">the store</span> in Summer 2026. Leave your email and we'll tell you the moment it goes live.</p>
+            <form class="wl-form" id="waitlist-form" novalidate>
+                <label class="wl-label" for="wl-email">Email address</label>
+                <input class="wl-input" id="wl-email" type="email" name="email" placeholder="you@email.com" autocomplete="email" required>
+                <p class="wl-error" id="wl-error" role="alert" hidden></p>
+                <button class="wl-submit" type="submit">Notify me</button>
+            </form>
+            <div class="wl-success" id="wl-success" hidden>
+                <div class="wl-success-check" aria-hidden="true">✓</div>
+                <h3>You're on the list.</h3>
+                <p>We'll email you the moment Stationly is ready to download.</p>
+                <button class="wl-submit wl-submit-ghost" type="button" onclick="closeWaitlist()">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cookie consent (UK PECR / UK GDPR) is injected by the shared /js/cookie-consent.js?v=1 on every page -->
+
     <!-- Init scripts -->
     <script>
-        // Tab init — runs before main.js to prevent flash
+        // Tab init - runs before main.js to prevent flash
         (function () {
             try {
                 var hash = window.location.hash.substring(1) || 'home';
@@ -555,7 +701,7 @@
                 'letter-spacing:0.08em;color:#F5A623;text-transform:uppercase;flex-shrink:0;">',
                 '<span class="st-dot"></span>STAGING</span>',
                 '<span style="font-size:12.5px;color:#7A8499;">',
-                'You\'re on the staging server — data and behaviour may differ from production</span>',
+                'You\'re on the staging server. Data and behaviour may differ from production</span>',
                 '<button id="st-close" title="Dismiss">&#x2715;</button>'
             ].join('');
             document.body.prepend(stBanner);
@@ -571,58 +717,157 @@
             });
         }
 
-        // Notify form — calls backend waitlist endpoint
-        document.getElementById('notify-form').addEventListener('submit', async function (e) {
-            e.preventDefault();
-            var emailInput = this.querySelector('input[type="email"]');
-            var btn = this.querySelector('button[type="submit"]');
-            var email = emailInput ? emailInput.value.trim() : '';
-            if (!email) return;
-            btn.disabled = true;
-            btn.textContent = 'Saving…';
+        // Shared email format check
+        function isValidEmail(email) {
+            return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+        }
+
+        // Shared waitlist join - posts to backend, returns { ok, error }
+        async function joinWaitlist(email) {
             try {
                 var res = await fetch(API_BASE + '/api/v1/waitlist/join', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ email: email })
                 });
-                if (res.ok) {
-                    this.style.display = 'none';
-                    document.getElementById('notify-success').style.display = 'block';
-                } else {
-                    btn.disabled = false;
-                    btn.textContent = 'Notify Me';
-                    alert('Something went wrong — please try again.');
-                }
+                return { ok: res.ok, error: res.ok ? null : 'server' };
             } catch (err) {
+                return { ok: false, error: 'network' };
+            }
+        }
+
+        // Inline notify form (secondary path at page bottom)
+        document.getElementById('notify-form').addEventListener('submit', async function (e) {
+            e.preventDefault();
+            var emailInput = this.querySelector('input[type="email"]');
+            var btn = this.querySelector('button[type="submit"]');
+            var email = emailInput ? emailInput.value.trim() : '';
+            if (!email || !isValidEmail(email)) { emailInput.reportValidity(); return; }
+            btn.disabled = true;
+            btn.textContent = 'Saving…';
+            var r = await joinWaitlist(email);
+            if (r.ok) {
+                this.style.display = 'none';
+                document.getElementById('notify-success').style.display = 'block';
+            } else {
                 btn.disabled = false;
                 btn.textContent = 'Notify Me';
-                alert('Could not connect — please try again.');
+                alert(r.error === 'network' ? 'Could not connect. Please try again.' : 'Something went wrong. Please try again.');
             }
         });
 
-        // Store badge scroll to waitlist
-        function scrollToWaitlist(e) {
-            e.preventDefault();
-            var section = document.getElementById('notify-form').closest('section');
-            section.scrollIntoView({ behavior: 'smooth' });
-            setTimeout(function () {
-                var inner = section.querySelector('.notify-inner');
-                if (inner) {
-                    inner.classList.add('notify-highlight');
-                    setTimeout(function () { inner.classList.remove('notify-highlight'); }, 1800);
-                }
-            }, 600);
+        // ── Waitlist modal (opened from the store badges) ──
+        var wlModal = document.getElementById('waitlist-modal');
+        var wlLastFocus = null;
+
+        function openWaitlist(e, store) {
+            if (e && e.preventDefault) e.preventDefault();
+            wlLastFocus = document.activeElement;
+            // Tailor copy to the store the user tapped
+            var label = document.getElementById('wl-store-label');
+            var name = document.getElementById('wl-store-name');
+            if (store === 'App Store') { label.textContent = 'iOS · Summer 2026'; name.textContent = 'the App Store'; }
+            else if (store === 'Google Play') { label.textContent = 'Android · Summer 2026'; name.textContent = 'Google Play'; }
+            else { label.textContent = 'Summer 2026'; name.textContent = 'iOS and Android'; }
+            // Reset to a clean form state every time it opens
+            var form = document.getElementById('waitlist-form');
+            form.style.display = '';
+            form.reset();
+            var emailInput = document.getElementById('wl-email');
+            emailInput.value = '';
+            var submitBtn = form.querySelector('button[type="submit"]');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Notify me';
+            document.getElementById('wl-success').setAttribute('hidden', '');
+            var err = document.getElementById('wl-error');
+            err.setAttribute('hidden', ''); err.textContent = '';
+            wlModal.removeAttribute('hidden');
+            requestAnimationFrame(function () {
+                wlModal.classList.add('open');
+                document.getElementById('wl-email').focus();
+            });
+            document.body.style.overflow = 'hidden';
         }
 
-        // FAQ toggle
+        function closeWaitlist() {
+            wlModal.classList.remove('open');
+            document.body.style.overflow = '';
+            var done = false;
+            var finish = function () {
+                if (done) return;
+                done = true;
+                wlModal.setAttribute('hidden', '');
+                wlModal.removeEventListener('transitionend', onEnd);
+            };
+            var onEnd = function (e) { if (e.target === wlModal) finish(); };
+            wlModal.addEventListener('transitionend', onEnd);
+            setTimeout(finish, 400); // fallback if transitionend never fires
+            if (wlLastFocus && wlLastFocus.focus) wlLastFocus.focus();
+        }
+
+        function modalIsOpen() { return !wlModal.hasAttribute('hidden'); }
+
+        // Close on backdrop click; Escape closes; Tab is trapped inside the dialog
+        wlModal.addEventListener('click', function (e) { if (e.target === wlModal) closeWaitlist(); });
+        document.addEventListener('keydown', function (e) {
+            if (!modalIsOpen()) return;
+            if (e.key === 'Escape') { closeWaitlist(); return; }
+            if (e.key !== 'Tab') return;
+            var focusables = wlModal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+            var visible = Array.prototype.filter.call(focusables, function (el) { return el.offsetParent !== null && !el.disabled; });
+            if (!visible.length) return;
+            var first = visible[0], last = visible[visible.length - 1];
+            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        });
+
+        document.getElementById('waitlist-form').addEventListener('submit', async function (e) {
+            e.preventDefault();
+            var input = document.getElementById('wl-email');
+            var err = document.getElementById('wl-error');
+            var btn = this.querySelector('button[type="submit"]');
+            var email = input.value.trim();
+            if (!email || !isValidEmail(email)) {
+                err.textContent = 'Please enter a valid email address.';
+                err.removeAttribute('hidden');
+                input.focus();
+                return;
+            }
+            err.setAttribute('hidden', '');
+            btn.disabled = true;
+            btn.textContent = 'Saving…';
+            var r = await joinWaitlist(email);
+            btn.disabled = false;
+            btn.textContent = 'Notify me';
+            if (r.ok) {
+                this.style.display = 'none';
+                document.getElementById('wl-success').removeAttribute('hidden');
+            } else {
+                err.textContent = r.error === 'network'
+                    ? 'Could not connect. Please check your connection and try again.'
+                    : 'Something went wrong. Please try again.';
+                err.removeAttribute('hidden');
+            }
+        });
+
+        // Cookie consent is handled by the shared /js/cookie-consent.js?v=1 (loaded on every page).
+
+        // FAQ toggle (single-open accordion, with ARIA state)
         function toggleFaq(btn) {
             var item = btn.parentElement;
             var isOpen = item.classList.contains('open');
-            document.querySelectorAll('.faq-item.open').forEach(function (el) { el.classList.remove('open'); });
-            if (!isOpen) item.classList.add('open');
+            document.querySelectorAll('.faq-item.open').forEach(function (el) {
+                el.classList.remove('open');
+                var q = el.querySelector('.faq-question');
+                if (q) q.setAttribute('aria-expanded', 'false');
+            });
+            if (!isOpen) {
+                item.classList.add('open');
+                btn.setAttribute('aria-expanded', 'true');
+            }
         }
     </script>
+    <script src="/js/cookie-consent.js?v=1"></script>
     <script type="module" src="js/main.js"></script>
 </body>
 

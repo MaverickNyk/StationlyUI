@@ -29,6 +29,13 @@ out/
 # VS Code
 .vscode/
 
+# Claude Code (local skills, settings, caches)
+.claude/
+
+# Deploy artifacts / dumps
+*.tar.gz
+logdump.txt
+
 # Node / Web
 node_modules/
 dist/
