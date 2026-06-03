@@ -40,13 +40,16 @@ object GlobalBoardProcessor {
 
     private fun groupByPlatformSorted(predictions: List<PredictionDisplay>): List<Map.Entry<String, List<PredictionDisplay>>> {
         val sorted = StationlyFormatters.sortPredictions(predictions)
+        // Order platform groups by the earliest `targetEpochMs` in the
+        // group — the same key the row-level sort uses. Was previously
+        // parsing the first row's eta STRING, which got fragile once the
+        // per-platform bump rule started emitting labels that don't
+        // round-trip cleanly back to minutes ("3 min" might be a bumped
+        // 90-second train). Falls back to MAX_VALUE for groups whose
+        // rows all have null targets so they sink to the bottom rather
+        // than masquerading as 0-min.
         return sorted.groupBy { it.platform }.entries.sortedBy { (_, platformPreds) ->
-            val firstEta = platformPreds.firstOrNull()?.eta?.lowercase()?.trim() ?: ""
-            when {
-                firstEta.contains("due") -> 0
-                firstEta.contains("min") -> firstEta.replace(" min", "").toIntOrNull() ?: 999
-                else -> firstEta.toIntOrNull() ?: 999
-            }
+            platformPreds.mapNotNull { it.targetEpochMs }.minOrNull() ?: Long.MAX_VALUE
         }
     }
 
@@ -128,11 +131,12 @@ object GlobalBoardProcessor {
 
         val platformGroups = groupByPlatformSorted(predictions)
         platformGroups.forEach { (platform, platformPreds) ->
-            val stopLetter = platformPreds.firstOrNull()?.stopLetter
-            val platformLabel = if (!stopLetter.isNullOrBlank()) "Stop $stopLetter" else platform
-            
-            // Add Platform Header
-            rows.add(LegacyRow.Header(platformLabel))
+            // The platform label is fully backend-owned (formatPlatform /
+            // getPresentablePlatform): "Stop C" for assigned buses, "" for
+            // unassigned, "Platform 8" / "Platform not assigned" for rail.
+            // Display it verbatim — no client-side relabel. A blank value is
+            // rendered as just the line prefix by platformHeaderText().
+            rows.add(LegacyRow.Header(platform))
             
             // Take up to 3 predictions per platform
             val platformTop3 = platformPreds.take(3)

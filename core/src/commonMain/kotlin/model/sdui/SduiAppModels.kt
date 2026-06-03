@@ -234,7 +234,17 @@ data class SduiDropdownOption(
     val iconUrl: String? = null,
     val secondaryLabel: String? = null,
     val color: String? = null,
-    val tags: List<String>? = null  // TfL line brand colors (hex) for the lines serving this station
+    val tags: List<String>? = null,  // TfL line brand colors (hex) for the lines serving this station
+    // Mode-only fields — populated when /modes is the data source.
+    // tintHex backs the widget + dream station-row roundel tint when no
+    // cached icon is present yet. iconVersion is used by ModeIconCache
+    // to invalidate stale icons when the backend bumps its asset bundle.
+    val tintHex: String? = null,
+    val iconVersion: String? = null,
+    val upcomingStations: List<String>? = null,
+    val directionName: String? = null,
+    val towards: String? = null,
+    val destinations: List<SduiDropdownOption>? = null,
 )
 
 @Serializable
@@ -247,12 +257,25 @@ data class SubscribedStation(
 )
 
 @Serializable
+data class DeviceInfo(
+    val platform: String? = null,    // "android" | "ios" | "web"
+    val osVersion: String? = null,   // e.g. "Android 14 (SDK 34)"
+    val model: String? = null,       // e.g. "Google Pixel 8"
+    val appVersion: String? = null   // e.g. "1.0-staging"
+)
+
+@Serializable
 data class SyncProfileRequest(
     val uid: String,
     val email: String,
     val displayName: String? = null,
     val photoURL: String? = null,
-    val signInProvider: String? = null
+    val signInProvider: String? = null,
+    // Stable per-install device id — lets the backend track active device
+    // sessions so subscription counts only release on the last device's logout.
+    val deviceId: String? = null,
+    // Optional device metadata stored alongside the session for that deviceId.
+    val deviceInfo: DeviceInfo? = null
 )
 
 @Serializable

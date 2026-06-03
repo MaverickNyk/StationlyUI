@@ -6,6 +6,7 @@ import com.stationly.core.util.GlobalBoardProcessor
 import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.datetime.Clock
 
 /**
  * Sync Predictions Use Case
@@ -24,9 +25,19 @@ class SyncPredictionsUseCase(
      * @return Formatted predictions for display
      */
     suspend fun execute(payload: FcmPayload, selection: UserSelection): List<PredictionDisplay> {
+        // ONE timestamp for this whole sync. We stamp the board's "last
+        // backend update" time the moment the payload lands — BEFORE we know
+        // whether it even contains rows for this line/direction — so a 0-row
+        // update still resets the "X ago" timer. The same value is later
+        // handed to savePredictions, so the sync stamp and the prediction
+        // rows agree to the millisecond and all three surfaces (home, widget,
+        // dream) read one consistent time via getLastUpdatedTimestamp.
+        val syncMs = Clock.System.now().toEpochMilliseconds()
+        sqlStorage.saveSyncTimestamp(selection.station, selection.line, syncMs)
+
         // 1. Extract line data (Loose matching for casing)
         val lineIdLower = selection.line.lowercase()
-        val lineData = payload.lines[lineIdLower] 
+        val lineData = payload.lines[lineIdLower]
             ?: payload.lines.entries.find { it.key.lowercase() == lineIdLower }?.value
             ?: return emptyList()
         
@@ -37,19 +48,19 @@ class SyncPredictionsUseCase(
             ?: lineData.dirs.entries.find { it.key.lowercase() == dirIdLower }?.value
         
         val rawPreds = dirData?.preds ?: emptyList()
-        
-        // 3. Determine a valid platform to fallback to if "Unknown" is encountered
-        val knownPlatform = rawPreds.firstOrNull { 
-            !it.platform.equals("Unknown", ignoreCase = true) && it.platform.isNotBlank() 
-        }?.platform ?: "Unknown"
 
-        // 4. Format predictions for display. Capture the absolute arrival
+        // 3. Format predictions for display. Capture the absolute arrival
         //    time (parsed from the FCM's ISO timestamp) alongside the
         //    formatted string so downstream consumers can re-derive
         //    minutes-remaining on their own clock between FCM pushes.
         val formattedPredictions = rawPreds.map { pred ->
             val etaString = StationlyFormatters.formatETA(pred.eta)
-            val displayPlatform = if (pred.platform.equals("Unknown", ignoreCase = true) || pred.platform.isBlank()) knownPlatform else pred.platform
+            // Platform is backend-owned (formatPlatform / getPresentablePlatform):
+            // "Platform 8", "Platform not assigned", "Stop C", or "" for an
+            // unassigned bus stop. Trust it verbatim — do NOT fill a blank from a
+            // sibling prediction (that masked genuinely-unassigned stops). A stray
+            // legacy "Unknown" is treated as unassigned ("").
+            val displayPlatform = if (pred.platform.equals("Unknown", ignoreCase = true)) "" else pred.platform
 
             PredictionDisplay(
                 destination = StationlyFormatters.formatDestination(pred.displayName),
@@ -59,7 +70,16 @@ class SyncPredictionsUseCase(
                 stopLetter = pred.stopLetter,
                 targetEpochMs = StationlyFormatters.parseTargetEpochMs(pred.eta),
             )
-        }.distinctBy { "${it.destination}_${it.platform}_${it.eta}" }
+        // Dedupe on absolute arrival time, NOT the formatted eta string.
+        // The earlier string-based dedup ("dest_platform_eta") silently
+        // dropped a legitimate second train when both rounded to the same
+        // minute bucket — e.g. two Cockfosters trains 40s apart, both
+        // formatted "1 min", collapsed to one. The per-platform bump rule
+        // in PredictionTicker.tickPredictions now handles the visible
+        // duplicate problem at render time without losing the row from
+        // SQL. Dedup by exact target catches genuine TfL duplicates
+        // (same train returned twice in one /arrivals payload).
+        }.distinctBy { "${it.destination}_${it.platform}_${it.targetEpochMs ?: it.eta}" }
         
         // 5. Use unified processor for sorting and platform grouping.
         //    Cap at 8 per platform (not 3) so the in-memory tick layer
@@ -72,8 +92,9 @@ class SyncPredictionsUseCase(
             perPlatformCap = 8,
         )
 
-        // 6. Save to SQL storage
-        sqlStorage.savePredictions(selection.station, selection.line, processedPredictions)
+        // 6. Save to SQL storage — same `syncMs` so the row timestamps match
+        //    the sync stamp recorded above.
+        sqlStorage.savePredictions(selection.station, selection.line, processedPredictions, syncMs)
 
         return processedPredictions
     }

@@ -1,11 +1,40 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-GB">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Terms of Service — Stationly</title>
-    <meta name="description" content="Stationly Terms of Service">
+    <title>Terms of Service | Stationly</title>
+    <meta name="description" content="The terms for using Stationly, the live London TfL departure board app and home screen widget for iOS and Android.">
+    <link rel="canonical" href="https://stationly.co.uk/terms/">
+    <meta name="robots" content="index, follow">
+    <meta name="theme-color" content="#080D1A">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Stationly">
+    <meta property="og:locale" content="en_GB">
+    <meta property="og:url" content="https://stationly.co.uk/terms/">
+    <meta property="og:title" content="Terms of Service | Stationly">
+    <meta property="og:description" content="The terms for using Stationly, the live London TfL departure board app and widget.">
+    <meta property="og:image" content="https://stationly.co.uk/og-image.png">
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:image" content="https://stationly.co.uk/og-image.png">
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebPage",
+      "name": "Terms of Service",
+      "url": "https://stationly.co.uk/terms/",
+      "inLanguage": "en-GB",
+      "isPartOf": { "@type": "WebSite", "name": "Stationly", "url": "https://stationly.co.uk/" },
+      "breadcrumb": {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://stationly.co.uk/" },
+          { "@type": "ListItem", "position": 2, "name": "Terms of Service", "item": "https://stationly.co.uk/terms/" }
+        ]
+      }
+    }
+    </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="../css/variables.css">
     <link rel="stylesheet" href="../css/base.css">
@@ -81,11 +110,11 @@
                 <a href="/#support" class="nav-btn">Support</a>
                 <a href="/privacy/" class="nav-btn">Privacy</a>
             </nav>
-            <div class="hamburger" onclick="this.closest('.header').classList.toggle('nav-open')">
+            <button class="hamburger" type="button" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="mobile-menu" onclick="var h=this.closest('.header');this.setAttribute('aria-expanded', h.classList.toggle('nav-open'));">
                 <span></span><span></span><span></span>
-            </div>
+            </button>
         </div>
-        <div class="mobile-menu">
+        <div class="mobile-menu" id="mobile-menu">
             <a href="/" class="nav-btn">Home</a>
             <a href="/#support" class="nav-btn">Support</a>
             <a href="/privacy/" class="nav-btn">Privacy</a>
@@ -351,23 +380,25 @@
 
     <footer class="footer">
         <div class="container">
-            <div style="width: 100%; height: 1px; background: rgba(255,255,255,0.1); margin-bottom: 2rem;"></div>
+            <div style="height: 1px; background: rgba(255,255,255,0.07); margin-bottom: 1.75rem;"></div>
             <div class="footer-content">
                 <div class="footer-brand">
-                    <div style="font-weight: 700; font-size: 1.2rem; color: white;">Stationly</div>
-                    <div style="opacity: 0.6; margin-top: 0.5rem;">Powered by TfL Open Data.<br>Contains OS data © Crown copyright 2026.</div>
+                    <div style="font-weight: 800; font-size: 1.2rem; color: white; letter-spacing: -0.02em;">Stationly</div>
+                    <div style="opacity: 0.45; margin-top: 0.4rem; font-size: 0.82rem; line-height: 1.6;">Powered by TfL Open Data.<br>Contains OS data © Crown copyright 2026.</div>
                 </div>
                 <div class="footer-links">
                     <a href="/#support">Contact Us</a>
                     <a href="/privacy/">Privacy Policy</a>
                     <a href="/terms/">Terms of Service</a>
+                    <a href="#" onclick="manageCookies(event)">Cookie settings</a>
                 </div>
             </div>
-            <div style="width: 100%; margin-top: 2rem; text-align: center; opacity: 0.5;">
+            <div style="margin-top: 1.75rem; text-align: center; opacity: 0.3; font-size: 0.82rem;">
                 &copy; 2026 Stationly Limited. All rights reserved.
             </div>
         </div>
     </footer>
 
+    <script src="/js/cookie-consent.js?v=1"></script>
 </body>
 </html>

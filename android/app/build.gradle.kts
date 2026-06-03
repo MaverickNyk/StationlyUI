@@ -77,7 +77,7 @@ dependencies {
 
     // AndroidX Core
     implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation("androidx.activity:activity-compose:1.8.1")
 
     // Material3 Theme (for XML themes)
@@ -99,9 +99,15 @@ dependencies {
     // APK update. See ui/theme/Type.kt for the FontFamily declaration.
     implementation("androidx.compose.ui:ui-text-google-fonts")
 
-    // Navigation
-    implementation("androidx.navigation:navigation-compose:2.7.5")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
+    // Navigation — must match Compose 1.7 (compose-bom 2024.09.00). nav 2.7.x
+    // targets Compose 1.6 and its screen transitions break on 1.7's AnimatedContent
+    // rewrite: fast navigate+pop (e.g. open/close Profile repeatedly) leaves the
+    // fade transition stuck mid-flight, so destinations overlap (ghosted Profile
+    // behind Summary) and eventually nothing draws → blank screen. 2.8.x is the
+    // Compose-1.7-aligned line and fixes this; it also brings lifecycle 2.8.x in
+    // transitively, so the viewmodel-compose pin below is lifted to match.
+    implementation("androidx.navigation:navigation-compose:2.8.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
 
     // Splash Screen
     implementation("androidx.core:core-splashscreen:1.0.1")

@@ -68,19 +68,32 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun loadAboutLayout() {
+        // Instant first paint from the last good About layout (stale-while-
+        // revalidate). If absent, ProfileScreen still shows its hardcoded
+        // fallback; the network refresh below replaces whatever is shown.
+        com.stationly.mobile.util.SduiCache.read<com.stationly.core.model.sdui.SduiAppScreen>(
+            context, "about_layout"
+        )?.let { _aboutComponents.value = it.components }
         viewModelScope.launch {
             try {
                 val screen = sduiService.getAboutLayout()
                 _aboutComponents.value = screen.components
+                com.stationly.mobile.util.SduiCache.write(context, "about_layout", screen)
             } catch (_: Exception) {
-                // Keep empty — ProfileScreen falls back to hardcoded content
+                // Keep whatever's painted (cache or hardcoded fallback).
             }
         }
     }
 
     private suspend fun fetchHomeConfig() {
+        // Instant paint from the on-disk store (written by SummaryViewModel),
+        // then refresh from the backend.
+        com.stationly.mobile.util.HomeConfigStore.read(context)
+            .takeIf { it.isNotEmpty() }?.let { _homeConfig.value = it }
         try {
-            _homeConfig.value = sduiService.getHomeConfig().strings
+            val config = sduiService.getHomeConfig().strings
+            _homeConfig.value = config
+            com.stationly.mobile.util.HomeConfigStore.write(context, config)
         } catch (_: Exception) {
             // Falls back to hardcoded strings already present in ProfileScreen
         }
@@ -140,7 +153,9 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                         displayName   = trimmed,
                         photoURL      = user.photoUrl?.toString(),
                         signInProvider = user.providerData.find { it.providerId != "firebase" }?.providerId
-                            ?: "email"
+                            ?: "email",
+                        deviceId      = com.stationly.mobile.service.DeviceIdProvider.get(context),
+                        deviceInfo    = com.stationly.mobile.service.DeviceIdProvider.info(context)
                     )
                 )
                 onComplete(Result.success(trimmed))

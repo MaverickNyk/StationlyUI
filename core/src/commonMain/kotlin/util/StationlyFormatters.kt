@@ -22,6 +22,115 @@ object StationlyFormatters {
         return " $text"
     }
 
+    /**
+     * Format the line prefix shown alongside the station name on the
+     * widget + fullscreen-dream station strip.
+     *
+     *   Bus 39           ← bus, line is the route number (uppercased for N30 etc.)
+     *   DLR              ← DLR
+     *   Elizabeth        ← Elizabeth line
+     *   Piccadilly       ← Tube / Overground / Tram — capitalised line name
+     *
+     * Templates can be overridden via homeConfig under `station.label.<mode>`
+     * (with `{line}` placeholder, substituted with the formatted line name).
+     * Bus line ids are uppercased before substitution. Falls back to
+     * hardcoded defaults when the homeConfig is empty (offline / first
+     * launch) so the strip never renders blank.
+     *
+     * Empty mode/line returns an empty string so callers can fall back
+     * gracefully to just the station name.
+     */
+    fun formatLinePrefix(
+        mode: String?,
+        line: String?,
+        strings: Map<String, String> = emptyMap(),
+    ): String {
+        val m = mode?.lowercase()?.trim().orEmpty()
+        val l = line?.trim().orEmpty()
+        if (m.isEmpty() && l.isEmpty()) return ""
+
+        // Bus line ids are uppercased ("n30" → "N30"); everything else
+        // gets the line name formatted (e.g. "elizabeth-line" → "Elizabeth Line").
+        val formattedLine = if (m == "bus") l.uppercase()
+        else l.split('-')
+            .filter { it.isNotEmpty() }
+            .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+
+        // Look up the per-mode template first, then the global default.
+        // Hardcoded fallbacks mirror the original switch behaviour so the
+        // formatter still works without any SDUI data loaded.
+        val template = strings["station.label.$m"]
+            ?: strings["station.label.default"]
+            ?: defaultTemplateForMode(m)
+        return template.replace("{line}", formattedLine).trim()
+    }
+
+    /**
+     * Compose the platform-header text shown on every surface (home board,
+     * widget, dream): "<linePrefix>: <platform>" — e.g. "Piccadilly: Platform 1".
+     *
+     * When [platform] is blank — which the backend now emits for bus arrivals
+     * with no assigned stop (instead of a confusing "Stop not assigned") — we
+     * keep the row but show just the line prefix, dropping the ": " suffix.
+     * The platform string itself is fully backend-owned (formatPlatform /
+     * getPresentablePlatform); the client never derives it.
+     */
+    fun platformHeaderText(linePrefix: String, platform: String): String = when {
+        platform.isBlank()      -> linePrefix
+        linePrefix.isEmpty()    -> platform
+        else                    -> "$linePrefix: $platform"
+    }
+
+    private fun defaultTemplateForMode(mode: String): String = when (mode) {
+        "bus" -> "Bus {line}"
+        "dlr" -> "DLR"
+        "elizabeth", "elizabeth-line" -> "Elizabeth"
+        else -> "{line}"
+    }
+
+    /**
+     * Format "{Line}: {Station}" — used on the widget + fullscreen-dream
+     * station strip. Falls back to the station name alone when the prefix
+     * can't be derived (e.g. no selection yet).
+     */
+    fun formatStationLabel(
+        mode: String?,
+        line: String?,
+        stationName: String,
+        strings: Map<String, String> = emptyMap(),
+    ): String {
+        val prefix = formatLinePrefix(mode, line, strings)
+        return if (prefix.isEmpty()) stationName else "$prefix: $stationName"
+    }
+
+    /**
+     * Human-readable mode name — used by the line-status dialog and any
+     * other surface that needs to display a mode label. Reads from
+     * `station.mode.<mode>` in homeConfig, with sensible defaults.
+     */
+    fun formatModeName(
+        mode: String?,
+        strings: Map<String, String> = emptyMap(),
+    ): String {
+        val m = mode?.lowercase()?.trim().orEmpty()
+        if (m.isEmpty()) return ""
+        strings["station.mode.$m"]?.let { return it }
+        return when (m) {
+            "tube"                          -> "Tube"
+            "overground"                    -> "Overground"
+            "dlr"                           -> "DLR"
+            "elizabeth", "elizabeth-line"   -> "Elizabeth line"
+            "tram"                          -> "Tram"
+            "national-rail", "national_rail"-> "National Rail"
+            "bus"                           -> "Bus"
+            "river-bus", "river_bus"        -> "River Bus"
+            "cable-car", "cable_car"        -> "Cable Car"
+            else -> m.split('-', '_')
+                .filter { it.isNotEmpty() }
+                .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+        }
+    }
+
     fun formatDestination(name: String): String {
         val cleanName = name.replace(" Underground Station", "")
             .replace(" DLR Station", "")
@@ -57,16 +166,29 @@ object StationlyFormatters {
         }
     }
 
+    /**
+     * Convert an ISO arrival timestamp into a board label using the same
+     * rules TfL's own countdown indicators use:
+     *
+     *   secs < 60s   → "Due"           // train is arriving / at the platform
+     *   secs ≥ 60s   → "${secs / 60} min"     // floor (truncate, NOT round)
+     *
+     * Floor rounding matches what riders see on the TfL platform signs and
+     * tfl.gov.uk: a train 90s away reads "1 min", a train 119s away reads
+     * "1 min", a train 120s away reads "2 min". TfL deliberately
+     * under-promises so the rider gets to the platform on time.
+     *
+     * Past-target seconds also land in the "Due" bucket; callers that want
+     * to drop departed trains do so upstream (see PredictionTicker).
+     */
     fun formatETA(etaIso: String): String {
         return try {
             val etaTime = Instant.parse(etaIso)
             val now = Clock.System.now()
-            val duration = etaTime - now
-
+            val secs = (etaTime - now).inWholeSeconds
             when {
-                duration.inWholeSeconds < 30 -> "Due"
-                duration.inWholeSeconds < 60 -> "1 min"
-                else -> "${(duration.inWholeSeconds + 30) / 60} min"
+                secs < 60 -> "Due"
+                else      -> "${secs / 60} min"
             }
         } catch (e: Exception) {
             "Due"
@@ -88,10 +210,14 @@ object StationlyFormatters {
 
     /**
      * Re-format a `PredictionDisplay`'s ETA given the *current* wall
-     * clock. Used by the per-minute ticker on the widget / dot-matrix
-     * surfaces — preserves the same "Due / 1 min / N min" rounding the
-     * receive-time formatter uses, so a row labelled "5 min" at FCM
-     * receipt ticks cleanly down to "4 min", "3 min", ..., "Due".
+     * clock. Used by the per-minute ticker on every Android surface
+     * (home, dream, widget) — uses the same TfL-style floor rounding
+     * as [formatETA] so a row labelled "5 min" at FCM receipt ticks
+     * cleanly down to "4 min", "3 min", ..., "Due" matching what the
+     * rider sees on the platform sign.
+     *
+     *   secs < 60s   → "Due"
+     *   secs ≥ 60s   → "${secs / 60} min"     // floor
      *
      * If targetEpochMs is null (FCM ISO timestamp failed to parse),
      * returns [staleFallback] verbatim — typically the row's
@@ -100,21 +226,34 @@ object StationlyFormatters {
      */
     fun formatMinutesRemaining(targetEpochMs: Long?, nowMs: Long, staleFallback: String): String {
         if (targetEpochMs == null) return staleFallback
-        val secondsRemaining = (targetEpochMs - nowMs) / 1000
+        val secs = (targetEpochMs - nowMs) / 1000
         return when {
-            secondsRemaining < 30 -> "Due"
-            secondsRemaining < 60 -> "1 min"
-            else -> "${(secondsRemaining + 30) / 60} min"
+            secs < 60 -> "Due"
+            else      -> "${secs / 60} min"
         }
     }
 
+    /**
+     * Sort predictions by actual arrival time. Falls back to parsing the
+     * eta string when `targetEpochMs` is null (defensive: pre-formatted
+     * SDUI rows, malformed FCM timestamps).
+     *
+     * Was previously string-only — parsing "1 min" / "Due" back to a sort
+     * key. That broke once the per-platform bump rule started lying about
+     * minute labels: a bumped "3 min" row would sort after a real "2 min"
+     * row from a different platform even though its train is actually
+     * closer. Sorting by absolute target keeps the cross-platform hero
+     * picker honest regardless of what the row label says.
+     */
     fun sortPredictions(predictions: List<com.stationly.core.model.PredictionDisplay>): List<com.stationly.core.model.PredictionDisplay> {
-        return predictions.sortedWith(compareBy { 
-            val raw = it.eta.lowercase().trim()
-            when {
-                raw.contains("due") -> 0
-                raw.contains("min") -> raw.replace(" min", "").toIntOrNull() ?: 999
-                else -> raw.toIntOrNull() ?: 999
+        return predictions.sortedWith(compareBy {
+            it.targetEpochMs ?: run {
+                val raw = it.eta.lowercase().trim()
+                when {
+                    raw.contains("due") -> 0L
+                    raw.contains("min") -> (raw.replace(" min", "").toLongOrNull() ?: 999L) * 60_000L
+                    else -> (raw.toLongOrNull() ?: 999L) * 60_000L
+                }
             }
         })
     }

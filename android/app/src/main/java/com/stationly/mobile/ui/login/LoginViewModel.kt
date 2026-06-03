@@ -75,8 +75,23 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadLayout(type: String) {
+        val cacheKey = "auth_layout_$type"
+        // Instant first paint from the last good layout (stale-while-revalidate);
+        // the network refresh below always runs and replaces it. Auth is the
+        // first screen for logged-out users, so this kills the cold-launch blank.
+        val cached = com.stationly.mobile.util.SduiCache.read<com.stationly.core.model.sdui.SduiAppScreen>(
+            getApplication(), cacheKey
+        )
+        _uiState.value = _uiState.value.copy(
+            layout = cached ?: _uiState.value.layout,
+            // Only show the full-screen loader when we have nothing to paint yet.
+            isLoading = cached == null,
+            // We have content to show — clear any stale offline state.
+            isBackendOffline = if (cached != null) false else _uiState.value.isBackendOffline,
+            error = null,
+            inputs = emptyMap()
+        )
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null, inputs = emptyMap())
             try {
                 val layout = when (type) {
                     "login"            -> apiService.getLoginLayout()
@@ -85,13 +100,20 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                     else               -> apiService.getLoginLayout()
                 }
                 _uiState.value = _uiState.value.copy(layout = layout, isLoading = false)
+                com.stationly.mobile.util.SduiCache.write(getApplication(), cacheKey, layout)
             } catch (e: Exception) {
                 Log.e("LoginViewModel", "Failed to load $type screen.", e)
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    isBackendOffline = true,
-                    error = com.stationly.mobile.util.BackendErrorUtil.getFriendlyMessage(e)
-                )
+                // If we already painted a cached layout, stay on it silently;
+                // only surface the offline error when there's nothing to show.
+                if (_uiState.value.layout == null) {
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        isBackendOffline = true,
+                        error = com.stationly.mobile.util.BackendErrorUtil.getFriendlyMessage(e)
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(isLoading = false)
+                }
             }
         }
     }
@@ -284,7 +306,9 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                             email       = result.user.email ?: email,
                             displayName = result.user.displayName ?: displayName.ifBlank { null },
                             photoURL    = result.user.photoUrl?.toString(),
-                            provider    = provider
+                            provider    = provider,
+                            deviceId    = com.stationly.mobile.service.DeviceIdProvider.get(getApplication()),
+                            deviceInfo  = com.stationly.mobile.service.DeviceIdProvider.info(getApplication())
                         )
                     }.isSuccess
                     if (!syncOk) {
@@ -536,7 +560,9 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                     email       = user.email ?: "",
                     displayName = user.displayName,
                     photoURL    = user.photoUrl?.toString(),
-                    provider    = provider
+                    provider    = provider,
+                    deviceId    = com.stationly.mobile.service.DeviceIdProvider.get(getApplication()),
+                    deviceInfo  = com.stationly.mobile.service.DeviceIdProvider.info(getApplication())
                 )
                 stationLifecycleUseCase.cleanupAll()
                 val primary = stations.firstOrNull()
@@ -553,12 +579,32 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                         ),
                         isFirstTime = true
                     )
+                    // Fan out to every surface so the dream's chronometer
+                    // resets too (setupStation already updates the home
+                    // VM via SharedPrefs ping + the widget via
+                    // widgetManager.updateWidget, but skips the dream
+                    // broadcast).
+                    com.stationly.mobile.util.FreshDataNotifier.notify(
+                        getApplication(),
+                        stationId = primary.id,
+                        lineId = primary.line,
+                    )
                 } else {
                     // No saved stations — redraw widget so it exits the login placeholder
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                         com.stationly.mobile.widget.DepartureWidgetProvider.updateFromStorage(getApplication())
                     }
                 }
+                // Register this device's FCM token under the just-signed-in
+                // account NOW. FcmTokenRegistrar otherwise only runs on app
+                // launch and token rotation, so logging in within an already-
+                // running process left the token unregistered for the new uid —
+                // which meant every `user_sync` push (incl. the account-deleted
+                // force-logout) reached 0 devices. This is what made cross-device
+                // logout fall back to the foreground/lock-unlock path instead of
+                // being instant.
+                com.stationly.mobile.service.FcmTokenRegistrar.ensureRegistered(getApplication())
+
                 _uiState.value = _uiState.value.copy(isAuthenticating = false)
                 onAuthSuccess()
             } catch (e: Exception) {

@@ -41,6 +41,21 @@ CREATE TABLE LineStatusEntity (
     PRIMARY KEY (mode, line)
 );
 
+-- Last time a backend payload (FCM push or REST refresh) was PROCESSED for
+-- this (station, line) board, in epoch millis. Deliberately separate from
+-- PredictionEntity.timestamp: that timestamp only exists if a row was
+-- written, so a 0-row update (line quiet, service ended, empty direction)
+-- would leave no record of "we just heard from the backend". This table is
+-- upserted on EVERY sync regardless of row count, so the "X ago" timer can
+-- honestly mean "time since the last backend update" even when that update
+-- carried zero departures. One row per board.
+CREATE TABLE SyncStatusEntity (
+    stationId TEXT NOT NULL,
+    lineId TEXT NOT NULL,
+    lastSyncMs INTEGER NOT NULL,
+    PRIMARY KEY (stationId, lineId)
+);
+
 -- Queries
 insertSelection:
 INSERT INTO UserSelectionEntity(mode, line, station, stationName, direction, destinations, destinationIds)
@@ -80,3 +95,13 @@ SELECT * FROM LineStatusEntity WHERE mode = ? AND line = ?;
 
 clearLineStatuses:
 DELETE FROM LineStatusEntity;
+
+upsertSyncStatus:
+INSERT OR REPLACE INTO SyncStatusEntity(stationId, lineId, lastSyncMs)
+VALUES (?, ?, ?);
+
+getSyncStatus:
+SELECT lastSyncMs FROM SyncStatusEntity WHERE stationId = ? AND lineId = ?;
+
+clearSyncStatuses:
+DELETE FROM SyncStatusEntity;

@@ -12,6 +12,7 @@ import com.google.android.gms.tasks.Task
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -122,14 +123,49 @@ class FirebaseAuthManager(private val context: Context) {
     suspend fun logout() = withContext(NonCancellable) {
         val uid = auth.currentUser?.uid
 
-        // 1. Fire-and-forget backend notify. Doesn't block local cleanup.
+        // 1. Notify backend BEFORE the local sign-out — and await it (capped).
+        //    /user/logout is gated by validateUserToken, and the request's
+        //    bearer token is read from FirebaseAuth.currentUser, which
+        //    signOut() nulls. Firing this fire-and-forget (racing signOut, as
+        //    it did before) meant the request usually went out tokenless → 401,
+        //    so the server-side station-count decrement AND loggedIn=false
+        //    never ran. We still cap it with a timeout so a slow/broken backend
+        //    can't strand the user "half logged in".
         if (uid != null) {
-            backgroundScope.launch {
-                try {
-                    com.stationly.core.service.SduiApiServiceFactory.create().logOut(uid)
-                    Log.d(TAG, "Backend logout notify ok uid=${AuthLog.maskPii(uid)}")
-                } catch (e: Exception) {
-                    AuthLog.logoutBackendFailed(e.message ?: e::class.simpleName.orEmpty())
+            val deviceId = DeviceIdProvider.get(context)
+            // Run BOTH auth-gated backend calls CONCURRENTLY before signOut (each
+            // needs the still-valid token, which signOut() nulls). They're
+            // independent, so racing them keeps worst-case sign-out latency at
+            // ~4s instead of 4s+3s sequential. Both are best-effort / capped so a
+            // slow or unreachable backend can't strand the user "half logged in".
+            kotlinx.coroutines.coroutineScope {
+                // a) /user/logout — ends this device's session server-side so the
+                //    station-count decrement (last device) + loggedIn flip run.
+                launch {
+                    try {
+                        val ok = kotlinx.coroutines.withTimeoutOrNull(4000) {
+                            com.stationly.core.service.SduiApiServiceFactory.create().logOut(uid, deviceId)
+                        }
+                        if (ok == null) AuthLog.logoutBackendFailed("timeout")
+                        else Log.d(TAG, "Backend logout notify ok uid=${AuthLog.maskPii(uid)}")
+                    } catch (e: Exception) {
+                        AuthLog.logoutBackendFailed(e.message ?: e::class.simpleName.orEmpty())
+                    }
+                }
+                // b) Unregister this device's FCM token so a push for the (now
+                //    signed-out) user — incl. a `user_sync` deleted/force-logout —
+                //    can't reach this device after another account signs in here.
+                launch {
+                    try {
+                        val fcmToken = FirebaseMessaging.getInstance().token.await()
+                        if (!fcmToken.isNullOrBlank()) {
+                            kotlinx.coroutines.withTimeoutOrNull(3000) {
+                                com.stationly.core.service.SduiApiServiceFactory.create().unregisterFcmToken(fcmToken)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "FCM token unregister during logout failed (continuing): ${e.message}")
+                    }
                 }
             }
         }
