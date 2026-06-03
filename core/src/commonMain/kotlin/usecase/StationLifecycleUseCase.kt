@@ -26,44 +26,70 @@ class StationLifecycleUseCase(
 ) {
 
     /**
-     * Setup a station: Subscriptions, Initial Data, and Persistence
+     * Set up a station end to end — used by login + cross-device reconcile,
+     * where blocking until everything is done is fine.
+     *
+     * Composed from the same two building blocks the interactive "Setup the
+     * board" flow uses:
+     *  - [persistAndFetch] — persist + fetch the first predictions/line status
+     *    (so the board renders populated), and
+     *  - [completeSetupAsync] — subscribe to FCM topics + push to the widget.
+     *
+     * The interactive flow awaits [persistAndFetch] then runs [completeSetupAsync]
+     * on a detached scope so navigation isn't delayed; here we simply await both.
      */
     suspend fun setupStation(selection: UserSelection, isFirstTime: Boolean = true) {
-        // 1. Save to local SQL (SelectionRepository handles Flow updates)
+        persistAndFetch(selection)
+        completeSetupAsync(selection)
+    }
+
+    /**
+     * Essential setup the board needs to render POPULATED, in one awaited call:
+     * persist the selection and eagerly fetch its first predictions + line status
+     * into SQL. Await this BEFORE navigating to the board so the user lands on a
+     * board that already has data, instead of a brief "no departures yet" flash
+     * while a backgrounded fetch is still in flight.
+     *
+     * The REST fetch is best-effort — if it fails (offline, TfL hiccup) we still
+     * return so the caller can navigate; the board falls back to its empty state
+     * and FCM / pull-to-refresh fills it in. Does NOT subscribe FCM or touch the
+     * widget — those are the non-blocking tail in [completeSetupAsync].
+     */
+    suspend fun persistAndFetch(selection: UserSelection) {
         selectionRepository.saveSelection(selection, null)
-
-        // 2. Subscribe to FCM topics for real-time updates
-        val topics = listOf(
-            "Station_${selection.station}",
-            "LineStatus_${selection.mode}_${selection.line}"
-        )
-        notificationManager.subscribeToTopics(topics)
-
-        // 3. Clear any stale predictions for this station/line before fetch
         sqlStorage.clearPredictions(selection.station, selection.line)
-        storageManager.saveString("predictions_${selection.station}_${selection.line}", "cleared_${Clock.System.now().toEpochMilliseconds()}")
-
-        // 4. Show 'Connecting' widget state immediately
-        widgetManager.showWaitingState(selection.stationName, selection.line)
-
-        // 5. Eagerly fetch Line Status & Predictions via REST
-        departureRepository.fetchInitialData(selection)
-        
-        // 6. Notify UI that fresh data is ready
+        try {
+            departureRepository.fetchInitialData(selection)
+        } catch (e: Exception) {
+            // Best-effort: navigate anyway; live data arrives via FCM / refresh.
+        }
         val now = Clock.System.now().toEpochMilliseconds()
         storageManager.saveString("predictions_${selection.station}_${selection.line}", "updated_$now")
         storageManager.saveString("line_status_data", "updated_$now")
+    }
 
-        // 7. Push eagerly fetched data to the widget
-        val refreshedPreds = sqlStorage.getPredictions(selection.station, selection.line)
-        val refreshedStatus = sqlStorage.getLineStatus(selection.mode, selection.line)
+    /**
+     * Non-essential setup tail, safe to run AFTER navigation on a detached scope:
+     * subscribe to FCM topics for live updates and push the freshly-fetched data
+     * to the widget. None of this blocks the board from showing.
+     */
+    suspend fun completeSetupAsync(selection: UserSelection) {
+        notificationManager.subscribeToTopics(
+            listOf(
+                "Station_${selection.station}",
+                "LineStatus_${selection.mode}_${selection.line}"
+            )
+        )
+        val now = Clock.System.now().toEpochMilliseconds()
+        val preds = sqlStorage.getPredictions(selection.station, selection.line)
+        val status = sqlStorage.getLineStatus(selection.mode, selection.line)
         widgetManager.updateWidget(
             WidgetState(
                 stationName = selection.stationName,
                 lineName = selection.line,
-                predictions = refreshedPreds,
-                status = refreshedStatus?.statusSeverityDescription,
-                lastUpdated = now / 1000  // convert ms → seconds (Swift reads as timeIntervalSince1970)
+                predictions = preds,
+                status = status?.statusSeverityDescription,
+                lastUpdated = now / 1000
             )
         )
     }

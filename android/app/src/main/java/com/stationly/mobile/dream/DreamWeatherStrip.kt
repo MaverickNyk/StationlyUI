@@ -51,7 +51,6 @@ internal fun DateAndWeatherStrip(dim: DreamDims) {
 
     val themeColors = LocalDreamColors.current
     val onCanvas    = themeColors.onCanvas
-    val brandAmber  = themeColors.brandAccent
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
@@ -71,7 +70,9 @@ internal fun DateAndWeatherStrip(dim: DreamDims) {
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = "$t°",
-                    color = brandAmber,
+                    // Match the date/day colour — white in dark mode, black in
+                    // light — instead of the brand amber.
+                    color = onCanvas.copy(alpha = 0.85f),
                     fontWeight = FontWeight.Bold,
                     fontSize = tempFontSize,
                     letterSpacing = 0.5.sp,

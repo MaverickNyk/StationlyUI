@@ -39,6 +39,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.stationly.mobile.R
 import com.stationly.mobile.ui.common.AnnouncementBanner
+import com.stationly.mobile.ui.common.LoadingOverlay
+import com.stationly.mobile.ui.common.NotificationPermissionEffect
 import com.stationly.mobile.ui.common.rememberFirebaseAuthState
 import com.stationly.mobile.ui.summary.components.*
 import com.stationly.mobile.ui.theme.TflAmber
@@ -62,10 +64,26 @@ fun SummaryScreen(
     val forceUpdate by viewModel.forceUpdate.collectAsState()
     val deletingBoardId by viewModel.isDeletingBoard.collectAsState()
     val showWidgetPromo by viewModel.showWidgetPromo.collectAsState()
+    val showDreamPromo by viewModel.showDreamPromo.collectAsState()
+    val showNotificationDeniedBanner by viewModel.showNotificationDeniedBanner.collectAsState()
 
     val firebaseUser by rememberFirebaseAuthState()
     val userName = firebaseUser?.displayName?.split(" ")?.firstOrNull()
         ?: firebaseUser?.email?.substringBefore('@')
+
+    // Ask the user for POST_NOTIFICATIONS (API 33+) on first arrival to the
+    // home screen. Without this prompt the device default `importance=NONE`
+    // sticks and every notification — admin push, line-status auto-alert,
+    // future alarms — silently no-ops inside `NotificationDispatcher.dispatch`.
+    // The effect itself is idempotent and a no-op on older Android, on
+    // already-granted state, and after the first ask. See its docstring.
+    //
+    // On decision (grant OR deny), re-evaluate the "notifications off"
+    // banner so the user sees it immediately on denial without waiting
+    // for the next ON_RESUME.
+    NotificationPermissionEffect(
+        onDecision = { viewModel.checkNotificationDeniedBanner() }
+    )
 
     // Reload selections from SQLite whenever this screen resumes.
     // Handles the case where ProfileScreen (or any other screen) deleted a station
@@ -101,6 +119,18 @@ fun SummaryScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding)
         ) {
+            // Modal loader while a board delete is in flight. Lives here at
+            // the screen level (not inside the board card) because the card
+            // unmounts the instant its selection is removed from the list —
+            // any spinner inside it would vanish before the backend
+            // unsubscribe + sync completes. zIndex keeps it above content
+            // regardless of declaration order within this Box.
+            LoadingOverlay(
+                visible = deletingBoardId != null,
+                label = "Deleting board…",
+                modifier = Modifier.zIndex(10f),
+            )
+
             // Tiny theme toggle pinned to the screen's bottom-right,
             // right above the system gesture-nav handle. Compact mode
             // makes it small + low-alpha so it's discoverable without
@@ -148,11 +178,49 @@ fun SummaryScreen(
                                 }
                             }
 
-                            if (showWidgetPromo) {
+                            // SDUI master switches — if the backend sets `show`
+                            // to "false", suppress the banner regardless of
+                            // local detection. Defaults to true for back-compat.
+                            val widgetPromoEnabled = (homeConfig["home.promo.widget.show"] ?: "true").equals("true", ignoreCase = true)
+                            val dreamPromoEnabled  = (homeConfig["home.promo.dream.show"]  ?: "true").equals("true", ignoreCase = true)
+
+                            // SDUI kill-switch for the banner — same shape as
+                            // `home.promo.widget.show` / `home.promo.dream.show`.
+                            // Defaults true; backend can set "false" to
+                            // suppress the banner entirely (e.g. during a
+                            // notification-platform outage when "enable
+                            // notifications" wouldn't actually help).
+                            val notifBannerEnabled = (homeConfig["home.notif_denied.show"] ?: "true")
+                                .equals("true", ignoreCase = true)
+
+                            if (showNotificationDeniedBanner && notifBannerEnabled) {
+                                item(key = "notification_denied") {
+                                    NotificationDeniedBanner(
+                                        strings = homeConfig,
+                                        onDismiss = { viewModel.dismissNotificationDeniedBanner() },
+                                        onEnable = { viewModel.dismissNotificationDeniedBanner() },
+                                        modifier = Modifier.animateItem()
+                                    )
+                                }
+                            }
+
+                            if (showWidgetPromo && widgetPromoEnabled) {
                                 item(key = "widget_promo") {
                                     WidgetPromoCard(
+                                        strings = homeConfig,
                                         onDismiss = { viewModel.dismissWidgetPromo() },
                                         onAdd = { viewModel.hideWidgetPromoForSession() },
+                                        modifier = Modifier.animateItem()
+                                    )
+                                }
+                            }
+
+                            if (showDreamPromo && dreamPromoEnabled) {
+                                item(key = "dream_promo") {
+                                    DreamPromoCard(
+                                        strings = homeConfig,
+                                        onDismiss = { viewModel.dismissDreamPromo() },
+                                        onSetUp = { viewModel.hideDreamPromoForSession() },
                                         modifier = Modifier.animateItem()
                                     )
                                 }
@@ -321,16 +389,22 @@ private fun SummaryTopBar(
     )
 }
 
+/**
+ * Shared layout for the home-screen promo cards (widget + screensaver
+ * today; any future "set up X" prompts can reuse this). Title / subtitle /
+ * cta are SDUI-driven by the caller — defaults come from homeConfig with
+ * hardcoded fallbacks so the banner never renders blank.
+ */
 @Composable
-private fun WidgetPromoCard(
+private fun PromoBanner(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    cta: String?,
+    onCta: () -> Unit,
     onDismiss: () -> Unit,
-    onAdd: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
-    val manager = AppWidgetManager.getInstance(context)
-    val canPin = manager.isRequestPinAppWidgetSupported
-
     Surface(
         shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -339,64 +413,50 @@ private fun WidgetPromoCard(
             .border(
                 width = 1.dp,
                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
-            )
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+            ),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // Widget icon
             Surface(
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                modifier = Modifier.size(44.dp)
+                modifier = Modifier.size(44.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
-                        imageVector = Icons.Default.Add,
+                        imageVector = icon,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
+                        modifier = Modifier.size(22.dp),
                     )
                 }
             }
 
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = "Add to Home Screen",
+                    text = title,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
+                    fontSize = 14.sp,
                 )
                 Text(
-                    text = "Live departures one glance away",
+                    text = subtitle,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 12.sp
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
                 )
             }
 
-            if (canPin) {
+            if (!cta.isNullOrBlank()) {
                 TextButton(
-                    onClick = {
-                        val provider = ComponentName(context, com.stationly.mobile.widget.DepartureWidgetProvider::class.java)
-                        // After user confirms in the system dialog, fire home intent so
-                        // they land on the home screen and can resize / reposition the widget
-                        val goHome = PendingIntent.getActivity(
-                            context, 0,
-                            Intent(Intent.ACTION_MAIN).apply {
-                                addCategory(Intent.CATEGORY_HOME)
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            },
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                        )
-                        manager.requestPinAppWidget(provider, null, goHome)
-                        onAdd()
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)
+                    onClick = onCta,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary),
                 ) {
-                    Text("Add", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text(cta, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
             }
 
@@ -405,11 +465,136 @@ private fun WidgetPromoCard(
                     imageVector = Icons.Default.Close,
                     contentDescription = "Dismiss",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(16.dp),
                 )
             }
         }
     }
+}
+
+@Composable
+private fun WidgetPromoCard(
+    strings: Map<String, String>,
+    onDismiss: () -> Unit,
+    onAdd: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val manager = AppWidgetManager.getInstance(context)
+    val canPin = manager.isRequestPinAppWidgetSupported
+
+    PromoBanner(
+        icon = Icons.Default.Add,
+        title    = strings["home.promo.widget.title"]    ?: "Add a home screen widget",
+        subtitle = strings["home.promo.widget.subtitle"] ?: "Pin your live board for one-tap glances — no need to open the app",
+        cta      = if (canPin) strings["home.promo.widget.cta"] ?: "Add" else null,
+        onCta    = {
+            val provider = ComponentName(context, com.stationly.mobile.widget.DepartureWidgetProvider::class.java)
+            // After user confirms in the system dialog, fire home intent so
+            // they land on the home screen and can resize / reposition the widget.
+            val goHome = PendingIntent.getActivity(
+                context, 0,
+                Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_HOME)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            manager.requestPinAppWidget(provider, null, goHome)
+            onAdd()
+        },
+        onDismiss = onDismiss,
+        modifier = modifier,
+    )
+}
+
+/**
+ * Surfaces when the user has denied (or never granted) the
+ * `POST_NOTIFICATIONS` runtime permission. Without notifications enabled,
+ * line-status auto-alerts and admin pushes silently no-op inside
+ * `NotificationDispatcher` — without this banner the user has no way to
+ * know they're missing them.
+ *
+ * Tap "Enable" → opens the app-specific notification settings screen.
+ * The banner reflows on next `ON_RESUME` (via `checkNotificationDeniedBanner`)
+ * so flipping the permission back on in Settings makes it disappear without
+ * another nudge.
+ */
+@Composable
+private fun NotificationDeniedBanner(
+    strings: Map<String, String>,
+    onDismiss: () -> Unit,
+    onEnable: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    PromoBanner(
+        icon = Icons.Default.Notifications,
+        title    = strings["home.notif_denied.title"]
+            ?: "Turn on notifications",
+        subtitle = strings["home.notif_denied.subtitle"]
+            ?: "Stationly can alert you when your line has delays, closures, or recovers.",
+        cta      = strings["home.notif_denied.cta"] ?: "Enable",
+        onCta    = {
+            // System app-notification settings deep-link. Available on
+            // API 26+; we're already API 33+ if this banner is showing
+            // (NotificationPermissionEffect is a no-op below TIRAMISU).
+            val intent = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            try {
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                // Fallback: generic app settings page.
+                runCatching {
+                    context.startActivity(
+                        Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                            .setData(android.net.Uri.parse("package:${context.packageName}"))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }
+            }
+            onEnable()
+        },
+        onDismiss = onDismiss,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun DreamPromoCard(
+    strings: Map<String, String>,
+    onDismiss: () -> Unit,
+    onSetUp: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    PromoBanner(
+        icon = Icons.Default.Bedtime,
+        title    = strings["home.promo.dream.title"]    ?: "Set as Screensaver",
+        subtitle = strings["home.promo.dream.subtitle"] ?: "Live departures when docked or charging",
+        cta      = strings["home.promo.dream.cta"]      ?: "Set up",
+        onCta    = {
+            // Opens system Settings → Display → Screen saver. ACTION_DREAM_SETTINGS
+            // is a public Settings action; FLAG_ACTIVITY_NEW_TASK keeps us safe if
+            // LocalContext is the app context, not an activity context.
+            val intent = Intent(android.provider.Settings.ACTION_DREAM_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            try {
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                runCatching {
+                    context.startActivity(
+                        Intent(android.provider.Settings.ACTION_DISPLAY_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }
+            }
+            onSetUp()
+        },
+        onDismiss = onDismiss,
+        modifier = modifier,
+    )
 }
 
 @Composable

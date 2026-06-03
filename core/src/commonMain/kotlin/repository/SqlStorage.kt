@@ -47,8 +47,16 @@ class SqlStorage(private val database: StationlyDatabase) {
         queries.clearSelections()
     }
 
-    fun savePredictions(stationId: String, lineId: String, predictions: List<PredictionDisplay>) {
-        val timestamp = Clock.System.now().toEpochMilliseconds()
+    fun savePredictions(
+        stationId: String,
+        lineId: String,
+        predictions: List<PredictionDisplay>,
+        // Caller may supply the sync instant so the prediction rows and the
+        // SyncStatusEntity stamp share ONE timestamp — keeping the "X ago"
+        // value byte-identical whether a surface reads the sync stamp or
+        // (legacy fallback) the newest row. Defaults to now for ad-hoc saves.
+        timestamp: Long = Clock.System.now().toEpochMilliseconds(),
+    ) {
         val normalizedLineId = lineId.lowercase()
         queries.transaction {
             queries.clearPredictionsForStation(stationId, normalizedLineId)
@@ -113,6 +121,41 @@ class SqlStorage(private val database: StationlyDatabase) {
             ?.lastTimestamp
     }
 
+    /**
+     * Record that a backend payload was just processed for this board —
+     * called on EVERY sync (FCM or REST), regardless of whether it carried
+     * any predictions. This is what lets a 0-row update still reset the
+     * "X ago" timer. See [SyncStatusEntity] and [getLastUpdatedTimestamp].
+     */
+    fun saveSyncTimestamp(
+        stationId: String,
+        lineId: String,
+        timestamp: Long = Clock.System.now().toEpochMilliseconds(),
+    ) {
+        queries.upsertSyncStatus(stationId, lineId.lowercase(), timestamp)
+    }
+
+    /**
+     * Wall-clock millis of the last backend sync for this board, or null if
+     * we've never synced it. Unlike [getPredictionsTimestamp] this is present
+     * even when the last sync returned zero rows.
+     */
+    fun getSyncTimestamp(stationId: String, lineId: String): Long? {
+        return queries.getSyncStatus(stationId, lineId.lowercase()).executeAsOneOrNull()
+    }
+
+    /**
+     * The honest "last updated from backend" time that drives the "X ago"
+     * timer on every surface (home / widget / dream). Prefers the dedicated
+     * sync timestamp (survives 0-row updates); falls back to the newest
+     * prediction-row timestamp for boards last persisted before sync
+     * tracking existed. Null only when we have neither.
+     */
+    fun getLastUpdatedTimestamp(stationId: String, lineId: String): Long? {
+        return getSyncTimestamp(stationId, lineId)
+            ?: getPredictionsTimestamp(stationId, lineId)
+    }
+
     fun saveLineStatus(status: LineStatus) {
         val timestamp = Clock.System.now().toEpochMilliseconds()
         queries.insertLineStatus(
@@ -155,6 +198,7 @@ class SqlStorage(private val database: StationlyDatabase) {
             queries.clearSelections()
             queries.clearAllPredictions()
             queries.clearLineStatuses()
+            queries.clearSyncStatuses()
         }
     }
 }

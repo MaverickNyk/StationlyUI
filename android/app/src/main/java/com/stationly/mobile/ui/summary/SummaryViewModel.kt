@@ -22,7 +22,11 @@ import com.stationly.core.platform.Platform
 import com.stationly.core.platform.AndroidStorageManager
 import com.stationly.core.platform.AndroidNotificationManager
 import com.stationly.core.platform.AndroidWidgetManager
+import com.stationly.mobile.util.HomeConfigStore
+import com.stationly.mobile.util.ModeIconCache
 import com.stationly.mobile.util.PREFS_NAME
+import com.stationly.mobile.widget.DepartureWidgetProvider
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -118,6 +122,28 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     // True when widget hasn't been pinned yet and user hasn't dismissed the promo
     private val _showWidgetPromo = MutableStateFlow(false)
     val showWidgetPromo: StateFlow<Boolean> = _showWidgetPromo.asStateFlow()
+
+    // True when Stationly is NOT the current screensaver. Re-evaluated on
+    // every ON_RESUME so the banner disappears as soon as the user picks
+    // it in system Settings.
+    private val _showDreamPromo = MutableStateFlow(false)
+    val showDreamPromo: StateFlow<Boolean> = _showDreamPromo.asStateFlow()
+
+    // True when the user has been asked for POST_NOTIFICATIONS (so the
+    // system permission prompt has fired at least once) and the result
+    // was denial. Drives a soft banner that opens app notification
+    // settings — without this nudge the user wouldn't know that line
+    // status alerts are silently no-op'd by the dispatcher. Re-evaluated
+    // on every ON_RESUME so the banner disappears as soon as the user
+    // toggles notifications back on in Settings.
+    private val _showNotificationDeniedBanner = MutableStateFlow(false)
+    val showNotificationDeniedBanner: StateFlow<Boolean> = _showNotificationDeniedBanner.asStateFlow()
+
+    // One-shot guard for the mode-icon warmup. Set after the first
+    // `/modes` fetch attempt regardless of success — without it, a
+    // failed download (anyMissing stays true) would re-hit the API on
+    // every selectionRepository emit.
+    private var iconWarmupAttempted = false
     
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key != null && key.startsWith("predictions_")) {
@@ -139,7 +165,11 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
         } else if (key == "selections") {
-            // Handled by repository flow
+            // A cross-device reconcile (UserSyncCoordinator) or another
+            // screen mutated the saved selections through a DIFFERENT
+            // SelectionRepository instance, so our in-memory flow is stale.
+            // Re-read from SQL to pick up the change live.
+            reloadSelectionsFromDb()
         }
     }
     
@@ -150,6 +180,8 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { fetchAnnouncement() }
         viewModelScope.launch { fetchHomeConfig() }
         checkWidgetPromo()
+        checkDreamPromo()
+        checkNotificationDeniedBanner()
 
         viewModelScope.launch {
             selectionRepository.initialize()
@@ -159,6 +191,52 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             selectionRepository.selections.collect { selections ->
                 _selections.value = selections
+
+                // Prune _lineStatuses + _failedLineStatusKeys to entries that
+                // match a current selection. Without this, switching the
+                // active board (or having a selection removed by sync from
+                // another device) leaves a stale entry in the map — and the
+                // Network section's disclaimer dialog ends up listing lines
+                // the user isn't actually watching anymore.
+                val validKeys = selections.map { "${it.mode}_${it.line}".lowercase() }.toSet()
+                _lineStatuses.value = _lineStatuses.value.filterKeys { it in validKeys }
+                _failedLineStatusKeys.value = _failedLineStatusKeys.value.intersect(validKeys)
+
+                // Warm the mode-icon cache for the modes the user is actually
+                // using. Only triggers if at least one of those modes has no
+                // cached icon yet — typical case: user installs, restores a
+                // selection from the cloud without entering Selection, so
+                // loadModes() never fires. The widget + dream's station-row
+                // roundel reads from this cache.
+                val anyMissing = selections.any { sel ->
+                    ModeIconCache.cachedFile(context, sel.mode) == null
+                }
+                if (anyMissing && selections.isNotEmpty() && !iconWarmupAttempted) {
+                    iconWarmupAttempted = true
+                    viewModelScope.launch(Dispatchers.IO) {
+                        try {
+                            val modes = sduiService.getDropdownData("/modes")
+                            val entries = modes.map { opt ->
+                                ModeIconCache.ModeSyncEntry(
+                                    modeName = opt.id,
+                                    iconUrl  = opt.iconUrl,
+                                    tintHex  = opt.tintHex,
+                                )
+                            }
+                            val iconVersion = modes.firstOrNull { !it.iconVersion.isNullOrBlank() }?.iconVersion
+                            if (entries.isNotEmpty()) {
+                                ModeIconCache.sync(context, entries, iconVersion)
+                                // Re-push the widget so it picks up the
+                                // newly-cached icon without waiting for the
+                                // next FCM tick / minute alarm.
+                                DepartureWidgetProvider.updateFromStorage(context)
+                            }
+                        } catch (e: Exception) {
+                            Log.w("SummaryVM", "Mode icon warmup failed", e)
+                        }
+                    }
+                }
+
                 selections.forEach { selection ->
                     loadPredictions(selection)
                     loadLineStatus(selection)
@@ -184,7 +262,18 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val rawPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line)
-                val dbPreds = com.stationly.core.util.GlobalBoardProcessor.processPredictions(rawPreds)
+                // Keep the FULL per-platform buffer (up to 8 rows, the storage
+                // cap set by SyncPredictionsUseCase). Earlier this defaulted
+                // to perPlatformCap = 3 — which meant the home Board's
+                // cached list only held the visible 3 rows, with no buffer
+                // to slide up when the first row passed grace. Result: when
+                // a Due train departed, the board shrunk to 2 rows and stayed
+                // that way until the next FCM, instead of pulling in the next
+                // upcoming train. The display cap of 3 is applied at render
+                // time by `prepareLegacyRows` — the storage layer must not
+                // pre-cap.
+                val dbPreds = com.stationly.core.util.GlobalBoardProcessor
+                    .processPredictions(rawPreds, perPlatformCap = Int.MAX_VALUE)
                 
                 // Honest "last updated" time — the SQL row's persistence
                 // timestamp (set when the FCM payload or REST sync was
@@ -198,7 +287,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 // install, no data yet". 0L is now only returned when
                 // SQL genuinely has no timestamp for this station/line.
                 val predsTimestamp = Platform.sqlStorage
-                    .getPredictionsTimestamp(selection.station, selection.line)
+                    .getLastUpdatedTimestamp(selection.station, selection.line)
                     ?: 0L
                 val currentMap = _predictions.value.toMutableMap()
                 currentMap[selection.station] = dbPreds
@@ -311,10 +400,22 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
 
             if (existingPreds.isEmpty() || existingStatus == null || isStale) {
                 departureRepository.fetchInitialData(selection)
-                
+
                 // Refresh local UI state flows from the updated database
                 loadPredictions(selection)
                 loadLineStatus(selection)
+
+                // Fan out the fresh-data signal to every surface — same
+                // helper FCM and pull-to-refresh use. Without this, the
+                // dream's chronometer would stay anchored to its old
+                // lastUpdatedMs if it happens to be active during app
+                // launch (rare but possible when phone is docked while
+                // the user re-opens the app).
+                com.stationly.mobile.util.FreshDataNotifier.notify(
+                    context,
+                    stationId = selection.station,
+                    lineId = selection.line,
+                )
             }
         }
     }
@@ -369,8 +470,23 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
             try {
                 _selections.value.forEach { selection ->
                     departureRepository.fetchInitialData(selection)
+                    // Update our own VM state synchronously so the home
+                    // Board reflects fresh data immediately on this
+                    // coroutine path; don't wait for the SharedPrefs
+                    // listener round-trip.
                     loadPredictions(selection)
                     loadLineStatus(selection)
+                    // Fan out to the dream + widget. The home is already
+                    // updated above, so the SharedPrefs ping that
+                    // FreshDataNotifier fires is mostly a defensive
+                    // duplicate for us — it costs one redundant
+                    // loadPredictions call, harmless. The dream broadcast
+                    // and widget redraw are what matter here.
+                    com.stationly.mobile.util.FreshDataNotifier.notify(
+                        context,
+                        stationId = selection.station,
+                        lineId = selection.line,
+                    )
                 }
                 _uiState.value = _uiState.value.copy(
                     isRefreshing = false,
@@ -394,6 +510,13 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
      */
     fun deleteSelection(selection: UserSelection) {
         viewModelScope.launch {
+            // Minimum on-screen time for the delete overlay. The actual
+            // teardown is mostly fast local work (FCM unsubscribe + SQL), so
+            // without a floor it can finish in ~100ms — too fast for the
+            // overlay's fade to render a single frame, making it look like
+            // "nothing happened". 650ms reads as a deliberate action.
+            val startMs = System.currentTimeMillis()
+            val minVisibleMs = 650L
             _isDeletingBoard.value = selection.station
             try {
                 stationLifecycleUseCase.discardStation(selection, clearSelectionInRepo = true)
@@ -432,11 +555,14 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 Log.e("SummaryViewModel", "Error deleting selection", e)
                 _uiState.value = _uiState.value.copy(error = "Failed to delete: ${e.message}")
             } finally {
+                // Hold the overlay until the minimum visible window elapses.
+                val elapsed = System.currentTimeMillis() - startMs
+                if (elapsed < minVisibleMs) delay(minVisibleMs - elapsed)
                 _isDeletingBoard.value = null
             }
         }
     }
-    
+
     private suspend fun fetchAnnouncement() {
         try {
             val screen = sduiService.getHomeAnnouncement()
@@ -453,9 +579,16 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private suspend fun fetchHomeConfig() {
+        // Instant paint from the on-disk store (last good config) before the
+        // network refresh — same store the widget/dream/board already read.
+        HomeConfigStore.read(context).takeIf { it.isNotEmpty() }?.let { _homeConfig.value = it }
         try {
             val config = sduiService.getHomeConfig().strings
             _homeConfig.value = config
+            // Persist so the widget, dream, and DreamSettingsActivity
+            // (launched from system Settings, no ViewModel) all read the
+            // latest SDUI copy without re-fetching.
+            HomeConfigStore.write(context, config)
             config["app.minVersion"]?.let { minVer ->
                 _forceUpdate.value = isVersionBelow(com.stationly.mobile.BuildConfig.VERSION_NAME, minVer)
             }
@@ -500,6 +633,101 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         _showWidgetPromo.value = false
     }
 
+    /**
+     * Decide whether to surface the "notifications are off" banner.
+     *
+     * `NotificationPermissionEffect` is what fires the system permission
+     * dialog and persists `post_notifications_asked` + `_granted` in
+     * SharedPrefs. We read those here:
+     *   - `asked == true` AND `granted == false`  → show banner
+     *   - anything else  → hide
+     *
+     * Idempotent — re-running this after the user has flipped the
+     * permission in system Settings will flip the banner off. The
+     * banner itself just dismisses session-locally via
+     * `dismissNotificationDeniedBanner` until the next ON_RESUME.
+     *
+     * No-op on API < 33 (the legacy auto-grant model).
+     */
+    fun checkNotificationDeniedBanner() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+            _showNotificationDeniedBanner.value = false
+            return
+        }
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val asked = prefs.getBoolean("post_notifications_asked", false)
+        // The system is the truth — the user can flip the permission
+        // via Settings without our SharedPrefs flag knowing. So we
+        // ignore our own `granted` cache here and just ask the OS.
+        // The `asked` flag is still load-bearing: until the user has
+        // seen at least one prompt, the banner would be premature.
+        val systemGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.POST_NOTIFICATIONS,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        _showNotificationDeniedBanner.value = asked && !systemGranted
+    }
+
+    fun dismissNotificationDeniedBanner() {
+        _showNotificationDeniedBanner.value = false
+    }
+
+    /**
+     * Detect whether Stationly is the user's active screensaver. The banner
+     * shows whenever ANY of these is true:
+     *
+     *   1. Screensavers are disabled system-wide (`screensaver_enabled = 0`).
+     *      Toggling "Off" in system Settings leaves `screensaver_components`
+     *      pointing at the last-picked dream, so we MUST also check the
+     *      enabled flag — otherwise the banner stays hidden after the user
+     *      sets us and then disables screensavers.
+     *   2. Screensavers are enabled but `screensaver_components` doesn't
+     *      contain our `StationlyDreamService`.
+     *
+     * Called from `init` and again on every ON_RESUME via
+     * `reloadSelectionsFromDb()`, so the banner re-appears the moment the
+     * user backs out of system Settings having toggled us off.
+     */
+    fun checkDreamPromo() {
+        val enabled = try {
+            android.provider.Settings.Secure.getInt(
+                context.contentResolver,
+                "screensaver_enabled",
+                1,
+            ) == 1
+        } catch (e: Exception) { true }
+
+        val components = try {
+            android.provider.Settings.Secure.getString(
+                context.contentResolver,
+                "screensaver_components",
+            )
+        } catch (e: Exception) { null }
+
+        val ours = ComponentName(
+            context,
+            com.stationly.mobile.dream.StationlyDreamService::class.java,
+        )
+        val oursLong  = ours.flattenToString()
+        val oursShort = ours.flattenToShortString()
+
+        val isOurs = components
+            ?.split(',')
+            ?.any { it.trim().let { c -> c == oursLong || c == oursShort } } == true
+
+        _showDreamPromo.value = !(enabled && isOurs)
+    }
+
+    // X button — hides until next ON_RESUME re-checks the system setting.
+    fun dismissDreamPromo() {
+        _showDreamPromo.value = false
+    }
+
+    // Called by "Set up" button after we open system dream settings —
+    // hide until next ON_RESUME confirms whether the user actually picked us.
+    fun hideDreamPromoForSession() {
+        _showDreamPromo.value = false
+    }
+
     fun dismissAnnouncement() {
         val current = _announcement.value ?: return
         val key = current.dismissKey ?: current.id
@@ -517,6 +745,8 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
             selectionRepository.initialize()
         }
         checkWidgetPromo()
+        checkDreamPromo()
+        checkNotificationDeniedBanner()
     }
 
     /**

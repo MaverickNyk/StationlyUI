@@ -54,10 +54,16 @@ fun DreamHost(refreshTick: StateFlow<Long>) {
     //                   ("system") drives everything by default; users
     //                   who want the dream to differ from the app can
     //                   pick a specific theme for it.
-    val isDark = when (theme) {
-        DreamTheme.DARK   -> true
-        DreamTheme.LIGHT  -> false
-        DreamTheme.SYSTEM -> when (com.stationly.mobile.ui.theme.AppSettings.getTheme(context)) {
+    // Fullscreen layout is the dot-matrix signage panel — it always reads
+    // as dark, regardless of the user's saved DreamTheme. Light canvas on
+    // a fullscreen amber-bordered board looks broken (a black card adrift
+    // on cream), so we hard-pin the canvas to dark for that layout. The
+    // theme picker is hidden in DreamSettingsActivity for the same reason.
+    val isDark = when {
+        layout == DreamLayout.FULLSCREEN_BOARD -> true
+        theme == DreamTheme.DARK               -> true
+        theme == DreamTheme.LIGHT              -> false
+        else /* SYSTEM */                      -> when (com.stationly.mobile.ui.theme.AppSettings.getTheme(context)) {
             com.stationly.mobile.ui.theme.AppTheme.DARK   -> true
             com.stationly.mobile.ui.theme.AppTheme.LIGHT  -> false
             com.stationly.mobile.ui.theme.AppTheme.SYSTEM -> isSystemInDarkTheme()
@@ -66,14 +72,16 @@ fun DreamHost(refreshTick: StateFlow<Long>) {
     val colors = if (isDark) DarkDreamColors else LightDreamColors
 
     CompositionLocalProvider(LocalDreamColors provides colors) {
+        // NOTE: no outer windowInsetsPadding here on purpose. The fullscreen
+        // layout handles its own (symmetric) cutout mirroring — applying the
+        // asymmetric system cutout padding at this level stacked on top of
+        // its symmetric pad produced a board lopsided toward the camera
+        // side. The cluster layout applies the cutout-safe padding inside
+        // itself (see ClockAndBoardHost).
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(colors.canvas)
-                // Respect display cutouts (camera hole-punch) — the dream
-                // renders edge-to-edge so without this our content slides
-                // under the camera.
-                .windowInsetsPadding(WindowInsets.displayCutout)
         ) {
             when (layout) {
                 DreamLayout.FULLSCREEN_BOARD -> FullscreenBoardLayout(snapshot)
@@ -89,7 +97,15 @@ fun DreamHost(refreshTick: StateFlow<Long>) {
  */
 @Composable
 private fun ClockAndBoardHost(snapshot: DreamSnapshot, clockStyle: ClockStyle) {
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            // Cluster layout keeps the system's cutout-safe inset so the
+            // clock cluster and the side-by-side board don't slide under
+            // the camera punch-hole. The fullscreen layout doesn't get
+            // this padding (it handles cutouts symmetrically itself).
+            .windowInsetsPadding(WindowInsets.displayCutout),
+    ) {
         val isLandscape = maxWidth > maxHeight
 
         // The device's short edge — same value in either orientation for a
@@ -98,8 +114,11 @@ private fun ClockAndBoardHost(snapshot: DreamSnapshot, clockStyle: ClockStyle) {
         val shortEdgeDp = minOf(maxWidth, maxHeight).value
 
         // Responsive scale for everything OTHER than the clock. Phone short
-        // ≈ 360dp → ~0.9; tablet short ≈ 800dp → clamped 1.2.
-        val scale = (shortEdgeDp / 400f).coerceIn(0.85f, 1.20f)
+        // ≈ 360dp → ~0.9; 10" tablet ≈ 800dp → 1.50 (was clamped 1.20);
+        // 12" tablet ≈ 1200dp → still clamped 1.50. Raised so the cluster
+        // dream actually uses the tablet canvas — earlier the whole layout
+        // sat in a centred strip with the rest dark.
+        val scale = (shortEdgeDp / 400f).coerceIn(0.85f, 1.50f)
         val dim = DreamDims.fromScreen(scale, shortEdgeDp)
 
         // Outer padding scales mildly, never hugging the edges on a tablet.
@@ -107,11 +126,12 @@ private fun ClockAndBoardHost(snapshot: DreamSnapshot, clockStyle: ClockStyle) {
         val vPad = (22f * scale).dp
 
         // Cap the content width so super-wide tablets don't stretch the
-        // layout edge-to-edge — content centres in a comfortable strip
-        // instead of being pulled across the whole panel. Landscape is wider
-        // than portrait because it needs room for clock column + board side
-        // by side; portrait stacks them so a tighter strip reads better.
-        val maxContentDp = if (isLandscape) 1000.dp else 560.dp
+        // layout edge-to-edge — but raised from 1000/560 to 1400/800 so a
+        // 12" tablet uses a healthy chunk of the canvas instead of sitting
+        // in a narrow strip. Landscape is wider than portrait because it
+        // needs room for clock column + board side by side; portrait stacks
+        // them so a tighter strip still reads.
+        val maxContentDp = if (isLandscape) 1400.dp else 800.dp
         val contentMaxWidth = minOf(maxWidth - hPad * 2, maxContentDp)
 
         Box(
@@ -163,9 +183,11 @@ internal data class DreamDims(
             // portrait before it grows past the date strip's visual weight;
             // landscape is already smaller than this so the cap doesn't
             // kick in there).
-            // Tablet short ≈ 800dp → digital max ≈ 140sp.
-            val digitalMaxSp = (shortEdgeDp * 0.12f + 50f).coerceIn(95f, 140f)
-            val analogMaxDp  = (shortEdgeDp * 0.42f).coerceIn(180f, 320f)
+            // Tablet short ≈ 800dp → digital max ≈ 146sp (clamped 170).
+            // Caps raised (was 140/320) so the clock stays balanced
+            // against the bumped boardTextScale on tablets.
+            val digitalMaxSp = (shortEdgeDp * 0.12f + 50f).coerceIn(95f, 170f)
+            val analogMaxDp  = (shortEdgeDp * 0.42f).coerceIn(180f, 380f)
             return DreamDims(
                 titleSize        = (20f * k).sp,
                 directionSize    = (12f * k).sp,
@@ -182,10 +204,18 @@ internal data class DreamDims(
                 minSize          = (10f * k).sp,
                 analogClockDp    = analogMaxDp.dp,
                 digitalTimeSize  = digitalMaxSp.sp,
-                // Widget rows: phone uses ~1.0×, tablet caps at ~1.2× so
-                // the text reads as "slightly bigger phone" rather than
-                // billboard.
-                boardTextScale   = s.coerceIn(0.95f, 1.2f),
+                // Widget rows: derived directly from shortEdgeDp (NOT from
+                // `s`, which is capped at 1.5 for layout proportions) so
+                // departure-row text can reach the 1.6× cap on tablets
+                // even though the layout `scale` stays at 1.5×.
+                //
+                //   412dp phone (Pixel)        → 1.03 (unchanged)
+                //   800dp 10" tablet           → clamped 1.60 (was 1.20)
+                //   1200dp 12" tablet          → clamped 1.60
+                //
+                // Stays well under the fullscreen layout's 2.8× cap so the
+                // cluster keeps its "clock-plus-board" character.
+                boardTextScale   = (shortEdgeDp / 400f).coerceIn(0.95f, 1.60f),
             )
         }
     }
@@ -251,6 +281,11 @@ private fun LandscapeLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim
             // caps and the inner ScrollView gets a real fixed viewport — so
             // scrolling actually works on multi-platform stations.
             val boardMaxHeight = maxHeight * 0.75f
+            // 0.88f matches the Column's fillMaxWidth below — that's the
+            // effective slot the DreamBoard inflates into. Passing this
+            // sizes its station-strip `maxEms` to the actual width
+            // instead of falling back to the widget's default cap.
+            val boardSlotWidthDp = (maxWidth.value * 0.88f).toInt()
             Column(
                 modifier = Modifier
                     .fillMaxWidth(0.88f)
@@ -279,7 +314,8 @@ private fun LandscapeLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim
                             .fillMaxWidth()
                             .heightIn(max = boardMaxHeight),
                         textScale = dim.boardTextScale,
-                        showHeader = false,
+                        showHeader = true,
+                        slotWidthDp = boardSlotWidthDp,
                     )
                 } else {
                     EmptyStatePanel()
@@ -333,6 +369,9 @@ private fun PortraitLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim:
             // when there's only a handful of rows (no stretch); caps when
             // content overflows so the inner ScrollView can actually scroll.
             val boardMaxHeight = maxHeight * 0.65f
+            // Portrait — DreamBoard's Column is `fillMaxWidth()`, so it
+            // gets the full panel width. That's the strip's effective slot.
+            val boardSlotWidthDp = maxWidth.value.toInt()
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -359,7 +398,8 @@ private fun PortraitLayout(snapshot: DreamSnapshot, clockStyle: ClockStyle, dim:
                             .fillMaxWidth()
                             .heightIn(max = boardMaxHeight),
                         textScale = dim.boardTextScale,
-                        showHeader = false,
+                        showHeader = true,
+                        slotWidthDp = boardSlotWidthDp,
                     )
                 } else {
                     EmptyStatePanel()

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  TfL-style mode roundel — a ring with a horizontal bar through it.
+  fillColor is pure white so it can be tinted programmatically per mode
+  (tube=red, overground=orange, dlr=turquoise, elizabeth=purple, bus=red,
+  tram=green, national-rail=BR blue). Sized 24×24 viewport so the ImageView
+  scales it cleanly to whatever size the layout requests.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Outer ring (filled donut via evenOdd fill) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M12,2 A10,10 0 1,0 12,22 A10,10 0 1,0 12,2 Z M12,6 A6,6 0 1,1 12,18 A6,6 0 1,1 12,6 Z" />
+
+    <!-- Horizontal bar across the middle, slightly wider than the ring's inner diameter -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M2,10.5 L22,10.5 L22,13.5 L2,13.5 Z" />
+</vector>

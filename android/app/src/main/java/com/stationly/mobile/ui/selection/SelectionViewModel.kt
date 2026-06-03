@@ -18,10 +18,14 @@ import com.stationly.core.service.SduiApiServiceFactory
 import com.stationly.core.service.TflApiServiceFactory
 import com.stationly.core.platform.Platform
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.stationly.mobile.util.ModeIconCache
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import android.Manifest
@@ -76,6 +80,14 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
     private val _uiState = MutableStateFlow(SduiUiState())
     val uiState: StateFlow<SduiUiState> = _uiState.asStateFlow()
 
+    companion object {
+        // App-level scope for fire-and-forget post-setup work (eager fetch,
+        // backend sync) that must survive this ViewModel being cleared when
+        // the user navigates to the board. SupervisorJob so one failure
+        // doesn't cancel sibling jobs.
+        private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    }
+
     init {
         viewModelScope.launch {
             selectionRepository.initialize()
@@ -83,7 +95,8 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         }
         loadCachedLayout()
         loadServerLayout()
-        loadModes()
+        loadCachedModes()   // instant first paint from last good /modes…
+        loadModes()         // …then always refresh from the backend (source of truth)
         loadRecentStations()
         silentlyFetchLocation()
     }
@@ -146,6 +159,22 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         fetchDropdownData(component, state.selections)
     }
 
+    /**
+     * Instant-render modes from the last good /modes payload (stale-while-
+     * revalidate). Mirrors [loadCachedLayout] — the mode picker shows
+     * immediately on repeat opens instead of waiting on the network, then
+     * [loadModes] refreshes silently in the background.
+     */
+    private fun loadCachedModes() {
+        val cached = com.stationly.mobile.util.SduiCache
+            .read<List<SduiDropdownOption>>(context, "modes") ?: return
+        if (cached.isNotEmpty()) {
+            val updated = _uiState.value.dropdownData.toMutableMap()
+            updated["mode"] = cached
+            _uiState.value = _uiState.value.copy(modes = cached, dropdownData = updated)
+        }
+    }
+
     private fun loadModes() {
         viewModelScope.launch {
             try {
@@ -156,6 +185,29 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                     modes = modes, dropdownData = updatedData,
                     failedFetches = _uiState.value.failedFetches - "mode"
                 )
+
+                // Persist for the next cold open (stale-while-revalidate).
+                com.stationly.mobile.util.SduiCache.write(context, "modes", modes)
+
+                // Sync the mode-icon cache with the backend payload. This
+                // pre-downloads icons (so widget + fullscreen dream's
+                // station-row roundel can blit them without a network
+                // round-trip), persists tint colours (replaces the
+                // hardcoded ModeColors fallback), and invalidates stale
+                // PNGs when the backend bumps iconVersion.
+                val entries = modes.map { opt ->
+                    ModeIconCache.ModeSyncEntry(
+                        modeName = opt.id,
+                        iconUrl  = opt.iconUrl,
+                        tintHex  = opt.tintHex,
+                    )
+                }
+                val iconVersion = modes.firstOrNull { !it.iconVersion.isNullOrBlank() }?.iconVersion
+                if (entries.isNotEmpty()) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        ModeIconCache.sync(context, entries, iconVersion)
+                    }
+                }
             } catch (e: Exception) {
                 Log.e("SDUI", "Failed to fetch modes", e)
                 _uiState.value = _uiState.value.copy(failedFetches = _uiState.value.failedFetches + "mode")
@@ -421,7 +473,11 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             _uiState.value = state.copy(isLoading = true, isSaving = true)
             try {
-                // Resolve the exact physical stop within the station group
+                // ── Essential, fast path ──────────────────────────────────
+                // Resolve the exact physical stop within the station group,
+                // then do the local setup (SQL save + FCM subscribe +
+                // connecting-widget state). fetchData=false skips the slow
+                // REST fetch so we can navigate to the board immediately.
                 val resolvedId = sduiService.resolveStation(stationId, mode, line, direction)
                 Log.d("SDUI", "Station resolved: $stationId → $resolvedId")
 
@@ -432,18 +488,46 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
                 )
 
                 stationLifecycleUseCase.cleanupAll()
-                stationLifecycleUseCase.setupStation(userSelection, isFirstTime = true)
 
-                try {
-                    com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.let { user ->
-                        sduiService.syncStations(user.uid, listOf(SubscribedStation(
-                            id = userSelection.station, name = userSelection.stationName,
-                            line = userSelection.line, mode = userSelection.mode, direction = userSelection.direction
-                        )))
-                    }
-                } catch (_: Exception) {}
+                // Await the essential path: persist the selection + fetch its
+                // first predictions + line status into SQL. This means the board
+                // renders POPULATED instead of flashing a "no departures yet"
+                // empty state while a backgrounded fetch catches up. The fetch is
+                // best-effort inside persistAndFetch, so a network hiccup still
+                // lets us navigate (board falls back to empty + FCM fills in).
+                stationLifecycleUseCase.persistAndFetch(userSelection)
 
+                // Board now has data — navigate.
                 _uiState.value = state.copy(isLoading = false, isSaving = false, showSuccessDialog = true)
+
+                // ── Non-essential tail (detached) ─────────────────────────
+                // FCM topic subscription, widget population, dream broadcast,
+                // and backend sync run on an app-level scope so they complete
+                // even after this VM is cleared on navigation. None of these
+                // gate the board appearing.
+                backgroundScope.launch {
+                    try {
+                        stationLifecycleUseCase.completeSetupAsync(userSelection)
+                        com.stationly.mobile.util.FreshDataNotifier.notify(
+                            context,
+                            stationId = userSelection.station,
+                            lineId = userSelection.line,
+                        )
+                    } catch (e: Exception) {
+                        Log.e("SDUI", "Background completeSetupAsync failed", e)
+                    }
+
+                    try {
+                        com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.let { user ->
+                            sduiService.syncStations(user.uid, listOf(SubscribedStation(
+                                id = userSelection.station, name = userSelection.stationName,
+                                line = userSelection.line, mode = userSelection.mode, direction = userSelection.direction
+                            )))
+                        }
+                    } catch (e: Exception) {
+                        Log.e("SDUI", "Background syncStations failed", e)
+                    }
+                }
             } catch (e: Exception) {
                 _uiState.value = state.copy(isLoading = false, isSaving = false, error = "Failed to save: ${e.message}")
             }
