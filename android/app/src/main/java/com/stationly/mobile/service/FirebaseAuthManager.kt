@@ -3,6 +3,7 @@ package com.stationly.mobile.service
 import android.app.Activity
 import android.content.Context
 import android.util.Log
+import com.stationly.mobile.R
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
@@ -34,12 +35,15 @@ class FirebaseAuthManager(private val context: Context) {
     // SupervisorJob so one failure can't cancel siblings.
     private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val CLIENT_ID = "48865967804-daogo1om8e92inob2lr2481akgvm6a4a.apps.googleusercontent.com"
-
     // Set up Google Sign In
     fun getGoogleSignInClient(): GoogleSignInClient {
+        // Web client ID is read from the active flavor's google-services.json
+        // (R.string.default_web_client_id), so prod builds use the prod OAuth
+        // client and staging builds use the staging one. Never hardcode this:
+        // a hardcoded staging ID makes prod sign-in fail with "id_token audience
+        // not authorized for this project".
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestIdToken(CLIENT_ID)
+            .requestIdToken(context.getString(R.string.default_web_client_id))
             .requestEmail()
             .build()
         return GoogleSignIn.getClient(context, gso)

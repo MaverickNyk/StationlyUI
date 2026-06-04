@@ -29,10 +29,25 @@ android {
         }
     }
 
+    signingConfigs {
+        // Prod is signed with its OWN key so its (package + SHA-1) is distinct
+        // from staging's. Staging keeps the shared debug key, so this does not
+        // affect staging at all. Creds live in local.properties (git-ignored).
+        create("prod") {
+            localProperties.getProperty("prod.keystore.path")?.let { ksPath ->
+                storeFile = file(ksPath)
+                storePassword = localProperties.getProperty("prod.keystore.storePassword")
+                keyAlias = localProperties.getProperty("prod.keystore.keyAlias")
+                keyPassword = localProperties.getProperty("prod.keystore.keyPassword")
+            }
+        }
+    }
+
     flavorDimensions += "environment"
     productFlavors {
         create("prod") {
             dimension = "environment"
+            signingConfig = signingConfigs.getByName("prod")
             buildConfigField("String", "STATIONLY_API_KEY", "\"${localProperties.getProperty("prod.STATIONLY_API_KEY") ?: ""}\"")
         }
         create("staging") {
