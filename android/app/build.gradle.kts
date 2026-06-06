@@ -14,13 +14,19 @@ val localProperties = Properties().apply {
 
 android {
     namespace = "com.stationly.mobile"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.stationly.mobile"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 1
+        // Google Play requires new apps and updates to target API 35
+        // (Android 15) as of 31 Aug 2025. The app already opts into
+        // edge-to-edge via enableEdgeToEdge() in MainActivity, which is the
+        // main behaviour change enforced at this level.
+        targetSdk = 35
+        // v2: patched reCAPTCHA (security fix) over the first uploaded bundle.
+        // versionName stays 1.0 (no user-facing feature change).
+        versionCode = 2
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -60,7 +66,21 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 full mode: shrink + obfuscate. Shrinks the bundle and makes
+            // the embedded BuildConfig.STATIONLY_API_KEY harder to recover.
+            // Keep rules for the reflection-based libraries (Gson, kotlinx
+            // serialization, Firebase) live in proguard-rules.pro.
+            // NOTE: always smoke-test a release build before uploading — R8
+            // strips unused code aggressively.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // Bundle native debug symbols (from dependency .so files) into the
+            // AAB so Play can symbolicate native crashes/ANRs. Resolves the
+            // "no debug symbols" upload warning. Lives in BUNDLE-METADATA, not
+            // the delivered APK, so it doesn't increase install size.
+            ndk {
+                debugSymbolLevel = "FULL"
+            }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
@@ -132,6 +152,13 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging-ktx")
     implementation("com.google.firebase:firebase-auth-ktx")
     implementation("com.google.firebase:firebase-analytics-ktx")
+    // firebase-auth 22.1.2 (from the BOM above) transitively pulls
+    // recaptcha 18.1.2, which Google flagged with a CRITICAL security
+    // vulnerability and deprecated. Pin the patched latest explicitly so
+    // Gradle resolves it over the vulnerable transitive version. Same public
+    // API, so it's a drop-in for firebase-auth's internal use. Revisit when
+    // the firebase-bom is bumped (a newer BOM pulls a patched recaptcha itself).
+    implementation("com.google.android.recaptcha:recaptcha:18.9.1")
     implementation("com.google.android.gms:play-services-auth:20.7.0")
     implementation("com.google.android.gms:play-services-location:21.0.1")
 

@@ -1,9 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Auto Backup rules (Android 11 and below — android:fullBackupContent).
+
+  We back up the user's app data (saved stations, prefs, cached boards) so a
+  reinstall restores their setup, but we EXCLUDE everything Firebase Auth
+  persists. Restoring auth tokens to a new device leaks session material and
+  can resurrect stale/expired sessions; the user simply re-signs in instead.
+-->
 <full-backup-content>
-    <!-- Include shared preferences -->
+    <!-- App preferences and saved boards -->
     <include domain="sharedpref" path="." />
-    
-    <!-- Include database files -->
+
+    <!-- Database files (departure cache, etc.) -->
     <include domain="database" path="." />
-    
+
+    <!-- ── Exclusions: never back up auth/session material ── -->
+    <!-- Only the sharedpref + database domains are included above, so Firebase's
+         file-domain installation token (PersistedInstallation.*.json) is already
+         excluded by omission. We only need to carve the auth/identifier prefs
+         out of the included sharedpref domain. -->
+    <!-- Firebase Auth persisted user + tokens -->
+    <exclude domain="sharedpref" path="com.google.firebase.auth.api.Store.xml" />
+    <!-- GMS / measurement identifiers -->
+    <exclude domain="sharedpref" path="com.google.android.gms.appid.xml" />
+    <exclude domain="sharedpref" path="com.google.android.gms.measurement.prefs.xml" />
 </full-backup-content>

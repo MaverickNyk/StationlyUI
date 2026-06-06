@@ -32,11 +32,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 // Theme-aware palette — names preserved so call sites stay unchanged.
-// AmberDark was a dark amber chip background in the original dark theme;
-// using primary.copy(alpha = 0.08f) gives the same "amber-tinted chip"
-// effect in both themes (faint primary tint over surface).
 private val Amber     @Composable get() = MaterialTheme.colorScheme.primary
-private val AmberDark @Composable get() = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
 private val BgColor   @Composable get() = MaterialTheme.colorScheme.background
 private val White80   @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.80f)
 private val White50   @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.50f)
@@ -207,7 +203,8 @@ fun VerifyEmailScreen(
                 modifier = Modifier.fillMaxWidth().height(54.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Amber, contentColor = AmberDark
+                    containerColor = Amber,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
                 )
             ) {
                 Icon(
