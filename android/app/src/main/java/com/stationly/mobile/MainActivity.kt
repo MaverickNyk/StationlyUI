@@ -397,6 +397,12 @@ fun AppNavigation(
                 url = url,
                 title = title,
                 onClose = { navController.popBackStack() },
+                // First-party stationly.co.uk pages (marketing site, privacy,
+                // terms) are JS-driven: scroll-reveal sections start at
+                // opacity:0 and an IntersectionObserver flips them to .visible.
+                // With JS off the page renders full-height but blank. These are
+                // trusted first-party URLs, so JS is safe to enable here.
+                enableJavaScript = true,
             )
         }
 
