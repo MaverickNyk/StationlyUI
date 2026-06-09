@@ -225,7 +225,8 @@ write the grouped SDUI structure. Follow-up.
 | `5fe713c` | **EmptyStates** — theme-aware first-launch |
 | `c70786f` | **Board** — pure-Compose dot-matrix departure board |
 | `b29a5c9` | **Widget** — dot-matrix restyle to match Android |
-| (this) | cleanup (dead `SummaryHeader`, stray imports) + this doc |
+| `7fbf91d` | cleanup (dead `SummaryHeader`, stray imports) + this doc |
+| `04de5da` | **widget FCM fix** + **iOS push transitions** (see below) |
 
 Each Kotlin commit was verified with `./gradlew :composeApp:compileKotlinIosSimulatorArm64`;
 the device build + install succeeds (staging). The app + widget are running on the
@@ -233,10 +234,34 @@ physical iPhone.
 
 ---
 
+## 7b. Landed in `04de5da` (session 2b)
+- **Widget now updates on FCM** — root cause: `ProcessFcmPayloadUseCase` looked up
+  the primary selection via `storageManager.loadSelections()`, which is **never
+  written on iOS** (selections persist to SQLite only via `SelectionRepository →
+  sqlStorage`). Added an optional `sqlStorage` fallback to the use case (default
+  `null` so Android call sites are untouched) and pass `Platform.sqlStorage` from
+  the iOS `FcmPayloadBridge`. Also: `AppDelegate.processFcmPayload` now calls
+  `WidgetCenter.reloadAllTimelines()` ~2 s after a push (the foreground 5 s
+  `WidgetReloadObserver` doesn't run in the background).
+- **iOS push/pop transitions** — `AppNavigation` `NavHost` now slides screens in
+  from the right / out to the left (reversed on back) for a native feel. Board
+  content untouched.
+
 ## 8. What's REMAINING (priority order)
 
+0. **Selection screen re-port (TOP PRIORITY)** — the Compose `SelectionScreen` is
+   the **stale pre-redesign version** (only theme-migrated by us, not re-ported
+   like Login/Profile). Symptoms on device: SDUI title/header text falls back to
+   placeholders ("Pick your chariot", "Select Line"), and the line/direction/
+   station step renders **different data than the redesigned Android**. Fix =
+   faithfully port `android/.../ui/selection/SelectionScreen.kt` (1158 lines) into
+   `composeApp` the same way Login/Profile were done: same `getSelectionLayout()`
+   SDUI layout + `sdText("screen_*")` ids + dropdown binding
+   (`onDropdownSelected`), and apply the `e488e81` DirCard "shape-jump on select"
+   fix. The ViewModel (`SelectionViewModel`) + `getSelectionLayout` endpoint
+   already exist and are correct — this is a UI re-port, not a data change.
 1. **On-device visual QA pass** — colours/spacing/alignment vs Android, screen by
-   screen. Highest priority; some blind-port roughness is expected.
+   screen. Some blind-port roughness is expected.
 2. **Real assets** — brand logo + Google "G" are drawn placeholders. Add
    `stationly_logo` + `ic_google_standard` to
    `composeApp/src/commonMain/composeResources/drawable/` and use `Res.drawable.*`
