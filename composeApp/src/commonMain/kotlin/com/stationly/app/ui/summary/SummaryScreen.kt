@@ -38,6 +38,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -89,23 +90,13 @@ fun SummaryScreen(
     val deletingBoardId by viewModel.isDeletingBoard.collectAsStateWithLifecycle()
     val showWidgetPromo by viewModel.showWidgetPromo.collectAsStateWithLifecycle()
 
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 0.8f,
-        animationSpec = infiniteRepeatable(tween(1000), RepeatMode.Reverse),
-        label = "pulse_alpha"
-    )
-
     Scaffold(
-        containerColor = Color.Black,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             SummaryTopBar(
                 onNavigateToProfile = onNavigateToProfile,
                 onNavigateToSelection = onNavigateToSelection,
                 selectionsEmpty = selections.isEmpty(),
-                pulseAlpha = pulseAlpha,
-                liveLabel = homeConfig["topbar.live_label"] ?: "Live Network",
                 userInitial = uiState.userInitial
             )
         }
@@ -113,11 +104,7 @@ fun SummaryScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(Color(0xFF0A0A0A), Color.Black)
-                    )
-                )
+                .background(MaterialTheme.colorScheme.background)
                 .padding(padding)
         ) {
             AnimatedContent(
@@ -136,14 +123,9 @@ fun SummaryScreen(
                             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
                             verticalArrangement = Arrangement.spacedBy(20.dp)
                         ) {
-                            item {
-                                SummaryHeader(
-                                    count = currentSelections.size,
-                                    lastUpdated = uiState.lastUpdated,
-                                    strings = homeConfig
-                                )
-                            }
-
+                            // SummaryHeader (greeting + "Live · N boards") intentionally
+                            // removed to match the redesigned Android home — the top-bar
+                            // brand lockup already sets context; boards are the focus.
                             announcement?.let { banner ->
                                 item(key = "announcement_${banner.id}") {
                                     AnnouncementBanner(
@@ -238,102 +220,65 @@ private fun SummaryTopBar(
     onNavigateToProfile: () -> Unit,
     onNavigateToSelection: () -> Unit,
     selectionsEmpty: Boolean,
-    pulseAlpha: Float,
-    liveLabel: String = "Live Network",
     userInitial: String = "?"
 ) {
+    val primary = MaterialTheme.colorScheme.primary
+    val onPrimary = MaterialTheme.colorScheme.onPrimary
+    val onBackground = MaterialTheme.colorScheme.onBackground
     CenterAlignedTopAppBar(
         title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                // Logo: amber "S" avatar (no drawable required until resource is added)
+            // Single-line brand lockup matching the redesigned Android home —
+            // the "Live Network" pulse subtitle was dropped.
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                 Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(TflAmber),
+                    modifier = Modifier.size(32.dp).clip(CircleShape).background(primary),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        "S",
-                        color = Color.Black,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 18.sp
-                    )
+                    Text("S", color = onPrimary, fontWeight = FontWeight.Black, fontSize = 18.sp)
                 }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "Stationly",
-                        color = Color.White,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 20.sp,
-                        letterSpacing = (-0.5).sp
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .background(Color(0xFF4CAF50).copy(alpha = pulseAlpha), CircleShape)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = liveLabel,
-                            color = Color.Gray,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.5.sp
-                        )
-                    }
-                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "Stationly",
+                    color = onBackground,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 22.sp,
+                    letterSpacing = (-0.5).sp
+                )
             }
         },
         navigationIcon = {
-            IconButton(
-                onClick = onNavigateToProfile,
-                modifier = Modifier.padding(start = 8.dp)
-            ) {
+            IconButton(onClick = onNavigateToProfile, modifier = Modifier.padding(start = 8.dp)) {
                 Surface(
                     shape = CircleShape,
-                    color = Color.White.copy(alpha = 0.05f),
+                    color = onBackground.copy(alpha = 0.05f),
                     modifier = Modifier.size(34.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            userInitial,
-                            color = TflAmber,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
-                        )
+                        Text(userInitial, color = primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     }
                 }
             }
         },
         actions = {
-            IconButton(
-                onClick = onNavigateToSelection,
-                modifier = Modifier.padding(end = 8.dp)
-            ) {
+            IconButton(onClick = onNavigateToSelection, modifier = Modifier.padding(end = 8.dp)) {
                 Surface(
                     shape = CircleShape,
-                    color = TflAmber.copy(alpha = 0.1f),
+                    color = primary.copy(alpha = 0.10f),
                     modifier = Modifier.size(40.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             if (selectionsEmpty) Icons.Default.Add else Icons.Default.Edit,
                             contentDescription = "Action",
-                            tint = TflAmber
+                            tint = primary
                         )
                     }
                 }
             }
         },
         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-            containerColor = Color.Black,
-            titleContentColor = Color.White
+            containerColor = MaterialTheme.colorScheme.background,
+            titleContentColor = MaterialTheme.colorScheme.onBackground
         )
     )
 }
