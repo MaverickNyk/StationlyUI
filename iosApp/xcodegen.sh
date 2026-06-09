@@ -1,9 +1,11 @@
 #!/bin/bash
-# Regenerate xcodeproj and patch objectVersion for Xcode 15.4 compatibility.
-# XcodeGen 2.45+ writes objectVersion=77 which Xcode 15.4 cannot open.
+# Regenerate the Xcode project from project.yml.
+#
+# NOTE (2026-06): the toolchain is now Xcode 26, which reads XcodeGen's native
+# objectVersion=77 format directly. The old objectVersion 77→56 downgrade (an
+# Xcode-15.4 workaround) is REMOVED — on Xcode 26 it left SUPPORTED_PLATFORMS
+# unresolved and broke simulator/device destination matching. If you ever build
+# with Xcode 15.x again, re-add the sed downgrade below.
 set -e
 xcodegen generate "$@"
-sed -i '' 's/objectVersion = 77;/objectVersion = 56;/' iosApp.xcodeproj/project.pbxproj
-# Remove preferredProjectObjectVersion — Xcode 15.4 doesn't recognise this key and crashes
-sed -i '' '/preferredProjectObjectVersion/d' iosApp.xcodeproj/project.pbxproj
-echo "Project regenerated (objectVersion patched to 56, preferredProjectObjectVersion removed)"
+echo "Project regenerated (native objectVersion 77 for Xcode 16+/26)."
