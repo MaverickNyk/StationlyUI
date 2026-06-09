@@ -123,3 +123,49 @@ val DefaultLightTokens = ThemeTokens(
  * misconfigured contexts still render sensibly.
  */
 val LocalThemeTokens = compositionLocalOf { DefaultDarkTokens }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * MERGE — applies a partial SDUI override map onto a baseline [ThemeTokens].
+ * Each key is a token name; values are `#RRGGBB` / `#AARRGGBB` hex strings.
+ * Unknown keys are ignored. Mirrors android/.../ThemeRepository.kt#merge.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+internal fun ThemeTokens.merge(
+    overrides: Map<String, String>,
+    constants: Map<String, String>,
+): ThemeTokens {
+    if (overrides.isEmpty() && constants.isEmpty()) return this
+    fun pick(key: String, fallback: Color): Color = overrides[key]?.let(::parseHex) ?: fallback
+    fun pickConst(key: String, fallback: Color): Color = constants[key]?.let(::parseHex) ?: fallback
+    return copy(
+        canvas             = pick("canvas",             canvas),
+        card               = pick("card",               card),
+        cardElevated       = pick("cardElevated",       cardElevated),
+        scrim              = pick("scrim",              scrim),
+        textPrimary        = pick("textPrimary",        textPrimary),
+        textMuted          = pick("textMuted",          textMuted),
+        textSubtle         = pick("textSubtle",         textSubtle),
+        borderSubtle       = pick("borderSubtle",       borderSubtle),
+        borderStrong       = pick("borderStrong",       borderStrong),
+        primary            = pick("primary",            primary),
+        onPrimary          = pick("onPrimary",          onPrimary),
+        primaryContainer   = pick("primaryContainer",   primaryContainer),
+        onPrimaryContainer = pick("onPrimaryContainer", onPrimaryContainer),
+        success            = pick("success",            success),
+        warning            = pick("warning",            warning),
+        error              = pick("error",              error),
+        info               = pick("info",               info),
+        due                = pick("due",                due),
+        live               = pick("live",               live),
+        brandSignage       = pickConst("brandSignage",  brandSignage),
+        roundelRed         = pickConst("roundelRed",    roundelRed),
+    )
+}
+
+/** Parses `#RRGGBB`, `#AARRGGBB`, `RRGGBB`, `AARRGGBB`. Null on garbage. */
+private fun parseHex(hex: String): Color? = runCatching {
+    val cleaned = hex.removePrefix("#")
+    val withAlpha = if (cleaned.length == 6) "FF$cleaned" else cleaned
+    if (withAlpha.length != 8) return@runCatching null
+    Color(withAlpha.toLong(16))
+}.getOrNull()

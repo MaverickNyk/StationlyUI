@@ -8,7 +8,7 @@ import com.stationly.app.navigation.AppNavigation
 import com.stationly.app.ui.common.LocalOpenUrl
 import com.stationly.app.ui.common.OpenUrl
 import com.stationly.app.ui.login.PlatformAuthProvider
-import com.stationly.app.ui.theme.StationlyTheme
+import com.stationly.app.ui.theme.StationlyThemeHost
 
 @Composable
 fun App(
@@ -22,7 +22,7 @@ fun App(
     val openUrl: OpenUrl = remember(uriHandler) {
         { url, _ -> runCatching { uriHandler.openUri(url) } }
     }
-    StationlyTheme {
+    StationlyThemeHost {
         CompositionLocalProvider(LocalOpenUrl provides openUrl) {
             AppNavigation(
                 authProvider    = authProvider,
