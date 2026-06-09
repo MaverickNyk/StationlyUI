@@ -2,12 +2,54 @@
 
 **Status as of 2026-06-09.** Living handoff doc; update it as phases land.
 
+## ⏯️ RESUME HERE (continuation for a fresh agent / new session)
+
+**Where we are (2026-06-09, end of Session 2):**
+- Working on git branch **`ios-parity`** (off `dev_25Apr`). 8 commits landed (list
+  below). Nothing merged to `dev_25Apr`/`master` yet.
+- **All four screens + the full theme system are ported and compile-verified for
+  iOS**; the XCFramework links for device + simulator. **NOT yet visually QA'd on
+  a device** — that's the immediate next milestone.
+- **In flight when the session ended:** a long Apple download —
+  `xcodebuild -downloadPlatform iOS` (the iOS *platform component*, needed to run
+  on device/simulator on Xcode 26; the SDK alone isn't enough). Check if it
+  finished: `xcrun simctl list runtimes | grep -i ios` should show iOS 26.x (not
+  just 17.5), and `xcrun xctrace list devices` shows the iPhone.
+
+**Decision: build + test with the STAGING config** (user's call). Use the
+`iosApp Staging` scheme → `STATIONLY_ENVIRONMENT=staging` → AppConfig points at
+`staging-api.stationly.co.uk` / `staging.stationly.co.uk`. The single real Firebase
+plist (`mindthetimefcm`) is shared across envs (auth/Google/FCM work regardless).
+
+**Exact next steps to get it on the iPhone (once the platform download is done):**
+```bash
+cd iosApp && ./xcodegen.sh                       # 1. regenerate project (idempotent)
+# 2. pre-clean SPM checkouts (Xcode-26 + Firebase/nanopb quirk — see §2 "gotchas")
+DD=build/DD
+xcodebuild -project iosApp.xcodeproj -scheme "iosApp Staging" -derivedDataPath "$DD" -resolvePackageDependencies
+chmod -R u+w "$DD/SourcePackages/checkouts"
+find "$DD/SourcePackages/checkouts" -maxdepth 2 -iname BUILD -type f -delete
+# 3. build for the connected device (id from `xcrun xctrace list devices`)
+xcodebuild -project iosApp.xcodeproj -scheme "iosApp Staging" \
+  -destination 'id=00008030-001E0D9C3EFB802E' -derivedDataPath "$DD" \
+  -allowProvisioningUpdates build
+```
+If the CLI build fails on **code signing** (needs an interactive Apple ID), fall
+back to the GUI: `open iosApp/iosApp.xcodeproj` → scheme `iosApp Staging` → select
+the iPhone → Signing & Capabilities: Automatically manage signing, Team
+`6D3CXG8U25` (both `iosApp` and `StationlyWidget` targets) → **⌘R**. First run:
+trust the cert on the phone (Settings → General → VPN & Device Management).
+Install a CLI-built `.app` to the device with
+`xcrun devicectl device install app --device <id> <path-to.app>`.
+
+**First-run smoke test:** login (email + Google) → board renders → the new
+**Network / Fares cards (ExploreSection)** → open Profile. Capture defects in §0.
+
+---
+
 ## Session 2 progress (2026-06-09) — branch `ios-parity`
 
-Full theme-system migration + all four screens ported, each compile-verified for
-iOS (`compileKotlinIosSimulatorArm64`) and the XCFramework links for device +
-simulator. **Not yet visually QA'd on device.** Per-screen commits on branch
-`ios-parity` (off `dev_25Apr`):
+Per-screen commits, each compile-verified (`compileKotlinIosSimulatorArm64`):
 
 - `4f26fee` theme tokens + ExploreSection + Xcode-26 build fixes
 - `9a6b2f1` **full light/dark/system theme + SDUI token sync** (ThemeRepository,
@@ -17,19 +59,34 @@ simulator. **Not yet visually QA'd on device.** Per-screen commits on branch
 - `8dd595b` **Summary** — theme migration, dropped stale SummaryHeader
 - `5870019` **Selection** — theme-aware palette
 - `5fe713c` **EmptyStates** — theme-aware first-launch
+- `09f1aec` docs
 
 Decisions applied: full light/dark/system theme; **promos omitted** on iOS v1;
-new branch + per-screen commits; keep porting forward.
+new branch + per-screen commits; keep porting forward; test on **staging**.
 
-Known follow-ups (not blockers): swap drawn brand/Google marks for real assets in
-`composeResources`; network avatar (Coil 3 KMP) on Profile; in-app WebView (still
-Safari hand-off); email-verification flow; OfflineBanner/AnnouncementBanner/
-SduiRenderer still hardcode dark (Board/SduiRenderer are signage — intentionally
-dark; the two banners are dark toasts, migrate if light-mode parity wanted); the
-DirCard "shape jump on select" fix from Android `e488e81` not yet applied.
-
-Next: build on device (install Xcode iOS platform component first — see §2), then
-visually QA and iterate.
+### What's LEFT to do (priority order)
+1. **Get it running on the iPhone** (blocked only on the platform download above)
+   and do the first visual QA pass — expect layout/spacing/colour tweaks.
+2. **Replace drawn placeholders with real assets**: brand logo + Google "G" glyph
+   are currently drawn (an amber "S" / a "G" letter). Add `stationly_logo` +
+   `ic_google_standard` to `composeApp/src/commonMain/composeResources/drawable/`
+   and use generated `Res.drawable.*` in Login/Summary/Profile top bars.
+3. **Network avatar on Profile** — currently monogram only (no Coil in CMP).
+   Add Coil 3 KMP (`coil-compose` multiplatform) and render `uiState.photoUrl`.
+4. **Email-verification flow** — Android has VerifyEmailScreen +
+   `onNeedsEmailVerification`; not ported. Add to nav + LoginViewModel if needed.
+5. **In-app WebView** — iOS currently hands links to Safari via `LocalOpenUrl`.
+   Port a `WKWebView` screen if in-app browsing is wanted.
+6. **Light-mode polish on the remaining shared components**: `OfflineBanner.kt`,
+   `AnnouncementBanner.kt` still hardcode dark (acceptable as dark toasts, but
+   migrate to tokens for full light parity). **`Board.kt` + `SduiRenderer.kt`
+   stay hardcoded dark ON PURPOSE** — dot-matrix signage, never themed (matches
+   Android). `SummaryHeader.kt` is now dead code (unused) — delete or leave.
+7. **DirCard "shape jumps on select" fix** from Android `e488e81` not yet applied
+   to the Compose SelectionScreen — apply if the visual QA shows the jump.
+8. **Widget parity** — the SwiftUI widget exists; align it with the redesigned
+   board after the app screens are confirmed.
+9. Decide staging→prod Firebase plist story before a prod TestFlight build.
 
 ---
 
