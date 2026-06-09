@@ -1,6 +1,35 @@
 # iOS Parity Plan — bring the iOS app to the redesigned Android feature set
 
-**Status as of 2026-06-08.** Living handoff doc; update it as phases land.
+**Status as of 2026-06-09.** Living handoff doc; update it as phases land.
+
+## Session 2 progress (2026-06-09) — branch `ios-parity`
+
+Full theme-system migration + all four screens ported, each compile-verified for
+iOS (`compileKotlinIosSimulatorArm64`) and the XCFramework links for device +
+simulator. **Not yet visually QA'd on device.** Per-screen commits on branch
+`ios-parity` (off `dev_25Apr`):
+
+- `4f26fee` theme tokens + ExploreSection + Xcode-26 build fixes
+- `9a6b2f1` **full light/dark/system theme + SDUI token sync** (ThemeRepository,
+  StationlyThemeHost, toColorScheme; via Platform.storageManager)
+- `f7081f5` **Login** — redesigned landing + SDUI form + reset-confirm
+- `144972d` **Profile** — header, My Stations, SDUI About, sign-out/delete dialogs
+- `8dd595b` **Summary** — theme migration, dropped stale SummaryHeader
+- `5870019` **Selection** — theme-aware palette
+- `5fe713c` **EmptyStates** — theme-aware first-launch
+
+Decisions applied: full light/dark/system theme; **promos omitted** on iOS v1;
+new branch + per-screen commits; keep porting forward.
+
+Known follow-ups (not blockers): swap drawn brand/Google marks for real assets in
+`composeResources`; network avatar (Coil 3 KMP) on Profile; in-app WebView (still
+Safari hand-off); email-verification flow; OfflineBanner/AnnouncementBanner/
+SduiRenderer still hardcode dark (Board/SduiRenderer are signage — intentionally
+dark; the two banners are dark toasts, migrate if light-mode parity wanted); the
+DirCard "shape jump on select" fix from Android `e488e81` not yet applied.
+
+Next: build on device (install Xcode iOS platform component first — see §2), then
+visually QA and iterate.
 
 ---
 
