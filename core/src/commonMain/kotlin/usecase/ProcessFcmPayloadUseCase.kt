@@ -4,6 +4,7 @@ import com.stationly.core.model.FcmPayload
 import com.stationly.core.model.PredictionItem
 import com.stationly.core.model.WidgetState
 import com.stationly.core.repository.DepartureRepository
+import com.stationly.core.repository.SqlStorage
 import com.stationly.core.platform.WidgetManager
 import com.stationly.core.platform.StorageManager
 import kotlinx.datetime.Clock
@@ -21,7 +22,13 @@ class ProcessFcmPayloadUseCase(
     private val departureRepository: DepartureRepository,
     private val widgetManager: WidgetManager,
     private val storageManager: StorageManager,
-    private val formatDeparturesUseCase: FormatDeparturesUseCase
+    private val formatDeparturesUseCase: FormatDeparturesUseCase,
+    // Optional fallback selection source. Selections are persisted to SQLite
+    // (SelectionRepository → sqlStorage), but NOT to storageManager — so on iOS
+    // `storageManager.loadSelections()` is always empty and the widget never
+    // updated on an FCM push. Passing sqlStorage lets us fall back to the real
+    // source. Defaults to null so existing (Android) call sites are unchanged.
+    private val sqlStorage: SqlStorage? = null
 ) {
     
     /**
@@ -33,8 +40,10 @@ class ProcessFcmPayloadUseCase(
         // Step 1: Process and cache predictions
         departureRepository.processFcmPayload(payload)
         
-        // Step 2: Get primary selection for context
+        // Step 2: Get primary selection for context. Prefer storageManager
+        // (legacy), fall back to the real SQLite source (used by iOS).
         val primarySelection = storageManager.loadSelections().firstOrNull()
+            ?: sqlStorage?.getAllSelections()?.firstOrNull()
         
         if (primarySelection != null) {
             // Step 3: Format predictions for widget
