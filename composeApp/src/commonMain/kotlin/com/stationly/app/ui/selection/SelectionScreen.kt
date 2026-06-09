@@ -81,6 +81,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -118,14 +119,18 @@ import com.stationly.core.model.sdui.SduiDropdownOption
 import kotlinx.coroutines.delay
 
 // ── Palette ───────────────────────────────────────────────────────────────────
-private val Amber    = Color(0xFFFFB81C)
-private val Surface0 = Color(0xFF0A0A0A)
-private val Surface1 = Color(0xFF141414)
-private val Surface2 = Color(0xFF1C1C1C)
-private val White90  = Color.White.copy(alpha = 0.90f)
-private val White55  = Color.White.copy(alpha = 0.55f)
-private val White25  = Color.White.copy(alpha = 0.25f)
-private val White08  = Color.White.copy(alpha = 0.08f)
+// Theme-aware (names preserved so call sites stay unchanged). Each reads from
+// MaterialTheme.colorScheme so the screen flips with the app theme, matching the
+// redesigned Android SelectionScreen. The dot-matrix board keeps its own locked
+// dark signage palette elsewhere.
+private val Amber    @Composable get() = MaterialTheme.colorScheme.primary
+private val Surface0 @Composable get() = MaterialTheme.colorScheme.background
+private val Surface1 @Composable get() = MaterialTheme.colorScheme.surface
+private val Surface2 @Composable get() = MaterialTheme.colorScheme.surfaceVariant
+private val White90  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.90f)
+private val White55  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
+private val White25  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.25f)
+private val White08  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f)
 
 // ── SDUI helpers ──────────────────────────────────────────────────────────────
 private fun SduiAppScreen.sdText(id: String): String? =
@@ -158,11 +163,12 @@ fun SelectionScreen(
     val modes by viewModel.modes.collectAsStateWithLifecycle()
     val recentStations by viewModel.recentStations.collectAsStateWithLifecycle()
 
-    val primary by remember(st.layout) {
+    val amberColor = Amber
+    val primary by remember(st.layout, amberColor) {
         derivedStateOf {
             st.layout?.theme?.primaryColor?.let {
-                parseColorSafe(it) ?: Amber
-            } ?: Amber
+                parseColorSafe(it) ?: amberColor
+            } ?: amberColor
         }
     }
 
