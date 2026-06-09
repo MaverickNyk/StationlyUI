@@ -1,5 +1,9 @@
 package com.stationly.app.navigation
 
+import androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -36,7 +40,19 @@ fun AppNavigation(
         }
     }
 
-    NavHost(navController = navController, startDestination = startDestination) {
+    // iOS-style push/pop: new screen slides in from the right, the previous one
+    // slides out to the left; reversed on back. Gives the app a native feel
+    // without touching screen content (the board, etc. stay intact).
+    val slide = tween<androidx.compose.ui.unit.IntOffset>(300)
+    val fade = tween<Float>(300)
+    NavHost(
+        navController = navController,
+        startDestination = startDestination,
+        enterTransition = { slideIntoContainer(SlideDirection.Left, slide) + fadeIn(fade) },
+        exitTransition = { slideOutOfContainer(SlideDirection.Left, slide) + fadeOut(fade) },
+        popEnterTransition = { slideIntoContainer(SlideDirection.Right, slide) + fadeIn(fade) },
+        popExitTransition = { slideOutOfContainer(SlideDirection.Right, slide) + fadeOut(fade) },
+    ) {
 
         composable("auth/login") {
             LoginScreen(

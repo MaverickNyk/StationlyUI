@@ -141,6 +141,13 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         guard let jsonData = try? JSONSerialization.data(withJSONObject: userInfo),
               let jsonString = String(data: jsonData, encoding: .utf8) else { return }
         FcmPayloadBridge.shared.processPayload(jsonString: jsonString)
+        // KMP writes the App Group asynchronously (GlobalScope). Reload the
+        // widget shortly after so a background push refreshes it even when the
+        // foreground WidgetReloadObserver timer isn't running. (The observer
+        // still handles foreground immediacy via the reload signal.)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            WidgetCenter.shared.reloadAllTimelines()
+        }
     }
 }
 

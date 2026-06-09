@@ -301,7 +301,10 @@ object FcmPayloadBridge {
             ),
             widgetManager          = Platform.widgetManager,
             storageManager         = Platform.storageManager,
-            formatDeparturesUseCase = FormatDeparturesUseCase()
+            formatDeparturesUseCase = FormatDeparturesUseCase(),
+            // iOS persists selections only to SQLite — pass it so FCM can find
+            // the primary board and actually update the widget.
+            sqlStorage             = Platform.sqlStorage
         )
     }
 
