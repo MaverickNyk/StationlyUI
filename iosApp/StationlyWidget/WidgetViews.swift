@@ -114,269 +114,168 @@ struct SmallDepartureRow: View {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MARK: - Dot-matrix board (shared by medium + large)
+// Matches the Android dot-matrix widget: TfL roundel + station header, platform-
+// grouped sections (centered amber), all-amber dest/eta rows, status + "ago".
+// ─────────────────────────────────────────────────────────────────────────────
+
+private let DueRed = Color(red: 1.0, green: 0.32, blue: 0.32)
+
+/// Group a flat departures list by platform, preserving first-seen order.
+private func groupedByPlatform(_ deps: [DepartureRow]) -> [(title: String, rows: [DepartureRow])] {
+    var order: [String] = []
+    var map: [String: [DepartureRow]] = [:]
+    for d in deps {
+        let key = (d.platform.isEmpty || d.platform.lowercased() == "unknown") ? "" : "Platform \(d.platform)"
+        if map[key] == nil { map[key] = []; order.append(key) }
+        map[key]?.append(d)
+    }
+    return order.map { (title: $0, rows: map[$0] ?? []) }
+}
+
+struct DotMatrixHeader: View {
+    let data: WidgetData
+    var body: some View {
+        HStack(spacing: 6) {
+            // TfL roundel mark
+            ZStack {
+                Circle().stroke(WidgetTheme.amber, lineWidth: 2.5).frame(width: 13, height: 13)
+                Rectangle().fill(WidgetTheme.amber).frame(width: 16, height: 2.5)
+            }
+            Text(data.stationName)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(WidgetTheme.amber)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .background(WidgetTheme.rowSurface)
+    }
+}
+
+struct DotMatrixSectionHeader: View {
+    let title: String
+    var body: some View {
+        Text(title)
+            .font(.system(size: 12, weight: .bold))
+            .foregroundColor(WidgetTheme.amber)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 2)
+            .background(WidgetTheme.rowSurface)
+    }
+}
+
+struct DotMatrixRow: View {
+    let dep: DepartureRow
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(dep.destination)
+                .font(.system(size: 13))
+                .foregroundColor(WidgetTheme.amber)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(dep.isDue ? "Due" : dep.eta)
+                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                .foregroundColor(dep.isDue ? DueRed : WidgetTheme.amber)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(WidgetTheme.rowSurface)
+    }
+}
+
+struct DotMatrixFooter: View {
+    let data: WidgetData
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(data.status.isEmpty ? "Good Service" : data.status)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(WidgetTheme.amber)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Text(relativeAgo(from: data.lastUpdated))
+                .font(.system(size: 10).italic())
+                .foregroundColor(WidgetTheme.amber.opacity(0.85))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(WidgetTheme.rowSurface)
+    }
+    private func relativeAgo(from date: Date) -> String {
+        let s = max(0, Int(-date.timeIntervalSinceNow))
+        return "\(s / 60):" + String(format: "%02d", s % 60) + " ago"
+    }
+}
+
+/// The dot-matrix board panel — station header, grouped platform sections, footer.
+struct DotMatrixBoard: View {
+    let data: WidgetData
+    let maxRows: Int
+
+    var body: some View {
+        VStack(spacing: 2) {
+            DotMatrixHeader(data: data)
+
+            if data.departures.isEmpty {
+                NoDeparturesRow()
+                Spacer(minLength: 0)
+            } else {
+                let groups = groupedByPlatform(Array(data.departures.prefix(maxRows)))
+                VStack(spacing: 2) {
+                    ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                        if !group.title.isEmpty {
+                            DotMatrixSectionHeader(title: group.title)
+                        }
+                        ForEach(group.rows) { dep in
+                            DotMatrixRow(dep: dep)
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+
+            DotMatrixFooter(data: data)
+        }
+        .padding(6)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MARK: - Medium widget  (4×2)
-// Station header + amber separator + up to 4 departure rows + status bar
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct MediumWidgetView: View {
     let data: WidgetData
-
     var body: some View {
         ZStack {
             WidgetTheme.background
-
             if data.isEmpty {
                 EmptyWidgetView(size: .medium)
             } else {
-                VStack(alignment: .leading, spacing: 0) {
-
-                    // ── Header panel ─────────────────────────────────────────
-                    MediumWidgetHeader(data: data)
-
-                    // ── 2px amber separator ──────────────────────────────────
-                    Rectangle()
-                        .fill(WidgetTheme.amber)
-                        .frame(height: 2)
-
-                    // ── Departure rows ───────────────────────────────────────
-                    if data.departures.isEmpty {
-                        NoDeparturesRow()
-                    } else {
-                        VStack(spacing: 0) {
-                            ForEach(Array(data.departures.prefix(4).enumerated()), id: \.offset) { index, dep in
-                                MediumDepartureRow(departure: dep, isFirst: index == 0)
-                                if index < min(data.departures.count, 4) - 1 {
-                                    Divider()
-                                        .background(Color.white.opacity(0.04))
-                                        .padding(.horizontal, 14)
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(minLength: 0)
-
-                    // ── Status bar ───────────────────────────────────────────
-                    if !data.status.isEmpty {
-                        StatusBar(status: data.status)
-                    }
-                }
+                DotMatrixBoard(data: data, maxRows: 4)
             }
         }
         .containerBackground(WidgetTheme.background, for: .widget)
-    }
-}
-
-struct MediumWidgetHeader: View {
-    let data: WidgetData
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(data.stationName)
-                    .font(.system(size: 13, weight: .black))
-                    .foregroundColor(WidgetTheme.amber)
-                    .lineLimit(1)
-                Text(data.lineName.capitalized + " Line")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(WidgetTheme.textSecondary)
-            }
-
-            Spacer()
-
-            // Live indicator
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(WidgetTheme.goodService)
-                    .frame(width: 6, height: 6)
-                Text("LIVE")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(WidgetTheme.textMuted)
-                    .kerning(1.2)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(WidgetTheme.surface)
-    }
-}
-
-struct MediumDepartureRow: View {
-    let departure: DepartureRow
-    let isFirst: Bool
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-
-            // ── Platform / stop-letter badge ─────────────────────────────────
-            PlatformBadge(platform: departure.platform, stopLetter: departure.stopLetter, size: .medium)
-
-            // ── Destination ──────────────────────────────────────────────────
-            Text(departure.destination)
-                .font(.system(size: 13, weight: isFirst ? .semibold : .regular))
-                .foregroundColor(isFirst ? WidgetTheme.textPrimary : WidgetTheme.textSecondary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            // ── ETA ──────────────────────────────────────────────────────────
-            ETALabel(eta: departure.eta, isDue: departure.isDue, fontSize: 14)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(isFirst ? WidgetTheme.amber.opacity(0.06) : Color.clear)
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MARK: - Large widget  (4×4)
-// Full departure board — up to 8 rows with column headers + footer
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct LargeWidgetView: View {
     let data: WidgetData
-
     var body: some View {
         ZStack {
             WidgetTheme.background
-
             if data.isEmpty {
                 EmptyWidgetView(size: .large)
             } else {
-                VStack(alignment: .leading, spacing: 0) {
-
-                    // ── Full header ──────────────────────────────────────────
-                    LargeWidgetHeader(data: data)
-
-                    // ── 2px amber separator ──────────────────────────────────
-                    Rectangle()
-                        .fill(WidgetTheme.amber)
-                        .frame(height: 2)
-
-                    // ── Column header row ────────────────────────────────────
-                    DepartureBoardColumnHeader()
-
-                    // ── Departure rows ───────────────────────────────────────
-                    if data.departures.isEmpty {
-                        NoDeparturesRow()
-                    } else {
-                        VStack(spacing: 0) {
-                            ForEach(Array(data.departures.prefix(8).enumerated()), id: \.offset) { index, dep in
-                                LargeDepartureRow(departure: dep, rowIndex: index)
-                                if index < min(data.departures.count, 8) - 1 {
-                                    Divider()
-                                        .background(Color.white.opacity(0.05))
-                                        .padding(.horizontal, 14)
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(minLength: 0)
-
-                    // ── Footer: status + last-updated timestamp ───────────────
-                    WidgetFooter(data: data)
-                }
+                DotMatrixBoard(data: data, maxRows: 9)
             }
         }
         .containerBackground(WidgetTheme.background, for: .widget)
-    }
-}
-
-struct LargeWidgetHeader: View {
-    let data: WidgetData
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-
-            // Stationly "S" roundel
-            ZStack {
-                Circle()
-                    .fill(WidgetTheme.amber)
-                    .frame(width: 30, height: 30)
-                Text("S")
-                    .font(.system(size: 15, weight: .black))
-                    .foregroundColor(.black)
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(data.stationName)
-                    .font(.system(size: 15, weight: .black))
-                    .foregroundColor(WidgetTheme.amber)
-                    .lineLimit(1)
-                Text(data.lineName.capitalized + " Line")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(WidgetTheme.textSecondary)
-            }
-
-            Spacer()
-
-            // Live indicator
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(WidgetTheme.goodService)
-                    .frame(width: 6, height: 6)
-                Text("LIVE")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(WidgetTheme.textMuted)
-                    .kerning(1.5)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(WidgetTheme.surface)
-    }
-}
-
-struct DepartureBoardColumnHeader: View {
-    var body: some View {
-        HStack(spacing: 0) {
-            // Matches the width of PlatformBadge
-            Color.clear.frame(width: 22)
-
-            Text("DESTINATION")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundColor(WidgetTheme.textMuted)
-                .kerning(1.0)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 8)
-
-            Text("ETA")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundColor(WidgetTheme.textMuted)
-                .kerning(1.0)
-                .frame(minWidth: 50, alignment: .trailing)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 5)
-        .background(Color.white.opacity(0.03))
-    }
-}
-
-struct LargeDepartureRow: View {
-    let departure: DepartureRow
-    let rowIndex: Int
-
-    var isHighlighted: Bool { rowIndex == 0 }
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-
-            // ── Platform / stop-letter badge ─────────────────────────────────
-            PlatformBadge(platform: departure.platform, stopLetter: departure.stopLetter, size: .large)
-
-            // ── Destination ──────────────────────────────────────────────────
-            Text(departure.destination)
-                .font(.system(size: 14, weight: isHighlighted ? .semibold : .regular))
-                .foregroundColor(isHighlighted ? .white : WidgetTheme.textSecondary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            // ── ETA ──────────────────────────────────────────────────────────
-            ETALabel(eta: departure.eta, isDue: departure.isDue, fontSize: 15)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
-        .background(isHighlighted ? WidgetTheme.amber.opacity(0.07) : Color.clear)
     }
 }
 
