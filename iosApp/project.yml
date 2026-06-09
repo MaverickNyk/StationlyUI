@@ -3,7 +3,7 @@ options:
   bundleIdPrefix: com.stationly
   deploymentTarget:
     iOS: "16.0"
-  xcodeVersion: "15.4"
+  xcodeVersion: "26.0"
   indentWidth: 4
   tabWidth: 4
   createIntermediateGroups: true
@@ -17,7 +17,9 @@ configs:
 packages:
   Firebase:
     url: https://github.com/firebase/firebase-ios-sdk
-    exactVersion: "10.28.1"
+    # 11.x restructured to drop the build-time generated-module-map step that
+    # broke under Xcode 16+/26 explicit clang modules ("modulemap not found").
+    from: "11.0.0"
   GoogleSignIn:
     url: https://github.com/google/GoogleSignIn-iOS
     from: "7.0.0"
@@ -120,3 +122,40 @@ targets:
           STATIONLY_ENVIRONMENT: production
         Release Production:
           STATIONLY_ENVIRONMENT: production
+
+# Explicit shared schemes — required because the 4 custom config names above
+# (Debug/Release × Staging/Production) leave xcodegen unable to auto-pick a
+# default debug/release config, so it otherwise generates NO scheme and Xcode's
+# implicit scheme resolves to empty supported platforms ("can't find iOS
+# Simulator destination"). Pinning each action to a concrete config fixes it.
+schemes:
+  iosApp Production:
+    build:
+      targets:
+        iosApp: all
+        StationlyWidget: all
+    run:
+      config: Debug Production
+    test:
+      config: Debug Production
+    profile:
+      config: Release Production
+    analyze:
+      config: Debug Production
+    archive:
+      config: Release Production
+  iosApp Staging:
+    build:
+      targets:
+        iosApp: all
+        StationlyWidget: all
+    run:
+      config: Debug Staging
+    test:
+      config: Debug Staging
+    profile:
+      config: Release Staging
+    analyze:
+      config: Debug Staging
+    archive:
+      config: Release Staging

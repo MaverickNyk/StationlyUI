@@ -63,6 +63,7 @@ import com.stationly.app.ui.common.AnnouncementBanner
 import com.stationly.app.ui.common.OfflineBanner
 import com.stationly.app.ui.summary.components.Board
 import com.stationly.app.ui.summary.components.EmptyStationsState
+import com.stationly.app.ui.summary.components.StationExploreSection
 import com.stationly.app.ui.summary.components.SummaryHeader
 import com.stationly.app.ui.theme.TflAmber
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -168,6 +169,13 @@ fun SummaryScreen(
                                     nextPrediction = selectionPredictions.firstOrNull(),
                                     homeConfig = homeConfig,
                                     isDeleting = deletingBoardId == selection.station
+                                )
+                            }
+
+                            item {
+                                StationExploreSection(
+                                    lineStatuses = lineStatuses,
+                                    strings = homeConfig
                                 )
                             }
                         }

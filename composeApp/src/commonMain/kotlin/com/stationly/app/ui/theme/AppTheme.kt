@@ -3,6 +3,7 @@ package com.stationly.app.ui.theme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 
 private val StationlyDarkColorScheme = darkColorScheme(
@@ -36,8 +37,14 @@ private val StationlyDarkColorScheme = darkColorScheme(
 
 @Composable
 fun StationlyTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = StationlyDarkColorScheme,
-        content = content
-    )
+    // Provide the semantic [LocalThemeTokens] alongside the M3 colorScheme so
+    // ported screens can read `LocalThemeTokens.current.live/due/error/...`
+    // exactly like the Android app. Dark-only for now; SDUI theme sync +
+    // light/system preference is a later parity phase.
+    CompositionLocalProvider(LocalThemeTokens provides DefaultDarkTokens) {
+        MaterialTheme(
+            colorScheme = StationlyDarkColorScheme,
+            content = content
+        )
+    }
 }
