@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -58,10 +59,13 @@ fun EmptyStationsState(
         label = "ring_alpha"
     )
 
+    val primary = MaterialTheme.colorScheme.primary
+    val onPrimary = MaterialTheme.colorScheme.onPrimary
+    val onBackground = MaterialTheme.colorScheme.onBackground
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(MaterialTheme.colorScheme.background),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -81,7 +85,7 @@ fun EmptyStationsState(
                         .border(
                             width = 1.5.dp,
                             brush = Brush.radialGradient(
-                                listOf(TflAmber.copy(alpha = 0.5f), Color.Transparent)
+                                listOf(primary.copy(alpha = 0.5f), Color.Transparent)
                             ),
                             shape = CircleShape
                         )
@@ -91,8 +95,8 @@ fun EmptyStationsState(
                     modifier = Modifier.size(80.dp),
                     shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = TflAmber,
-                        contentColor = Color.Black
+                        containerColor = primary,
+                        contentColor = onPrimary
                     )
                 ) {
                     Icon(
@@ -107,7 +111,7 @@ fun EmptyStationsState(
 
             Text(
                 text = strings["empty.title"] ?: "No boards yet",
-                color = Color.White,
+                color = onBackground,
                 fontWeight = FontWeight.Bold,
                 fontSize = 24.sp,
                 textAlign = TextAlign.Center
@@ -117,7 +121,7 @@ fun EmptyStationsState(
 
             Text(
                 text = strings["empty.subtitle"] ?: "Tap the + button to set up your first live departure board.",
-                color = Color.White.copy(alpha = 0.5f),
+                color = onBackground.copy(alpha = 0.5f),
                 fontSize = 15.sp,
                 textAlign = TextAlign.Center,
                 lineHeight = 22.sp
@@ -149,7 +153,7 @@ fun EmptyStationsState(
 
             Text(
                 text = strings["empty.hint"] ?: "Tube · Bus · DLR · Overground · Elizabeth line",
-                color = Color.White.copy(alpha = 0.3f),
+                color = onBackground.copy(alpha = 0.3f),
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center
             )
