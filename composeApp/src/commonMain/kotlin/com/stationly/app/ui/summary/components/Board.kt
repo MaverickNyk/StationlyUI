@@ -55,6 +55,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -88,6 +89,7 @@ import kotlinx.datetime.toLocalDateTime
 private val BoardAmber = Color(0xFFFFC819)
 private val PanelBg = Color(0xFF0C0C0C)
 private val ActiveRowBg = Color(0xFF161616)
+private val StationlyRed = Color(0xFFE32017)
 
 val TFL_LINE_COLORS = mapOf(
     "bakerloo" to Color(0xFFB36305), "central" to Color(0xFFE32017),
@@ -349,11 +351,12 @@ private fun DotMatrixPanel(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TflRoundel(modeRoundelColor(selection.mode), 18.dp)
+                TflRoundel(modeRoundelColor(selection.mode), 22.dp)
                 Spacer(Modifier.width(8.dp))
                 Text(
                     selection.stationName,
                     color = BoardAmber, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.2.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
             }
@@ -378,29 +381,37 @@ private fun DotMatrixPanel(
                     is BoardLine.Header -> ActiveStrip {
                         Text(
                             line.title, color = line.color ?: BoardAmber,
-                            fontSize = 15.sp, fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                            fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.3.sp,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
                         )
                     }
                     is BoardLine.Departure -> ActiveStrip {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
                                 line.destination, color = BoardAmber, fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium, letterSpacing = 0.2.sp,
                                 modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis
                             )
                             if (line.eta.isNotBlank()) {
                                 Spacer(Modifier.width(8.dp))
-                                Text(line.eta, color = line.etaColor ?: BoardAmber, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                // Monospace ETAs: every "N min" occupies identical
+                                // width so the right column rags perfectly — the
+                                // tabular look real departure boards have.
+                                Text(
+                                    line.eta, color = line.etaColor ?: BoardAmber, fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace
+                                )
                             }
                         }
                     }
                     is BoardLine.Message -> ActiveStrip {
                         Text(
                             line.text, color = line.color ?: BoardAmber, fontSize = 15.sp,
-                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp)
                         )
                     }
                 }
@@ -419,7 +430,7 @@ private fun DotMatrixPanel(
             else -> { severity = homeConfig["board.good_service_label"] ?: "Good Service"; reason = "" }
         }
         ActiveStrip {
-            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(severity, color = BoardAmber, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 if (reason.isNotBlank()) {
                     Text(" : ", color = BoardAmber, fontSize = 12.sp)
@@ -436,10 +447,34 @@ private fun DotMatrixPanel(
     }
 }
 
-/** A "lit cell" strip on the dot-matrix panel. */
+/**
+ * A "lit cell" strip on the dot-matrix panel. Matches the Android board's
+ * `departure_board_active_row_background`: a SQUARE-cornered strip (the
+ * Android original is a tiled pixel bitmap — no per-row radius; only the
+ * outer panel is rounded) with a faint unlit-dot grid so the rows read as
+ * LED matrix cells rather than flat chips.
+ */
 @Composable
 private fun ActiveStrip(content: @Composable () -> Unit) {
-    Surface(color = ActiveRowBg, shape = RoundedCornerShape(3.dp), modifier = Modifier.fillMaxWidth()) { content() }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ActiveRowBg)
+            .drawBehind {
+                val pitch = 3.dp.toPx()
+                val r = 0.6.dp.toPx()
+                val dot = Color.White.copy(alpha = 0.030f)
+                var y = pitch / 2f
+                while (y < size.height) {
+                    var x = pitch / 2f
+                    while (x < size.width) {
+                        drawCircle(dot, radius = r, center = Offset(x, y))
+                        x += pitch
+                    }
+                    y += pitch
+                }
+            }
+    ) { content() }
 }
 
 /** TfL roundel: a coloured ring with a horizontal bar. */
@@ -470,12 +505,25 @@ private fun BoardFooter(lastUpdated: Long) {
     val ago = remember(nowSec / 1000, lastUpdated) { agoLabel(lastUpdated, nowSec) }
 
     Box(modifier = Modifier.fillMaxWidth().padding(top = 2.dp), contentAlignment = Alignment.Center) {
-        // Maker mark (left)
-        Box(modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp)) {
-            TflRoundel(BoardAmber, 16.dp)
+        // Stationly maker mark (left) — the brand disc, matching Android's
+        // footer `stationly_logo` ImageView (22dp). Drawn (composeResources
+        // aren't bundled on iOS yet); swap for the real PNG when packaging
+        // lands.
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = 6.dp)
+                .size(20.dp)
+                .background(StationlyRed, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("S", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Black)
         }
-        // Live clock (center)
-        Text(clock, color = BoardAmber, fontSize = 19.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+        // Live clock (center) on its own lit strip, like Android's TextClock
+        // with the active-row background.
+        Box(modifier = Modifier.background(ActiveRowBg).padding(horizontal = 6.dp)) {
+            Text(clock, color = BoardAmber, fontSize = 19.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+        }
         // X ago (right)
         Text(
             ago, color = BoardAmber, fontSize = 12.sp, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
