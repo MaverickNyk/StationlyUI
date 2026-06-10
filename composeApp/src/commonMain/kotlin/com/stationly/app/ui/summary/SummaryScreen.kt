@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -53,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
@@ -131,14 +133,17 @@ fun SummaryScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding)
         ) {
-            // Discreet theme toggle pinned bottom-right above the gesture-nav
-            // handle — the daily-use light/dark/system shortcut (the full picker
-            // lives in Profile → Appearance). Matches the Android home placement.
+            // Discreet theme toggle pinned bottom-right, truly at the screen's
+            // end — the daily-use light/dark/system shortcut (the full picker
+            // lives in Profile → Appearance). NOTE: the Scaffold content
+            // padding already includes the bottom safe-area inset on iOS, so
+            // adding windowInsetsPadding(navigationBars) here (the Android
+            // placement code) double-applied it and floated the toggle well
+            // above the bottom edge.
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(end = 6.dp, bottom = 2.dp)
+                    .padding(end = 4.dp)
                     .zIndex(2f),
             ) {
                 ThemeToggleButton(compact = true)
@@ -154,13 +159,25 @@ fun SummaryScreen(
                 if (currentSelections.isEmpty()) {
                     EmptyStationsState(onNavigateToSelection, strings = homeConfig)
                 } else {
+                    val pullState = rememberPullToRefreshState()
                     PullToRefreshBox(
                         isRefreshing = uiState.isRefreshing,
                         onRefresh = { viewModel.refreshAll() },
+                        state = pullState,
                         modifier = Modifier.fillMaxSize()
                     ) {
                         LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                // iOS rubber-band: the WHOLE screen follows the pull,
+                                // with increasing friction past the trigger point
+                                // (f/(1+0.5f) asymptotes instead of tracking 1:1 —
+                                // things in the real world slow down, they don't hit
+                                // walls). graphicsLayer = transform-only, no relayout.
+                                .graphicsLayer {
+                                    val f = pullState.distanceFraction
+                                    translationY = (f / (1f + 0.5f * f)) * 72.dp.toPx()
+                                },
                             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
                             verticalArrangement = Arrangement.spacedBy(20.dp)
                         ) {

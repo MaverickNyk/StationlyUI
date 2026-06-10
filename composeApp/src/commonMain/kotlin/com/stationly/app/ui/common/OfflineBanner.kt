@@ -22,16 +22,17 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.stationly.app.ui.theme.LocalThemeTokens
 
 @Composable
 fun OfflineBanner(
@@ -46,12 +47,16 @@ fun OfflineBanner(
         exit = slideOutVertically(targetOffsetY = { -it }, animationSpec = tween(280)) + fadeOut(tween(220)),
         modifier = modifier
     ) {
+        // Themed danger-tint chip (was a hardcoded near-black red that vanished
+        // in dark mode and glared in light mode).
+        val danger = LocalThemeTokens.current.error
+        val onBg = MaterialTheme.colorScheme.onBackground
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
-            color = Color(0xFF1A0A0A),
+            color = MaterialTheme.colorScheme.surfaceVariant,
             shape = RoundedCornerShape(10.dp),
             shadowElevation = 4.dp,
             tonalElevation = 0.dp
@@ -70,13 +75,13 @@ fun OfflineBanner(
                     Icon(
                         Icons.Rounded.WifiOff,
                         contentDescription = null,
-                        tint = Color(0xFFF06292),
+                        tint = danger,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
                         "Unable to reach Stationly servers",
-                        color = Color.White.copy(alpha = 0.80f),
+                        color = onBg.copy(alpha = 0.80f),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -92,13 +97,13 @@ fun OfflineBanner(
                         Icon(
                             Icons.Rounded.Refresh,
                             contentDescription = null,
-                            tint = Color(0xFFFF6B6B),
+                            tint = danger,
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
                             "Retry",
-                            color = Color(0xFFFF6B6B),
+                            color = danger,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -110,7 +115,7 @@ fun OfflineBanner(
                         Icon(
                             Icons.Outlined.Close,
                             contentDescription = "Dismiss",
-                            tint = Color.White.copy(alpha = 0.35f),
+                            tint = onBg.copy(alpha = 0.35f),
                             modifier = Modifier.size(14.dp)
                         )
                     }

@@ -5,6 +5,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalUriHandler
 import com.stationly.app.navigation.AppNavigation
+import com.stationly.app.platform.openUrlInApp
 import com.stationly.app.ui.common.LocalOpenUrl
 import com.stationly.app.ui.common.OpenUrl
 import com.stationly.app.ui.login.PlatformAuthProvider
@@ -17,10 +18,14 @@ fun App(
     deepLinkOobCode: String? = null
 ) {
     val uriHandler = LocalUriHandler.current
-    // iOS has no in-app WebView screen yet (a later parity phase), so hand off
-    // to the platform handler (Safari). Title is ignored until the WebView lands.
+    // In-app first (SFSafariViewController on iOS — the user stays inside the
+    // app, like Android's WebView screen); external handler only for non-web
+    // schemes (mailto:, App Store) or when no presenter is available.
     val openUrl: OpenUrl = remember(uriHandler) {
-        { url, _ -> runCatching { uriHandler.openUri(url) } }
+        { url, title ->
+            val handledInApp = runCatching { openUrlInApp(url, title) }.getOrDefault(false)
+            if (!handledInApp) runCatching { uriHandler.openUri(url) }
+        }
     }
     StationlyThemeHost {
         CompositionLocalProvider(LocalOpenUrl provides openUrl) {
