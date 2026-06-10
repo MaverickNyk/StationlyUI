@@ -51,7 +51,8 @@ class FormatDeparturesUseCase {
             predictions = sortedPredictions.take(3), // Top 3 predictions
             status = lineStatus,
             lastUpdated = Clock.System.now().epochSeconds,
-            direction = selection.direction
+            direction = selection.direction,
+            mode = selection.mode
         )
     }
     

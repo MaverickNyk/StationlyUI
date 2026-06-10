@@ -12,10 +12,10 @@ struct DepartureBoardEntryView: View {
 
     var body: some View {
         switch family {
-        case .systemSmall:  SmallWidgetView(data: entry.widgetData)
-        case .systemMedium: MediumWidgetView(data: entry.widgetData)
-        case .systemLarge:  LargeWidgetView(data: entry.widgetData)
-        @unknown default:   MediumWidgetView(data: entry.widgetData)
+        case .systemSmall:  SmallWidgetView(data: entry.widgetData, clock: entry.date)
+        case .systemMedium: MediumWidgetView(data: entry.widgetData, clock: entry.date)
+        case .systemLarge:  LargeWidgetView(data: entry.widgetData, clock: entry.date)
+        @unknown default:   MediumWidgetView(data: entry.widgetData, clock: entry.date)
         }
     }
 }
@@ -30,7 +30,17 @@ struct DepartureBoardEntryView: View {
 
 private let DueRed = Color(red: 1.0, green: 0.32, blue: 0.32)
 
-/// A "lit cell" strip — the dark-amber active row background from the Android board.
+/// HH:mm:ss formatter for the footer clock (24h, like Android's TextClock).
+private let clockFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateFormat = "HH:mm"
+    return f
+}()
+
+/// A "lit cell" strip — the active row background from the Android board.
+/// SQUARE corners: the Android original is a tiled pixel bitmap with no
+/// per-row radius (only the widget container is rounded), plus a faint
+/// unlit-dot grid so the rows read as LED matrix cells.
 private struct LitCell<Content: View>: View {
     var vPad: CGFloat = 3
     var hPad: CGFloat = 8
@@ -41,7 +51,29 @@ private struct LitCell<Content: View>: View {
             .padding(.vertical, vPad)
             .frame(maxWidth: .infinity)
             .background(WidgetTheme.rowSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            .overlay(DotGrid().allowsHitTesting(false))
+    }
+}
+
+/// The unlit-LED texture: a sparse dot lattice at very low alpha.
+private struct DotGrid: View {
+    var body: some View {
+        Canvas { context, size in
+            let pitch: CGFloat = 3
+            let r: CGFloat = 0.55
+            var y = pitch / 2
+            while y < size.height {
+                var x = pitch / 2
+                while x < size.width {
+                    context.fill(
+                        Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
+                        with: .color(.white.opacity(0.030))
+                    )
+                    x += pitch
+                }
+                y += pitch
+            }
+        }
     }
 }
 
@@ -66,17 +98,20 @@ struct TflRoundelMark: View {
 /// Live "M:SS ago" — WidgetKit renders the `.timer` style as a self-updating
 /// element (ticks every second with no timeline reload), the iOS analog of
 /// Android's Chronometer. Falls back to a static dash before any data has landed.
+///
+/// Gotcha that broke the footer layout on device: a `.timer` Text greedily
+/// expands to fill its container and left-aligns, which shoved the digits to
+/// the far LEFT while the "ago" label stayed right ("0:03 …… ago").
+/// Concatenating into a single Text and trailing-aligning inside a capped
+/// frame keeps "M:SS ago" together as one unit.
 private struct LiveAgo: View {
     let data: WidgetData
     var fontSize: CGFloat = 10
     var body: some View {
         Group {
             if data.hasTimestamp {
-                HStack(spacing: 3) {
-                    Text(data.lastUpdated, style: .timer)
-                        .monospacedDigit()
-                    Text("ago")
-                }
+                (Text(data.lastUpdated, style: .timer).monospacedDigit() + Text(" ago"))
+                    .multilineTextAlignment(.trailing)
             } else {
                 Text("—")
             }
@@ -84,6 +119,7 @@ private struct LiveAgo: View {
         .font(.system(size: fontSize).italic())
         .foregroundColor(WidgetTheme.amber.opacity(0.85))
         .lineLimit(1)
+        .frame(maxWidth: 72, alignment: .trailing)
     }
 }
 
@@ -103,14 +139,15 @@ private func groupedByPlatform(_ deps: [DepartureRow]) -> [(platform: String, ro
 // MARK: - Dot-matrix board (shared by medium + large)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Centered station lockup: roundel + station name (the constant strip shown on
-/// every Stationly surface).
+/// Centered station lockup: mode-tinted roundel + station name (the constant
+/// strip shown on every Stationly surface — the roundel colour carries the
+/// transport-mode identity, exactly like Android's tinted mode_icon).
 struct DotMatrixHeader: View {
     let data: WidgetData
     var body: some View {
         LitCell(vPad: 5) {
             HStack(spacing: 7) {
-                TflRoundelMark(diameter: 14)
+                TflRoundelMark(color: WidgetTheme.modeColor(data.mode), diameter: 15)
                 Text(data.stationName)
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(WidgetTheme.amber)
@@ -186,19 +223,42 @@ struct DotMatrixStatusStrip: View {
     }
 }
 
-/// Footer: Stationly roundel mark (left) + live "M:SS ago" timer (right).
-/// (Android also centers a per-second wall clock; iOS widgets can't tick a clock
-/// without burning the refresh budget, so the live "ago" carries freshness.)
+/// Footer, matching the Android board's bottom row: Stationly maker mark
+/// (left) + wall clock (CENTER) + live "M:SS ago" together (right).
+/// The clock is minute-accurate: the timeline pre-renders one entry per
+/// minute (free — local renders don't consume the refresh budget), and the
+/// "ago" ticks per second via the `.timer` style.
 struct DotMatrixFooter: View {
     let data: WidgetData
+    let clock: Date
     var body: some View {
         LitCell(vPad: 3) {
-            HStack(spacing: 6) {
-                TflRoundelMark(diameter: 13)
-                Spacer(minLength: 4)
-                LiveAgo(data: data, fontSize: 10)
+            ZStack {
+                HStack {
+                    StationlyMark(diameter: 14)
+                    Spacer(minLength: 0)
+                    LiveAgo(data: data, fontSize: 10)
+                }
+                Text(clockFormatter.string(from: clock))
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundColor(WidgetTheme.amber)
             }
         }
+    }
+}
+
+/// The Stationly brand disc (red circle + white S) — Android's footer
+/// stationly_logo ImageView.
+struct StationlyMark: View {
+    var diameter: CGFloat = 14
+    var body: some View {
+        ZStack {
+            Circle().fill(WidgetTheme.stationlyRed)
+            Text("S")
+                .font(.system(size: diameter * 0.62, weight: .black))
+                .foregroundColor(.white)
+        }
+        .frame(width: diameter, height: diameter)
     }
 }
 
@@ -206,6 +266,7 @@ struct DotMatrixFooter: View {
 /// status strip, footer. Shared by medium + large; `maxRows` caps departures.
 struct DotMatrixBoard: View {
     let data: WidgetData
+    let clock: Date
     let maxRows: Int
 
     var body: some View {
@@ -232,7 +293,7 @@ struct DotMatrixBoard: View {
             }
 
             DotMatrixStatusStrip(data: data)
-            DotMatrixFooter(data: data)
+            DotMatrixFooter(data: data, clock: clock)
         }
         .padding(6)
     }
@@ -244,6 +305,7 @@ struct DotMatrixBoard: View {
 
 struct SmallWidgetView: View {
     let data: WidgetData
+    let clock: Date
 
     var body: some View {
         ZStack {
@@ -252,9 +314,9 @@ struct SmallWidgetView: View {
                 EmptyWidgetView(size: .small)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
-                    // Header: roundel + station
+                    // Header: mode-tinted roundel + station
                     HStack(spacing: 5) {
-                        TflRoundelMark(diameter: 12)
+                        TflRoundelMark(color: WidgetTheme.modeColor(data.mode), diameter: 12)
                         Text(data.stationName)
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(WidgetTheme.amber)
@@ -333,13 +395,14 @@ struct SmallDepartureRow: View {
 
 struct MediumWidgetView: View {
     let data: WidgetData
+    let clock: Date
     var body: some View {
         ZStack {
             WidgetTheme.background
             if data.isEmpty {
                 EmptyWidgetView(size: .medium)
             } else {
-                DotMatrixBoard(data: data, maxRows: 4)
+                DotMatrixBoard(data: data, clock: clock, maxRows: 4)
             }
         }
         .containerBackground(WidgetTheme.background, for: .widget)
@@ -352,13 +415,14 @@ struct MediumWidgetView: View {
 
 struct LargeWidgetView: View {
     let data: WidgetData
+    let clock: Date
     var body: some View {
         ZStack {
             WidgetTheme.background
             if data.isEmpty {
                 EmptyWidgetView(size: .large)
             } else {
-                DotMatrixBoard(data: data, maxRows: 9)
+                DotMatrixBoard(data: data, clock: clock, maxRows: 9)
             }
         }
         .containerBackground(WidgetTheme.background, for: .widget)

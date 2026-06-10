@@ -166,7 +166,8 @@ class SummaryViewModel(
                             predictions = dbPreds,
                             status = widgetStatus,
                             lastUpdated = predsTimestamp / 1000,
-                            direction = selection.direction
+                            direction = selection.direction,
+                            mode = selection.mode
                         )
                     )
                 }
