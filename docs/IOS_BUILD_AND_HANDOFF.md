@@ -10,6 +10,64 @@ and SDUI work on iOS, and what remains.
 
 ---
 
+## ⚠️ READ FIRST — Session 3 (2026-06-10): on-device crash fix + composeResources caveat
+
+**The app builds, installs, runs, and was tested on the physical iPhone this
+session. It crashed on first frame; the cause is found + fixed (committed). The
+shared framework was rebuilding when this was written — rebuild + redeploy (steps
+below) to confirm the fix on device.**
+
+### The crash (composeResources are NOT bundled on iOS) — fixed
+- Symptom: `SIGABRT` on the first frame, repeatedly. Crash `.ips` faulting thread =
+  `org.jetbrains.compose.resources.MissingResourceException` →
+  `painterResource(DrawableResource)`, thrown inside `MetalRedrawer.draw`.
+- Root cause: **this project never wired Compose-Multiplatform `composeResources`
+  packaging for the iOS target.** The generated resources (drawables, fonts) are NOT
+  copied into `iosApp.app` (verified: no `*.ttf`, `stationly_logo`, or
+  `compose-resources` dir in the built `.app` or the `.xcframework`). Any runtime
+  `Res.drawable.*` / `Res.font.*` read throws → crash. (This is exactly why the
+  original Login used a *drawn* "S" with a "swap for composeResources later" comment
+  — composeResource reads were never validated on iOS.)
+- Fix (committed): reverted **every** runtime composeResource read to drawn/system
+  versions — logos are drawn "S" marks; `DisplayFamily` (`Type.kt`) is stubbed to
+  `FontFamily.Default`. The Inter Tight TTFs (`composeResources/font/`), the logo PNG
+  (`composeResources/drawable/`), and the real wiring (commented in `Type.kt`) are
+  KEPT for when packaging is fixed. Everything else from Session 3 is intact.
+
+### TODO — actually ship the logo + Inter Tight on iOS (the proper fix)
+1. Wire the generated `compose-resources` dir into the **iosApp target's Copy Bundle
+   Resources** build phase via `iosApp/project.yml` (xcodegen), so the drawables +
+   fonts land in `iosApp.app`. (CMP static-framework resources aren't auto-embedded.)
+2. Verify on device that `Res.drawable.stationly_logo` loads (it crashes instantly if
+   missing), THEN restore the reads: uncomment `Type.kt` `DisplayFamily` body; swap
+   the 3 drawn "S" marks back to `Image(painterResource(Res.drawable.stationly_logo))`
+   (Summary top bar + update dialog, Profile top bar) and the wordmarks already pass
+   `fontFamily = DisplayFamily`.
+
+### Device build + run pipeline (VERIFIED working 2026-06-10)
+Device: **Nick's iPhone, iOS 26.3, UDID `00008030-001E0D9C3EFB802E`**; Xcode 26.5;
+signing `Apple Development: nikhilkumar11896@gmail.com`. **Disk is TIGHT (~3–4 GB
+free) — do NOT build for the simulator (it ate >1 GB); test on the device.**
+```bash
+# 1. shared framework (~9 min; only when composeApp/core Kotlin changed)
+./gradlew :composeApp:assembleComposeAppDebugXCFramework
+# 2. project + SPM
+cd iosApp && ./xcodegen.sh
+DD=build/DD
+xcodebuild -project iosApp.xcodeproj -scheme "iosApp Staging" -derivedDataPath "$DD" -resolvePackageDependencies
+chmod -R u+w "$DD/SourcePackages/checkouts"; find "$DD/SourcePackages/checkouts" -maxdepth 2 -iname BUILD -type f -delete
+# 3. build (signed) + install + launch
+xcodebuild -project iosApp.xcodeproj -scheme "iosApp Staging" -destination 'id=00008030-001E0D9C3EFB802E' -derivedDataPath "$DD" -allowProvisioningUpdates build
+xcrun devicectl device install app --device 00008030-001E0D9C3EFB802E "$DD/Build/Products/Debug Staging-iphoneos/iosApp.app"
+xcrun devicectl device process launch --device 00008030-001E0D9C3EFB802E com.stationly.mobile
+```
+Crash logs: `idevicecrashreport -u 00008030-001E0D9C3EFB802E -k /tmp/crashes`, then
+parse the newest `iosApp-*.ips` (faulting thread + `lastExceptionBacktrace` give the
+Kotlin exception). NOTE: `idevicescreenshot` / `idevicesyslog` do NOT work on iOS 26
+(CoreDevice flow); use the `.ips` crash reports for diagnosis.
+
+---
+
 ## 1. What the iOS app actually is
 
 It is **NOT** a native-Swift rewrite. It is **Kotlin/Compose Multiplatform**:
