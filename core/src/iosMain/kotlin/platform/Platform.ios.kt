@@ -35,6 +35,7 @@ object AppGroupKeys {
     const val WIDGET_LINE_NAME        = "widget_line_name"
     const val WIDGET_PREDICTIONS      = "widget_predictions"
     const val WIDGET_STATUS           = "widget_status"
+    const val WIDGET_DIRECTION        = "widget_direction"
     const val WIDGET_LAST_UPDATED     = "widget_last_updated"
     const val WIDGET_RELOAD_SIGNAL    = "widget_reload_signal"
 
@@ -83,6 +84,7 @@ class IosWidgetManager : WidgetManager {
         d.setObject(state.lineName,              forKey = AppGroupKeys.WIDGET_LINE_NAME)
         d.setObject(predictionsJson,             forKey = AppGroupKeys.WIDGET_PREDICTIONS)
         d.setObject(state.status ?: "",          forKey = AppGroupKeys.WIDGET_STATUS)
+        d.setObject(state.direction,             forKey = AppGroupKeys.WIDGET_DIRECTION)
         d.setDouble(state.lastUpdated.toDouble(), forKey = AppGroupKeys.WIDGET_LAST_UPDATED)
         // Bumping the signal tells Swift WidgetReloadObserver to call WidgetCenter.reloadAllTimelines()
         val sig = d.integerForKey(AppGroupKeys.WIDGET_RELOAD_SIGNAL)

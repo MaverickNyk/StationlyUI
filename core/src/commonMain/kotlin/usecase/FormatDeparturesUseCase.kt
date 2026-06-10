@@ -50,7 +50,8 @@ class FormatDeparturesUseCase {
             lineName = selection.line,
             predictions = sortedPredictions.take(3), // Top 3 predictions
             status = lineStatus,
-            lastUpdated = Clock.System.now().epochSeconds
+            lastUpdated = Clock.System.now().epochSeconds,
+            direction = selection.direction
         )
     }
     

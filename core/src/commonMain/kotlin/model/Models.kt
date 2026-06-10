@@ -153,7 +153,11 @@ data class WidgetState(
     val lineName: String,
     val predictions: List<PredictionDisplay>,
     val status: String?,
-    val lastUpdated: Long // Unix timestamp
+    val lastUpdated: Long, // Unix timestamp
+    // Selection direction (e.g. "eastbound"). Optional + defaulted so every
+    // existing call site (Android included) is unchanged; the iOS widget uses it
+    // to render the "Line: Platform N (Direction)" header like Android's board.
+    val direction: String = ""
 )
 
 /**
