@@ -63,6 +63,7 @@ class AuthBridge {
         ud.removeObject(forKey: "auth_pending_command")
         ud.removeObject(forKey: "auth_pending_error")
         ud.removeObject(forKey: "auth_operation_success")
+        ud.removeObject(forKey: "auth_command_done")
         ud.synchronize()
 
         let parts = command.components(separatedBy: "|")
@@ -85,6 +86,7 @@ class AuthBridge {
             case "googleSignInInteractive":
                 guard let rootVC = await rootViewController() else {
                     writeError("No root view controller available")
+                    markDone()
                     return
                 }
                 let r = await signInWithGoogle(presentingViewController: rootVC)
@@ -95,6 +97,17 @@ class AuthBridge {
                 switch r {
                 case .success:
                     // No token issued for reset; signal KMP via dedicated key
+                    ud.set("1", forKey: "auth_operation_success")
+                    ud.synchronize()
+                case .failure(let e):
+                    writeError(e.localizedDescription)
+                }
+
+            case "updateDisplayName" where parts.count >= 2:
+                // Name may legitimately contain "|" — rejoin everything after the verb.
+                let r = await updateDisplayName(parts.dropFirst().joined(separator: "|"))
+                switch r {
+                case .success:
                     ud.set("1", forKey: "auth_operation_success")
                     ud.synchronize()
                 case .failure(let e):
@@ -114,7 +127,19 @@ class AuthBridge {
             default:
                 writeError("Unknown command: \(verb)")
             }
+
+            // Completion flag — the LAST write for every command. KMP waits on
+            // this key, not on the command key (cleared above before the async
+            // work even starts). Without it, an interactive Google sign-in
+            // "failed" on KMP's first 250 ms poll while the user was still
+            // picking an account in the Google sheet.
+            markDone()
         }
+    }
+
+    private func markDone() {
+        UserDefaults.standard.set("1", forKey: "auth_command_done")
+        UserDefaults.standard.synchronize()
     }
 
     private func writeError(_ message: String) {
@@ -175,6 +200,22 @@ class AuthBridge {
                 return .failure(AuthBridgeError.missingIDToken)
             }
             return await signInWithGoogleIdToken(idToken: idToken)
+        } catch { return .failure(error) }
+    }
+
+    // MARK: - Display name
+
+    func updateDisplayName(_ name: String) async -> Result<Void, Error> {
+        guard let user = Auth.auth().currentUser else {
+            return .failure(AuthBridgeError.notSignedIn)
+        }
+        do {
+            let change = user.createProfileChangeRequest()
+            change.displayName = name
+            try await change.commitChanges()
+            UserDefaults.standard.set(name, forKey: "firebase_user_display_name")
+            UserDefaults.standard.synchronize()
+            return .success(())
         } catch { return .failure(error) }
     }
 
@@ -248,7 +289,13 @@ class AuthBridge {
 
 enum AuthBridgeError: LocalizedError {
     case missingIDToken
-    var errorDescription: String? { "Google Sign-In did not return an ID token." }
+    case notSignedIn
+    var errorDescription: String? {
+        switch self {
+        case .missingIDToken: return "Google Sign-In did not return an ID token."
+        case .notSignedIn:    return "Not signed in."
+        }
+    }
 }
 
 extension Notification.Name {

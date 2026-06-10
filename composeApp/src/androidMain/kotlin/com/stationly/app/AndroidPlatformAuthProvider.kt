@@ -12,6 +12,8 @@ class AndroidPlatformAuthProvider(private val context: Context) : PlatformAuthPr
 
     override fun isLoggedIn(): Boolean = auth.currentUser != null
 
+    override fun currentUserUid(): String? = auth.currentUser?.uid
+
     override fun currentUserEmail(): String? = auth.currentUser?.email
 
     override fun currentUserDisplayName(): String? = auth.currentUser?.displayName
@@ -45,6 +47,18 @@ class AndroidPlatformAuthProvider(private val context: Context) : PlatformAuthPr
 
     override suspend fun confirmPasswordReset(oobCode: String, newPassword: String): Result<Unit> = try {
         auth.confirmPasswordReset(oobCode, newPassword).await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    override suspend fun updateDisplayName(name: String): Result<Unit> = try {
+        val user = auth.currentUser ?: throw IllegalStateException("Not signed in.")
+        user.updateProfile(
+            com.google.firebase.auth.UserProfileChangeRequest.Builder()
+                .setDisplayName(name)
+                .build()
+        ).await()
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)

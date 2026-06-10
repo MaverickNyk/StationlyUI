@@ -11,18 +11,25 @@ import platform.Foundation.NSUserDefaults
  * Protocol (both sides use NSUserDefaults.standard):
  *
  * 1. KMP writes:  auth_pending_command = "<verb>|<arg1>|<arg2>"
- * 2. Swift AuthBridge observes via UserDefaults.didChangeNotification, processes
- *    the Firebase call, then:
- *      - success → clears auth_pending_command + writes firebase_auth_token
- *                  (or auth_operation_success = "1" for resetConfirm)
- *      - failure → clears auth_pending_command + writes auth_pending_error = <message>
- * 3. KMP polls every 250 ms (up to 15 s) until auth_pending_command disappears.
+ * 2. Swift AuthBridge observes via UserDefaults.didChangeNotification, clears
+ *    the command key immediately (dedupe), processes the Firebase call, then:
+ *      - success → writes firebase_auth_token (or auth_operation_success = "1"
+ *                  for non-token operations like resetConfirm)
+ *      - failure → writes auth_pending_error = <message>
+ *    and ALWAYS finishes by writing auth_command_done = "1".
+ * 3. KMP polls every 250 ms for auth_command_done. The command key vanishing
+ *    means nothing — Swift clears it before the async work starts, which is
+ *    why waiting on it broke interactive Google sign-in (the user was still
+ *    in the Google account sheet when the old 15 s poll gave up).
  *
  * Supported commands:
  *   signIn|<email>|<password>
  *   register|<email>|<password>
  *   googleSignIn|<idToken>
+ *   googleSignInInteractive
  *   resetConfirm|<oobCode>|<newPassword>
+ *   updateDisplayName|<name>
+ *   signOut
  */
 class IosPlatformAuthProvider : PlatformAuthProvider {
 
@@ -40,6 +47,9 @@ class IosPlatformAuthProvider : PlatformAuthProvider {
     override fun currentUserPhotoUrl(): String? =
         defaults.stringForKey(AppGroupKeys.FIREBASE_USER_PHOTO)
 
+    override fun currentUserUid(): String? =
+        defaults.stringForKey(AppGroupKeys.FIREBASE_USER_UID)
+
     override suspend fun signInWithEmail(email: String, password: String): Result<String> =
         issueCommand("signIn|$email|$password")
 
@@ -49,11 +59,16 @@ class IosPlatformAuthProvider : PlatformAuthProvider {
     override suspend fun signInWithGoogle(idToken: String): Result<String> =
         issueCommand("googleSignIn|$idToken")
 
+    // The user can sit in the Google account sheet for as long as they like —
+    // give the interactive flow 3 minutes, not the regular network timeout.
     override suspend fun signInWithGoogleInteractive(): Result<String> =
-        issueCommand("googleSignInInteractive")
+        issueCommand("googleSignInInteractive", timeoutMillis = 180_000L)
 
     override suspend fun confirmPasswordReset(oobCode: String, newPassword: String): Result<Unit> =
         issueCommand("resetConfirm|$oobCode|$newPassword").map { }
+
+    override suspend fun updateDisplayName(name: String): Result<Unit> =
+        issueCommand("updateDisplayName|$name").map { }
 
     override suspend fun signOut(): Result<Unit> =
         issueCommand("signOut").map { }
@@ -66,32 +81,36 @@ class IosPlatformAuthProvider : PlatformAuthProvider {
     }
 
     /**
-     * Writes a command and polls every 250 ms for up to 15 s.
-     * Handles three completion states:
-     *   • firebase_auth_token present  → success (sign-in / register)
-     *   • auth_operation_success = "1" → success (resetConfirm, no token)
+     * Writes a command and polls every 250 ms until Swift writes
+     * auth_command_done (its very last write for every command). Completion
+     * states, checked in order:
      *   • auth_pending_error present   → failure with message
+     *   • firebase_auth_token present  → success (sign-in / register)
+     *   • auth_operation_success = "1" → success (non-token ops)
      */
-    private suspend fun issueCommand(command: String): Result<String> {
-        defaults.setObject(command, forKey = AppGroupKeys.AUTH_PENDING_COMMAND)
+    private suspend fun issueCommand(
+        command: String,
+        timeoutMillis: Long = 30_000L
+    ): Result<String> {
         defaults.removeObjectForKey(AppGroupKeys.AUTH_PENDING_ERROR)
         defaults.removeObjectForKey(AppGroupKeys.AUTH_OPERATION_SUCCESS)
+        defaults.removeObjectForKey(AppGroupKeys.AUTH_COMMAND_DONE)
+        defaults.setObject(command, forKey = AppGroupKeys.AUTH_PENDING_COMMAND)
         defaults.synchronize()
 
-        repeat(60) {                      // 60 × 250 ms = 15 s
+        repeat((timeoutMillis / 250L).toInt()) {
             delay(250L)
-            val pending  = defaults.stringForKey(AppGroupKeys.AUTH_PENDING_COMMAND)
-            val token    = defaults.stringForKey(AppGroupKeys.FIREBASE_AUTH_TOKEN)
-            val error    = defaults.stringForKey(AppGroupKeys.AUTH_PENDING_ERROR)
-            val success  = defaults.stringForKey(AppGroupKeys.AUTH_OPERATION_SUCCESS)
-
-            if (pending == null) {
+            if (defaults.stringForKey(AppGroupKeys.AUTH_COMMAND_DONE) != null) {
+                val error   = defaults.stringForKey(AppGroupKeys.AUTH_PENDING_ERROR)
+                val token   = defaults.stringForKey(AppGroupKeys.FIREBASE_AUTH_TOKEN)
+                val success = defaults.stringForKey(AppGroupKeys.AUTH_OPERATION_SUCCESS)
                 defaults.removeObjectForKey(AppGroupKeys.AUTH_PENDING_ERROR)
                 defaults.removeObjectForKey(AppGroupKeys.AUTH_OPERATION_SUCCESS)
+                defaults.removeObjectForKey(AppGroupKeys.AUTH_COMMAND_DONE)
                 return when {
                     error   != null -> Result.failure(Exception(error))
                     token   != null -> Result.success(token)
-                    success != null -> Result.success("")   // resetConfirm success
+                    success != null -> Result.success("")
                     else            -> Result.failure(Exception("Auth failed. Please try again."))
                 }
             }

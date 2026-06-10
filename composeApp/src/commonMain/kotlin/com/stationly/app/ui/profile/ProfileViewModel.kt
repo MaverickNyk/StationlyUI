@@ -2,9 +2,11 @@ package com.stationly.app.ui.profile
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.stationly.app.platform.DeviceIdentity
 import com.stationly.app.ui.login.PlatformAuthProvider
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.sdui.SubscribedStation
+import com.stationly.core.model.sdui.SyncProfileRequest
 import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SelectionRepository
@@ -95,6 +97,54 @@ class ProfileViewModel(
                     homeConfig = sduiApi.getHomeConfig().strings
                 )
             } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Update the display name on Firebase Auth (via the platform provider —
+     * Swift AuthBridge on iOS) and mirror it to the backend user doc so FCM
+     * payloads and emails see the new name. Mirrors Android ProfileViewModel.
+     */
+    fun updateDisplayName(rawName: String, onComplete: (Result<String>) -> Unit) {
+        viewModelScope.launch {
+            val trimmed = rawName.trim()
+            if (trimmed.length < 2) {
+                onComplete(Result.failure(IllegalArgumentException("Name must be at least 2 characters.")))
+                return@launch
+            }
+            if (trimmed.length > 60) {
+                onComplete(Result.failure(IllegalArgumentException("Name is too long.")))
+                return@launch
+            }
+            authProvider.updateDisplayName(trimmed).fold(
+                onSuccess = {
+                    // Best-effort backend mirror — the Firebase name is already
+                    // saved, so a sync failure shouldn't fail the edit.
+                    try {
+                        val uid = authProvider.currentUserUid()
+                        if (uid != null) {
+                            sduiApi.syncProfile(
+                                SyncProfileRequest(
+                                    uid            = uid,
+                                    email          = authProvider.currentUserEmail() ?: "",
+                                    displayName    = trimmed,
+                                    photoURL       = authProvider.currentUserPhotoUrl(),
+                                    signInProvider = when (storageManager.loadString("signin_provider")) {
+                                        "Google" -> "google.com"
+                                        "Apple"  -> "apple.com"
+                                        else     -> "email"
+                                    },
+                                    deviceId       = DeviceIdentity.deviceId(),
+                                    deviceInfo     = DeviceIdentity.deviceInfo()
+                                )
+                            )
+                        }
+                    } catch (_: Exception) {}
+                    _uiState.value = _uiState.value.copy(displayName = trimmed)
+                    onComplete(Result.success(trimmed))
+                },
+                onFailure = { e -> onComplete(Result.failure(e)) }
+            )
         }
     }
 
