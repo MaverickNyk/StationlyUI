@@ -12,203 +12,198 @@ struct DepartureBoardEntryView: View {
 
     var body: some View {
         switch family {
-        case .systemSmall:
-            SmallWidgetView(data: entry.widgetData)
-        case .systemMedium:
-            MediumWidgetView(data: entry.widgetData)
-        case .systemLarge:
-            LargeWidgetView(data: entry.widgetData)
-        @unknown default:
-            MediumWidgetView(data: entry.widgetData)
+        case .systemSmall:  SmallWidgetView(data: entry.widgetData)
+        case .systemMedium: MediumWidgetView(data: entry.widgetData)
+        case .systemLarge:  LargeWidgetView(data: entry.widgetData)
+        @unknown default:   MediumWidgetView(data: entry.widgetData)
         }
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MARK: - Small widget  (2×2)
-// Station name + next 2 departures + line name footer
-// ─────────────────────────────────────────────────────────────────────────────
-
-struct SmallWidgetView: View {
-    let data: WidgetData
-
-    var body: some View {
-        ZStack {
-            WidgetTheme.background
-
-            if data.isEmpty {
-                EmptyWidgetView(size: .small)
-            } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    // ── Header ──────────────────────────────────────────────
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(WidgetTheme.amber)
-                            .frame(width: 7, height: 7)
-                        Text(data.stationName)
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(WidgetTheme.amber)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.top, 12)
-                    .padding(.bottom, 7)
-
-                    // ── Amber rule ───────────────────────────────────────────
-                    Rectangle()
-                        .fill(WidgetTheme.amber.opacity(0.35))
-                        .frame(height: 1)
-                        .padding(.horizontal, 12)
-
-                    // ── Departure rows ───────────────────────────────────────
-                    VStack(spacing: 0) {
-                        if data.departures.isEmpty {
-                            Text("No departures")
-                                .font(.system(size: 11))
-                                .foregroundColor(WidgetTheme.textMuted)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-                        } else {
-                            ForEach(data.departures.prefix(2)) { dep in
-                                SmallDepartureRow(departure: dep)
-                            }
-                        }
-                    }
-                    .padding(.top, 4)
-
-                    Spacer(minLength: 0)
-
-                    // ── Line name footer ────────────────────────────────────
-                    Text(data.lineName.capitalized)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(WidgetTheme.textMuted)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 10)
-                }
-            }
-        }
-        .containerBackground(WidgetTheme.background, for: .widget)
-    }
-}
-
-struct SmallDepartureRow: View {
-    let departure: DepartureRow
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Text(departure.destination)
-                .font(.system(size: 11))
-                .foregroundColor(WidgetTheme.textPrimary)
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            Text(departure.isDue ? "Due" : departure.eta)
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundColor(WidgetTheme.etaColor(eta: departure.eta, isDue: departure.isDue))
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-        .background(WidgetTheme.rowSurface.opacity(0.45))
-        .padding(.vertical, 1)   // hairline gap between rows
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MARK: - Dot-matrix board (shared by medium + large)
-// Matches the Android dot-matrix widget: TfL roundel + station header, platform-
-// grouped sections (centered amber), all-amber dest/eta rows, status + "ago".
+// MARK: - Dot-matrix tokens + shared marks
+// Mirrors the Android dot-matrix departure board (widget_departure_board.xml):
+// TfL amber on near-black, "lit cell" row backgrounds, roundel + station header,
+// line-prefixed platform sections, amber rows / red Due, status strip, footer
+// roundel + live "ago".
 // ─────────────────────────────────────────────────────────────────────────────
 
 private let DueRed = Color(red: 1.0, green: 0.32, blue: 0.32)
 
+/// A "lit cell" strip — the dark-amber active row background from the Android board.
+private struct LitCell<Content: View>: View {
+    var vPad: CGFloat = 3
+    var hPad: CGFloat = 8
+    @ViewBuilder var content: Content
+    var body: some View {
+        content
+            .padding(.horizontal, hPad)
+            .padding(.vertical, vPad)
+            .frame(maxWidth: .infinity)
+            .background(WidgetTheme.rowSurface)
+            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+    }
+}
+
+/// TfL roundel: amber ring crossed by a horizontal bar. Pure SwiftUI so it scales
+/// crisply at any size (matches the Compose `TflRoundel` in the in-app board).
+struct TflRoundelMark: View {
+    var color: Color = WidgetTheme.amber
+    var diameter: CGFloat = 14
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(color, lineWidth: diameter * 0.19)
+                .frame(width: diameter * 0.92, height: diameter * 0.92)
+            Rectangle()
+                .fill(color)
+                .frame(width: diameter * 1.16, height: diameter * 0.19)
+        }
+        .frame(width: diameter * 1.16, height: diameter)
+    }
+}
+
+/// Live "M:SS ago" — WidgetKit renders the `.timer` style as a self-updating
+/// element (ticks every second with no timeline reload), the iOS analog of
+/// Android's Chronometer. Falls back to a static dash before any data has landed.
+private struct LiveAgo: View {
+    let data: WidgetData
+    var fontSize: CGFloat = 10
+    var body: some View {
+        Group {
+            if data.hasTimestamp {
+                HStack(spacing: 3) {
+                    Text(data.lastUpdated, style: .timer)
+                        .monospacedDigit()
+                    Text("ago")
+                }
+            } else {
+                Text("—")
+            }
+        }
+        .font(.system(size: fontSize).italic())
+        .foregroundColor(WidgetTheme.amber.opacity(0.85))
+        .lineLimit(1)
+    }
+}
+
 /// Group a flat departures list by platform, preserving first-seen order.
-private func groupedByPlatform(_ deps: [DepartureRow]) -> [(title: String, rows: [DepartureRow])] {
+private func groupedByPlatform(_ deps: [DepartureRow]) -> [(platform: String, rows: [DepartureRow])] {
     var order: [String] = []
     var map: [String: [DepartureRow]] = [:]
     for d in deps {
-        let key = (d.platform.isEmpty || d.platform.lowercased() == "unknown") ? "" : "Platform \(d.platform)"
+        let key = (d.platform.isEmpty || d.platform.lowercased() == "unknown") ? "" : d.platform
         if map[key] == nil { map[key] = []; order.append(key) }
         map[key]?.append(d)
     }
-    return order.map { (title: $0, rows: map[$0] ?? []) }
+    return order.map { (platform: $0, rows: map[$0] ?? []) }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MARK: - Dot-matrix board (shared by medium + large)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Centered station lockup: roundel + station name (the constant strip shown on
+/// every Stationly surface).
 struct DotMatrixHeader: View {
     let data: WidgetData
     var body: some View {
-        HStack(spacing: 6) {
-            // TfL roundel mark
-            ZStack {
-                Circle().stroke(WidgetTheme.amber, lineWidth: 2.5).frame(width: 13, height: 13)
-                Rectangle().fill(WidgetTheme.amber).frame(width: 16, height: 2.5)
+        LitCell(vPad: 5) {
+            HStack(spacing: 7) {
+                TflRoundelMark(diameter: 14)
+                Text(data.stationName)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(WidgetTheme.amber)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
-            Text(data.stationName)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundColor(WidgetTheme.amber)
-                .lineLimit(1)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
-        .padding(.horizontal, 10)
-        .background(WidgetTheme.rowSurface)
     }
 }
 
+/// "Piccadilly: Platform 1 (Eastbound)" — centered amber section header.
 struct DotMatrixSectionHeader: View {
     let title: String
     var body: some View {
-        Text(title)
-            .font(.system(size: 12, weight: .bold))
-            .foregroundColor(WidgetTheme.amber)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 2)
-            .background(WidgetTheme.rowSurface)
+        LitCell(vPad: 2) {
+            Text(title)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(WidgetTheme.amber)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
     }
 }
 
+/// Destination (left) + ETA (right). All amber; "Due" in red — matches the board.
 struct DotMatrixRow: View {
     let dep: DepartureRow
     var body: some View {
-        HStack(spacing: 8) {
-            Text(dep.destination)
-                .font(.system(size: 13))
-                .foregroundColor(WidgetTheme.amber)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text(dep.isDue ? "Due" : dep.eta)
-                .font(.system(size: 13, weight: .bold, design: .monospaced))
-                .foregroundColor(dep.isDue ? DueRed : WidgetTheme.amber)
+        LitCell {
+            HStack(spacing: 8) {
+                Text(dep.destination)
+                    .font(.system(size: 13))
+                    .foregroundColor(WidgetTheme.amber)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(dep.isDue ? "Due" : dep.eta)
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundColor(dep.isDue ? DueRed : WidgetTheme.amber)
+            }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(WidgetTheme.rowSurface)
     }
 }
 
+/// "Severity : reason" — the line-status strip. iOS widgets can't marquee, so the
+/// reason truncates with a fading tail rather than scrolling (Android marquees it).
+struct DotMatrixStatusStrip: View {
+    let data: WidgetData
+    private var parts: (severity: String, reason: String) {
+        let raw = data.status.isEmpty ? "Good Service" : data.status
+        if let r = raw.range(of: ":") {
+            return (String(raw[..<r.lowerBound]).trimmingCharacters(in: .whitespaces),
+                    String(raw[r.upperBound...]).trimmingCharacters(in: .whitespaces))
+        }
+        return (raw, "")
+    }
+    var body: some View {
+        LitCell(vPad: 2) {
+            HStack(spacing: 0) {
+                Text(parts.severity)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(WidgetTheme.amber)
+                    .lineLimit(1)
+                if !parts.reason.isEmpty {
+                    Text(" : \(parts.reason)")
+                        .font(.system(size: 11))
+                        .foregroundColor(WidgetTheme.amber.opacity(0.9))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+}
+
+/// Footer: Stationly roundel mark (left) + live "M:SS ago" timer (right).
+/// (Android also centers a per-second wall clock; iOS widgets can't tick a clock
+/// without burning the refresh budget, so the live "ago" carries freshness.)
 struct DotMatrixFooter: View {
     let data: WidgetData
     var body: some View {
-        HStack(spacing: 6) {
-            Text(data.status.isEmpty ? "Good Service" : data.status)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(WidgetTheme.amber)
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            Text(relativeAgo(from: data.lastUpdated))
-                .font(.system(size: 10).italic())
-                .foregroundColor(WidgetTheme.amber.opacity(0.85))
+        LitCell(vPad: 3) {
+            HStack(spacing: 6) {
+                TflRoundelMark(diameter: 13)
+                Spacer(minLength: 4)
+                LiveAgo(data: data, fontSize: 10)
+            }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(WidgetTheme.rowSurface)
-    }
-    private func relativeAgo(from date: Date) -> String {
-        let s = max(0, Int(-date.timeIntervalSinceNow))
-        return "\(s / 60):" + String(format: "%02d", s % 60) + " ago"
     }
 }
 
-/// The dot-matrix board panel — station header, grouped platform sections, footer.
+/// The dot-matrix board panel — station header, grouped platform sections,
+/// status strip, footer. Shared by medium + large; `maxRows` caps departures.
 struct DotMatrixBoard: View {
     let data: WidgetData
     let maxRows: Int
@@ -224,8 +219,9 @@ struct DotMatrixBoard: View {
                 let groups = groupedByPlatform(Array(data.departures.prefix(maxRows)))
                 VStack(spacing: 2) {
                     ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
-                        if !group.title.isEmpty {
-                            DotMatrixSectionHeader(title: group.title)
+                        let header = data.platformHeader(platform: group.platform)
+                        if !header.isEmpty {
+                            DotMatrixSectionHeader(title: header)
                         }
                         ForEach(group.rows) { dep in
                             DotMatrixRow(dep: dep)
@@ -235,6 +231,7 @@ struct DotMatrixBoard: View {
                 Spacer(minLength: 0)
             }
 
+            DotMatrixStatusStrip(data: data)
             DotMatrixFooter(data: data)
         }
         .padding(6)
@@ -242,7 +239,96 @@ struct DotMatrixBoard: View {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MARK: - Medium widget  (4×2)
+// MARK: - Small widget (2×2): station + next 2 departures + live "ago"
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct SmallWidgetView: View {
+    let data: WidgetData
+
+    var body: some View {
+        ZStack {
+            WidgetTheme.background
+            if data.isEmpty {
+                EmptyWidgetView(size: .small)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    // Header: roundel + station
+                    HStack(spacing: 5) {
+                        TflRoundelMark(diameter: 12)
+                        Text(data.stationName)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(WidgetTheme.amber)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                    .padding(.bottom, 7)
+
+                    Rectangle()
+                        .fill(WidgetTheme.amber.opacity(0.35))
+                        .frame(height: 1)
+                        .padding(.horizontal, 12)
+
+                    VStack(spacing: 2) {
+                        if data.departures.isEmpty {
+                            Text("No departures")
+                                .font(.system(size: 11))
+                                .foregroundColor(WidgetTheme.textMuted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                        } else {
+                            ForEach(data.departures.prefix(3)) { dep in
+                                SmallDepartureRow(departure: dep)
+                            }
+                        }
+                    }
+                    .padding(.top, 5)
+
+                    Spacer(minLength: 0)
+
+                    // Footer: line name (left) + live "ago" (right)
+                    HStack(spacing: 4) {
+                        Text(data.lineName.capitalized)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(WidgetTheme.textMuted)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        LiveAgo(data: data, fontSize: 9)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+                }
+            }
+        }
+        .containerBackground(WidgetTheme.background, for: .widget)
+    }
+}
+
+struct SmallDepartureRow: View {
+    let departure: DepartureRow
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(departure.destination)
+                .font(.system(size: 11))
+                .foregroundColor(WidgetTheme.amber)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Text(departure.isDue ? "Due" : departure.eta)
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .foregroundColor(departure.isDue ? DueRed : WidgetTheme.amber)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .background(WidgetTheme.rowSurface.opacity(0.55))
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MARK: - Medium widget (4×2)
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct MediumWidgetView: View {
@@ -261,7 +347,7 @@ struct MediumWidgetView: View {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MARK: - Large widget  (4×4)
+// MARK: - Large widget (4×4)
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct LargeWidgetView: View {
@@ -283,132 +369,9 @@ struct LargeWidgetView: View {
 // MARK: - Shared sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 
-// MARK: PlatformBadge
-
-enum BadgeSize { case medium, large }
-
-/// Renders a circular amber badge for a bus stop letter, a plain platform
-/// number in muted text, or an empty spacer when the platform is unknown.
-struct PlatformBadge: View {
-    let platform: String
-    let stopLetter: String?
-    let size: BadgeSize
-
-    private var diameter: CGFloat   { size == .large ? 18 : 20 }
-    private var fontSize: CGFloat   { size == .large ?  9 : 10 }
-    private var numberSize: CGFloat { size == .large ?  9 :  9 }
-
-    var body: some View {
-        Group {
-            if let stop = stopLetter, !stop.isEmpty {
-                // Bus stop letter — filled amber circle
-                Text(stop)
-                    .font(.system(size: fontSize, weight: .bold))
-                    .foregroundColor(.black)
-                    .frame(width: diameter, height: diameter)
-                    .background(WidgetTheme.amber)
-                    .clipShape(Circle())
-            } else if !platform.isEmpty && platform.lowercased() != "unknown" {
-                // Platform number — muted text, fixed width for alignment
-                Text(platform)
-                    .font(.system(size: numberSize, weight: .semibold))
-                    .foregroundColor(WidgetTheme.textMuted)
-                    .frame(width: diameter, alignment: .center)
-            } else {
-                // Nothing to show — preserve alignment spacing
-                Color.clear
-                    .frame(width: diameter, height: diameter)
-            }
-        }
-    }
-}
-
-// MARK: ETALabel
-
-/// Monospaced ETA countdown, coloured by urgency.
-struct ETALabel: View {
-    let eta: String
-    let isDue: Bool
-    let fontSize: CGFloat
-
-    var body: some View {
-        Text(isDue ? "Due" : eta)
-            .font(.system(size: fontSize, weight: .bold, design: .monospaced))
-            .foregroundColor(WidgetTheme.etaColor(eta: eta, isDue: isDue))
-            .frame(minWidth: 50, alignment: .trailing)
-    }
-}
-
-// MARK: StatusBar
-
-/// Single-line service status row with coloured indicator dot.
-/// Used at the bottom of the medium widget.
-struct StatusBar: View {
-    let status: String
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(WidgetTheme.statusColor(status: status))
-                .frame(width: 6, height: 6)
-            Text(status)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(WidgetTheme.textSecondary)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.04))
-    }
-}
-
-// MARK: WidgetFooter
-
-/// Status dot + label on the left, relative timestamp on the right.
-/// Used at the bottom of the large widget.
-struct WidgetFooter: View {
-    let data: WidgetData
-
-    var body: some View {
-        HStack(spacing: 0) {
-            if !data.status.isEmpty {
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(WidgetTheme.statusColor(status: data.status))
-                        .frame(width: 5, height: 5)
-                    Text(data.status)
-                        .font(.system(size: 9))
-                        .foregroundColor(WidgetTheme.textSecondary)
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer(minLength: 4)
-
-            Text(relativeTime(from: data.lastUpdated))
-                .font(.system(size: 9))
-                .foregroundColor(WidgetTheme.textMuted)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Color.white.opacity(0.03))
-    }
-
-    private func relativeTime(from date: Date) -> String {
-        let seconds = Int(-date.timeIntervalSinceNow)
-        guard seconds >= 0 else { return "Just now" }
-        if seconds < 60   { return "Just now" }
-        if seconds < 3600 { return "\(seconds / 60)m ago" }
-        return "\(seconds / 3600)h ago"
-    }
-}
-
-// MARK: NoDeparturesRow
-
 struct NoDeparturesRow: View {
     var body: some View {
-        Text("No departures available")
+        Text("No departures right now")
             .font(.system(size: 12))
             .foregroundColor(WidgetTheme.textMuted)
             .frame(maxWidth: .infinity, alignment: .center)
@@ -427,16 +390,7 @@ struct EmptyWidgetView: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            // Stationly roundel
-            ZStack {
-                Circle()
-                    .fill(WidgetTheme.amber.opacity(0.15))
-                    .frame(width: 44, height: 44)
-                Text("S")
-                    .font(.system(size: 22, weight: .black))
-                    .foregroundColor(WidgetTheme.amber)
-            }
-
+            TflRoundelMark(diameter: 40)
             if size != .small {
                 Text("Stationly")
                     .font(.system(size: 13, weight: .bold))
@@ -463,32 +417,22 @@ private let previewEntry = DepartureEntry(date: Date(), widgetData: .placeholder
 private let emptyEntry   = DepartureEntry(date: Date(), widgetData: .empty)
 
 @available(iOS 17.0, *)
-#Preview("Small — live data", as: .systemSmall) {
+#Preview("Small — live", as: .systemSmall) {
     StationlyDepartureBoardWidget()
 } timeline: { previewEntry }
 
 @available(iOS 17.0, *)
-#Preview("Small — empty", as: .systemSmall) {
+#Preview("Medium — live", as: .systemMedium) {
     StationlyDepartureBoardWidget()
-} timeline: { emptyEntry }
+} timeline: { previewEntry }
 
 @available(iOS 17.0, *)
-#Preview("Medium — live data", as: .systemMedium) {
+#Preview("Large — live", as: .systemLarge) {
     StationlyDepartureBoardWidget()
 } timeline: { previewEntry }
 
 @available(iOS 17.0, *)
 #Preview("Medium — empty", as: .systemMedium) {
-    StationlyDepartureBoardWidget()
-} timeline: { emptyEntry }
-
-@available(iOS 17.0, *)
-#Preview("Large — live data", as: .systemLarge) {
-    StationlyDepartureBoardWidget()
-} timeline: { previewEntry }
-
-@available(iOS 17.0, *)
-#Preview("Large — empty", as: .systemLarge) {
     StationlyDepartureBoardWidget()
 } timeline: { emptyEntry }
 #endif

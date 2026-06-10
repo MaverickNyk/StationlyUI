@@ -141,13 +141,23 @@ class SummaryViewModel(
                         _uiState.value = _uiState.value.copy(lastUpdated = predsTimestamp)
                     }
 
+                    // Real line status (severity : reason) so the widget footer
+                    // matches the in-app board / Android widget instead of always
+                    // defaulting to "Good Service".
+                    val dbStatus = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
+                    val widgetStatus = dbStatus?.let { s ->
+                        val reason = StationlyFormatters.formatStatusReason(s.reason ?: "").trim()
+                        if (reason.isNotEmpty()) "${s.statusSeverityDescription}: $reason"
+                        else s.statusSeverityDescription
+                    }
                     Platform.widgetManager.updateWidget(
                         com.stationly.core.model.WidgetState(
                             stationName = selection.stationName,
                             lineName = selection.line,
                             predictions = dbPreds,
-                            status = null,
-                            lastUpdated = predsTimestamp / 1000
+                            status = widgetStatus,
+                            lastUpdated = predsTimestamp / 1000,
+                            direction = selection.direction
                         )
                     )
                 }
