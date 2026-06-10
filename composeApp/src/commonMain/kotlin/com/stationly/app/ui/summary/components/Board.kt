@@ -17,6 +17,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -361,8 +363,14 @@ private fun DotMatrixPanel(
         val rows: List<BoardLine> = remember(sduiPayload, ticked, lineStatus, linePrefix) {
             buildBoardLines(sduiPayload, ticked, selection, lineStatus, linePrefix)
         }
+        // Rows scroll independently inside the capped height — station strip
+        // (above) and status + clock footer (below) stay pinned, matching the
+        // Android board's ScrollView so a many-platform station (Bank, King's
+        // Cross) never clips departures off the bottom of the panel.
         Column(
-            modifier = Modifier.heightIn(max = 360.dp),
+            modifier = Modifier
+                .heightIn(max = 360.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             rows.forEach { line ->
