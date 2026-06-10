@@ -157,7 +157,10 @@ data class WidgetState(
     // Selection direction (e.g. "eastbound"). Optional + defaulted so every
     // existing call site (Android included) is unchanged; the iOS widget uses it
     // to render the "Line: Platform N (Direction)" header like Android's board.
-    val direction: String = ""
+    val direction: String = "",
+    // Transport mode (e.g. "tube"). Same optional+defaulted pattern; the iOS
+    // widget tints the header roundel per mode like Android's mode_icon.
+    val mode: String = ""
 )
 
 /**

@@ -36,6 +36,7 @@ object AppGroupKeys {
     const val WIDGET_PREDICTIONS      = "widget_predictions"
     const val WIDGET_STATUS           = "widget_status"
     const val WIDGET_DIRECTION        = "widget_direction"
+    const val WIDGET_MODE             = "widget_mode"
     const val WIDGET_LAST_UPDATED     = "widget_last_updated"
     const val WIDGET_RELOAD_SIGNAL    = "widget_reload_signal"
 
@@ -89,6 +90,7 @@ class IosWidgetManager : WidgetManager {
         d.setObject(predictionsJson,             forKey = AppGroupKeys.WIDGET_PREDICTIONS)
         d.setObject(state.status ?: "",          forKey = AppGroupKeys.WIDGET_STATUS)
         d.setObject(state.direction,             forKey = AppGroupKeys.WIDGET_DIRECTION)
+        d.setObject(state.mode,                  forKey = AppGroupKeys.WIDGET_MODE)
         d.setDouble(state.lastUpdated.toDouble(), forKey = AppGroupKeys.WIDGET_LAST_UPDATED)
         // Bumping the signal tells Swift WidgetReloadObserver to call WidgetCenter.reloadAllTimelines()
         val sig = d.integerForKey(AppGroupKeys.WIDGET_RELOAD_SIGNAL)
@@ -113,6 +115,8 @@ class IosWidgetManager : WidgetManager {
         d.removeObjectForKey(AppGroupKeys.WIDGET_LINE_NAME)
         d.removeObjectForKey(AppGroupKeys.WIDGET_PREDICTIONS)
         d.removeObjectForKey(AppGroupKeys.WIDGET_STATUS)
+        d.removeObjectForKey(AppGroupKeys.WIDGET_DIRECTION)
+        d.removeObjectForKey(AppGroupKeys.WIDGET_MODE)
         d.removeObjectForKey(AppGroupKeys.WIDGET_LAST_UPDATED)
         // Bump signal so widget reloads to empty state
         val sig = d.integerForKey(AppGroupKeys.WIDGET_RELOAD_SIGNAL)
@@ -126,7 +130,9 @@ class IosWidgetManager : WidgetManager {
             lineName    = predictions.firstOrNull()?.line ?: "",
             predictions = emptyList(),
             status      = null,
-            lastUpdated = NSDate().timeIntervalSince1970.toLong()
+            lastUpdated = NSDate().timeIntervalSince1970.toLong(),
+            direction   = predictions.firstOrNull()?.direction ?: "",
+            mode        = predictions.firstOrNull()?.mode ?: ""
         )
     }
 }

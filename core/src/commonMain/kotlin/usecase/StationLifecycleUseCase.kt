@@ -89,7 +89,9 @@ class StationLifecycleUseCase(
                 lineName = selection.line,
                 predictions = preds,
                 status = status?.statusSeverityDescription,
-                lastUpdated = now / 1000
+                lastUpdated = now / 1000,
+                direction = selection.direction,
+                mode = selection.mode
             )
         )
     }

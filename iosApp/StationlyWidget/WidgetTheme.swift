@@ -30,6 +30,20 @@ enum WidgetTheme {
     static let goodService   = Color(red: 0.298, green: 0.686, blue: 0.314)
     /// Disruption / Delay: TfL disruption orange #F16130
     static let disruption    = Color(red: 0.945, green: 0.384, blue: 0.169)
+    /// Stationly brand red (#E32017) — the footer maker mark.
+    static let stationlyRed  = Color(red: 0.890, green: 0.125, blue: 0.090)
+
+    // MARK: - Mode roundel tints (mirror the in-app board's modeRoundelColor)
+
+    static func modeColor(_ mode: String) -> Color {
+        switch mode.lowercased() {
+        case "dlr":                          return Color(red: 0.000, green: 0.643, blue: 0.655) // #00A4A7
+        case "overground":                   return Color(red: 0.933, green: 0.486, blue: 0.055) // #EE7C0E
+        case "elizabeth", "elizabeth-line":  return Color(red: 0.412, green: 0.314, blue: 0.631) // #6950A1
+        case "tram":                         return Color(red: 0.518, green: 0.722, blue: 0.090) // #84B817
+        default:                             return Color(red: 0.863, green: 0.141, blue: 0.122) // #DC241F tube/bus
+        }
+    }
 
     // MARK: - Dynamic helpers
 

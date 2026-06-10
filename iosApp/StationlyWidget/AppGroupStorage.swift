@@ -45,6 +45,7 @@ struct WidgetData {
     let stationName: String
     let lineName: String
     let direction: String
+    let mode: String
     let departures: [DepartureRow]
     let status: String
     let lastUpdated: Date
@@ -58,10 +59,24 @@ struct WidgetData {
     /// "Piccadilly: Platform 1 (Eastbound)" — the dot-matrix platform header,
     /// mirroring Android's StationlyFormatters.platformHeaderText + formatLinePrefix.
     /// Collapses cleanly when a part is missing ("Piccadilly", "Platform 1", "").
+    ///
+    /// The platform value KMP writes can already be fully formed (e.g.
+    /// "Platform 2 (Westbound)") — never re-prefix "Platform" or re-append the
+    /// direction in that case (it rendered as
+    /// "Platform Platform 2 (Westbound) (Inbound)" on device).
     func platformHeader(platform: String) -> String {
+        let rawPlat = platform.trimmingCharacters(in: .whitespaces)
         let line = lineName.isEmpty ? "" : lineName.capitalized
-        let plat = (platform.isEmpty || platform.lowercased() == "unknown") ? "" : "Platform \(platform)"
-        let dir  = direction.isEmpty ? "" : " (\(direction.capitalized))"
+
+        var plat = ""
+        if !rawPlat.isEmpty && rawPlat.lowercased() != "unknown" {
+            let lower = rawPlat.lowercased()
+            plat = (lower.hasPrefix("platform") || lower.hasPrefix("stop")) ? rawPlat : "Platform \(rawPlat)"
+        }
+        // Skip the selection direction when the platform string already carries
+        // one ("… (Westbound)").
+        let dir = (direction.isEmpty || plat.contains("(")) ? "" : " (\(direction.capitalized))"
+
         switch (line.isEmpty, plat.isEmpty) {
         case (false, false): return "\(line): \(plat)\(dir)"
         case (false, true):  return "\(line)\(dir)"
@@ -76,6 +91,7 @@ struct WidgetData {
             stationName: "Arsenal",
             lineName: "Piccadilly",
             direction: "Eastbound",
+            mode: "tube",
             departures: [
                 DepartureRow(destination: "Cockfosters",  platform: "1", eta: "2 min", isDue: false, stopLetter: nil),
                 DepartureRow(destination: "Heathrow T5",  platform: "2", eta: "5 min", isDue: false, stopLetter: nil),
@@ -94,6 +110,7 @@ struct WidgetData {
             stationName: "No station set",
             lineName: "",
             direction: "",
+            mode: "",
             departures: [],
             status: "",
             lastUpdated: Date(),
@@ -126,6 +143,7 @@ class AppGroupStorage {
         let stationName = defaults.string(forKey: "widget_station_name") ?? ""
         let lineName    = defaults.string(forKey: "widget_line_name")    ?? ""
         let direction   = defaults.string(forKey: "widget_direction")    ?? ""
+        let mode        = defaults.string(forKey: "widget_mode")         ?? ""
         let status      = defaults.string(forKey: "widget_status")       ?? ""
         let tsRaw       = defaults.double(forKey: "widget_last_updated")
         let lastUpdated = tsRaw > 0 ? Date(timeIntervalSince1970: tsRaw) : Date(timeIntervalSince1970: 0)
@@ -145,6 +163,7 @@ class AppGroupStorage {
             stationName: stationName,
             lineName: lineName,
             direction: direction,
+            mode: mode,
             departures: departures,
             status: status,
             lastUpdated: lastUpdated,

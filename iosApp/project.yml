@@ -39,6 +39,13 @@ targets:
         CADisableMinimumFrameDurationOnPhone: true
         NSLocationWhenInUseUsageDescription: "Stationly uses your location to show nearby stops."
         StationlyEnvironment: $(STATIONLY_ENVIRONMENT)
+        # Background remote notifications: without this, silent FCM data pushes
+        # (content-available:1 — the station/line-status topic updates) are
+        # NEVER delivered to a backgrounded app, so didReceiveRemoteNotification
+        # can't run and the widget never refreshes between app opens. This is
+        # the iOS equivalent of Android's FirebaseMessagingService wake-up.
+        UIBackgroundModes:
+          - remote-notification
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UILaunchScreen: {}
@@ -51,6 +58,9 @@ targets:
       properties:
         com.apple.security.application-groups:
           - group.com.stationly.mobile
+        # Push Notifications capability — codesign swaps the value per
+        # provisioning profile (development/production) automatically.
+        aps-environment: development
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stationly.mobile
