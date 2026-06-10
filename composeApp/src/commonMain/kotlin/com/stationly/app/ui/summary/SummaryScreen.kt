@@ -75,6 +75,7 @@ import com.stationly.app.ui.common.ThemeToggleButton
 import com.stationly.app.ui.summary.components.Board
 import com.stationly.app.ui.summary.components.EmptyStationsState
 import com.stationly.app.ui.summary.components.StationExploreSection
+import com.stationly.app.ui.theme.DisplayFamily
 import com.stationly.app.ui.theme.TflAmber
 import org.jetbrains.compose.resources.painterResource
 
@@ -264,6 +265,7 @@ private fun SummaryTopBar(
                 Text(
                     text = "Stationly",
                     color = onBackground,
+                    fontFamily = DisplayFamily,
                     fontWeight = FontWeight.Black,
                     fontSize = 22.sp,
                     letterSpacing = (-0.5).sp

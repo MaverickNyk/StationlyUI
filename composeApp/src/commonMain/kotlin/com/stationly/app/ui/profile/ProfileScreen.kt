@@ -48,6 +48,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.stationly.app.ui.common.LocalOpenUrl
 import com.stationly.app.ui.login.PlatformAuthProvider
+import com.stationly.app.ui.theme.DisplayFamily
 import com.stationly.app.ui.theme.LocalThemeTokens
 import com.stationly.app.resources.Res
 import com.stationly.app.resources.stationly_logo
@@ -122,7 +123,7 @@ fun ProfileScreen(
                             modifier = Modifier.size(28.dp).clip(CircleShape)
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text("Stationly", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black, color = White90, letterSpacing = (-0.3).sp)
+                        Text("Stationly", style = MaterialTheme.typography.titleMedium, fontFamily = DisplayFamily, fontWeight = FontWeight.Black, color = White90, letterSpacing = (-0.3).sp)
                     }
                 },
                 navigationIcon = {
