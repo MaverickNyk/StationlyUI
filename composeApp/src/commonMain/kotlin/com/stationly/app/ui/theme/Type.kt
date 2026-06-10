@@ -31,12 +31,16 @@ import org.jetbrains.compose.resources.Font
  * shipping Android app is the separate `android/` module, which keeps using GMS
  * downloadable fonts — so there is no Android APK bloat and no behaviour change.
  */
-val DisplayFamily: FontFamily
-    @Composable get() = FontFamily(
-        Font(Res.font.inter_tight_regular,   FontWeight.Normal,    FontStyle.Normal),
-        Font(Res.font.inter_tight_medium,    FontWeight.Medium,    FontStyle.Normal),
-        Font(Res.font.inter_tight_semibold,  FontWeight.SemiBold,  FontStyle.Normal),
-        Font(Res.font.inter_tight_bold,      FontWeight.Bold,      FontStyle.Normal),
-        Font(Res.font.inter_tight_extrabold, FontWeight.ExtraBold, FontStyle.Normal),
-        Font(Res.font.inter_tight_black,     FontWeight.Black,     FontStyle.Normal),
-    )
+// ⚠️ STUBBED to FontFamily.Default. composeResources (the bundled Inter Tight
+// TTFs) are NOT packaged into the iOS app bundle by this project's build, so
+// reading `Res.font.*` throws `MissingResourceException` at draw time and CRASHES
+// the app on first frame (confirmed on device 2026-06-10). Until composeResources
+// packaging is wired for iOS — copy the generated `compose-resources` dir into the
+// iosApp target's Copy-Bundle-Resources phase (project.yml), OR switch composeApp
+// to a setup that embeds resources in the framework — `DisplayFamily` falls back
+// to the system face. The TTFs in composeResources/font/ + the FontFamily wiring
+// below are kept ready for when packaging is fixed; just restore the body then.
+//
+//  val DisplayFamily: FontFamily @Composable get() = FontFamily(
+//      Font(Res.font.inter_tight_regular, FontWeight.Normal), ... Black ...)
+val DisplayFamily: FontFamily get() = FontFamily.Default

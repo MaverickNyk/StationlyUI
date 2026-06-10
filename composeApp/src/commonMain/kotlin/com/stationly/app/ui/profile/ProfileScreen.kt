@@ -117,11 +117,9 @@ fun ProfileScreen(
             CenterAlignedTopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                        Image(
-                            painter = painterResource(Res.drawable.stationly_logo),
-                            contentDescription = "Stationly",
-                            modifier = Modifier.size(28.dp).clip(CircleShape)
-                        )
+                        Box(Modifier.size(28.dp).clip(CircleShape).background(Amber), contentAlignment = Alignment.Center) {
+                            Text("S", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Black, fontSize = 14.sp)
+                        }
                         Spacer(Modifier.width(8.dp))
                         Text("Stationly", style = MaterialTheme.typography.titleMedium, fontFamily = DisplayFamily, fontWeight = FontWeight.Black, color = White90, letterSpacing = (-0.3).sp)
                     }
