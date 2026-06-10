@@ -278,7 +278,11 @@ class SummaryViewModel(
         val name = Platform.storageManager.loadString("firebase_user_display_name")
             ?: Platform.storageManager.loadString("firebase_user_email")
         val initial = name?.firstOrNull { it.isLetter() }?.uppercaseChar()?.toString() ?: "?"
-        _uiState.value = _uiState.value.copy(userInitial = initial)
+        // Firebase profile photo (Google sign-in) — written by AuthBridge.swift
+        // to NSUserDefaults under "firebase_user_photo_url". Rendered as the
+        // top-bar avatar; falls back to the monogram when absent.
+        val photoUrl = Platform.storageManager.loadString("firebase_user_photo_url")
+        _uiState.value = _uiState.value.copy(userInitial = initial, photoUrl = photoUrl)
     }
 
     private suspend fun fetchAnnouncement() {
