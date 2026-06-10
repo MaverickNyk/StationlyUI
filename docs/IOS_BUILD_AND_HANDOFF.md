@@ -378,6 +378,59 @@ Per-screen commits, each `compileKotlinIosSimulatorArm64`-verified. **No
   earlier "no network images" caveat is obsolete. Avatars / mode-roundels / logos
   all load fine, and the brand logo is now a real bundled asset.
 
+## 7d. Landed in Session 4 (2026-06-10, afternoon) — branch `ios-parity`
+
+Four commits, each compile/typecheck-verified. **No `android/` changes.**
+
+1. **`iOS auth` commit — the big functional batch:**
+   - **Google login race FIXED**: Swift AuthBridge clears `auth_pending_command`
+     immediately on receipt, but KMP treated key-vanishing as completion → the
+     interactive flow "failed" while the user was in the Google sheet (second
+     tap worked because the token had landed by then). New protocol key
+     `auth_command_done` is Swift's LAST write for every command; KMP polls it
+     (30 s default, 180 s for `googleSignInInteractive`).
+   - **Backend session sync ported** (was completely missing on iOS): composeApp
+     `LoginViewModel.syncUserAndSetupData` mirrors Android — `/user/sync/profile`
+     with `deviceId`+`deviceInfo` (new `DeviceIdentity` expect/actual; the id
+     lives in the APP-GROUP suite because logout's `storageManager.clearAll()`
+     wipes the standard domain), station restore, primary-station setup (FCM
+     topics + initial fetch + widget), `registerFcmToken(platform="ios")`,
+     rollback-and-sign-out when the backend is unreachable. **Deliberately does
+     NOT call `cleanupAll()`** post-login (on iOS it would wipe the
+     `firebase_user_*` identity keys Swift just wrote — the "Stationly user"
+     placeholder culprit).
+   - **Identity reload**: SummaryViewModel re-reads name/photo on every
+     ON_RESUME (fixes stale "?" avatar / "Stationly user").
+   - **Profile edit-name**: `updateDisplayName` AuthBridge command +
+     `PlatformAuthProvider.updateDisplayName` + dialog ported from Android +
+     backend mirror via `syncProfile`.
+2. **`iOS home` commit**: AnnouncementBanner + OfflineBanner theme-token tints
+   (the "staging banner not theming" was the SDUI announcement); theme toggle
+   truly bottom-right (Scaffold padding already includes the bottom safe area on
+   iOS — the extra `navigationBars` inset double-applied); whole-screen
+   rubber-band pull-to-refresh (`graphicsLayer` translation with friction);
+   **in-app browser** — `openUrlInApp` expect/actual presents
+   `SFSafariViewController` for http(s), external for mailto:/store links.
+3. **`iOS board` commit**: square LED strips with faint dot lattice (Android's
+   active row is a tiled pixel bitmap, not rounded chips), monospace tabular
+   ETAs, 13 sp single-line platform headers, 22 dp mode roundel, Stationly red
+   "S" maker mark footer-left + clock on a lit strip.
+4. **`iOS widget` commit**: footer = S mark left / minute-accurate clock CENTER
+   / "M:SS ago" together right (fixed the `.timer` greedy-expansion layout bug);
+   per-minute timeline entries for the clock (~24 scheduled refreshes/day);
+   platform-header dedup ("Platform Platform 2 (Westbound) (Inbound)");
+   mode-tinted header roundel via new `WidgetState.mode` → `widget_mode`;
+   square LED cells + dot lattice; **`UIBackgroundModes: remote-notification`
+   added** (silent FCM was never delivered in background — the root cause of
+   "widget doesn't update unless I open the app") + explicit `aps-environment`
+   entitlement. True no-app-wake widget updates = iOS 26 WidgetKit push tokens;
+   needs backend APNs work (follow-up; FCM topics can't target widget tokens).
+
+**Syncer prerequisite for background widget refresh:** the Station_*/
+LineStatus_* FCM messages must carry APNs `content-available: 1` (data-only FCM
+to iOS is otherwise not delivered to backgrounded apps even with the background
+mode). Verify in StationlySyncer's send path.
+
 ## 8. What's REMAINING (priority order)
 
 1. **On-device QA of the rebuilt board + widget (TOP — needs the iPhone).** The
