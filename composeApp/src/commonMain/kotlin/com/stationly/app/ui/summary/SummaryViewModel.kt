@@ -13,6 +13,7 @@ import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.FormatDeparturesUseCase
 import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
+import com.stationly.core.util.FreshDataNotifier
 import com.stationly.core.util.GlobalBoardProcessor
 import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.delay
@@ -113,6 +114,14 @@ class SummaryViewModel(
         viewModelScope.launch {
             while (true) {
                 delay(30_000)
+                _selections.value.forEach { loadPredictions(it) }
+            }
+        }
+        // Instant refresh when an FCM push lands while the app is active:
+        // ProcessFcmPayloadUseCase emits after writing predictions to SQLite, so
+        // we reload the board immediately rather than waiting on the 30 s poll.
+        viewModelScope.launch {
+            FreshDataNotifier.events.collect {
                 _selections.value.forEach { loadPredictions(it) }
             }
         }

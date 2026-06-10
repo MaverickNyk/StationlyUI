@@ -7,6 +7,7 @@ import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SqlStorage
 import com.stationly.core.platform.WidgetManager
 import com.stationly.core.platform.StorageManager
+import com.stationly.core.util.FreshDataNotifier
 import kotlinx.datetime.Clock
 
 /**
@@ -53,6 +54,12 @@ class ProcessFcmPayloadUseCase(
             // Step 4: Update widget
             widgetManager.updateWidget(widgetState)
         }
+
+        // Step 5: Tell any live in-app board to reload from SQLite right now,
+        // instead of waiting on its 30 s poll. Fired whether or not a primary
+        // selection drove a widget update — fresh predictions are in SQLite
+        // either way. (iOS path; the Android app uses its own FreshDataNotifier.)
+        FreshDataNotifier.notifyFreshData()
     }
     
     /**
