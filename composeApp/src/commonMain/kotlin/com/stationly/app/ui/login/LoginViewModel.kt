@@ -2,8 +2,16 @@ package com.stationly.app.ui.login
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.stationly.app.platform.DeviceIdentity
+import com.stationly.core.model.UserSelection
 import com.stationly.core.model.sdui.SduiAppComponent
+import com.stationly.core.platform.Platform
+import com.stationly.core.repository.DepartureRepository
+import com.stationly.core.repository.SelectionRepository
+import com.stationly.core.repository.UserSyncRepository
 import com.stationly.core.service.NetworkModule
+import com.stationly.core.usecase.StationLifecycleUseCase
+import com.stationly.core.usecase.SyncPredictionsUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,6 +22,23 @@ class LoginViewModel(
 ) : ViewModel() {
 
     private val sduiApi = NetworkModule.sduiApi
+
+    private val userSyncRepository = UserSyncRepository(
+        NetworkModule.sduiApi, Platform.sqlStorage, Platform.storageManager
+    )
+    private val stationLifecycleUseCase = StationLifecycleUseCase(
+        selectionRepository = SelectionRepository(Platform.storageManager, Platform.sqlStorage),
+        departureRepository = DepartureRepository(
+            NetworkModule.tflApi,
+            Platform.storageManager,
+            Platform.sqlStorage,
+            SyncPredictionsUseCase(Platform.sqlStorage)
+        ),
+        notificationManager = Platform.notificationManager,
+        widgetManager = Platform.widgetManager,
+        sqlStorage = Platform.sqlStorage,
+        storageManager = Platform.storageManager
+    )
 
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
@@ -113,8 +138,11 @@ class LoginViewModel(
             }
             result.fold(
                 onSuccess = {
-                    _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                    onSuccess()
+                    val isAuthFlow = screenType == "login" || screenType == "register"
+                    if (!isAuthFlow || syncUserAndSetupData(provider = "email")) {
+                        _uiState.value = _uiState.value.copy(isAuthenticating = false)
+                        onSuccess()
+                    }
                 },
                 onFailure = { e ->
                     _uiState.value = _uiState.value.copy(
@@ -131,8 +159,10 @@ class LoginViewModel(
             _uiState.value = _uiState.value.copy(isAuthenticating = true, error = null)
             authProvider.signInWithGoogle(idToken).fold(
                 onSuccess = {
-                    _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                    onSuccess()
+                    if (syncUserAndSetupData(provider = "google")) {
+                        _uiState.value = _uiState.value.copy(isAuthenticating = false)
+                        onSuccess()
+                    }
                 },
                 onFailure = { e ->
                     _uiState.value = _uiState.value.copy(
@@ -149,8 +179,10 @@ class LoginViewModel(
             _uiState.value = _uiState.value.copy(isAuthenticating = true, error = null)
             authProvider.signInWithGoogleInteractive().fold(
                 onSuccess = {
-                    _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                    onSuccess()
+                    if (syncUserAndSetupData(provider = "google")) {
+                        _uiState.value = _uiState.value.copy(isAuthenticating = false)
+                        onSuccess()
+                    }
                 },
                 onFailure = { e ->
                     _uiState.value = _uiState.value.copy(
@@ -159,6 +191,83 @@ class LoginViewModel(
                     )
                 }
             )
+        }
+    }
+
+    /**
+     * Post-auth backend session sync — the iOS counterpart of Android
+     * `LoginViewModel.syncUserAndSyncData`:
+     *  1. `/user/sync/profile` registers this device's session (deviceId +
+     *     deviceInfo) and creates/updates the user record, returning the
+     *     user's saved stations, which are restored into SQLite.
+     *  2. The primary station is fully set up (predictions fetch + FCM topic
+     *     subscribe + widget push).
+     *  3. This device's FCM token is registered under the just-signed-in uid
+     *     so user-targeted pushes (incl. cross-device force-logout) arrive.
+     *
+     * Unlike Android we must NOT run `stationLifecycleUseCase.cleanupAll()`
+     * here: on iOS it wipes the standard NSUserDefaults domain, which is where
+     * Swift AuthBridge just stored the user's identity (display name, photo,
+     * token). The profile sync above already resets SQL + cached data.
+     *
+     * Returns false (after rolling back the Firebase session, mirroring
+     * Android) when the backend can't be reached — the caller must NOT
+     * navigate in that case.
+     */
+    private suspend fun syncUserAndSetupData(provider: String): Boolean {
+        try {
+            val uid = authProvider.currentUserUid()
+                ?: throw IllegalStateException("No uid after sign-in")
+            val stations = userSyncRepository.syncUserAndGetSavedStations(
+                uid         = uid,
+                email       = authProvider.currentUserEmail() ?: "",
+                displayName = authProvider.currentUserDisplayName(),
+                photoURL    = authProvider.currentUserPhotoUrl(),
+                provider    = provider,
+                deviceId    = DeviceIdentity.deviceId(),
+                deviceInfo  = DeviceIdentity.deviceInfo()
+            )
+
+            stations.firstOrNull()?.let { primary ->
+                stationLifecycleUseCase.setupStation(
+                    UserSelection(
+                        mode           = primary.mode,
+                        line           = primary.line,
+                        station        = primary.id,
+                        stationName    = primary.name,
+                        direction      = primary.direction,
+                        destinations   = emptyList(),
+                        destinationIds = emptyList()
+                    ),
+                    isFirstTime = true
+                )
+            }
+
+            // Best-effort — a failed token registration shouldn't block login;
+            // it is retried implicitly the next time the token rotates.
+            try {
+                val fcmToken = Platform.notificationManager.registerDevice()
+                if (fcmToken.isNotBlank()) {
+                    sduiApi.registerFcmToken(
+                        token      = fcmToken,
+                        platform   = Platform.getPlatformName().lowercase(),
+                        appVersion = DeviceIdentity.deviceInfo().appVersion
+                    )
+                }
+            } catch (_: Exception) {}
+
+            return true
+        } catch (e: Exception) {
+            // ROLLBACK: Firebase auth succeeded but the backend sync didn't.
+            // Proceeding would leave a session with no server record (broken
+            // widget/sync/FCM topics) — sign back out and let the user retry.
+            runCatching { authProvider.signOut() }
+            _uiState.value = _uiState.value.copy(
+                isAuthenticating = false,
+                error = "We couldn't reach our servers to finish signing you in. " +
+                        "Please check your connection and try again."
+            )
+            return false
         }
     }
 

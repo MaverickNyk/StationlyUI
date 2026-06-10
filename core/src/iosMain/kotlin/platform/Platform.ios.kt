@@ -56,6 +56,10 @@ object AppGroupKeys {
     const val AUTH_PENDING_COMMAND    = "auth_pending_command"
     const val AUTH_PENDING_ERROR      = "auth_pending_error"
     const val AUTH_OPERATION_SUCCESS  = "auth_operation_success"  // for non-token operations (e.g. resetConfirm)
+    // Written by Swift ONLY after the Firebase call fully completes. KMP must
+    // wait on THIS (not on the command key vanishing — Swift clears that
+    // immediately on receipt, long before an interactive Google flow finishes).
+    const val AUTH_COMMAND_DONE       = "auth_command_done"
 
     // Profile metadata
     const val SIGNIN_PROVIDER         = "signin_provider"

@@ -334,6 +334,10 @@ class SummaryViewModel(
 
     fun reloadSelectionsFromDb() {
         viewModelScope.launch {
+            // Identity keys (name/photo) are written by Swift AuthBridge and can
+            // change after this VM was created (sign-in completes, display name
+            // edited on the Profile screen) — re-read them on every foreground.
+            loadUserInitial()
             selectionRepository.initialize()
         }
     }

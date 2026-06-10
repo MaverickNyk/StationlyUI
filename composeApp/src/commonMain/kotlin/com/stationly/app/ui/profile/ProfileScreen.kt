@@ -24,6 +24,7 @@ import androidx.compose.material.icons.rounded.ArrowBackIosNew
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.Public
@@ -61,10 +62,10 @@ import org.jetbrains.compose.resources.painterResource
  * wired to the existing iOS ProfileViewModel (user info from uiState; sign-out /
  * delete-account / delete-station through the VM + Swift AuthBridge).
  *
- * iOS adaptations: monogram avatar (no Coil network image yet), drawn brand
- * mark (no R.drawable), edit-name dialog omitted (no provider name-update on
- * the iOS auth path). SDUI About section + homeConfig dialog strings reuse the
- * same backend keys as Android.
+ * iOS adaptations: drawn brand mark (composeResources not bundled yet).
+ * Edit-name goes through PlatformAuthProvider.updateDisplayName (Swift
+ * AuthBridge `updateDisplayName` command on iOS). SDUI About section +
+ * homeConfig dialog strings reuse the same backend keys as Android.
  */
 private val Amber    @Composable get() = MaterialTheme.colorScheme.primary
 private val Surface0 @Composable get() = MaterialTheme.colorScheme.background
@@ -110,6 +111,7 @@ fun ProfileScreen(
 
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
     var showDeleteStationDialog by remember { mutableStateOf<SubscribedStation?>(null) }
+    var showEditNameDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = Surface0,
@@ -148,7 +150,8 @@ fun ProfileScreen(
                         email = uiState.email,
                         photoUrl = uiState.photoUrl,
                         provider = uiState.signInProvider,
-                        memberSince = uiState.memberSince.ifBlank { "Recently" }
+                        memberSince = uiState.memberSince.ifBlank { "Recently" },
+                        onEditName = { showEditNameDialog = true }
                     )
                 }
 
@@ -230,6 +233,85 @@ fun ProfileScreen(
                 }
             }
         }
+    }
+
+    // ── Edit Display Name dialog ── (ported from Android ProfileScreen)
+    if (showEditNameDialog) {
+        val currentName = uiState.displayName
+        var nameDraft by remember(currentName) { mutableStateOf(currentName) }
+        var nameError by remember { mutableStateOf<String?>(null) }
+        var isSavingName by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { if (!isSavingName) showEditNameDialog = false },
+            containerColor = Surface2,
+            titleContentColor = White90,
+            textContentColor = White55,
+            title = { Text("Edit your name", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = nameDraft,
+                        onValueChange = {
+                            nameDraft = it
+                            if (nameError != null) nameError = null
+                        },
+                        label = { Text("Display name") },
+                        singleLine = true,
+                        isError = nameError != null,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        // Material3 defaults to blue accents which read wrong on
+                        // Stationly's amber theme — match the AuthField look.
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor      = Amber,
+                            unfocusedBorderColor    = White25,
+                            focusedTextColor        = White90,
+                            unfocusedTextColor      = White90,
+                            focusedLabelColor       = Amber,
+                            unfocusedLabelColor     = White55,
+                            focusedContainerColor   = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            cursorColor             = Amber,
+                            errorBorderColor        = DangerRed,
+                            errorLabelColor         = DangerRed,
+                            errorCursorColor        = DangerRed
+                        )
+                    )
+                    nameError?.let { Text(it, color = DangerRed, fontSize = 12.sp) }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !isSavingName && nameDraft.trim() != currentName,
+                    onClick = {
+                        isSavingName = true
+                        nameError = null
+                        viewModel.updateDisplayName(nameDraft) { result ->
+                            isSavingName = false
+                            result.onSuccess { showEditNameDialog = false }
+                            result.onFailure { e ->
+                                nameError = e.message ?: "Couldn't save. Please try again."
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Amber)
+                ) {
+                    if (isSavingName) {
+                        CircularProgressIndicator(color = Amber, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                    } else {
+                        Text("Save", fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            dismissButton = {
+                if (!isSavingName) {
+                    TextButton(
+                        onClick = { showEditNameDialog = false },
+                        colors = ButtonDefaults.textButtonColors(contentColor = White55)
+                    ) { Text("Cancel") }
+                }
+            }
+        )
     }
 
     // ── Delete Station dialog ──
@@ -328,7 +410,14 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun ProfileHeaderCard(name: String, email: String, photoUrl: String?, provider: String, memberSince: String) {
+private fun ProfileHeaderCard(
+    name: String,
+    email: String,
+    photoUrl: String?,
+    provider: String,
+    memberSince: String,
+    onEditName: () -> Unit
+) {
     Surface(color = Surface1, shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, White08)) {
         Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             // Avatar with amber ring. Google sign-ins carry a photoUrl; email
@@ -349,7 +438,13 @@ private fun ProfileHeaderCard(name: String, email: String, photoUrl: String?, pr
                 }
             }
             Spacer(Modifier.height(16.dp))
-            Text(name, color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(name, color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                Spacer(Modifier.width(6.dp))
+                IconButton(onClick = onEditName, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Rounded.Edit, "Edit name", tint = White55, modifier = Modifier.size(16.dp))
+                }
+            }
             Spacer(Modifier.height(4.dp))
             Text(email, color = White55, fontSize = 14.sp)
             Spacer(Modifier.height(14.dp))
