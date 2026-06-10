@@ -281,6 +281,40 @@ Per-screen commits, each `compileKotlinIosSimulatorArm64`-verified. **No
   (`uiState.photoUrl` was already loaded; was monogram-only); real
   `stationly_logo` in the top bar; Google provider badge uses `AlternateEmail`.
 
+- **Departure board + widget — spot-clean parity** (the product-critical surface):
+  - **In-app board** (`composeApp/.../summary/components/Board.kt`): the rows now
+    `verticalScroll` inside the capped panel — a many-platform station (Bank,
+    King's Cross) no longer clips departures; the station strip + status + footer
+    stay pinned (matches Android's ScrollView). The dot-matrix structure
+    (roundel + station header, line-prefixed platform headers, amber rows / red
+    Due, marquee status, footer roundel + per-second clock + "M:SS ago") was
+    already faithful from Session 2.
+  - **SwiftUI widget** (`iosApp/StationlyWidget/`): rebuilt to read like the
+    Android board. Platform headers now render `Piccadilly: Platform 1
+    (Eastbound)` — added optional `WidgetState.direction` (default `""`, so every
+    call site incl. `android/` is unchanged), populated by composeApp
+    `SummaryViewModel` + `FormatDeparturesUseCase`, written as `widget_direction`
+    by `IosWidgetManager`, and assembled by `WidgetData.platformHeader()`. Real
+    line status (severity : reason) is now written from the poll (was always
+    null). **Live ticking "M:SS ago"** via WidgetKit `Text(_:style:.timer)` — the
+    iOS analog of Android's `Chronometer` (self-updates, no timeline reload).
+    Roundel marks, lit-cell rows, per-family caps (small 3 / medium 4 / large 9).
+  - **iOS platform constraints (documented, not bugs):** WidgetKit widgets are
+    static snapshots — they **cannot scroll** and **cannot tick a per-second wall
+    clock** (Apple's refresh budget). So the widget shows the best fixed row set
+    per family and the live "ago" carries freshness; the status truncates instead
+    of marqueeing.
+
+- **Font — Inter Tight bundled** (`Type.kt` `DisplayFamily`): the brand wordmark
+  on Summary + Profile now uses Inter Tight, matching Android. Android loads it
+  via GMS Downloadable Fonts (no iOS provider), so the official OFL variable font
+  was sliced into 6 static weights with `fonttools` and bundled in
+  `composeResources/font/inter_tight_*.ttf` (license in
+  `composeApp/THIRD_PARTY_LICENSES/`). Only affects shared `composeApp` (iOS); the
+  shipping `android/` app keeps GMS fonts → no APK bloat. **Available for broader
+  use** — apply `fontFamily = DisplayFamily` to more headlines/section headers to
+  extend the match (Login brand mark is a good next target).
+
 ### Notable finding
 - **Coil 3 IS already a composeApp dependency** (`coil3.compose.AsyncImage`); the
   earlier "no network images" caveat is obsolete. Avatars / mode-roundels / logos
@@ -288,20 +322,14 @@ Per-screen commits, each `compileKotlinIosSimulatorArm64`-verified. **No
 
 ## 8. What's REMAINING (priority order)
 
-1. **Departure board + widget — SPOT-CLEAN PARITY (TOP PRIORITY, product call).**
-   The dot-matrix board is the heart of the app; it must match Android exactly in
-   the app AND render cleanly in **every** iOS widget family.
-   - In-app: diff `composeApp/.../summary/components/Board.kt` vs
-     `android/.../summary/components/Board.kt` — roundel, station header, platform
-     section headers (`Northern: Platform 3 (Northbound)`), amber rows / red Due,
-     status strip marquee, footer roundel + ticking clock + "M:SS ago".
-   - Widget: `iosApp/StationlyWidget/WidgetViews.swift` must look right at
-     **systemSmall / systemMedium / systemLarge** (truncation, row counts, safe
-     margins). Known gap: the App-Group payload is a flat `[DepartureRow]` (no
-     line/direction prefix) so it shows `Platform N` not
-     `Northern: Platform 3 (Northbound)`. Fix = enrich
-     `IosWidgetManager.updateWidget` (`core/.../Platform.ios.kt`) to write the
-     grouped structure, then render it in WidgetViews.
+1. **On-device QA of the rebuilt board + widget (TOP — needs the iPhone).** The
+   board + widget were rebuilt this session (§7c "Departure board + widget") and
+   compile + Swift-type-check, but have **not been rendered on a device**. Verify:
+   in-app board scroll + colours vs Android; the widget at **systemSmall / medium
+   / large** — row counts, truncation, the line-prefixed headers (`Piccadilly:
+   Platform 1 (Eastbound)`), and the live "ago" ticking. If anything overflows,
+   tune the per-family caps in `WidgetViews.swift` (small 3 / medium 4 / large 9).
+   (Build the widget via Xcode — `swiftc -typecheck` passes but can't render.)
 2. **FCM in-app immediacy** — optional fresh-data signal so the in-app board
    updates instantly instead of on the 30 s poll / foreground reload.
 3. **On-device visual QA pass** — colours/spacing/alignment vs Android, screen by
