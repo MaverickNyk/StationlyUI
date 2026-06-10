@@ -1,6 +1,7 @@
 package com.stationly.app.ui.profile
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.filled.Tram
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Train as TrainOutlined
+import androidx.compose.material.icons.rounded.AlternateEmail
 import androidx.compose.material.icons.rounded.ArrowBackIosNew
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Close
@@ -36,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -46,8 +49,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.stationly.app.ui.common.LocalOpenUrl
 import com.stationly.app.ui.login.PlatformAuthProvider
 import com.stationly.app.ui.theme.LocalThemeTokens
+import com.stationly.app.resources.Res
+import com.stationly.app.resources.stationly_logo
 import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.model.sdui.SubscribedStation
+import org.jetbrains.compose.resources.painterResource
 
 /**
  * Compose-Multiplatform (iOS) port of the redesigned Android ProfileScreen,
@@ -110,9 +116,11 @@ fun ProfileScreen(
             CenterAlignedTopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                        Box(Modifier.size(28.dp).clip(CircleShape).background(Amber), contentAlignment = Alignment.Center) {
-                            Text("S", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Black, fontSize = 14.sp)
-                        }
+                        Image(
+                            painter = painterResource(Res.drawable.stationly_logo),
+                            contentDescription = "Stationly",
+                            modifier = Modifier.size(28.dp).clip(CircleShape)
+                        )
                         Spacer(Modifier.width(8.dp))
                         Text("Stationly", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black, color = White90, letterSpacing = (-0.3).sp)
                     }
@@ -139,6 +147,7 @@ fun ProfileScreen(
                     ProfileHeaderCard(
                         name = uiState.displayName.ifBlank { "User" },
                         email = uiState.email,
+                        photoUrl = uiState.photoUrl,
                         provider = uiState.signInProvider,
                         memberSince = uiState.memberSince.ifBlank { "Recently" }
                     )
@@ -320,13 +329,24 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun ProfileHeaderCard(name: String, email: String, provider: String, memberSince: String) {
+private fun ProfileHeaderCard(name: String, email: String, photoUrl: String?, provider: String, memberSince: String) {
     Surface(color = Surface1, shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, White08)) {
         Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            // Avatar with amber ring. Google sign-ins carry a photoUrl; email
+            // sign-ins fall back to the first-letter monogram.
             Box(contentAlignment = Alignment.Center) {
                 Box(Modifier.size(96.dp).border(2.5.dp, Brush.linearGradient(listOf(Amber, Amber.copy(0.3f))), CircleShape))
-                Box(Modifier.size(86.dp).background(Surface2, CircleShape), contentAlignment = Alignment.Center) {
-                    Text(name.take(1).uppercase(), color = Amber, fontSize = 34.sp, fontWeight = FontWeight.Black)
+                if (photoUrl != null) {
+                    coil3.compose.AsyncImage(
+                        model = photoUrl,
+                        contentDescription = "Profile photo",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(86.dp).clip(CircleShape).background(Surface2, CircleShape)
+                    )
+                } else {
+                    Box(Modifier.size(86.dp).background(Surface2, CircleShape), contentAlignment = Alignment.Center) {
+                        Text(name.take(1).uppercase(), color = Amber, fontSize = 34.sp, fontWeight = FontWeight.Black)
+                    }
                 }
             }
             Spacer(Modifier.height(16.dp))
@@ -337,7 +357,7 @@ private fun ProfileHeaderCard(name: String, email: String, provider: String, mem
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Surface(color = White08, shape = RoundedCornerShape(20.dp)) {
                     Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Icon(Icons.Outlined.Email, null, tint = Amber, modifier = Modifier.size(13.dp))
+                        Icon(if (provider == "Google") Icons.Rounded.AlternateEmail else Icons.Outlined.Email, null, tint = Amber, modifier = Modifier.size(13.dp))
                         Text(provider, color = White55, fontSize = 11.sp)
                     }
                 }

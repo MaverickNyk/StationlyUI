@@ -1,7 +1,7 @@
 # Stationly iOS — Build, Architecture & Handoff
 
 **Audience:** the next engineer/agent picking up the iOS app.
-**Last updated:** 2026-06-09. **Branch:** `ios-parity` (off `dev_25Apr`, nothing merged).
+**Last updated:** 2026-06-10 (Session 3). **Branch:** `ios-parity` (off `dev_25Apr`, nothing merged).
 **Companion doc:** `docs/IOS_PARITY_PLAN.md` (the phased plan + "⏯️ RESUME HERE").
 
 This doc is the single source of truth for: how the iOS app is structured, how to
@@ -247,39 +247,81 @@ physical iPhone.
   from the right / out to the left (reversed on back) for a native feel. Board
   content untouched.
 
+## 7c. Landed in Session 3 (2026-06-10) — branch `ios-parity`
+
+Per-screen commits, each `compileKotlinIosSimulatorArm64`-verified. **No
+`android/` changes** (design source of truth untouched).
+
+- **Selection screen RE-PORTED** (was the §8 top-priority gap). Replaced the
+  stale pre-redesign Compose `SelectionScreen` with a faithful port of the
+  redesigned `android/.../ui/selection/SelectionScreen.kt`:
+  - SDUI `sdText()` with `{mode}`/`{station}`/`{line}` interpolation + the
+    context-aware vocabulary helpers (bus→stops/routes/Buses, rail→stations/
+    lines/Trains) + `summariseDestinations`.
+  - `StepHeader` carries the picked mode's roundel forward (coil3 AsyncImage).
+  - branch-aware `DirCard`: "towards {next station}" headline, tappable
+    destination chips that swap the stops timeline, rail-only compass badge, the
+    `e488e81` shape-jump fix (compass header gated on compass presence + pinned
+    height, never on `sel`), routes-split hint. Dropped the removed `DirFunFact`.
+  - theme-aware backgrounds (killed the hardcoded black band in light mode);
+    solid-primary CTA; `onSurface`/`onSurfaceVariant`/`onPrimary` text colours.
+  - kept the iOS VM wiring (`onDropdownSelected`, separate flows), `parseColorSafe`.
+
+- **Summary screen parity**: real Material3 `PullToRefreshBox`; **real
+  `stationly_logo`** via composeResources (`Res.drawable.stationly_logo`, PNG
+  copied from `android/.../res/drawable/`) in top bar + update dialog; **profile
+  photo avatar** in the top bar via coil3 (`firebase_user_photo_url`), monogram
+  fallback (`SummaryUiState.photoUrl` added); **floating `ThemeToggleButton`**
+  bottom-right — the light/dark/system selector — **newly ported**
+  `ui/common/ThemeToggleButton.kt` into shared composeApp; lifecycle `ON_RESUME`
+  → `reloadSelectionsFromDb()` (cross-screen consistency + pulls FCM-written rows
+  from SQLite on foreground); themed `UpdateNudgeDialog`.
+
+- **Profile screen parity**: **photo avatar** in `ProfileHeaderCard` via coil3
+  (`uiState.photoUrl` was already loaded; was monogram-only); real
+  `stationly_logo` in the top bar; Google provider badge uses `AlternateEmail`.
+
+### Notable finding
+- **Coil 3 IS already a composeApp dependency** (`coil3.compose.AsyncImage`); the
+  earlier "no network images" caveat is obsolete. Avatars / mode-roundels / logos
+  all load fine, and the brand logo is now a real bundled asset.
+
 ## 8. What's REMAINING (priority order)
 
-0. **Selection screen re-port (TOP PRIORITY)** — the Compose `SelectionScreen` is
-   the **stale pre-redesign version** (only theme-migrated by us, not re-ported
-   like Login/Profile). Symptoms on device: SDUI title/header text falls back to
-   placeholders ("Pick your chariot", "Select Line"), and the line/direction/
-   station step renders **different data than the redesigned Android**. Fix =
-   faithfully port `android/.../ui/selection/SelectionScreen.kt` (1158 lines) into
-   `composeApp` the same way Login/Profile were done: same `getSelectionLayout()`
-   SDUI layout + `sdText("screen_*")` ids + dropdown binding
-   (`onDropdownSelected`), and apply the `e488e81` DirCard "shape-jump on select"
-   fix. The ViewModel (`SelectionViewModel`) + `getSelectionLayout` endpoint
-   already exist and are correct — this is a UI re-port, not a data change.
-1. **On-device visual QA pass** — colours/spacing/alignment vs Android, screen by
-   screen. Some blind-port roughness is expected.
-2. **Real assets** — brand logo + Google "G" are drawn placeholders. Add
-   `stationly_logo` + `ic_google_standard` to
-   `composeApp/src/commonMain/composeResources/drawable/` and use `Res.drawable.*`
-   in Login/Summary/Profile (and the board footer roundel).
-3. **Profile network avatar** — currently monogram. Add Coil 3 KMP and render
-   `uiState.photoUrl`.
-4. **Widget platform labels** — enrich `IosWidgetManager.updateWidget` to write the
-   grouped `Line: Platform N (Direction)` structure so the widget matches Android.
-5. **FCM in-app immediacy** — optional: fresh-data signal instead of 30 s poll.
-6. **Email-verification flow** — Android has `VerifyEmailScreen` +
+1. **Departure board + widget — SPOT-CLEAN PARITY (TOP PRIORITY, product call).**
+   The dot-matrix board is the heart of the app; it must match Android exactly in
+   the app AND render cleanly in **every** iOS widget family.
+   - In-app: diff `composeApp/.../summary/components/Board.kt` vs
+     `android/.../summary/components/Board.kt` — roundel, station header, platform
+     section headers (`Northern: Platform 3 (Northbound)`), amber rows / red Due,
+     status strip marquee, footer roundel + ticking clock + "M:SS ago".
+   - Widget: `iosApp/StationlyWidget/WidgetViews.swift` must look right at
+     **systemSmall / systemMedium / systemLarge** (truncation, row counts, safe
+     margins). Known gap: the App-Group payload is a flat `[DepartureRow]` (no
+     line/direction prefix) so it shows `Platform N` not
+     `Northern: Platform 3 (Northbound)`. Fix = enrich
+     `IosWidgetManager.updateWidget` (`core/.../Platform.ios.kt`) to write the
+     grouped structure, then render it in WidgetViews.
+2. **FCM in-app immediacy** — optional fresh-data signal so the in-app board
+   updates instantly instead of on the 30 s poll / foreground reload.
+3. **On-device visual QA pass** — colours/spacing/alignment vs Android, screen by
+   screen (esp. the re-ported Selection + Summary). Needs the device build (§2).
+4. **Login email-verification flow** — Android has `VerifyEmailScreen` +
    `onNeedsEmailVerification`; not ported. Add to nav + `LoginViewModel` if needed.
+   Also re-verify Login flows/validation/copy vs the 1142-line Android screen.
+5. **Profile edit-display-name** — Android has an edit-name dialog +
+   `updateDisplayName`. NOT ported: needs `PlatformAuthProvider.updateDisplayName`
+   + a Swift `AuthBridge` command (Firebase `createProfileChangeRequest`).
+   Deferred — crosses the KMP/Swift boundary.
+6. **Google "G" glyph** — still a drawn "G" on the Login Google button. Add
+   `ic_google_standard` to composeResources and use `Res.drawable.*` (logo done).
 7. **In-app WebView** — iOS hands links to Safari via `LocalOpenUrl`; port a
    `WKWebView` route if in-app browsing is wanted.
 8. **Light-mode polish on shared toasts** — `OfflineBanner.kt`,
    `AnnouncementBanner.kt`, `SduiRenderer.kt` still hardcode dark. (Board's
    dot-matrix panel is intentionally always-dark signage — leave it.)
-9. **Selection `DirCard` shape-jump fix** from Android `e488e81` — apply if QA shows
-   the card resize-on-select.
+9. **iOS-native polish** — haptics on key interactions (selection commit, delete,
+   pull-refresh), refine transitions, safe-area / Dynamic-Island correctness.
 10. **App Store readiness** — icons, launch screen, prod Firebase plist decision,
     TestFlight, privacy manifest.
 
