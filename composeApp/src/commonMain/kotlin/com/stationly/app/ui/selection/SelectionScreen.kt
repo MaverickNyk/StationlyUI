@@ -3,7 +3,6 @@ package com.stationly.app.ui.selection
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -37,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -52,21 +52,19 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CallMade
-import androidx.compose.material.icons.filled.CallReceived
 import androidx.compose.material.icons.filled.East
-import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.North
 import androidx.compose.material.icons.filled.South
 import androidx.compose.material.icons.filled.West
 import androidx.compose.material.icons.rounded.ArrowBackIosNew
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Clear
-import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.Loop
+import androidx.compose.material.icons.rounded.NearMe
+import androidx.compose.material.icons.rounded.Place
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.RocketLaunch
 import androidx.compose.material.icons.rounded.Search
@@ -89,7 +87,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -118,11 +115,11 @@ import com.stationly.core.model.sdui.SduiAppScreen
 import com.stationly.core.model.sdui.SduiDropdownOption
 import kotlinx.coroutines.delay
 
-// ── Palette ───────────────────────────────────────────────────────────────────
-// Theme-aware (names preserved so call sites stay unchanged). Each reads from
-// MaterialTheme.colorScheme so the screen flips with the app theme, matching the
-// redesigned Android SelectionScreen. The dot-matrix board keeps its own locked
-// dark signage palette elsewhere.
+/* ═══════════════════════════════════════════════════════════════
+   Palette — theme-aware (names preserved so call sites stay unchanged).
+   Each reads from MaterialTheme.colorScheme so the screen flips with the
+   app theme. The dot-matrix board keeps its own locked dark signage palette.
+   ═══════════════════════════════════════════════════════════════ */
 private val Amber    @Composable get() = MaterialTheme.colorScheme.primary
 private val Surface0 @Composable get() = MaterialTheme.colorScheme.background
 private val Surface1 @Composable get() = MaterialTheme.colorScheme.surface
@@ -132,11 +129,64 @@ private val White55  @Composable get() = MaterialTheme.colorScheme.onBackground.
 private val White25  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.25f)
 private val White08  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f)
 
-// ── SDUI helpers ──────────────────────────────────────────────────────────────
-private fun SduiAppScreen.sdText(id: String): String? =
+/* ═══════════════════════════════════════════════════════════════
+   SDUI helpers
+   ═══════════════════════════════════════════════════════════════ */
+/**
+ * Resolve a server-driven string by component id, interpolating any
+ * `{mode}` / `{station}` / `{line}` (etc.) placeholders the backend embedded
+ * with the live selection. The server can ship "{Mode} stops near you" or
+ * "Lines from {station}" and the client fills in the runtime values. Empty
+ * substitutions collapse cleanly so a missing var never leaves a dangling
+ * token. Returns null when the key isn't in the layout, so call sites fall
+ * back to the local default string.
+ */
+private fun SduiAppScreen.sdText(id: String, vars: Map<String, String?> = emptyMap()): String? =
     components.filterIsInstance<SduiAppComponent.Text>().find { it.id == id }?.text
+        ?.let { interpolate(it, vars) }
 
-// ── Step helpers ──────────────────────────────────────────────────────────────
+private fun interpolate(template: String, vars: Map<String, String?>): String {
+    if (!template.contains('{')) return template
+    var out = template
+    vars.forEach { (k, v) -> out = out.replace("{$k}", v ?: "") }
+    return out.replace(Regex("\\s{2,}"), " ").trim()
+}
+
+/* ───────────────────────────────────────────────────────────────
+   Context-aware vocabulary. The copy on each step references the choice
+   made on the previous step (mode → station → line), so the flow reads like
+   a sentence: "Bus stops near you" → "Routes from Trafalgar Square" →
+   "Buses from Trafalgar Square". A bus rides on "stops"/"routes"/"Buses";
+   rail modes on "stations"/"lines"/"Trains". Backend can still override any
+   of these via the screen_* SDUI keys.
+   ─────────────────────────────────────────────────────────────── */
+private fun stopNounSingular(modeId: String?): String =
+    if (modeId == "bus" || modeId == "tram") "stop" else "station"
+private fun lineNounSingular(modeId: String?): String =
+    if (modeId == "bus") "route" else "line"
+private fun lineNounPluralCap(modeId: String?): String =
+    if (modeId == "bus") "Routes" else "Lines"
+private fun vehicleNounPlural(modeId: String?): String = when (modeId) {
+    "bus"       -> "Buses"
+    "tram"      -> "Trams"
+    "river-bus" -> "Boats"
+    else        -> "Trains"
+}
+
+/** Compact destination summary for a junction headline, e.g.
+ *  ["Wimbledon","Richmond","Ealing Broadway","Kensington (Olympia)"] →
+ *  "Wimbledon, Richmond & 2 more". */
+private fun summariseDestinations(labels: List<String>): String = when (labels.size) {
+    0 -> ""
+    1 -> labels[0]
+    2 -> "${labels[0]} & ${labels[1]}"
+    3 -> "${labels[0]}, ${labels[1]} & ${labels[2]}"
+    else -> "${labels[0]}, ${labels[1]} & ${labels.size - 2} more"
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Step helpers  (unified flow: Mode → Station → Line → Direction)
+   ═══════════════════════════════════════════════════════════════ */
 private fun computeStep(s: Map<String, String>): Int = when {
     "direction" in s -> 3
     "line"      in s -> 2
@@ -147,9 +197,12 @@ private fun computeStep(s: Map<String, String>): Int = when {
 private fun screenIdx(s: Map<String, String>): Int = when {
     "mode"    !in s -> 0
     "station" !in s -> 1
-    else            -> 2
+    else            -> 2  // merged line + direction screen
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Root
+   ═══════════════════════════════════════════════════════════════ */
 @Composable
 fun SelectionScreen(
     onNavigateToSummary: () -> Unit,
@@ -163,20 +216,14 @@ fun SelectionScreen(
     val modes by viewModel.modes.collectAsStateWithLifecycle()
     val recentStations by viewModel.recentStations.collectAsStateWithLifecycle()
 
-    val amberColor = Amber
-    val primary by remember(st.layout, amberColor) {
-        derivedStateOf {
-            st.layout?.theme?.primaryColor?.let {
-                parseColorSafe(it) ?: amberColor
-            } ?: amberColor
-        }
-    }
+    // App-wide themed primary — flips automatically with light/dark mode and
+    // any SDUI ThemeTokens override. Previously this screen parsed
+    // `st.layout?.theme?.primaryColor`, which hardcoded a bright TfL-amber that
+    // wrecked light-mode contrast (chips, CTA, border all #FFB81C regardless).
+    val primary = MaterialTheme.colorScheme.primary
 
     LaunchedEffect(st.showSuccessDialog) {
-        if (st.showSuccessDialog) {
-            onNavigateToSummary()
-            viewModel.dismissSuccessDialog()
-        }
+        if (st.showSuccessDialog) { onNavigateToSummary(); viewModel.dismissSuccessDialog() }
     }
 
     val done by remember(selMap) {
@@ -186,7 +233,18 @@ fun SelectionScreen(
     val step = computeStep(selMap)
     val idx  = screenIdx(selMap)
     val mode = modes.find { it.id == selMap["mode"] }
+    // The chosen station's display name, carried forward into the line /
+    // direction copy ("Lines from {station}"). Kept in dropdownData even after
+    // selection, so this resolves on the later steps too.
+    val stationName = remember(dropdownData, selMap) {
+        selMap["station"]?.let { id ->
+            dropdownData["station"]?.find { it.id == id }?.label
+        }
+    }
 
+    // When station screen is shown, auto-load nearby stations (if not already
+    // loaded). On iOS there is no Activity permission launcher — we hand off to
+    // the host via onRequestLocationPermission and let the VM resolve location.
     LaunchedEffect(idx) {
         if (idx == 1 && !st.isLocating && dropdownData["station"].isNullOrEmpty() && !st.isGpsUnavailable) {
             if (st.userLat != null && st.userLon != null) {
@@ -198,6 +256,7 @@ fun SelectionScreen(
         }
     }
 
+    // If location resolved after the station screen was already shown, re-trigger
     LaunchedEffect(st.userLat, st.userLon) {
         if (idx == 1 && !st.isLocating && dropdownData["station"].isNullOrEmpty()
             && !st.isGpsUnavailable && st.userLat != null && st.userLon != null) {
@@ -206,16 +265,20 @@ fun SelectionScreen(
     }
 
     Box(
-        Modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Surface0, Color.Black)))
+        Modifier.fillMaxSize()
+            // Subtle theme-aware fade: surface → background. (Originally a
+            // hardcoded Surface0 → Black band — jarring in light mode.)
+            .background(Brush.verticalGradient(listOf(Surface1, Surface0)))
             .imePadding()
     ) {
         Column(Modifier.fillMaxSize()) {
+
+            // ── top bar ──
             MinimalTopBar(mode?.label, step, "mode" in selMap, primary) {
                 if ("mode" in selMap) viewModel.popLastSelection() else onNavigateBack()
             }
 
+            // ── content ──
             AnimatedContent(
                 targetState = idx,
                 transitionSpec = {
@@ -229,47 +292,57 @@ fun SelectionScreen(
                 modifier = Modifier.weight(1f)
             ) { i ->
                 when (i) {
+                    // Screen 0 — Mode
                     0 -> ModeScreen(
                         st.layout, modes, "mode" in st.failedFetches, primary,
-                        { viewModel.onDropdownSelected("mode", it.id) },
-                        { viewModel.retryLoad() }
+                        { viewModel.onDropdownSelected("mode", it.id) }, { viewModel.retryLoad() }
                     )
+
+                    // Screen 1 — Station (nearby + search combined)
                     1 -> StationScreen(
-                        layout         = st.layout,
-                        stations       = dropdownData["station"] ?: emptyList(),
-                        recentStations = run {
+                        layout          = st.layout,
+                        stations        = dropdownData["station"] ?: emptyList(),
+                        recentStations  = run {
                             val currentIds = dropdownData["station"]?.map { it.id }?.toSet() ?: emptySet()
                             recentStations.filter { it.id in currentIds }
                         },
-                        selectedId     = selMap["station"],
-                        locating       = st.isLocating,
-                        noNearby       = st.isGpsUnavailable,
-                        searchEmpty    = st.isSearchEmpty,
-                        primary        = primary,
-                        modeIcon       = mode?.iconUrl,
-                        mode           = selMap["mode"],
-                        onSelect       = { viewModel.onDropdownSelected("station", it.id) },
-                        onSearch       = { viewModel.searchStations(it) }
+                        selectedId      = selMap["station"],
+                        locating        = st.isLocating,
+                        noNearby        = st.isGpsUnavailable,
+                        searchEmpty     = st.isSearchEmpty,
+                        primary         = primary,
+                        modeIcon        = mode?.iconUrl,
+                        mode            = selMap["mode"],
+                        modeLabel       = mode?.label,
+                        onSelect        = { viewModel.onDropdownSelected("station", it.id) },
+                        onSearch        = { viewModel.searchStations(it) }
                     )
+
+                    // Screen 2 — Line + Direction (merged)
                     2 -> LineDirectionScreen(
-                        layout         = st.layout,
-                        lines          = dropdownData["line"] ?: emptyList(),
-                        selectedLineId = selMap["line"],
-                        directions     = dropdownData["direction"] ?: emptyList(),
-                        selectedDirId  = selMap["direction"],
-                        loadingLines   = dropdownData["line"] == null && "line" !in st.failedFetches,
-                        loadingDirs    = dropdownData["direction"] == null && "direction" !in st.failedFetches,
-                        errLines       = "line" in st.failedFetches,
-                        primary        = primary,
-                        mode           = selMap["mode"],
-                        onSelectLine   = { viewModel.onDropdownSelected("line", it.id) },
-                        onSelectDir    = { viewModel.onDropdownSelected("direction", it.id) },
-                        onRetry        = { viewModel.retryDropdown("line") }
+                        layout          = st.layout,
+                        lines           = dropdownData["line"] ?: emptyList(),
+                        selectedLineId  = selMap["line"],
+                        directions      = dropdownData["direction"] ?: emptyList(),
+                        selectedDirId   = selMap["direction"],
+                        loadingLines    = dropdownData["line"] == null && "line" !in st.failedFetches,
+                        loadingDirs     = dropdownData["direction"] == null && "direction" !in st.failedFetches,
+                        errLines        = "line" in st.failedFetches,
+                        primary         = primary,
+                        mode            = selMap["mode"],
+                        modeIcon        = mode?.iconUrl,
+                        modeLabel       = mode?.label,
+                        stationName     = stationName,
+                        onSelectLine    = { viewModel.onDropdownSelected("line", it.id) },
+                        onSelectDir     = { viewModel.onDropdownSelected("direction", it.id) },
+                        onRetry         = { viewModel.retryDropdown("line") }
                     )
+
                     else -> Box(Modifier.fillMaxSize())
                 }
             }
 
+            // ── CTA ──
             val ctaBtn = st.layout?.components?.filterIsInstance<SduiAppComponent.Button>()?.firstOrNull()
             AnimatedVisibility(
                 done,
@@ -280,7 +353,9 @@ fun SelectionScreen(
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.95f), Color.Black)))
+                        // CTA backdrop fades from transparent into the canvas
+                        // background so the floating CTA doesn't sit on bare content.
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, Surface0.copy(0.95f), Surface0)))
                         .navigationBarsPadding()
                         .padding(horizontal = 20.dp)
                         .padding(top = 16.dp, bottom = 20.dp)
@@ -294,10 +369,10 @@ fun SelectionScreen(
             }
         }
 
+        // overlays
         AnimatedVisibility(st.isSaving, enter = fadeIn(), exit = fadeOut()) {
             Saving(primary, st.layout?.loadingMessage ?: "Preparing Your Live Board")
         }
-
         AnimatedVisibility(
             st.layout == null && st.isBackendOffline,
             enter = fadeIn(tween(400)), exit = fadeOut(tween(300))
@@ -311,6 +386,9 @@ fun SelectionScreen(
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Top bar — thin, elegant, animated progress dots
+   ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun MinimalTopBar(modeName: String?, step: Int, showProgress: Boolean, primary: Color, onBack: () -> Unit) {
     Column(Modifier.fillMaxWidth().statusBarsPadding()) {
@@ -331,10 +409,7 @@ private fun MinimalTopBar(modeName: String?, step: Int, showProgress: Boolean, p
         }
 
         if (showProgress) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 6.dp),
-                Arrangement.spacedBy(5.dp)
-            ) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 6.dp), Arrangement.spacedBy(5.dp)) {
                 repeat(3) { i ->
                     val filled by animateFloatAsState(if (step > i) 1f else 0f, tween(400), label = "bar$i")
                     Box(Modifier.weight(1f).height(2.5.dp).clip(RoundedCornerShape(2.dp)).background(White08)) {
@@ -348,29 +423,65 @@ private fun MinimalTopBar(modeName: String?, step: Int, showProgress: Boolean, p
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Step header — title + subtitle, with the chosen mode's icon carried
+   forward as a roundel so the user always sees what they picked.
+   ═══════════════════════════════════════════════════════════════ */
+@Composable
+private fun StepHeader(modeIcon: String?, primary: Color, title: String, subtitle: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (!modeIcon.isNullOrEmpty()) {
+            // White roundel — TfL mode glyphs are drawn for a white field.
+            Box(
+                Modifier.size(40.dp).background(Color.White, CircleShape)
+                    .border(1.5.dp, primary.copy(0.3f), CircleShape).padding(7.dp),
+                Alignment.Center
+            ) {
+                coil3.compose.AsyncImage(
+                    model = modeIcon, contentDescription = null, modifier = Modifier.fillMaxSize()
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp,
+                lineHeight = 26.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(3.dp))
+            Text(subtitle, color = White55, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Screen 0 — Mode picker
+   ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun ModeScreen(
     layout: SduiAppScreen?, modes: List<SduiDropdownOption>, err: Boolean, primary: Color,
     onSelect: (SduiDropdownOption) -> Unit, onRetry: () -> Unit
 ) {
     when {
-        err   -> Err("Couldn't load modes", primary, onRetry)
+        err -> Err("Couldn't load modes", primary, onRetry)
         modes.isEmpty() -> Loader(primary)
-        else  -> Column(Modifier.fillMaxSize()) {
+        else -> Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.height(24.dp))
-            Text(
-                layout?.sdText("screen_mode_title") ?: "Pick your\nchariot.",
+            // Copy is backend-owned (screen_mode_*); these are the offline
+            // fallbacks. Functional/clear tone, not the old "Pick your chariot".
+            Text(layout?.sdText("screen_mode_title") ?: "How are you travelling?",
                 color = White90, fontWeight = FontWeight.Bold, fontSize = 24.sp,
-                lineHeight = 30.sp, modifier = Modifier.padding(horizontal = 24.dp)
-            )
+                lineHeight = 30.sp, modifier = Modifier.padding(horizontal = 24.dp))
             Spacer(Modifier.height(6.dp))
-            Text(
-                layout?.sdText("screen_mode_subtitle") ?: "Bus, tube, or DLR — we're not judging.",
-                color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp)
-            )
+            Text(layout?.sdText("screen_mode_subtitle") ?: "Pick a transport mode to track.",
+                color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp))
             Spacer(Modifier.height(20.dp))
+            // Adaptive grid — auto-grows columns as the screen gets wider. 170dp
+            // min gives 2 columns on a phone and 4-5 on a tablet.
             LazyVerticalGrid(
-                columns = GridCells.Fixed(2), modifier = Modifier.fillMaxSize(),
+                columns = GridCells.Adaptive(minSize = 170.dp),
+                modifier = Modifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp)
@@ -392,33 +503,35 @@ private fun ModeCard(mode: SduiDropdownOption, primary: Color, onClick: () -> Un
             Modifier.fillMaxSize().padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
         ) {
+            // White roundel container — always white because TfL line icons are
+            // designed to sit on a white field. The fallback letter is forced to
+            // black for the same reason: black-on-white roundel typography.
             Box(contentAlignment = Alignment.Center) {
                 Box(Modifier.size(72.dp).background(primary.copy(0.08f), CircleShape))
                 Box(
                     Modifier.size(60.dp).background(Color.White, CircleShape)
-                        .border(2.dp, primary.copy(0.35f), CircleShape),
+                        .border(2.dp, primary.copy(0.35f), CircleShape).padding(12.dp),
                     Alignment.Center
                 ) {
-                    if (mode.iconUrl != null) {
+                    if (!mode.iconUrl.isNullOrEmpty())
                         coil3.compose.AsyncImage(
-                            model = mode.iconUrl,
-                            contentDescription = mode.label,
-                            modifier = Modifier.size(36.dp)
+                            model = mode.iconUrl, contentDescription = mode.label,
+                            modifier = Modifier.fillMaxSize()
                         )
-                    } else {
-                        Text(mode.label.take(1), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Surface0)
-                    }
+                    else
+                        Text(mode.label.take(1), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.Black)
                 }
             }
             Spacer(Modifier.height(14.dp))
-            Text(
-                mode.label, color = White90, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
-                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis
-            )
+            Text(mode.label, color = White90, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
+                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Screen 1 — Station picker (nearby + search in one screen)
+   ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun StationScreen(
     layout: SduiAppScreen?,
@@ -426,7 +539,7 @@ private fun StationScreen(
     recentStations: List<SduiDropdownOption>,
     selectedId: String?,
     locating: Boolean, noNearby: Boolean, searchEmpty: Boolean,
-    primary: Color, modeIcon: String?, mode: String?,
+    primary: Color, modeIcon: String?, mode: String?, modeLabel: String?,
     onSelect: (SduiDropdownOption) -> Unit,
     onSearch: (String) -> Unit
 ) {
@@ -434,19 +547,28 @@ private fun StationScreen(
     val focusRequester = remember { FocusRequester() }
 
     LaunchedEffect(searchQuery) { delay(300); onSearch(searchQuery) }
+
+    // Auto-focus search when GPS is unavailable
     LaunchedEffect(noNearby) { if (noNearby && stations.isEmpty()) focusRequester.requestFocus() }
+
+    // Interpolation vars + functional fallbacks. Backend owns the wording via
+    // screen_station_title / screen_station_subtitle; templates may use {mode}
+    // and {stop} (the mode-correct "station"/"stop" noun).
+    val noun = stopNounSingular(mode)
+    val vars = mapOf("mode" to modeLabel, "stop" to noun)
+    val titleFallback =
+        if (!modeLabel.isNullOrBlank()) "Find a $modeLabel $noun" else "Find your $noun"
+    val subtitleFallback =
+        if (noNearby) "Location off — search by name."
+        else "Nearby ${noun}s first, or search for another."
 
     Column(Modifier.fillMaxSize()) {
         Spacer(Modifier.height(16.dp))
-        Text(
-            layout?.sdText("screen_station_title") ?: "Find Your Stop",
-            color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp,
-            modifier = Modifier.padding(horizontal = 24.dp)
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            layout?.sdText("screen_station_subtitle") ?: "Nearby stops shown first. Search to find others.",
-            color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp)
+        StepHeader(
+            modeIcon = modeIcon,
+            primary  = primary,
+            title    = layout?.sdText("screen_station_title", vars) ?: titleFallback,
+            subtitle = layout?.sdText("screen_station_subtitle", vars) ?: subtitleFallback,
         )
         Spacer(Modifier.height(12.dp))
 
@@ -458,7 +580,7 @@ private fun StationScreen(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 10.dp)
                 .focusRequester(focusRequester),
-            placeholder = { Text("Search stations…", color = White25, fontSize = 15.sp) },
+            placeholder = { Text(layout?.sdText("station_search_placeholder", vars) ?: "Search ${noun}s…", color = White25, fontSize = 15.sp) },
             leadingIcon  = { Icon(Icons.Rounded.Search, null, tint = primary.copy(0.6f), modifier = Modifier.size(20.dp)) },
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) IconButton({ searchQuery = "" }) {
@@ -467,7 +589,6 @@ private fun StationScreen(
             },
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { onSearch(searchQuery) }),
             shape = RoundedCornerShape(12.dp),
             textStyle = LocalTextStyle.current.copy(fontSize = 15.sp),
             colors = OutlinedTextFieldDefaults.colors(
@@ -492,6 +613,8 @@ private fun StationScreen(
                     Text("Letting GPS do the legwork", color = White25, fontSize = 12.sp)
                 }
             }
+
+            // Search returned zero results — don't spin
             searchEmpty -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
                     Icon(Icons.Rounded.SearchOff, null, tint = White25, modifier = Modifier.size(40.dp))
@@ -501,6 +624,8 @@ private fun StationScreen(
                     Text("Try a different search term", color = White25, fontSize = 12.sp)
                 }
             }
+
+            // GPS unavailable but no search active — prompt to search
             stations.isEmpty() && noNearby -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
                     Icon(Icons.Rounded.Search, null, tint = White25, modifier = Modifier.size(40.dp))
@@ -510,7 +635,9 @@ private fun StationScreen(
                     Text("Location unavailable — type to find stops", color = White25, fontSize = 12.sp)
                 }
             }
+
             stations.isEmpty() -> Loader(primary)
+
             else -> {
                 val showRecent = searchQuery.isBlank() && recentStations.isNotEmpty()
                 val sectionLabel = if (searchQuery.isBlank()) "Nearby" else "Results"
@@ -537,6 +664,9 @@ private fun StationScreen(
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Screen 2 — Line + Direction (merged)
+   ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun LineDirectionScreen(
     layout: SduiAppScreen?,
@@ -544,30 +674,51 @@ private fun LineDirectionScreen(
     selectedLineId: String?,
     directions: List<SduiDropdownOption>,
     selectedDirId: String?,
-    loadingLines: Boolean, loadingDirs: Boolean, errLines: Boolean,
-    primary: Color, mode: String?,
+    loadingLines: Boolean,
+    loadingDirs: Boolean,
+    errLines: Boolean,
+    primary: Color,
+    mode: String?,
+    modeIcon: String?,
+    modeLabel: String?,
+    stationName: String?,
     onSelectLine: (SduiDropdownOption) -> Unit,
     onSelectDir: (SduiDropdownOption) -> Unit,
     onRetry: () -> Unit
 ) {
     val lineSelected = selectedLineId != null
-    val funFactTitle = layout?.sdText("screen_direction_funfact_title")
-    val funFactText  = layout?.sdText("screen_direction_funfact")
+    val lineName = lines.find { it.id == selectedLineId }?.label
+
+    // Interpolation vars shared by both sub-steps. Backend owns the wording via
+    // the screen_line_* / screen_direction_* keys. Templates may use {station},
+    // {line}, {mode}, plus the mode-correct nouns {lines}, {line_noun} and
+    // {vehicle}. These local strings only show offline.
+    val vars = mapOf(
+        "mode"      to modeLabel,
+        "station"   to stationName,
+        "line"      to lineName,
+        "lines"     to lineNounPluralCap(mode),
+        "line_noun" to lineNounSingular(mode),
+        "vehicle"   to vehicleNounPlural(mode),
+    )
+    val fromStation = if (!stationName.isNullOrBlank()) " from $stationName" else ""
+
+    val title = if (!lineSelected)
+        layout?.sdText("screen_line_title", vars)
+            ?: "${lineNounPluralCap(mode)}$fromStation"
+    else
+        layout?.sdText("screen_direction_title", vars) ?: "Which direction?"
+
+    val subtitle = if (!lineSelected)
+        layout?.sdText("screen_line_subtitle", vars)
+            ?: "Which ${lineNounSingular(mode)} are you taking?"
+    else
+        layout?.sdText("screen_direction_subtitle", vars)
+            ?: "${vehicleNounPlural(mode)}$fromStation"
 
     Column(Modifier.fillMaxSize()) {
         Spacer(Modifier.height(16.dp))
-        Text(
-            if (!lineSelected) layout?.sdText("screen_line_title") ?: "Select Line"
-            else layout?.sdText("screen_direction_title") ?: "Which direction?",
-            color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp,
-            modifier = Modifier.padding(horizontal = 24.dp)
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            if (!lineSelected) layout?.sdText("screen_line_subtitle") ?: "Lines stopping here."
-            else layout?.sdText("screen_direction_subtitle") ?: "Which way are you going?",
-            color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp)
-        )
+        StepHeader(modeIcon = modeIcon, primary = primary, title = title, subtitle = subtitle)
         Spacer(Modifier.height(14.dp))
 
         when {
@@ -579,8 +730,11 @@ private fun LineDirectionScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 item { SectionHeader("Lines") }
+
                 items(lines, key = { it.id }) { line ->
                     OptRow(line, line.id == selectedLineId, primary, null, mode) { onSelectLine(line) }
+
+                    // Inline direction picker expands below the selected line
                     AnimatedVisibility(
                         visible = line.id == selectedLineId,
                         enter = expandVertically(tween(280)) + fadeIn(tween(220)),
@@ -595,17 +749,14 @@ private fun LineDirectionScreen(
                                 }
                             } else {
                                 directions.forEach { dir ->
-                                    DirCard(dir, dir.id == selectedDirId, primary) { onSelectDir(dir) }
+                                    DirCard(dir, dir.id == selectedDirId, primary, layout) { onSelectDir(dir) }
                                     Spacer(Modifier.height(8.dp))
-                                }
-                                if (funFactText != null && selectedDirId != null) {
-                                    Spacer(Modifier.height(4.dp))
-                                    DirFunFact(primary, funFactTitle, funFactText)
                                 }
                             }
                         }
                     }
                 }
+
                 item { Spacer(Modifier.height(20.dp)) }
             }
         }
@@ -613,13 +764,11 @@ private fun LineDirectionScreen(
 }
 
 @Composable
-private fun OptRow(
-    opt: SduiDropdownOption, sel: Boolean, primary: Color,
-    modeIcon: String?, mode: String? = null, onClick: () -> Unit
-) {
+private fun OptRow(opt: SduiDropdownOption, sel: Boolean, primary: Color, modeIcon: String?, mode: String? = null, onClick: () -> Unit) {
     val displayLabel = remember(opt.label, mode) {
         if (mode == "bus" && opt.label.all { it.isDigit() || it == ' ' } && opt.label.trim().isNotEmpty())
-            "Bus ${opt.label.trim()}" else opt.label
+            "Bus ${opt.label.trim()}"
+        else opt.label
     }
     val lineColor = remember(opt.color, mode) {
         val c = opt.color
@@ -640,78 +789,140 @@ private fun OptRow(
             } else Spacer(Modifier.width(14.dp))
 
             if (modeIcon != null) {
-                Box(
-                    Modifier.size(34.dp).background(Color.White, CircleShape)
-                        .border(1.dp, primary.copy(0.25f), CircleShape),
-                    Alignment.Center
-                ) {
-                    coil3.compose.AsyncImage(
-                        model = modeIcon,
-                        contentDescription = null,
-                        modifier = Modifier.size(22.dp)
-                    )
+                Box(Modifier.size(34.dp).background(Color.White, CircleShape)
+                    .border(1.dp, primary.copy(0.25f), CircleShape).padding(5.dp), Alignment.Center) {
+                    coil3.compose.AsyncImage(model = modeIcon, contentDescription = null, modifier = Modifier.fillMaxSize())
                 }
                 Spacer(Modifier.width(12.dp))
+            } else if (opt.iconUrl != null) {
+                coil3.compose.AsyncImage(model = opt.iconUrl, contentDescription = null, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(10.dp))
             }
 
             Column(Modifier.weight(1f)) {
-                Text(
-                    displayLabel, color = if (sel) primary else White90,
-                    fontWeight = FontWeight.Medium, fontSize = 15.sp,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis
-                )
+                // Station name — always high-contrast onSurface. Selected state is
+                // indicated by the card's border + tick, not by recolouring the
+                // title (which made it disappear on light theme).
+                Text(displayLabel, color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Medium,
+                    fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val hasDistance = opt.secondaryLabel != null
                 val hasTags = !opt.tags.isNullOrEmpty()
                 if (hasDistance || hasTags) {
                     Spacer(Modifier.height(5.dp))
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         opt.secondaryLabel?.let { secondary ->
-                            Text(secondary, color = primary.copy(0.6f), fontSize = 12.sp)
+                            // Muted onSurfaceVariant so it reads as supporting text
+                            // in both themes (the old primary tint vanished on light).
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Rounded.NearMe, null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(11.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(secondary,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 12.sp)
+                            }
                         }
                         opt.tags?.forEach { hex ->
-                            val dotColor = parseColorSafe(hex)
+                            val dotColor = remember(hex) { parseColorSafe(hex) }
                             if (dotColor != null) {
-                                Box(Modifier.size(8.dp).background(dotColor, CircleShape))
+                                Box(Modifier.size(8.dp).background(dotColor, CircleShape)
+                                    .border(0.5.dp, White25.copy(alpha = 0.6f), CircleShape))
                             }
                         }
                     }
                 }
             }
+
             if (sel) {
                 Spacer(Modifier.width(8.dp))
                 Box(Modifier.size(22.dp).background(primary, CircleShape), Alignment.Center) {
-                    Icon(Icons.Rounded.Check, null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(14.dp))
                 }
             }
         }
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Small section header
+   ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun SectionHeader(label: String) {
-    Text(
-        label.uppercase(), color = White25, fontSize = 11.sp,
+    Text(label.uppercase(), color = White25, fontSize = 11.sp,
         fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
-        modifier = Modifier.padding(bottom = 4.dp)
-    )
+        modifier = Modifier.padding(bottom = 4.dp))
 }
 
 @Composable
-private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, onClick: () -> Unit) {
-    val dirName     = opt.directionName ?: opt.label
-    val primaryDest = opt.towards ?: dirName
-    val branchDests = opt.destinations ?: emptyList()
-    val stops       = opt.upcomingStations
+private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, layout: SduiAppScreen?, onClick: () -> Unit) {
+    // Static chrome labels are backend-overridable via SDUI (dir_* keys); the
+    // strings below are only offline fallbacks.
+    val towardsLabel  = layout?.sdText("dir_towards_label") ?: "towards"
+    val stationsLabel = layout?.sdText("dir_stations_label") ?: "STATIONS THIS WAY"
+    val stationsToTpl = layout?.sdText("dir_stations_to_label") ?: "STATIONS TO {dest}"
+    val splitHint     = layout?.sdText("dir_split_hint") ?: "This direction splits — tap a destination above to see its full line of stops."
+    // Bind to the STRUCTURED route fields the backend sends (directionName /
+    // towards / destinations / upcomingStations). Fall back to parsing the
+    // legacy label / secondaryLabel strings so older payloads still render.
+    val lbl  = opt.label
+    val tIdx = lbl.indexOf(" towards", ignoreCase = true)
+    val parsedDir     = if (tIdx > 0) lbl.substring(0, tIdx).trim() else lbl.trim()
+    val parsedTowards = if (tIdx > 0) lbl.substring(tIdx + 8).trim().substringBefore('\n').trim() else ""
 
-    val dirIcon: ImageVector = when {
-        opt.id.contains("inbound",  true) || dirName.contains("inbound",  true) -> Icons.Filled.CallReceived
-        opt.id.contains("outbound", true) || dirName.contains("outbound", true) -> Icons.Filled.CallMade
-        dirName.contains("north", true) -> Icons.Filled.North
-        dirName.contains("south", true) -> Icons.Filled.South
-        dirName.contains("east",  true) -> Icons.Filled.East
-        dirName.contains("west",  true) -> Icons.Filled.West
-        else                            -> Icons.Filled.Explore
+    // "towards X" — the most relevant NEXT station in this direction (what the
+    // platform signage shows), not the terminus.
+    val towards = opt.towards?.takeIf { it.isNotBlank() }
+        ?: opt.upcomingStations?.firstOrNull()
+        ?: parsedTowards.takeIf { it.isNotBlank() }
+        ?: parsedDir
+
+    // Reachable destinations as FULL objects — each carries its own branch stops
+    // in `upcomingStations`, so tapping a chip swaps the timeline to that branch.
+    val destObjs = opt.destinations ?: emptyList()
+    val fallbackDestLabels = if (destObjs.isEmpty() && tIdx > 0)
+        lbl.substring(tIdx + 8).trim().split('\n').map { it.trim() }.filter { it.isNotBlank() }.drop(1)
+    else emptyList()
+
+    // Default timeline = the common trunk shared by all branches
+    // (direction-level upcomingStations). Empty at a hard junction.
+    val commonStops = opt.upcomingStations
+        ?: opt.secondaryLabel?.split(" · ")?.map { it.trim() }?.filter { it.isNotBlank() }
+        ?: emptyList()
+
+    // Tapping a destination chip selects that branch; null = the default view.
+    var selectedDestId by remember(opt.id) { mutableStateOf<String?>(null) }
+    val selectedDest = destObjs.firstOrNull { it.id == selectedDestId }
+    val routeSplits = destObjs.size > 1
+
+    // Timeline stops: a selected branch → else the common trunk. At a hard
+    // junction (no common trunk) we deliberately DON'T preview an arbitrary
+    // branch; the headline lists the destinations and a note invites a tap.
+    val activeStops = selectedDest?.upcomingStations?.takeIf { it.isNotEmpty() } ?: commonStops
+
+    // Headline target: a chosen branch's NEXT stop → else the next common stop →
+    // else (junction, nothing chosen) the destination list itself.
+    val displayedTowards = when {
+        selectedDest != null -> selectedDest.upcomingStations?.firstOrNull() ?: selectedDest.label
+        commonStops.isNotEmpty() -> towards
+        destObjs.isNotEmpty() -> summariseDestinations(destObjs.map { it.label })
+        else -> towards
     }
+
+    // Compass badge only for rail/tube/overground (Northbound … / Clockwise).
+    // Buses report directionName="Towards" and inbound/outbound is meaningless to
+    // passengers, so those get no badge — the "towards X" headline carries it.
+    val dir = (opt.directionName ?: parsedDir).lowercase()
+    val compassIcon: ImageVector? = when {
+        dir.contains("north")        -> Icons.Filled.North
+        dir.contains("south")        -> Icons.Filled.South
+        dir.contains("east")         -> Icons.Filled.East
+        dir.contains("west")         -> Icons.Filled.West
+        dir.contains("clockwise")    -> Icons.Rounded.Loop   // covers anticlockwise too
+        else                         -> null
+    }
+    val badgeText = (opt.directionName ?: parsedDir).takeIf { compassIcon != null }
 
     Surface(
         onClick = onClick,
@@ -722,68 +933,148 @@ private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, onCli
     ) {
         Row(Modifier.fillMaxWidth()) {
             Box(
-                Modifier.width(4.dp).fillMaxHeight()
-                    .background(if (sel) primary else primary.copy(0.25f), RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp))
+                Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(
+                        if (sel) primary else primary.copy(0.25f),
+                        RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp)
+                    )
             )
             Column(Modifier.weight(1f).padding(start = 14.dp, end = 16.dp, top = 16.dp, bottom = 16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier.background(
-                            if (sel) primary.copy(0.20f) else primary.copy(0.10f), RoundedCornerShape(8.dp)
-                        ).padding(horizontal = 10.dp, vertical = 5.dp)
+                // Compass cue + tick header — RAIL ONLY (compassIcon != null).
+                // Gated purely on compass presence, NEVER on `sel`, and pinned to
+                // the tick's height so selecting a card only fades the tick in/out
+                // *inside* an already-reserved row — the card never changes height.
+                if (compassIcon != null) {
+                    Row(
+                        Modifier.fillMaxWidth().heightIn(min = 22.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Icon(dirIcon, null, tint = if (sel) primary else primary.copy(0.7f), modifier = Modifier.size(12.dp))
-                            Text(
-                                dirName.uppercase(),
-                                color = if (sel) primary else primary.copy(0.7f),
-                                fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp
-                            )
+                        if (badgeText != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(compassIcon, null, tint = White55, modifier = Modifier.size(13.dp))
+                                Text(badgeText.uppercase(), color = White55,
+                                    fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                            }
+                        }
+                        Spacer(Modifier.weight(1f))
+                        if (sel) {
+                            Box(Modifier.size(22.dp).background(primary, CircleShape), Alignment.Center) {
+                                Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(13.dp))
+                            }
                         }
                     }
-                    Spacer(Modifier.weight(1f))
-                    if (sel) {
-                        Box(Modifier.size(24.dp).background(primary, CircleShape), Alignment.Center) {
-                            Icon(Icons.Rounded.Check, null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.height(8.dp))
+                }
+
+                // "towards {next station}" — the HIGHLIGHTED headline. The station
+                // name is the boldest element on the card; "towards" is a quiet
+                // muted lead-in, baseline-aligned so they read as one phrase.
+                Row(Modifier.fillMaxWidth()) {
+                    Text("$towardsLabel ", color = White55, fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium, modifier = Modifier.alignByBaseline())
+                    Text(
+                        displayedTowards,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).alignByBaseline()
+                    )
+                    // Bus cards have no compass header, so the selected tick rides
+                    // at the end of the headline row instead. The 18sp headline is
+                    // already ~tick-tall, so toggling it doesn't grow the row.
+                    if (sel && compassIcon == null) {
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier.align(Alignment.CenterVertically)
+                                .size(22.dp).background(primary, CircleShape),
+                            Alignment.Center
+                        ) {
+                            Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(13.dp))
                         }
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                Text("towards", color = White25, fontSize = 11.sp, letterSpacing = 0.5.sp)
-                Spacer(Modifier.height(2.dp))
-                Text(primaryDest, color = primary, fontWeight = FontWeight.ExtraBold, fontSize = 21.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
 
-                if (branchDests.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        branchDests.take(3).forEach { dest ->
+                // Destination chips. With >1 destination they're TAPPABLE: tapping
+                // one swaps the timeline below to that branch's stops; tapping
+                // again returns to the common trunk.
+                if (destObjs.isNotEmpty() || fallbackDestLabels.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState())
+                    ) {
+                        Icon(Icons.Rounded.Place, null, tint = primary.copy(0.7f), modifier = Modifier.size(13.dp))
+                        destObjs.forEach { d ->
+                            val isSel = d.id == selectedDestId
+                            // Only worth tapping if this branch has its own stops AND
+                            // there's more than one destination to disambiguate.
+                            val tappable = destObjs.size > 1 && !d.upcomingStations.isNullOrEmpty()
                             Box(
-                                Modifier.background(White08, RoundedCornerShape(6.dp))
-                                    .border(0.5.dp, White25, RoundedCornerShape(6.dp))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                                Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSel) primary.copy(0.22f) else primary.copy(0.10f))
+                                    .border(0.5.dp, if (isSel) primary.copy(0.6f) else primary.copy(0.30f), RoundedCornerShape(8.dp))
+                                    .then(if (tappable) Modifier.clickable { selectedDestId = if (isSel) null else d.id } else Modifier)
+                                    .padding(horizontal = 9.dp, vertical = 4.dp)
                             ) {
-                                Text(dest.label, color = White55, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(d.label, color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 12.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.SemiBold,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                        fallbackDestLabels.forEach { dest ->
+                            Box(
+                                Modifier
+                                    .background(primary.copy(0.10f), RoundedCornerShape(8.dp))
+                                    .border(0.5.dp, primary.copy(0.30f), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 9.dp, vertical = 4.dp)
+                            ) {
+                                Text(dest, color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
                 }
 
-                if (!stops.isNullOrEmpty()) {
+                // Stations sequence. By default we ALWAYS show a sequence: the
+                // common trunk if branches share one, otherwise the selected
+                // branch. Tapping a chip swaps to that branch.
+                if (activeStops.isNotEmpty()) {
+                    val timelineLabel = if (selectedDest != null)
+                        interpolate(stationsToTpl, mapOf("dest" to selectedDest.label.uppercase()))
+                    else stationsLabel
                     Spacer(Modifier.height(12.dp))
                     Box(
-                        Modifier.fillMaxWidth().background(White08, RoundedCornerShape(10.dp))
+                        Modifier
+                            .fillMaxWidth()
+                            .background(White08, RoundedCornerShape(10.dp))
                             .padding(horizontal = 10.dp, vertical = 7.dp)
                     ) {
                         Column {
-                            Text("NEXT STATIONS", color = White25, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = 0.8.sp, modifier = Modifier.padding(bottom = 5.dp))
+                            Text(
+                                timelineLabel,
+                                color = White25,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.8.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(bottom = 5.dp)
+                            )
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.horizontalScroll(rememberScrollState())
                             ) {
-                                stops.forEachIndexed { i, stop ->
-                                    if (i > 0) Text("  →  ", color = primary.copy(0.55f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                activeStops.forEachIndexed { i, stop ->
+                                    if (i > 0) {
+                                        Text("  →  ", color = primary.copy(0.55f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                         Box(Modifier.size(5.dp).background(primary.copy(0.6f), CircleShape))
                                         Text(stop, color = White90, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
@@ -793,32 +1084,22 @@ private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, onCli
                         }
                     }
                 }
-            }
-        }
-    }
-}
 
-@Composable
-private fun DirFunFact(primary: Color, title: String?, body: String) {
-    Surface(
-        color = primary.copy(alpha = 0.07f), shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, primary.copy(alpha = 0.18f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
-            Icon(Icons.Rounded.Info, null, tint = primary.copy(0.8f), modifier = Modifier.size(18.dp).padding(top = 1.dp))
-            Spacer(Modifier.width(10.dp))
-            Column {
-                if (title != null) {
-                    Text(title, color = primary.copy(0.9f), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                    Spacer(Modifier.height(5.dp))
+                // "Routes split" note — sits BELOW the stops, shown when the
+                // direction branches and no specific destination is chosen yet.
+                if (routeSplits && selectedDest == null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(splitHint, color = White55, fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Medium, lineHeight = 15.sp)
                 }
-                Text(body, color = White55, fontSize = 11.5.sp, lineHeight = 16.sp)
             }
         }
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Shared utilities
+   ═══════════════════════════════════════════════════════════════ */
 @Composable private fun Loader(primary: Color) = Box(Modifier.fillMaxSize(), Alignment.Center) {
     CircularProgressIndicator(color = primary, strokeWidth = 2.5.dp, modifier = Modifier.size(28.dp))
 }
@@ -833,9 +1114,9 @@ private fun Err(msg: String, primary: Color, onRetry: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             Button(onClick = onRetry, colors = ButtonDefaults.buttonColors(containerColor = primary),
                 shape = RoundedCornerShape(10.dp), modifier = Modifier.height(38.dp)) {
-                Icon(Icons.Rounded.Refresh, null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                Icon(Icons.Rounded.Refresh, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Retry", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text("Retry", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         }
     }
@@ -844,15 +1125,15 @@ private fun Err(msg: String, primary: Color, onRetry: () -> Unit) {
 @Composable
 private fun ServiceUnavailableScreen(error: String?, onRetry: () -> Unit, onDismiss: () -> Unit) {
     Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(0.95f)).padding(32.dp),
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background.copy(0.97f)).padding(32.dp),
         Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Icon(Icons.Rounded.WifiOff, null, tint = Color(0xFFF06292), modifier = Modifier.size(52.dp))
-            Text("Can't reach Stationly", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp, textAlign = TextAlign.Center)
+            Icon(Icons.Rounded.WifiOff, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(52.dp))
+            Text("Can't reach Stationly", color = White90, fontWeight = FontWeight.Bold, fontSize = 20.sp, textAlign = TextAlign.Center)
             Text(error ?: "Check your connection and try again.", color = White55, fontSize = 14.sp, textAlign = TextAlign.Center, lineHeight = 20.sp)
             Spacer(Modifier.height(8.dp))
-            Button(onClick = onRetry, colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Color.Black),
+            Button(onClick = onRetry, colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = MaterialTheme.colorScheme.onPrimary),
                 shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().height(52.dp)) {
                 Text("Try Again", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
@@ -864,10 +1145,15 @@ private fun ServiceUnavailableScreen(error: String?, onRetry: () -> Unit, onDism
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Modern CTA
+   ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun ModernCtaButton(label: String, primary: Color, onClick: () -> Unit) {
-    val shape    = RoundedCornerShape(20.dp)
-    val gradient = Brush.horizontalGradient(colors = listOf(primary, Color(0xFFFFD96A), primary))
+    val shape = RoundedCornerShape(20.dp)
+    // Solid primary background — holds clean onPrimary contrast in both themes.
+    // (The earlier 3-stop gradient had a lemon mid-stop that swallowed the text
+    // on light theme.)
     var pressed by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (pressed) 0.97f else 1f, tween(100), label = "cta_scale")
 
@@ -875,7 +1161,7 @@ private fun ModernCtaButton(label: String, primary: Color, onClick: () -> Unit) 
         modifier = Modifier
             .fillMaxWidth().height(60.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(shape).background(gradient)
+            .clip(shape).background(primary)
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
@@ -888,9 +1174,9 @@ private fun ModernCtaButton(label: String, primary: Color, onClick: () -> Unit) 
         contentAlignment = Alignment.Center
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            Icon(Icons.Rounded.RocketLaunch, null, tint = Color.Black, modifier = Modifier.size(20.dp))
+            Icon(Icons.Rounded.RocketLaunch, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(10.dp))
-            Text(label, color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, letterSpacing = 0.3.sp)
+            Text(label, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, letterSpacing = 0.3.sp)
         }
     }
 }
@@ -905,7 +1191,7 @@ private fun Saving(primary: Color, text: String) {
     Box(
         Modifier.fillMaxSize()
             .pointerInput(Unit) { awaitPointerEventScope { while (true) { awaitPointerEvent() } } }
-            .background(Color.Black.copy(0.97f)).padding(32.dp),
+            .background(MaterialTheme.colorScheme.background.copy(0.97f)).padding(32.dp),
         Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -923,8 +1209,7 @@ private fun Saving(primary: Color, text: String) {
             Spacer(Modifier.height(32.dp))
             LinearProgressIndicator(
                 Modifier.fillMaxWidth(0.5f).height(1.5.dp).clip(RoundedCornerShape(1.dp)),
-                color = primary, trackColor = primary.copy(0.1f)
-            )
+                color = primary, trackColor = primary.copy(0.1f))
         }
     }
 }
