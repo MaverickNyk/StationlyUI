@@ -1,16 +1,12 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
 package com.stationly.app.ui.summary
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.EaseInOut
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,12 +14,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -34,7 +33,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,9 +42,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,20 +54,30 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.zIndex
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.stationly.app.resources.Res
+import com.stationly.app.resources.stationly_logo
 import com.stationly.app.ui.common.AnnouncementBanner
 import com.stationly.app.ui.common.OfflineBanner
+import com.stationly.app.ui.common.ThemeToggleButton
 import com.stationly.app.ui.summary.components.Board
 import com.stationly.app.ui.summary.components.EmptyStationsState
 import com.stationly.app.ui.summary.components.StationExploreSection
 import com.stationly.app.ui.theme.TflAmber
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+import org.jetbrains.compose.resources.painterResource
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SummaryScreen(
     onNavigateToSelection: () -> Unit,
@@ -87,7 +95,22 @@ fun SummaryScreen(
     val homeConfig by viewModel.homeConfig.collectAsStateWithLifecycle()
     val forceUpdate by viewModel.forceUpdate.collectAsStateWithLifecycle()
     val deletingBoardId by viewModel.isDeletingBoard.collectAsStateWithLifecycle()
-    val showWidgetPromo by viewModel.showWidgetPromo.collectAsStateWithLifecycle()
+
+    // Reload selections from SQLite whenever this screen resumes (app foreground
+    // or returning from Profile). Mirrors Android's ON_RESUME hook: handles a
+    // station deleted elsewhere while the in-memory cache was stale, and pulls
+    // any board rows an FCM push wrote to SQLite while we were backgrounded —
+    // so the in-app board is fresh the instant the user comes back.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.reloadSelectionsFromDb()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -96,7 +119,8 @@ fun SummaryScreen(
                 onNavigateToProfile = onNavigateToProfile,
                 onNavigateToSelection = onNavigateToSelection,
                 selectionsEmpty = selections.isEmpty(),
-                userInitial = uiState.userInitial
+                userInitial = uiState.userInitial,
+                photoUrl = uiState.photoUrl,
             )
         }
     ) { padding ->
@@ -106,6 +130,19 @@ fun SummaryScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .padding(padding)
         ) {
+            // Discreet theme toggle pinned bottom-right above the gesture-nav
+            // handle — the daily-use light/dark/system shortcut (the full picker
+            // lives in Profile → Appearance). Matches the Android home placement.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(end = 6.dp, bottom = 2.dp)
+                    .zIndex(2f),
+            ) {
+                ThemeToggleButton(compact = true)
+            }
+
             AnimatedContent(
                 targetState = selections,
                 transitionSpec = {
@@ -116,10 +153,14 @@ fun SummaryScreen(
                 if (currentSelections.isEmpty()) {
                     EmptyStationsState(onNavigateToSelection, strings = homeConfig)
                 } else {
-                    Box(modifier = Modifier.fillMaxSize()) {
+                    PullToRefreshBox(
+                        isRefreshing = uiState.isRefreshing,
+                        onRefresh = { viewModel.refreshAll() },
+                        modifier = Modifier.fillMaxSize()
+                    ) {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
                             verticalArrangement = Arrangement.spacedBy(20.dp)
                         ) {
                             // SummaryHeader (greeting + "Live · N boards") intentionally
@@ -138,41 +179,27 @@ fun SummaryScreen(
                                 val selectionPredictions = predictions[selection.station] ?: emptyList()
                                 val statusKey = "${selection.mode}_${selection.line}".lowercase()
 
-                                Board(
-                                    selection = selection,
-                                    predictions = selectionPredictions,
-                                    hasPredictions = selectionPredictions.isNotEmpty(),
-                                    lineStatus = lineStatuses[statusKey],
-                                    lineStatusFailed = failedLineStatusKeys.contains(statusKey),
-                                    sduiPayload = sduiPayloads[selection.station],
-                                    lastUpdated = stationUpdates[selection.station] ?: 0L,
-                                    onDelete = { if (deletingBoardId == null) viewModel.deleteSelection(selection) },
-                                    nextPrediction = selectionPredictions.firstOrNull(),
-                                    homeConfig = homeConfig,
-                                    isDeleting = deletingBoardId == selection.station
-                                )
+                                Box(modifier = Modifier.animateItem()) {
+                                    Board(
+                                        selection = selection,
+                                        predictions = selectionPredictions,
+                                        hasPredictions = selectionPredictions.isNotEmpty(),
+                                        lineStatus = lineStatuses[statusKey],
+                                        lineStatusFailed = failedLineStatusKeys.contains(statusKey),
+                                        sduiPayload = sduiPayloads[selection.station],
+                                        lastUpdated = stationUpdates[selection.station] ?: 0L,
+                                        onDelete = { if (deletingBoardId == null) viewModel.deleteSelection(selection) },
+                                        nextPrediction = selectionPredictions.firstOrNull(),
+                                        homeConfig = homeConfig,
+                                        isDeleting = deletingBoardId == selection.station
+                                    )
+                                }
                             }
 
                             item {
                                 StationExploreSection(
                                     lineStatuses = lineStatuses,
                                     strings = homeConfig
-                                )
-                            }
-                        }
-
-                        // Refresh indicator overlaid at top
-                        if (uiState.isRefreshing) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 12.dp),
-                                contentAlignment = Alignment.TopCenter
-                            ) {
-                                CircularProgressIndicator(
-                                    color = TflAmber,
-                                    strokeWidth = 2.dp,
-                                    modifier = Modifier.size(24.dp)
                                 )
                             }
                         }
@@ -198,6 +225,7 @@ fun SummaryScreen(
                 onDismiss = { viewModel.clearError() }
             )
 
+            // Bottom decorative glow
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -213,28 +241,25 @@ fun SummaryScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SummaryTopBar(
     onNavigateToProfile: () -> Unit,
     onNavigateToSelection: () -> Unit,
     selectionsEmpty: Boolean,
-    userInitial: String = "?"
+    userInitial: String = "?",
+    photoUrl: String? = null,
 ) {
     val primary = MaterialTheme.colorScheme.primary
-    val onPrimary = MaterialTheme.colorScheme.onPrimary
     val onBackground = MaterialTheme.colorScheme.onBackground
     CenterAlignedTopAppBar(
         title = {
-            // Single-line brand lockup matching the redesigned Android home —
-            // the "Live Network" pulse subtitle was dropped.
+            // Single-line brand lockup matching the redesigned Android home.
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                Box(
-                    modifier = Modifier.size(32.dp).clip(CircleShape).background(primary),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("S", color = onPrimary, fontWeight = FontWeight.Black, fontSize = 18.sp)
-                }
+                Image(
+                    painter = painterResource(Res.drawable.stationly_logo),
+                    contentDescription = "Logo",
+                    modifier = Modifier.size(32.dp).clip(CircleShape)
+                )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
                     text = "Stationly",
@@ -247,13 +272,25 @@ private fun SummaryTopBar(
         },
         navigationIcon = {
             IconButton(onClick = onNavigateToProfile, modifier = Modifier.padding(start = 8.dp)) {
-                Surface(
-                    shape = CircleShape,
-                    color = onBackground.copy(alpha = 0.05f),
-                    modifier = Modifier.size(34.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(userInitial, color = primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                if (photoUrl != null) {
+                    coil3.compose.AsyncImage(
+                        model = photoUrl,
+                        contentDescription = "Profile",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(onBackground.copy(alpha = 0.05f), CircleShape)
+                    )
+                } else {
+                    Surface(
+                        shape = CircleShape,
+                        color = onBackground.copy(alpha = 0.05f),
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(userInitial, color = primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
                     }
                 }
             }
@@ -291,51 +328,50 @@ private fun UpdateNudgeDialog(
     storeUrl: String,
     onDismiss: () -> Unit
 ) {
-    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    val uriHandler = LocalUriHandler.current
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(20.dp),
-            color = Color(0xFF1A1A1A)
+            color = MaterialTheme.colorScheme.surfaceVariant
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(52.dp)
-                        .clip(CircleShape)
-                        .background(TflAmber),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("S", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 26.sp)
-                }
+                Image(
+                    painter = painterResource(Res.drawable.stationly_logo),
+                    contentDescription = null,
+                    modifier = Modifier.size(52.dp).clip(CircleShape)
+                )
                 Text(
                     title,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    textAlign = TextAlign.Center
                 )
                 Text(
                     message,
-                    color = Color.White.copy(alpha = 0.55f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                     fontSize = 14.sp,
                     lineHeight = 20.sp,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    textAlign = TextAlign.Center
                 )
                 Spacer(Modifier.height(4.dp))
                 Button(
                     onClick = { uriHandler.openUri(storeUrl); onDismiss() },
-                    colors = ButtonDefaults.buttonColors(containerColor = TflAmber, contentColor = Color.Black),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth().height(50.dp)
                 ) {
                     Text(cta, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 }
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                    Text(dismiss, color = Color.White.copy(alpha = 0.40f), fontSize = 14.sp)
+                    Text(dismiss, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.40f), fontSize = 14.sp)
                 }
             }
         }
