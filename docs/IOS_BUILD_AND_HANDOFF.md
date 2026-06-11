@@ -431,6 +431,151 @@ LineStatus_* FCM messages must carry APNs `content-available: 1` (data-only FCM
 to iOS is otherwise not delivered to backgrounded apps even with the background
 mode). Verify in StationlySyncer's send path.
 
+## 7e. Landed in Session 5 (2026-06-11) — branch `ios-parity`
+
+**Theme: make FCM→widget actually work (the core product promise) + widget/app
+visual parity.** All Kotlin compile-verified (`compileKotlinIosSimulatorArm64`),
+widget Swift typecheck exit 0. **No `android/` changes; the Syncer repo was NOT
+touched (product owner: StationlyUI only).**
+
+### 1. FCM→widget chain — three root causes found + fixed
+
+**(a) The client decoded the WRONG JSON shape (the big one).** The Syncer sends
+data-only FCM: `putData("payload", json)` on topics `Station_<id>` /
+`LineStatus_<mode>_<lineId>` (see StationlySyncer FcmService/LineService —
+read-only reference). On iOS the whole APNs `userInfo` dict was serialised and
+decoded directly as `FcmPayload` — but the real payload is a JSON *string* under
+the `"payload"` key (exactly Android's `remoteMessage.data["payload"]`), so
+EVERY real push threw MissingFieldException and was silently dropped.
+`FcmPayloadBridge` (core `Platform.ios.kt`) now parses the envelope: `from` →
+topic routing, `payload` → typed decode. LineStatus_* pushes (previously
+ignored entirely on iOS) now route to `processLineStatusUpdate`.
+
+**(b) `ProcessFcmPayloadUseCase` rewritten to mirror Android's
+FcmMessagingService** (core, commonMain — Android only *constructs* this class,
+never calls it, and the 4-arg constructor is unchanged, so `android/` is
+source-compatible):
+- `processStationUpdate(topicStationId, payload)` — selections matched by
+  topic station id first (child-stop-id mismatch handling), then payload.id;
+  predictions written to SQLite per matching selection via
+  `SyncPredictionsUseCase` (the old path never wrote SQLite — only an
+  in-memory flow!); widget rewritten ONLY when the primary selection was
+  affected (old code blanked the widget on any push for a non-primary station).
+- `processLineStatusUpdate(status)` — saves to SQLite, refreshes the widget
+  status strip when the primary selection rides that line.
+- `refreshWidgetFromStorage` rebuilds the exact WidgetState shape the
+  SummaryViewModel poll writes (status "Severity: reason", lastUpdated
+  SECONDS) so the widget never flips format per trigger.
+
+**(c) Xcode's project-upgrade had REVERTED the push entitlement.** Opening the
+project in Xcode 26.5 rewrote pbxproj/entitlements and dropped
+`aps-environment` → no APNs token → no FCM at all. `./xcodegen.sh` regenerates
+correctly from project.yml (which has the right values). **Rule: never commit
+Xcode-initiated edits to generated files; always re-run xcodegen.**
+
+**Swift side (AppDelegate/FCMBridge):**
+- Background `didReceiveRemoteNotification` now AWAITS KMP
+  (`FcmPayloadBridge.processPayloadAndWait(jsonString:completionHandler:)` — new
+  suspend bridge) before `WidgetCenter.reload` + completionHandler — the old
+  fire-and-forget +2 s reload raced background suspension.
+- `Messaging.appDidReceiveMessage(userInfo)` called for FCM bookkeeping.
+- Topic subscriptions queued by KMP now flush IMMEDIATELY via a debounced
+  `UserDefaults.didChangeNotification` observer (was: only on token receipt /
+  next foreground — adding a station mid-session didn't subscribe until app
+  switch).
+- Token rotation re-subscribes ALL topics from the `fcm_topics` ledger
+  (`FCMBridge.resubscribeAllTopics`) — parity with Android `onNewToken`.
+
+**Still required for background delivery (out of our repo):** FCM v1
+data-only messages are delivered to iOS as background pushes (content-available)
+automatically, BUT iOS throttles silent pushes (~a handful/hour budget) and
+delivers none if the user force-quits the app. True no-app-wake widget refresh
+= iOS 26 WidgetKit APNs push tokens (backend work, still a follow-up). Also
+verify in Firebase Console that an **APNs auth key** is uploaded for
+com.stationly.mobile (mindthetimefcm project) — without it APNs delivery fails
+silently regardless of client correctness.
+
+### 2. Widget redesign (WidgetViews.swift rewrite)
+- **Type hierarchy (product owner spec):** station biggest > platform header >
+  departure rows > status strip; footer clock ≈ station size; "ago" smallest.
+  Implemented as per-family `BoardMetrics` (medium/large scales; small has its
+  own compact set).
+- **Fills the whole canvas:** every LitCell is height-flexible
+  (`maxHeight: .infinity` + minHeight floors + layoutPriority) so the board
+  stretches edge-to-edge with no dead band; cells have continuous-corner
+  radius 5/6 ("well radiused" ask). The TfL dot-matrix identity (lit strips +
+  dot lattice + amber-on-black) is INTENTIONAL — it's the real-station-board
+  look; do not "modernise" it away.
+- **Real Stationly logo** (`Assets.xcassets/StationlyLogo.imageset`, downscaled
+  from android/res stationly_logo.png) replaces the drawn disc in footer +
+  empty state.
+- **Real mode roundels**: `ModeIconProvider` (AppGroupStorage.swift) reads
+  `mode_icons/<mode>.png` + `tints.json` from the App Group — written by the
+  new KMP ModeIconStore (below). Fallback chain identical to Android:
+  cached PNG → backend tint → hardcoded mode colour.
+- `containerBackgroundRemovable(false)` + `widgetAccentable()` on the station
+  lockup for tinted/StandBy rendering modes.
+
+### 3. ModeIconStore (composeApp expect/actual) — backend mode icons on iOS
+- common: `ModeIconStore.sync(entries, iconVersion)` / `hasIcon` /
+  `cachedIconBitmap`; iosMain actual writes the App-Group
+  `mode_icons/` layout (same file names as Android's ModeIconCache;
+  `safeName` must stay in lockstep with ModeIconProvider.swift); androidMain
+  actual is a no-op (the shipping Android app has its own cache).
+- Synced from composeApp SelectionViewModel.loadModes() (like Android) +
+  SummaryViewModel `maybeWarmModeIcons` safety net (cloud-restore path), which
+  re-pushes the widget after icons land.
+- In-app Board station strip now renders the cached bitmap (drawn roundel
+  fallback).
+
+### 4. composeResources packaging FIXED (the Session-3 crash, properly)
+- `iosApp/project.yml` → `postBuildScripts: Copy Compose Resources` copies
+  `composeApp/build/generated/compose/resourceGenerator/assembledResources/
+  ios{Arm64|SimulatorArm64}Main/` → `<app bundle>/compose-resources/` (the
+  exact layout `Res` resolves). Run
+  `./gradlew :composeApp:assembleIosArm64MainResources` before xcodebuild
+  (chained into the deploy steps below).
+- **Crash-proof gate:** new `composeResourcesBundled` expect/actual checks the
+  bundle dir ONCE at runtime; every Res.* read is gated on it, so a stale
+  build degrades to drawn logo/system font instead of SIGABRT.
+- Restored: `Type.kt` DisplayFamily (real Inter Tight), real
+  `stationly_logo` in Summary top bar + update dialog (via new shared
+  `ui/common/StationlyLogo.kt`), Profile top bar, Login brand mark, Board
+  footer maker mark.
+
+### 5. App icon — the app had NONE
+- `iosApp/iosApp/Assets.xcassets/AppIcon.appiconset` (single 1024, alpha
+  flattened for App Store). xcodegen picks xcassets up automatically.
+
+### Deploy to device (Session-5 ready sequence)
+```bash
+./gradlew :composeApp:assembleComposeAppDebugXCFramework :composeApp:assembleIosArm64MainResources
+cd iosApp && ./xcodegen.sh
+DD=build/DD
+xcodebuild -project iosApp.xcodeproj -scheme "iosApp Staging" -derivedDataPath "$DD" -resolvePackageDependencies
+chmod -R u+w "$DD/SourcePackages/checkouts"; find "$DD/SourcePackages/checkouts" -maxdepth 2 -iname BUILD -type f -delete
+xcodebuild -project iosApp.xcodeproj -scheme "iosApp Staging" -destination 'id=00008030-001E0D9C3EFB802E' -derivedDataPath "$DD" -allowProvisioningUpdates build
+xcrun devicectl device install app --device 00008030-001E0D9C3EFB802E "$DD/Build/Products/Debug Staging-iphoneos/iosApp.app"
+xcrun devicectl device process launch --device 00008030-001E0D9C3EFB802E com.stationly.mobile
+```
+**On-device QA checklist:** (1) logo renders (if drawn "S" appears, the copy
+phase didn't run — check build log for "Copied compose-resources");
+(2) Inter Tight wordmark; (3) widget shows real mode roundel after opening
+Selection or ~1 min after Summary (warm-up); (4) trigger a Syncer push (or
+wait for a real one) with app FOREGROUND → board updates instantly, widget
+within ~5 s; (5) background the app → next push should refresh the widget
+(subject to iOS silent-push budget — allow minutes, not seconds); (6) widget
+fills its canvas at small/medium/large with the new type hierarchy.
+
+### Known-remaining (Session 5 could not finish)
+- Profile sometimes shows "User"/no photo (identity key race) — NOT yet
+  root-caused this session; reproduce with fresh sign-in then cold relaunch.
+- In-app board "big and stretched" feedback only partially addressed (mode
+  roundel + logo landed; spacing/scale pass on Board chrome + SummaryScreen
+  still open).
+- Google "G" glyph still drawn on Login.
+- iOS 26 WidgetKit push tokens for true background widget refresh (backend).
+
 ## 8. What's REMAINING (priority order)
 
 1. **On-device QA of the rebuilt board + widget (TOP — needs the iPhone).** The
