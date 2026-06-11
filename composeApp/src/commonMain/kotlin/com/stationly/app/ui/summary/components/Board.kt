@@ -1,5 +1,7 @@
 package com.stationly.app.ui.summary.components
 
+import com.stationly.app.resources.Res
+import com.stationly.app.resources.stationly_logo
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.RepeatMode
@@ -14,6 +16,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -351,7 +354,21 @@ private fun DotMatrixPanel(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TflRoundel(modeRoundelColor(selection.mode), 22.dp)
+                // Real backend roundel from the App-Group ModeIconStore (same
+                // cache the widget reads); drawn-roundel fallback until the
+                // first /modes sync lands.
+                val modeIcon = remember(selection.mode) {
+                    com.stationly.app.platform.ModeIconStore.cachedIconBitmap(selection.mode)
+                }
+                if (modeIcon != null) {
+                    Image(
+                        bitmap = modeIcon,
+                        contentDescription = null,
+                        modifier = Modifier.size(22.dp)
+                    )
+                } else {
+                    TflRoundel(modeRoundelColor(selection.mode), 22.dp)
+                }
                 Spacer(Modifier.width(8.dp))
                 Text(
                     selection.stationName,
@@ -505,19 +522,29 @@ private fun BoardFooter(lastUpdated: Long) {
     val ago = remember(nowSec / 1000, lastUpdated) { agoLabel(lastUpdated, nowSec) }
 
     Box(modifier = Modifier.fillMaxWidth().padding(top = 2.dp), contentAlignment = Alignment.Center) {
-        // Stationly maker mark (left) — the brand disc, matching Android's
-        // footer `stationly_logo` ImageView (22dp). Drawn (composeResources
-        // aren't bundled on iOS yet); swap for the real PNG when packaging
-        // lands.
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .padding(start = 6.dp)
-                .size(20.dp)
-                .background(StationlyRed, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Text("S", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Black)
+        // Stationly maker mark (left) — the REAL brand logo, matching
+        // Android's footer `stationly_logo` ImageView (22dp); red-disc drawn
+        // fallback keeps the board crash-proof when resources aren't bundled.
+        if (com.stationly.app.platform.composeResourcesBundled) {
+            Image(
+                painter = org.jetbrains.compose.resources.painterResource(Res.drawable.stationly_logo),
+                contentDescription = "Stationly",
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 6.dp)
+                    .size(20.dp)
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 6.dp)
+                    .size(20.dp)
+                    .background(StationlyRed, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("S", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Black)
+            }
         }
         // Live clock (center) on its own lit strip, like Android's TextClock
         // with the active-row background.

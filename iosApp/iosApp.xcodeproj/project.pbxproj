@@ -10,8 +10,10 @@
 		0385B7B6CC06D1D60A9ADE8D /* composeApp.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 118F41A10A55B84CE576769B /* composeApp.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		15004BFF21C3E1734FA5E510 /* DepartureEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BA8E3A8CB73FA587D96BD12 /* DepartureEntry.swift */; };
 		1C81D6F669B7BB6D2FFCCEB3 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 617043448F4869026C2F0BB4 /* FirebaseAuth */; };
+		22EA1CB33A17DCC6FC82406D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F543015C899423D4B01CEB2E /* Assets.xcassets */; };
 		307C2654CD5972A25FB7FD87 /* iOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668CECA83ACC03A83C85A623 /* iOSApp.swift */; };
 		38BC8C0A2A20C409AD35F500 /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17F56BCEA93D417E080182A7 /* AppGroupStorage.swift */; };
+		3A939B1447CB25EBEE98671B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 258D481022F14E09267EE7BD /* Assets.xcassets */; };
 		445C052442747365B7CB2124 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = AC813CE66F97994D9BE8A812 /* FirebaseMessaging */; };
 		4F51E6F943E79B5999B8A52B /* composeApp.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 118F41A10A55B84CE576769B /* composeApp.xcframework */; };
 		56B0305B5D3847FC6B326502 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE8509E5A49E4A5CAAEB3ADB /* ContentView.swift */; };
@@ -66,6 +68,7 @@
 		02C0D79CCE01D0B3BA51EC14 /* FCMBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FCMBridge.swift; sourceTree = "<group>"; };
 		118F41A10A55B84CE576769B /* composeApp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = composeApp.xcframework; path = ../composeApp/build/XCFrameworks/debug/composeApp.xcframework; sourceTree = "<group>"; };
 		17F56BCEA93D417E080182A7 /* AppGroupStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorage.swift; sourceTree = "<group>"; };
+		258D481022F14E09267EE7BD /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		5BA8E3A8CB73FA587D96BD12 /* DepartureEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DepartureEntry.swift; sourceTree = "<group>"; };
 		668CECA83ACC03A83C85A623 /* iOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSApp.swift; sourceTree = "<group>"; };
 		725E230C3D1AA4C519DEBC68 /* WidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetViews.swift; sourceTree = "<group>"; };
@@ -80,6 +83,7 @@
 		DC75E3E8045F2DC8D1922D50 /* StationlyWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationlyWidget.swift; sourceTree = "<group>"; };
 		E6E60D8AB263A747C2061338 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		EE7E10119EC01AC8676B703D /* StationlyWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = StationlyWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F543015C899423D4B01CEB2E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -101,6 +105,7 @@
 			isa = PBXGroup;
 			children = (
 				8B6C1F485E0CF8BB70C9DDD2 /* AppDelegate.swift */,
+				F543015C899423D4B01CEB2E /* Assets.xcassets */,
 				88370C3FDDC238D3448AC2D1 /* AuthBridge.swift */,
 				CE8509E5A49E4A5CAAEB3ADB /* ContentView.swift */,
 				02C0D79CCE01D0B3BA51EC14 /* FCMBridge.swift */,
@@ -144,6 +149,7 @@
 			isa = PBXGroup;
 			children = (
 				17F56BCEA93D417E080182A7 /* AppGroupStorage.swift */,
+				258D481022F14E09267EE7BD /* Assets.xcassets */,
 				5BA8E3A8CB73FA587D96BD12 /* DepartureEntry.swift */,
 				E6E60D8AB263A747C2061338 /* Info.plist */,
 				DC75E3E8045F2DC8D1922D50 /* StationlyWidget.swift */,
@@ -162,6 +168,7 @@
 			buildConfigurationList = 0625D4857D840B43D9848A63 /* Build configuration list for PBXNativeTarget "StationlyWidget" */;
 			buildPhases = (
 				B385F4B0ECD8CB528CA0D3F3 /* Sources */,
+				806329D94232E1D28840B092 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -183,6 +190,7 @@
 				EF8A6E9BFD470986D9D5C9B5 /* Frameworks */,
 				E99160E501832DB2CECE6CFF /* Embed Foundation Extensions */,
 				DB76241340C08196BD9C492C /* Embed Frameworks */,
+				6A42F74FB35331E793298FD1 /* Copy Compose Resources */,
 			);
 			buildRules = (
 			);
@@ -247,11 +255,42 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				22EA1CB33A17DCC6FC82406D /* Assets.xcassets in Resources */,
 				C87B4FA04BDA1DA04158D48E /* GoogleService-Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		806329D94232E1D28840B092 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3A939B1447CB25EBEE98671B /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		6A42F74FB35331E793298FD1 /* Copy Compose Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Compose Resources";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -e\nARCH_DIR=\"iosArm64Main\"\nif [ \"${PLATFORM_NAME}\" = \"iphonesimulator\" ]; then ARCH_DIR=\"iosSimulatorArm64Main\"; fi\nSRC=\"${SRCROOT}/../composeApp/build/generated/compose/resourceGenerator/assembledResources/${ARCH_DIR}\"\nDST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/compose-resources\"\nif [ ! -d \"${SRC}\" ]; then\n  echo \"warning: compose resources missing at ${SRC} — run: ./gradlew :composeApp:assembleIosArm64MainResources (app falls back to drawn logo/system font)\"\n  exit 0\nfi\nrm -rf \"${DST}\"\nmkdir -p \"${DST}\"\ncp -R \"${SRC}/.\" \"${DST}/\"\necho \"Copied compose-resources (${ARCH_DIR}) into ${DST}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		297B59D9CE634556D6007C40 /* Sources */ = {
