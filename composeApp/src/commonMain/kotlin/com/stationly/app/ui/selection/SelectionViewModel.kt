@@ -166,6 +166,18 @@ class SelectionViewModel(
                 _uiState.value = _uiState.value.copy(
                     failedFetches = _uiState.value.failedFetches - "mode"
                 )
+                // Mirror Android SelectionViewModel: persist the mode roundel
+                // icons + tints into the App-Group cache so the widget and the
+                // board header render the real backend roundels offline.
+                val iconEntries = modesResult.map {
+                    com.stationly.app.platform.ModeIconEntry(it.id, it.iconUrl, it.tintHex)
+                }
+                val iconVersion = modesResult.firstOrNull { !it.iconVersion.isNullOrBlank() }?.iconVersion
+                if (iconEntries.isNotEmpty()) {
+                    viewModelScope.launch {
+                        com.stationly.app.platform.ModeIconStore.sync(iconEntries, iconVersion)
+                    }
+                }
             } catch (_: Exception) {
                 _uiState.value = _uiState.value.copy(
                     failedFetches = _uiState.value.failedFetches + "mode"

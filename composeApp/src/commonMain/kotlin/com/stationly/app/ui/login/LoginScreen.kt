@@ -1,5 +1,7 @@
 package com.stationly.app.ui.login
 
+import com.stationly.app.resources.Res
+import com.stationly.app.resources.stationly_logo
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -116,14 +118,23 @@ private fun SubtleBackground() {
     )
 }
 
-// ── Brand mark (drawn; swap for a composeResources logo later) ──────────────────
+// ── Brand mark: the real logo PNG once composeResources are bundled; amber
+// disc fallback keeps the landing render crash-proof on a stale build. ────────
 @Composable
 private fun StationlyLogo(sizeDp: Int) {
-    Box(
-        modifier = Modifier.size(sizeDp.dp).background(Amber, CircleShape),
-        contentAlignment = Alignment.Center
-    ) {
-        Text("S", color = AmberDark, fontWeight = FontWeight.Black, fontSize = (sizeDp * 0.45f).sp)
+    if (com.stationly.app.platform.composeResourcesBundled) {
+        androidx.compose.foundation.Image(
+            painter = org.jetbrains.compose.resources.painterResource(Res.drawable.stationly_logo),
+            contentDescription = "Stationly",
+            modifier = Modifier.size(sizeDp.dp)
+        )
+    } else {
+        Box(
+            modifier = Modifier.size(sizeDp.dp).background(Amber, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("S", color = AmberDark, fontWeight = FontWeight.Black, fontSize = (sizeDp * 0.45f).sp)
+        }
     }
 }
 

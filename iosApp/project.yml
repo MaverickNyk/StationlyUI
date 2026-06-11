@@ -93,6 +93,30 @@ targets:
         embed: true
       - target: StationlyWidget
         embed: true
+    # Compose Multiplatform resources are NOT embedded in a prebuilt
+    # XCFramework — without this copy, any runtime Res.drawable/Res.font read
+    # throws MissingResourceException and the app SIGABRTs on first frame
+    # (the Session-3 crash). The runtime resolves
+    # <bundle>/compose-resources/composeResources/com.stationly.app.resources/…
+    # which is exactly the layout assembleIos*MainResources produces.
+    postBuildScripts:
+      - name: Copy Compose Resources
+        shell: /bin/bash
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          ARCH_DIR="iosArm64Main"
+          if [ "${PLATFORM_NAME}" = "iphonesimulator" ]; then ARCH_DIR="iosSimulatorArm64Main"; fi
+          SRC="${SRCROOT}/../composeApp/build/generated/compose/resourceGenerator/assembledResources/${ARCH_DIR}"
+          DST="${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/compose-resources"
+          if [ ! -d "${SRC}" ]; then
+            echo "warning: compose resources missing at ${SRC} — run: ./gradlew :composeApp:assembleIosArm64MainResources (app falls back to drawn logo/system font)"
+            exit 0
+          fi
+          rm -rf "${DST}"
+          mkdir -p "${DST}"
+          cp -R "${SRC}/." "${DST}/"
+          echo "Copied compose-resources (${ARCH_DIR}) into ${DST}"
 
   StationlyWidget:
     type: app-extension

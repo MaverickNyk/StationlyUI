@@ -98,6 +98,7 @@ class SummaryViewModel(
         viewModelScope.launch {
             selectionRepository.selections.collect { newSelections ->
                 _selections.value = newSelections
+                maybeWarmModeIcons(newSelections)
                 newSelections.forEach { selection ->
                     loadPredictions(selection)
                     loadLineStatus(selection)
@@ -123,6 +124,39 @@ class SummaryViewModel(
         viewModelScope.launch {
             FreshDataNotifier.events.collect {
                 _selections.value.forEach { loadPredictions(it) }
+            }
+        }
+    }
+
+    // Safety-net warm-up, mirroring Android SummaryViewModel: a selection can
+    // exist with no cached mode icon (cloud restore skips the Selection
+    // screen, so loadModes() never fired). Fetch /modes once and populate the
+    // App-Group icon cache, then re-push the widget so it picks the icon up.
+    private var iconWarmupAttempted = false
+    private fun maybeWarmModeIcons(selections: List<UserSelection>) {
+        if (selections.isEmpty() || iconWarmupAttempted) return
+        if (selections.none { !com.stationly.app.platform.ModeIconStore.hasIcon(it.mode) }) return
+        iconWarmupAttempted = true
+        viewModelScope.launch {
+            try {
+                val modes = sduiApi.getDropdownData("/modes")
+                val entries = modes.map {
+                    com.stationly.app.platform.ModeIconEntry(
+                        modeName = it.id,
+                        iconUrl  = it.iconUrl?.replace(
+                            com.stationly.core.config.AppConfig.PROD_API_URL,
+                            com.stationly.core.config.AppConfig.apiBaseUrl
+                        ),
+                        tintHex  = it.tintHex,
+                    )
+                }
+                val iconVersion = modes.firstOrNull { !it.iconVersion.isNullOrBlank() }?.iconVersion
+                if (entries.isNotEmpty()) {
+                    com.stationly.app.platform.ModeIconStore.sync(entries, iconVersion)
+                    _selections.value.firstOrNull()?.let { loadPredictions(it) }
+                }
+            } catch (_: Exception) {
+                // Drawn roundel fallback stays until the next launch retries.
             }
         }
     }

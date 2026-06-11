@@ -274,16 +274,7 @@ private fun SummaryTopBar(
         title = {
             // Single-line brand lockup matching the redesigned Android home.
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                // Drawn brand mark — composeResources (a real logo PNG) aren't
-                // bundled on iOS yet (see Type.kt note), so reading
-                // Res.drawable.stationly_logo crashes. Restore painterResource here
-                // once composeResources packaging is wired for the iosApp target.
-                Box(
-                    modifier = Modifier.size(32.dp).clip(CircleShape).background(primary),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("S", color = onPrimary, fontWeight = FontWeight.Black, fontSize = 18.sp)
-                }
+                com.stationly.app.ui.common.StationlyLogo(size = 32.dp)
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
                     text = "Stationly",
@@ -364,12 +355,7 @@ private fun UpdateNudgeDialog(
                 modifier = Modifier.padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Box(
-                    modifier = Modifier.size(52.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("S", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Black, fontSize = 26.sp)
-                }
+                com.stationly.app.ui.common.StationlyLogo(size = 52.dp)
                 Text(
                     title,
                     color = MaterialTheme.colorScheme.onSurface,
