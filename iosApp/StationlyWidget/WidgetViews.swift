@@ -13,45 +13,70 @@ struct DepartureBoardEntryView: View {
     var body: some View {
         switch family {
         case .systemSmall:  SmallWidgetView(data: entry.widgetData, clock: entry.date)
-        case .systemMedium: MediumWidgetView(data: entry.widgetData, clock: entry.date)
-        case .systemLarge:  LargeWidgetView(data: entry.widgetData, clock: entry.date)
-        @unknown default:   MediumWidgetView(data: entry.widgetData, clock: entry.date)
+        case .systemMedium: BoardWidgetView(data: entry.widgetData, clock: entry.date, metrics: .medium)
+        case .systemLarge:  BoardWidgetView(data: entry.widgetData, clock: entry.date, metrics: .large)
+        @unknown default:   BoardWidgetView(data: entry.widgetData, clock: entry.date, metrics: .medium)
         }
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MARK: - Dot-matrix tokens + shared marks
-// Mirrors the Android dot-matrix departure board (widget_departure_board.xml):
-// TfL amber on near-black, "lit cell" row backgrounds, roundel + station header,
-// line-prefixed platform sections, amber rows / red Due, status strip, footer
-// roundel + live "ago".
+// MARK: - Type scale
+// The user-specified hierarchy, top to bottom:
+//   station (biggest) > platform header > departure rows > status strip;
+//   footer clock ≈ station, "ago" timer smallest.
+// One struct per family so the large widget breathes while medium stays dense.
 // ─────────────────────────────────────────────────────────────────────────────
+
+struct BoardMetrics {
+    let station: CGFloat      // station name — biggest
+    let platform: CGFloat     // platform section header — 2nd
+    let row: CGFloat          // departure destination/eta — 3rd
+    let status: CGFloat       // line status — slightly under rows
+    let clock: CGFloat        // footer wall clock — near-station size
+    let ago: CGFloat          // live "ago" — smallest
+    let icon: CGFloat         // mode roundel beside the station name
+    let logo: CGFloat         // Stationly maker mark in the footer
+    let cellRadius: CGFloat   // LED cell corner radius
+    let maxRows: Int
+
+    static let medium = BoardMetrics(
+        station: 16, platform: 13, row: 12.5, status: 10.5,
+        clock: 15, ago: 8.5, icon: 18, logo: 16, cellRadius: 5, maxRows: 4)
+    static let large = BoardMetrics(
+        station: 19, platform: 15, row: 14.5, status: 12.5,
+        clock: 18, ago: 10, icon: 22, logo: 19, cellRadius: 6, maxRows: 10)
+}
 
 private let DueRed = Color(red: 1.0, green: 0.32, blue: 0.32)
 
-/// HH:mm:ss formatter for the footer clock (24h, like Android's TextClock).
+/// HH:mm formatter for the footer clock (24h, like Android's TextClock).
 private let clockFormatter: DateFormatter = {
     let f = DateFormatter()
     f.dateFormat = "HH:mm"
     return f
 }()
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MARK: - Shared marks
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// A "lit cell" strip — the active row background from the Android board.
-/// SQUARE corners: the Android original is a tiled pixel bitmap with no
-/// per-row radius (only the widget container is rounded), plus a faint
-/// unlit-dot grid so the rows read as LED matrix cells.
+/// Soft-radiused so the cells flow with the widget's continuous corners while
+/// the faint unlit-dot lattice keeps the LED-matrix read.
 private struct LitCell<Content: View>: View {
     var vPad: CGFloat = 3
-    var hPad: CGFloat = 8
+    var hPad: CGFloat = 9
+    var radius: CGFloat = 5
     @ViewBuilder var content: Content
     var body: some View {
         content
             .padding(.horizontal, hPad)
             .padding(.vertical, vPad)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(WidgetTheme.rowSurface)
             .overlay(DotGrid().allowsHitTesting(false))
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
 }
 
@@ -77,8 +102,8 @@ private struct DotGrid: View {
     }
 }
 
-/// TfL roundel: amber ring crossed by a horizontal bar. Pure SwiftUI so it scales
-/// crisply at any size (matches the Compose `TflRoundel` in the in-app board).
+/// TfL roundel: ring crossed by a horizontal bar. Drawn fallback for when the
+/// backend mode icon hasn't been cached yet.
 struct TflRoundelMark: View {
     var color: Color = WidgetTheme.amber
     var diameter: CGFloat = 14
@@ -95,6 +120,40 @@ struct TflRoundelMark: View {
     }
 }
 
+/// The real per-mode roundel from the backend `/modes` endpoint, cached in the
+/// App Group by KMP ModeIconStore (same chain as Android's ModeIconCache):
+/// cached PNG → backend tint on the drawn roundel → hardcoded mode colour.
+struct ModeIconView: View {
+    let mode: String
+    var size: CGFloat = 18
+    var body: some View {
+        if let ui = ModeIconProvider.icon(mode) {
+            Image(uiImage: ui)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+        } else {
+            TflRoundelMark(color: tint, diameter: size)
+        }
+    }
+    private var tint: Color {
+        if let t = ModeIconProvider.tint(mode) { return Color(t) }
+        return WidgetTheme.modeColor(mode)
+    }
+}
+
+/// The Stationly maker mark — the real brand logo (bundled imageset, copied
+/// from android/res/drawable/stationly_logo.png).
+struct StationlyMark: View {
+    var diameter: CGFloat = 16
+    var body: some View {
+        Image("StationlyLogo")
+            .resizable()
+            .scaledToFit()
+            .frame(width: diameter, height: diameter)
+    }
+}
+
 /// Live "M:SS ago" — WidgetKit renders the `.timer` style as a self-updating
 /// element (ticks every second with no timeline reload), the iOS analog of
 /// Android's Chronometer. Falls back to a static dash before any data has landed.
@@ -106,7 +165,7 @@ struct TflRoundelMark: View {
 /// frame keeps "M:SS ago" together as one unit.
 private struct LiveAgo: View {
     let data: WidgetData
-    var fontSize: CGFloat = 10
+    var fontSize: CGFloat = 8.5
     var body: some View {
         Group {
             if data.hasTimestamp {
@@ -136,35 +195,37 @@ private func groupedByPlatform(_ deps: [DepartureRow]) -> [(platform: String, ro
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MARK: - Dot-matrix board (shared by medium + large)
+// MARK: - Board cells
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Centered station lockup: mode-tinted roundel + station name (the constant
-/// strip shown on every Stationly surface — the roundel colour carries the
-/// transport-mode identity, exactly like Android's tinted mode_icon).
+/// Centered station lockup: real mode roundel + station name — the board's
+/// loudest line, exactly like Android's station_lockup.
 struct DotMatrixHeader: View {
     let data: WidgetData
+    let m: BoardMetrics
     var body: some View {
-        LitCell(vPad: 5) {
-            HStack(spacing: 7) {
-                TflRoundelMark(color: WidgetTheme.modeColor(data.mode), diameter: 15)
+        LitCell(vPad: 4, radius: m.cellRadius) {
+            HStack(spacing: 8) {
+                ModeIconView(mode: data.mode, size: m.icon)
                 Text(data.stationName)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: m.station, weight: .bold))
                     .foregroundColor(WidgetTheme.amber)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.65)
             }
         }
+        .widgetAccentable()
     }
 }
 
 /// "Piccadilly: Platform 1 (Eastbound)" — centered amber section header.
 struct DotMatrixSectionHeader: View {
     let title: String
+    let m: BoardMetrics
     var body: some View {
-        LitCell(vPad: 2) {
+        LitCell(vPad: 2, radius: m.cellRadius) {
             Text(title)
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: m.platform, weight: .bold))
                 .foregroundColor(WidgetTheme.amber)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -175,16 +236,17 @@ struct DotMatrixSectionHeader: View {
 /// Destination (left) + ETA (right). All amber; "Due" in red — matches the board.
 struct DotMatrixRow: View {
     let dep: DepartureRow
+    let m: BoardMetrics
     var body: some View {
-        LitCell {
+        LitCell(radius: m.cellRadius) {
             HStack(spacing: 8) {
                 Text(dep.destination)
-                    .font(.system(size: 13))
+                    .font(.system(size: m.row))
                     .foregroundColor(WidgetTheme.amber)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(dep.isDue ? "Due" : dep.eta)
-                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .font(.system(size: m.row + 0.5, weight: .bold, design: .monospaced))
                     .foregroundColor(dep.isDue ? DueRed : WidgetTheme.amber)
             }
         }
@@ -195,6 +257,7 @@ struct DotMatrixRow: View {
 /// reason truncates with a fading tail rather than scrolling (Android marquees it).
 struct DotMatrixStatusStrip: View {
     let data: WidgetData
+    let m: BoardMetrics
     private var parts: (severity: String, reason: String) {
         let raw = data.status.isEmpty ? "Good Service" : data.status
         if let r = raw.range(of: ":") {
@@ -204,15 +267,15 @@ struct DotMatrixStatusStrip: View {
         return (raw, "")
     }
     var body: some View {
-        LitCell(vPad: 2) {
+        LitCell(vPad: 2, radius: m.cellRadius) {
             HStack(spacing: 0) {
                 Text(parts.severity)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(WidgetTheme.amber)
+                    .font(.system(size: m.status, weight: .bold))
+                    .foregroundColor(WidgetTheme.statusColor(status: parts.severity))
                     .lineLimit(1)
                 if !parts.reason.isEmpty {
                     Text(" : \(parts.reason)")
-                        .font(.system(size: 11))
+                        .font(.system(size: m.status))
                         .foregroundColor(WidgetTheme.amber.opacity(0.9))
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -224,83 +287,91 @@ struct DotMatrixStatusStrip: View {
 }
 
 /// Footer, matching the Android board's bottom row: Stationly maker mark
-/// (left) + wall clock (CENTER) + live "M:SS ago" together (right).
-/// The clock is minute-accurate: the timeline pre-renders one entry per
-/// minute (free — local renders don't consume the refresh budget), and the
-/// "ago" ticks per second via the `.timer` style.
+/// (left) + wall clock (CENTER, near-station size) + live "M:SS ago" (right,
+/// the smallest type on the board). Clock is minute-accurate via the
+/// per-minute timeline entries; "ago" ticks per second via `.timer`.
 struct DotMatrixFooter: View {
     let data: WidgetData
     let clock: Date
+    let m: BoardMetrics
     var body: some View {
-        LitCell(vPad: 3) {
+        LitCell(vPad: 3, radius: m.cellRadius) {
             ZStack {
                 HStack {
-                    StationlyMark(diameter: 14)
+                    StationlyMark(diameter: m.logo)
                     Spacer(minLength: 0)
-                    LiveAgo(data: data, fontSize: 10)
+                    LiveAgo(data: data, fontSize: m.ago)
                 }
                 Text(clockFormatter.string(from: clock))
-                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .font(.system(size: m.clock, weight: .bold, design: .monospaced))
                     .foregroundColor(WidgetTheme.amber)
             }
         }
     }
 }
 
-/// The Stationly brand disc (red circle + white S) — Android's footer
-/// stationly_logo ImageView.
-struct StationlyMark: View {
-    var diameter: CGFloat = 14
-    var body: some View {
-        ZStack {
-            Circle().fill(WidgetTheme.stationlyRed)
-            Text("S")
-                .font(.system(size: diameter * 0.62, weight: .black))
-                .foregroundColor(.white)
-        }
-        .frame(width: diameter, height: diameter)
-    }
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// MARK: - The board (medium + large)
+// Every cell is height-flexible (`maxHeight: .infinity` inside LitCell) with
+// layoutPriority steering the share-out, so the board always fills the whole
+// widget canvas — no dead band under the footer, no clipped rectangle.
+// ─────────────────────────────────────────────────────────────────────────────
 
-/// The dot-matrix board panel — station header, grouped platform sections,
-/// status strip, footer. Shared by medium + large; `maxRows` caps departures.
-struct DotMatrixBoard: View {
+struct BoardWidgetView: View {
     let data: WidgetData
     let clock: Date
-    let maxRows: Int
+    let metrics: BoardMetrics
 
     var body: some View {
+        Group {
+            if data.isEmpty {
+                EmptyWidgetView(size: metrics.maxRows > 4 ? .large : .medium)
+            } else {
+                board
+            }
+        }
+        .containerBackground(WidgetTheme.background, for: .widget)
+    }
+
+    private var board: some View {
         VStack(spacing: 2) {
-            DotMatrixHeader(data: data)
+            DotMatrixHeader(data: data, m: metrics)
+                .frame(minHeight: metrics.station + 14)
+                .layoutPriority(2)
 
             if data.departures.isEmpty {
                 NoDeparturesRow()
-                Spacer(minLength: 0)
+                    .frame(maxHeight: .infinity)
             } else {
-                let groups = groupedByPlatform(Array(data.departures.prefix(maxRows)))
-                VStack(spacing: 2) {
-                    ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
-                        let header = data.platformHeader(platform: group.platform)
-                        if !header.isEmpty {
-                            DotMatrixSectionHeader(title: header)
-                        }
-                        ForEach(group.rows) { dep in
-                            DotMatrixRow(dep: dep)
-                        }
+                let groups = groupedByPlatform(Array(data.departures.prefix(metrics.maxRows)))
+                ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                    let header = data.platformHeader(platform: group.platform)
+                    if !header.isEmpty {
+                        DotMatrixSectionHeader(title: header, m: metrics)
+                            .frame(minHeight: metrics.platform + 8)
+                            .layoutPriority(1)
+                    }
+                    ForEach(group.rows) { dep in
+                        DotMatrixRow(dep: dep, m: metrics)
+                            .frame(minHeight: metrics.row + 10)
                     }
                 }
-                Spacer(minLength: 0)
             }
 
-            DotMatrixStatusStrip(data: data)
-            DotMatrixFooter(data: data, clock: clock)
+            DotMatrixStatusStrip(data: data, m: metrics)
+                .frame(minHeight: metrics.status + 8)
+                .layoutPriority(1)
+            DotMatrixFooter(data: data, clock: clock, m: metrics)
+                .frame(minHeight: metrics.clock + 12)
+                .layoutPriority(2)
         }
-        .padding(6)
+        .padding(5)
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MARK: - Small widget (2×2): station + next 2 departures + live "ago"
+// MARK: - Small widget (2×2): station + next departures + footer clock/ago
+// Same hierarchy at small scale: station boldest, rows mid, ago smallest.
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct SmallWidgetView: View {
@@ -308,121 +379,62 @@ struct SmallWidgetView: View {
     let clock: Date
 
     var body: some View {
-        ZStack {
-            WidgetTheme.background
+        Group {
             if data.isEmpty {
                 EmptyWidgetView(size: .small)
             } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    // Header: mode-tinted roundel + station
-                    HStack(spacing: 5) {
-                        TflRoundelMark(color: WidgetTheme.modeColor(data.mode), diameter: 12)
-                        Text(data.stationName)
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(WidgetTheme.amber)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.top, 12)
-                    .padding(.bottom, 7)
-
-                    Rectangle()
-                        .fill(WidgetTheme.amber.opacity(0.35))
-                        .frame(height: 1)
-                        .padding(.horizontal, 12)
-
-                    VStack(spacing: 2) {
-                        if data.departures.isEmpty {
-                            Text("No departures")
-                                .font(.system(size: 11))
-                                .foregroundColor(WidgetTheme.textMuted)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-                        } else {
-                            ForEach(data.departures.prefix(3)) { dep in
-                                SmallDepartureRow(departure: dep)
-                            }
+                VStack(spacing: 2) {
+                    LitCell(vPad: 3, radius: 5) {
+                        HStack(spacing: 6) {
+                            ModeIconView(mode: data.mode, size: 14)
+                            Text(data.stationName)
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(WidgetTheme.amber)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
                         }
                     }
-                    .padding(.top, 5)
+                    .frame(minHeight: 24)
+                    .layoutPriority(2)
+                    .widgetAccentable()
 
-                    Spacer(minLength: 0)
-
-                    // Footer: line name (left) + live "ago" (right)
-                    HStack(spacing: 4) {
-                        Text(data.lineName.capitalized)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(WidgetTheme.textMuted)
-                            .lineLimit(1)
-                        Spacer(minLength: 4)
-                        LiveAgo(data: data, fontSize: 9)
+                    if data.departures.isEmpty {
+                        NoDeparturesRow()
+                            .frame(maxHeight: .infinity)
+                    } else {
+                        ForEach(data.departures.prefix(3)) { dep in
+                            LitCell(radius: 5) {
+                                HStack(spacing: 4) {
+                                    Text(dep.destination)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(WidgetTheme.amber)
+                                        .lineLimit(1)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    Text(dep.isDue ? "Due" : dep.eta)
+                                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                                        .foregroundColor(dep.isDue ? DueRed : WidgetTheme.amber)
+                                }
+                            }
+                            .frame(minHeight: 20)
+                        }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 10)
+
+                    LitCell(vPad: 2, radius: 5) {
+                        ZStack {
+                            HStack {
+                                StationlyMark(diameter: 11)
+                                Spacer(minLength: 0)
+                                LiveAgo(data: data, fontSize: 8)
+                            }
+                            Text(clockFormatter.string(from: clock))
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundColor(WidgetTheme.amber)
+                        }
+                    }
+                    .frame(minHeight: 20)
+                    .layoutPriority(2)
                 }
-            }
-        }
-        .containerBackground(WidgetTheme.background, for: .widget)
-    }
-}
-
-struct SmallDepartureRow: View {
-    let departure: DepartureRow
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Text(departure.destination)
-                .font(.system(size: 11))
-                .foregroundColor(WidgetTheme.amber)
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            Text(departure.isDue ? "Due" : departure.eta)
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundColor(departure.isDue ? DueRed : WidgetTheme.amber)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        .background(WidgetTheme.rowSurface.opacity(0.55))
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MARK: - Medium widget (4×2)
-// ─────────────────────────────────────────────────────────────────────────────
-
-struct MediumWidgetView: View {
-    let data: WidgetData
-    let clock: Date
-    var body: some View {
-        ZStack {
-            WidgetTheme.background
-            if data.isEmpty {
-                EmptyWidgetView(size: .medium)
-            } else {
-                DotMatrixBoard(data: data, clock: clock, maxRows: 4)
-            }
-        }
-        .containerBackground(WidgetTheme.background, for: .widget)
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MARK: - Large widget (4×4)
-// ─────────────────────────────────────────────────────────────────────────────
-
-struct LargeWidgetView: View {
-    let data: WidgetData
-    let clock: Date
-    var body: some View {
-        ZStack {
-            WidgetTheme.background
-            if data.isEmpty {
-                EmptyWidgetView(size: .large)
-            } else {
-                DotMatrixBoard(data: data, clock: clock, maxRows: 9)
+                .padding(4)
             }
         }
         .containerBackground(WidgetTheme.background, for: .widget)
@@ -454,7 +466,7 @@ struct EmptyWidgetView: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            TflRoundelMark(diameter: 40)
+            StationlyMark(diameter: 40)
             if size != .small {
                 Text("Stationly")
                     .font(.system(size: 13, weight: .bold))

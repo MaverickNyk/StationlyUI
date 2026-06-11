@@ -60,5 +60,9 @@ struct StationlyDepartureBoardWidget: Widget {
         .configurationDisplayName("Stationly Departures")
         .description("Live TfL departure board for your saved station.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        // The black dot-matrix panel IS the product identity — keep it under
+        // the amber text everywhere (StandBy, lock screen contexts) instead of
+        // letting the system strip it to bare glyphs.
+        .containerBackgroundRemovable(false)
     }
 }
