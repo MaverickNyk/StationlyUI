@@ -58,9 +58,18 @@ targets:
       properties:
         com.apple.security.application-groups:
           - group.com.stationly.mobile
-        # Push Notifications capability — codesign swaps the value per
-        # provisioning profile (development/production) automatically.
-        aps-environment: development
+        # ⚠️ PUSH IS BLOCKED ON SIGNING, NOT CODE. Team 6D3CXG8U25 is a
+        # PERSONAL (free) development team — Apple does not allow the Push
+        # Notifications capability on personal teams, so provisioning fails
+        # the moment aps-environment is present (this is also why Xcode
+        # auto-stripped it from the generated entitlements in Session 4/5).
+        # Without it the app never gets an APNs token and FCM cannot deliver
+        # AT ALL (modern firebase-ios-sdk has no non-APNs channel).
+        # UNBLOCK: enroll in the paid Apple Developer Program, set that team
+        # id in DEVELOPMENT_TEAM below, upload an APNs auth key (.p8) to
+        # Firebase console (project mindthetimefcm → Cloud Messaging → Apple),
+        # then RESTORE the line:
+        #   aps-environment: development
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stationly.mobile

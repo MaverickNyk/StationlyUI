@@ -567,6 +567,36 @@ within ~5 s; (5) background the app → next push should refresh the widget
 (subject to iOS silent-push budget — allow minutes, not seconds); (6) widget
 fills its canvas at small/medium/large with the new type hierarchy.
 
+### ⚠️ Session-5 deploy discoveries (READ before touching push or the bridge)
+
+**1. PUSH IS BLOCKED ON SIGNING, NOT CODE.** Team `6D3CXG8U25` is a PERSONAL
+(free) Apple development team — Apple forbids the Push Notifications
+capability on personal teams, so provisioning fails whenever `aps-environment`
+is in the entitlements ("Personal development teams … do not support the Push
+Notifications capability"). This is also why Xcode kept auto-stripping the
+entitlement (the mystery working-tree revert). Modern firebase-ios-sdk has no
+non-APNs channel → with this team, FCM can NEVER deliver to the app,
+foreground or background, regardless of the client fixes. Product owner
+decision 2026-06-11: push DISABLED for now (`aps-environment` removed from
+project.yml with an UNBLOCK comment). To enable push: paid Apple Developer
+Program team → set DEVELOPMENT_TEAM → upload APNs auth key (.p8) to Firebase
+console (mindthetimefcm → Cloud Messaging → Apple apps) → restore
+`aps-environment: development` in project.yml. All client-side FCM fixes from
+this session stay correct and dormant until then.
+
+**2. K/N suspend-function export quirk.** `FcmPayloadBridge.processPayloadAndWait`
+(core, suspend) compiles but is NOT in the framework's ObjC header — Kotlin/
+Native only generates completionHandler bridging for suspend functions in the
+ROOT framework module (composeApp); exported dependency modules (core) get
+classes/plain funcs only. Fix next session: add a thin composeApp-iosMain
+wrapper object delegating to it, then call that from AppDelegate (currently
+falls back to fire-and-forget `processPayload` + 2.5 s held completion).
+
+**3. Device deploy VERIFIED 2026-06-11:** build + install + launch succeeded
+on Nick's iPhone (staging scheme, push-free provisioning); the
+"Copy Compose Resources" phase ran (`Copied compose-resources (iosArm64Main)`
+in the build log) → real logo + Inter Tight are in the bundle.
+
 ### Known-remaining (Session 5 could not finish)
 - Profile sometimes shows "User"/no photo (identity key race) — NOT yet
   root-caused this session; reproduce with fresh sign-in then cold relaunch.
