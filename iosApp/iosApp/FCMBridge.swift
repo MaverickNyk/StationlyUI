@@ -1,4 +1,5 @@
 import Foundation
+import FirebaseCore
 import FirebaseMessaging
 import composeApp
 
@@ -8,10 +9,33 @@ import composeApp
 /// 2. Raw FCM payload JSON stored by AppDelegate under "pending_fcm_payload",
 ///    forwarded to KMP FcmPayloadBridge once the framework is integrated.
 ///
-/// Called on: FCM token receipt, app foreground.
-class FCMBridge {
+/// Called on: FCM token receipt, app foreground, and (debounced) whenever KMP
+/// writes to UserDefaults — so a station added mid-session subscribes its
+/// topics immediately instead of waiting for the next foreground transition.
+class FCMBridge: NSObject {
     static let shared = FCMBridge()
-    private init() {}
+    private override init() {}
+
+    /// Debounced UserDefaults-change entry point (see AppDelegate observer).
+    /// NSObject + @objc so it can be scheduled via perform(_:with:afterDelay:).
+    @objc func flushPendingFromDefaultsChange() {
+        guard FirebaseApp.app() != nil else { return }
+        processPendingSubscriptions()
+    }
+
+    /// Re-subscribe every topic this device should be on (KMP's `fcm_topics`
+    /// ledger). FCM subscribe is idempotent; called on token receipt/rotation
+    /// so a rotated token keeps receiving Station_*/LineStatus_* pushes —
+    /// the iOS analog of Android FcmMessagingService.onNewToken.
+    func resubscribeAllTopics() {
+        guard FirebaseApp.app() != nil else { return }
+        let topics = (UserDefaults.standard.array(forKey: "fcm_topics") as? [String]) ?? []
+        topics.forEach { topic in
+            Messaging.messaging().subscribe(toTopic: topic) { error in
+                if let error { print("[FCMBridge] Re-subscribe \(topic) failed: \(error)") }
+            }
+        }
+    }
 
     // MARK: - Topic subscriptions
 

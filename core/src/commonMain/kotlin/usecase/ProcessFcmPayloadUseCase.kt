@@ -1,23 +1,26 @@
 package com.stationly.core.usecase
 
 import com.stationly.core.model.FcmPayload
-import com.stationly.core.model.PredictionItem
+import com.stationly.core.model.LineStatus
+import com.stationly.core.model.UserSelection
 import com.stationly.core.model.WidgetState
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SqlStorage
 import com.stationly.core.platform.WidgetManager
 import com.stationly.core.platform.StorageManager
 import com.stationly.core.util.FreshDataNotifier
+import com.stationly.core.util.GlobalBoardProcessor
+import com.stationly.core.util.StationlyFormatters
 import kotlinx.datetime.Clock
 
 /**
  * Process FCM Payload Use Case
- * 
+ *
  * This is the core of the real-time widget updates. It processes incoming
- * FCM messages and updates the widget with new prediction data.
- * 
- * Mirrors the FcmMessagingService logic from MindTheTimeAndroid but
- * extracted as a reusable use case.
+ * FCM messages and updates SQLite + the widget with new data. It mirrors the
+ * Android FcmMessagingService routing (Station_* prediction payloads and
+ * LineStatus_* status payloads) for platforms without a native FCM service
+ * (iOS — invoked from FcmPayloadBridge).
  */
 class ProcessFcmPayloadUseCase(
     private val departureRepository: DepartureRepository,
@@ -31,47 +34,116 @@ class ProcessFcmPayloadUseCase(
     // source. Defaults to null so existing (Android) call sites are unchanged.
     private val sqlStorage: SqlStorage? = null
 ) {
-    
+
+    // Same persistence path the Android FcmMessagingService uses — writes the
+    // filtered/formatted predictions to SQLite so every surface (board poll,
+    // widget, FreshDataNotifier collectors) reads one consistent source.
+    private val syncPredictions: SyncPredictionsUseCase? =
+        sqlStorage?.let { SyncPredictionsUseCase(it) }
+
     /**
-     * Execute the FCM payload processing
-     * 
-     * @param payload The incoming FCM payload
+     * Legacy entry point (payload with no topic context). Kept for source
+     * compatibility — Android constructs this class; iOS test pushes without a
+     * `from` topic land here. Delegates to the station route.
      */
     suspend operator fun invoke(payload: FcmPayload) {
-        // Step 1: Process and cache predictions
+        processStationUpdate(topicStationId = null, payload = payload)
+    }
+
+    /**
+     * Station_* topic push: sync predictions into SQLite for every selection
+     * that matches the pushed station, then refresh the widget if (and only
+     * if) the primary selection — the one the widget shows — was affected.
+     * Mirrors Android's FcmMessagingService.handlePredictionUpdate.
+     *
+     * @param topicStationId station id extracted from the FCM topic
+     *        ("/topics/Station_940GZZLUASL" → "940GZZLUASL"). Checked first so
+     *        child-stop-id mismatches in the payload body don't drop the push.
+     */
+    suspend fun processStationUpdate(topicStationId: String?, payload: FcmPayload) {
+        // Keep the in-memory prediction flow fresh for any live collectors.
         departureRepository.processFcmPayload(payload)
-        
-        // Step 2: Get primary selection for context. Prefer storageManager
-        // (legacy), fall back to the real SQLite source (used by iOS).
-        val primarySelection = storageManager.loadSelections().firstOrNull()
-            ?: sqlStorage?.getAllSelections()?.firstOrNull()
-        
-        if (primarySelection != null) {
-            // Step 3: Format predictions for widget
-            val predictions = extractRelevantPredictions(payload, primarySelection.line)
-            val widgetState = formatDeparturesUseCase(predictions, primarySelection)
-            
-            // Step 4: Update widget
-            widgetManager.updateWidget(widgetState)
+
+        val selections = allSelections()
+        val matching = selections.filter {
+            it.station.equals(topicStationId ?: "", ignoreCase = true) ||
+                it.station.equals(payload.id, ignoreCase = true)
+        }
+        if (matching.isEmpty()) return
+
+        matching.forEach { selection ->
+            syncPredictions?.execute(payload, selection)
         }
 
-        // Step 5: Tell any live in-app board to reload from SQLite right now,
-        // instead of waiting on its 30 s poll. Fired whether or not a primary
-        // selection drove a widget update — fresh predictions are in SQLite
-        // either way. (iOS path; the Android app uses its own FreshDataNotifier.)
+        // The widget renders the primary (first) selection. Only rewrite it
+        // when that selection actually received data — refreshing it for a
+        // push that targeted another station would blank the board.
+        val primary = selections.firstOrNull()
+        if (primary != null && matching.any {
+                it.station.equals(primary.station, ignoreCase = true) &&
+                    it.line.equals(primary.line, ignoreCase = true)
+            }
+        ) {
+            refreshWidgetFromStorage(primary)
+        }
+
+        // Tell any live in-app board to reload from SQLite right now, instead
+        // of waiting on its 30 s poll.
         FreshDataNotifier.notifyFreshData()
     }
-    
+
     /**
-     * Extract predictions relevant to the primary selection
+     * LineStatus_* topic push: persist the status, and refresh the widget's
+     * status strip when the primary selection rides that line. Mirrors
+     * Android's FcmMessagingService.handleLineStatusUpdate (minus the local
+     * status-change notification, which is platform-native).
      */
-    private fun extractRelevantPredictions(
-        payload: FcmPayload,
-        lineId: String
-    ): List<PredictionItem> {
-        val lineData = payload.lines[lineId] ?: return emptyList()
-        
-        // Get all predictions for the line
-        return lineData.dirs.flatMap { it.value.preds }
+    suspend fun processLineStatusUpdate(status: LineStatus) {
+        sqlStorage?.saveLineStatus(status)
+
+        val primary = allSelections().firstOrNull()
+        if (primary != null && status.id.equals(primary.line, ignoreCase = true)) {
+            refreshWidgetFromStorage(primary)
+        }
+
+        FreshDataNotifier.notifyFreshData()
+    }
+
+    private suspend fun allSelections(): List<UserSelection> =
+        storageManager.loadSelections().ifEmpty {
+            sqlStorage?.getAllSelections() ?: emptyList()
+        }
+
+    /**
+     * Rebuild the widget state from SQLite — the same shape the in-app poll
+     * writes (SummaryViewModel.loadPredictions) so the widget never flips
+     * format depending on which trigger refreshed it.
+     */
+    private suspend fun refreshWidgetFromStorage(primary: UserSelection) {
+        val sql = sqlStorage ?: return
+        val dbPreds = GlobalBoardProcessor.processPredictions(
+            sql.getPredictions(primary.station, primary.line)
+        )
+        if (dbPreds.isEmpty()) return
+
+        val tsMs = sql.getLastUpdatedTimestamp(primary.station, primary.line)
+            ?: Clock.System.now().toEpochMilliseconds()
+        val widgetStatus = sql.getLineStatus(primary.mode, primary.line)?.let { s ->
+            val reason = StationlyFormatters.formatStatusReason(s.reason ?: "").trim()
+            if (reason.isNotEmpty()) "${s.statusSeverityDescription}: $reason"
+            else s.statusSeverityDescription
+        }
+
+        widgetManager.updateWidget(
+            WidgetState(
+                stationName = primary.stationName,
+                lineName = primary.line,
+                predictions = dbPreds,
+                status = widgetStatus,
+                lastUpdated = tsMs / 1000,
+                direction = primary.direction,
+                mode = primary.mode,
+            )
+        )
     }
 }

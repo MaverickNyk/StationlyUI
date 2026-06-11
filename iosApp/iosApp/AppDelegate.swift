@@ -26,6 +26,19 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         // Poll App Group UserDefaults every 5 s; reload widget when KMP bumps signal
         WidgetReloadObserver.shared.start()
 
+        // KMP queues topic (un)subscriptions in UserDefaults. Previously they
+        // were only flushed on token receipt / app foreground, so adding a
+        // station mid-session didn't take effect until the next app switch.
+        // React to the defaults write itself (debounced — the flush also
+        // mutates defaults, but a second pass sees empty queues and no-ops).
+        NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { _ in
+            NSObject.cancelPreviousPerformRequests(withTarget: FCMBridge.shared)
+            FCMBridge.shared.perform(#selector(FCMBridge.flushPendingFromDefaultsChange),
+                                     with: nil, afterDelay: 0.5)
+        }
+
         return true
     }
 
@@ -62,7 +75,10 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         // Store under "fcm_token" — read by KMP IosNotificationManager.registerDevice()
         UserDefaults.standard.set(token, forKey: "fcm_token")
         UserDefaults.standard.synchronize()
-        // Process any FCM topic subscriptions that KMP queued before the token was ready
+        // Token may have ROTATED: re-subscribe everything in the fcm_topics
+        // ledger (idempotent), then flush anything KMP queued before the token
+        // was ready — Android does the same in onNewToken.
+        FCMBridge.shared.resubscribeAllTopics()
         FCMBridge.shared.processPendingSubscriptions()
     }
 
@@ -131,8 +147,22 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     func application(_ application: UIApplication,
                      didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        processFcmPayload(userInfo)
-        completionHandler(.newData)
+        Messaging.messaging().appDidReceiveMessage(userInfo)
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: userInfo),
+              let jsonString = String(data: jsonData, encoding: .utf8) else {
+            completionHandler(.noData)
+            return
+        }
+        // AWAIT the KMP write (SQLite + App Group) before reloading the widget
+        // and completing — in the background iOS suspends the process right
+        // after the completion handler, so the old fire-and-forget +2 s reload
+        // raced suspension and the widget kept stale data.
+        FcmPayloadBridge.shared.processPayloadAndWait(jsonString: jsonString) { _ in
+            DispatchQueue.main.async {
+                WidgetCenter.shared.reloadAllTimelines()
+                completionHandler(.newData)
+            }
+        }
     }
 
     // MARK: - FCM payload → KMP
