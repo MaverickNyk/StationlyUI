@@ -153,15 +153,17 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
             completionHandler(.noData)
             return
         }
-        // AWAIT the KMP write (SQLite + App Group) before reloading the widget
-        // and completing — in the background iOS suspends the process right
-        // after the completion handler, so the old fire-and-forget +2 s reload
-        // raced suspension and the widget kept stale data.
-        FcmPayloadBridge.shared.processPayloadAndWait(jsonString: jsonString) { _ in
-            DispatchQueue.main.async {
-                WidgetCenter.shared.reloadAllTimelines()
-                completionHandler(.newData)
-            }
+        // KMP exposes a suspend processPayloadAndWait, but Kotlin/Native only
+        // bridges suspend functions (completionHandler form) for the ROOT
+        // framework module (composeApp) — core's suspend funcs are silently
+        // omitted from the ObjC header. Until a composeApp-side wrapper is
+        // added (next session), hold the background task open ~2.5 s after
+        // the fire-and-forget call so the SQLite + App Group writes land
+        // before iOS suspends us, then reload the widget and complete.
+        FcmPayloadBridge.shared.processPayload(jsonString: jsonString)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            WidgetCenter.shared.reloadAllTimelines()
+            completionHandler(.newData)
         }
     }
 
