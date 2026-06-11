@@ -19,6 +19,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
 import platform.Foundation.NSBundle
 import platform.Foundation.NSDate
 import platform.Foundation.NSUserDefaults
@@ -321,18 +324,63 @@ object FcmPayloadBridge {
     }
 
     /**
-     * Fire-and-forget: parse JSON FCM payload, update SQLite cache, refresh widget.
-     * Called from Swift on a background queue; uses GlobalScope since this is a
-     * platform-event callback with no associated lifecycle.
+     * Fire-and-forget variant for foreground deliveries where Swift doesn't
+     * need to await the write (the WidgetReloadObserver picks up the signal).
      */
     fun processPayload(jsonString: String) {
         GlobalScope.launch(Dispatchers.IO) {
-            try {
-                val payload = json.decodeFromString<FcmPayload>(jsonString)
-                processUseCase(payload)
-            } catch (e: Exception) {
-                println("[FcmPayloadBridge] Failed to process payload: ${e.message}")
+            processPayloadAndWait(jsonString)
+        }
+    }
+
+    /**
+     * Process an FCM message and return only when SQLite + the App Group have
+     * been written. Swift sees this as `processPayloadAndWait(jsonString:completionHandler:)`
+     * — AppDelegate awaits it in didReceiveRemoteNotification before calling
+     * the background-fetch completion handler, so iOS doesn't suspend the
+     * process mid-write and the widget reload sees fresh data.
+     *
+     * The argument is the WHOLE APNs userInfo dict as JSON. A real Syncer
+     * topic push looks like:
+     *   { "from": "/topics/Station_940GZZLUASL",   ← or LineStatus_tube_victoria
+     *     "payload": "{…inner JSON string…}",       ← FcmPayload or LineStatus
+     *     "aps": { "content-available": 1 }, … }
+     * which is why decoding the top level directly as FcmPayload (the old
+     * code) dropped every real push — the data lives one level down, exactly
+     * like Android's remoteMessage.data["payload"].
+     */
+    suspend fun processPayloadAndWait(jsonString: String) {
+        try {
+            val root = json.parseToJsonElement(jsonString).jsonObject
+            val topic = (root["from"] as? JsonPrimitive)?.contentOrNull
+            val inner = (root["payload"] as? JsonPrimitive)?.contentOrNull
+
+            when {
+                topic?.contains("LineStatus_") == true && inner != null ->
+                    processUseCase.processLineStatusUpdate(json.decodeFromString(inner))
+
+                topic?.contains("Station_") == true && inner != null ->
+                    processUseCase.processStationUpdate(
+                        topicStationId = topic.substringAfter("Station_"),
+                        payload = json.decodeFromString(inner)
+                    )
+
+                // No topic (direct/test push) — sniff the payload shape.
+                inner != null -> {
+                    val parsed = json.parseToJsonElement(inner).jsonObject
+                    if ("lines" in parsed) {
+                        processUseCase.processStationUpdate(null, json.decodeFromString(inner))
+                    } else if ("statusSeverityDescription" in parsed) {
+                        processUseCase.processLineStatusUpdate(json.decodeFromString(inner))
+                    }
+                }
+
+                // Legacy/manual pushes that put the FcmPayload at the top level.
+                "lines" in root ->
+                    processUseCase.processStationUpdate(null, json.decodeFromString(jsonString))
             }
+        } catch (e: Exception) {
+            println("[FcmPayloadBridge] Failed to process payload: ${e.message}")
         }
     }
 }
