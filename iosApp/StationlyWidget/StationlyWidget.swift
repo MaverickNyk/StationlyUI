@@ -1,5 +1,11 @@
 import WidgetKit
 import SwiftUI
+import os
+
+/// os_log (NOT print — print goes to stdout, invisible on a device) so the
+/// provider's activity shows up in `idevicesyslog`: proof of whether chronod
+/// launched the extension and what each family was given.
+private let providerLog = Logger(subsystem: "com.stationly.mobile.StationlyWidget", category: "provider")
 
 // MARK: - TimelineProvider
 
@@ -24,12 +30,13 @@ struct DepartureBoardProvider: TimelineProvider {
     //
     // The timeline itself carries ONE ENTRY PER MINUTE for the next hour, all
     // with the same board data: pre-rendered local entries are free (they don't
-    // consume Apple's ~40–70/day refresh budget), and they're what drives the
-    // footer's minute-accurate wall clock — the same trick the system Clock
-    // widget uses. `.atEnd` re-reads the App Group once an hour (~24
-    // refreshes/day, comfortably inside budget).
+    // consume Apple's ~40–70/day refresh budget). The footer clock ticks per
+    // second on its own (`.timer` Text, see LiveClock); the per-minute entries
+    // re-anchor it across midnight. `.atEnd` re-reads the App Group once an
+    // hour (~24 refreshes/day, comfortably inside budget).
     func getTimeline(in context: Context, completion: @escaping (Timeline<DepartureEntry>) -> Void) {
         let data = AppGroupStorage.shared.readWidgetData()
+        providerLog.notice("getTimeline family=\(String(describing: context.family), privacy: .public) station=\(data.stationName.isEmpty ? "<none>" : "set", privacy: .public) deps=\(data.departures.count) statusLen=\(data.status.count)")
 
         // Align entries to minute boundaries so the clock flips exactly on the minute.
         let calendar = Calendar.current
@@ -44,6 +51,7 @@ struct DepartureBoardProvider: TimelineProvider {
                 entries.append(DepartureEntry(date: date, widgetData: data))
             }
         }
+        providerLog.notice("getTimeline family=\(String(describing: context.family), privacy: .public) returning \(entries.count) entries")
         completion(Timeline(entries: entries, policy: .atEnd))
     }
 }
@@ -64,5 +72,11 @@ struct StationlyDepartureBoardWidget: Widget {
         // the amber text everywhere (StandBy, lock screen contexts) instead of
         // letting the system strip it to bare glyphs.
         .containerBackgroundRemovable(false)
+        // Kill iOS 17's default ~16pt safe-area margins: the board's lit cells
+        // run edge-to-edge so the widget reads as one LED panel, not a board
+        // floating inside a black frame. The system's corner mask clips the
+        // outer cells to the widget's continuous radius. (Cleared of suspicion
+        // in the Code=2 bisect — see docs/IOS_WIDGET_DESIGN.md §3.4.)
+        .contentMarginsDisabled()
     }
 }

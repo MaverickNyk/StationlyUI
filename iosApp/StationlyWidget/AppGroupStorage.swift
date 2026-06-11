@@ -30,7 +30,25 @@ enum ModeIconProvider {
     static func icon(_ mode: String) -> UIImage? {
         guard !mode.isEmpty, let dir = iconsDir else { return nil }
         let url = dir.appendingPathComponent("\(safeName(mode)).png")
-        return UIImage(contentsOfFile: url.path)
+        guard let raw = UIImage(contentsOfFile: url.path) else { return nil }
+        return rerendered(raw)
+    }
+
+    /// Re-encode the backend PNG into a fresh, small, standard-format bitmap.
+    /// The raw file is whatever the backend served — odd colour spaces, huge
+    /// dimensions or subtly corrupt data still open as a UIImage but get
+    /// embedded into EVERY timeline entry's view archive, where they can make
+    /// chronod reject the whole collection (WidgetArchiver ArchivingError
+    /// Code=2 → widget stuck on redacted placeholder). A 48pt re-render is
+    /// visually identical at roundel sizes and guaranteed archive-safe.
+    private static func rerendered(_ image: UIImage) -> UIImage {
+        let side: CGFloat = 48
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        format.scale = 3
+        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
+            image.draw(in: CGRect(x: 0, y: 0, width: side, height: side))
+        }
     }
 
     static func tint(_ mode: String) -> UIColor? {

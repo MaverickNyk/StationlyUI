@@ -116,7 +116,14 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
 
     // MARK: - Foreground
 
+    // NOTE: in the SwiftUI scene lifecycle UIKit does NOT call this method —
+    // it's kept only as belt-and-braces. The live path is scenePhase==.active
+    // in StationlyApp, which calls handleDidBecomeActive() directly.
     func applicationDidBecomeActive(_ application: UIApplication) {
+        handleDidBecomeActive()
+    }
+
+    func handleDidBecomeActive() {
         if FirebaseApp.app() != nil {
             Task { await AuthBridge.shared.refreshTokenIfNeeded() }
             FCMBridge.shared.processPendingSubscriptions()
