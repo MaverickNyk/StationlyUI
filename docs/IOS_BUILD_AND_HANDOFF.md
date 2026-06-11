@@ -358,10 +358,13 @@ Per-screen commits, each `compileKotlinIosSimulatorArm64`-verified. **No
     iOS analog of Android's `Chronometer` (self-updates, no timeline reload).
     Roundel marks, lit-cell rows, per-family caps (small 3 / medium 4 / large 9).
   - **iOS platform constraints (documented, not bugs):** WidgetKit widgets are
-    static snapshots — they **cannot scroll** and **cannot tick a per-second wall
-    clock** (Apple's refresh budget). So the widget shows the best fixed row set
-    per family and the live "ago" carries freshness; the status truncates instead
-    of marqueeing.
+    static snapshots — they **cannot scroll** and **cannot run animations**.
+    The footer wall clock WAS worked around (Session 6, see
+    `docs/IOS_WIDGET_DESIGN.md`): it ticks per second via a `.timer` Text
+    anchored at midnight (elapsed-since-00:00 IS the time of day). The status
+    reason does NOT marquee: a once-per-minute stepped scroll (the WidgetKit
+    ceiling) was built, rejected as worse than static, and removed — the
+    reason truncates with a tail. The widget shows a fixed row set per family.
 
 - **Font — Inter Tight bundled** (`Type.kt` `DisplayFamily`): the brand wordmark
   on Summary + Profile now uses Inter Tight, matching Android. Android loads it

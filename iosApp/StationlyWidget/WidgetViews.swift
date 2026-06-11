@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import WidgetKit
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,32 +43,32 @@ struct BoardMetrics {
 
     static let medium = BoardMetrics(
         station: 16, platform: 13, row: 12.5, status: 10.5,
-        clock: 15, ago: 8.5, icon: 18, logo: 16, cellRadius: 5, maxRows: 4)
+        clock: 15, ago: 8.5, icon: 18, logo: 16, cellRadius: 0, maxRows: 4)
     static let large = BoardMetrics(
         station: 19, platform: 15, row: 14.5, status: 12.5,
-        clock: 18, ago: 10, icon: 22, logo: 19, cellRadius: 6, maxRows: 10)
+        clock: 18, ago: 10, icon: 22, logo: 19, cellRadius: 0, maxRows: 10)
 }
 
 private let DueRed = Color(red: 1.0, green: 0.32, blue: 0.32)
-
-/// HH:mm formatter for the footer clock (24h, like Android's TextClock).
-private let clockFormatter: DateFormatter = {
-    let f = DateFormatter()
-    f.dateFormat = "HH:mm"
-    return f
-}()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MARK: - Shared marks
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A "lit cell" strip — the active row background from the Android board.
-/// Soft-radiused so the cells flow with the widget's continuous corners while
-/// the faint unlit-dot lattice keeps the LED-matrix read.
+/// Cells are square-cornered and run the full widget width (content margins are
+/// disabled), so the board IS the widget: the system's corner mask rounds the
+/// four outer corners and the 2pt black gaps between cells read as the bezel.
+///
+/// NO per-cell texture here: the unlit-dot lattice is ONE `DotGrid` overlay on
+/// the whole board (one image per entry instead of ~16 × 61 ≈ 1,000 refs in
+/// the archive — and an LED panel's unlit dots span the full panel anyway,
+/// gaps included). Archive-poisoning history of this board:
+/// docs/IOS_WIDGET_DESIGN.md §3.4.
 private struct LitCell<Content: View>: View {
     var vPad: CGFloat = 3
-    var hPad: CGFloat = 9
-    var radius: CGFloat = 5
+    var hPad: CGFloat = 10
+    var radius: CGFloat = 0
     @ViewBuilder var content: Content
     var body: some View {
         content
@@ -75,30 +76,38 @@ private struct LitCell<Content: View>: View {
             .padding(.vertical, vPad)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(WidgetTheme.rowSurface)
-            .overlay(DotGrid().allowsHitTesting(false))
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
 }
 
-/// The unlit-LED texture: a sparse dot lattice at very low alpha.
+/// The unlit-LED texture: a sparse dot lattice at very low alpha, tiled from a
+/// tiny bitmap rendered once per process. Applied ONCE over the whole board
+/// (covering lit cells and the black gaps alike — an LED panel's unlit dots
+/// span the full panel) — see LitCell's comment for why per-cell texturing
+/// broke the WidgetKit archiver. Earlier this was a live `Canvas` per cell,
+/// which additionally forced thousands of rasterisations per timeline render
+/// burst in the system's WidgetRenderer process.
 private struct DotGrid: View {
-    var body: some View {
-        Canvas { context, size in
-            let pitch: CGFloat = 3
-            let r: CGFloat = 0.55
+    static let tile: UIImage = {
+        let pitch: CGFloat = 3, r: CGFloat = 0.55, side: CGFloat = 9
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { ctx in
+            UIColor.white.withAlphaComponent(0.030).setFill()
             var y = pitch / 2
-            while y < size.height {
+            while y < side {
                 var x = pitch / 2
-                while x < size.width {
-                    context.fill(
-                        Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
-                        with: .color(.white.opacity(0.030))
-                    )
+                while x < side {
+                    ctx.cgContext.fillEllipse(in: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
                     x += pitch
                 }
                 y += pitch
             }
         }
+    }()
+    var body: some View {
+        Image(uiImage: Self.tile)
+            .resizable(resizingMode: .tile)
     }
 }
 
@@ -204,7 +213,9 @@ struct DotMatrixHeader: View {
     let data: WidgetData
     let m: BoardMetrics
     var body: some View {
-        LitCell(vPad: 4, radius: m.cellRadius) {
+        // Top cell lives in the widget's rounded-corner zone — deeper content
+        // inset than mid-board rows so nothing clips against the corner mask.
+        LitCell(vPad: 4, hPad: 14, radius: m.cellRadius) {
             HStack(spacing: 8) {
                 ModeIconView(mode: data.mode, size: m.icon)
                 Text(data.stationName)
@@ -253,8 +264,12 @@ struct DotMatrixRow: View {
     }
 }
 
-/// "Severity : reason" — the line-status strip. iOS widgets can't marquee, so the
-/// reason truncates with a fading tail rather than scrolling (Android marquees it).
+/// "Severity : reason" — the line-status strip. Board-amber everywhere (no
+/// green/orange severity tinting); the reason is STATIC, truncating with a
+/// tail. Android's continuously-scrolling marquee is impossible in WidgetKit
+/// (static snapshots, no animation API; best possible was a once-per-minute
+/// stepped window, which read as broken) — so by product decision the iOS
+/// widget doesn't marquee at all. History: docs/IOS_WIDGET_DESIGN.md §3.3.
 struct DotMatrixStatusStrip: View {
     let data: WidgetData
     let m: BoardMetrics
@@ -271,12 +286,13 @@ struct DotMatrixStatusStrip: View {
             HStack(spacing: 0) {
                 Text(parts.severity)
                     .font(.system(size: m.status, weight: .bold))
-                    .foregroundColor(WidgetTheme.statusColor(status: parts.severity))
+                    .foregroundColor(WidgetTheme.amber)
                     .lineLimit(1)
+                    .fixedSize()
                 if !parts.reason.isEmpty {
                     Text(" : \(parts.reason)")
                         .font(.system(size: m.status))
-                        .foregroundColor(WidgetTheme.amber.opacity(0.9))
+                        .foregroundColor(WidgetTheme.amber)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -286,25 +302,47 @@ struct DotMatrixStatusStrip: View {
     }
 }
 
+/// Live HH:MM:SS wall clock, ticking every second with NO timeline reloads:
+/// a `.timer`-style Text anchored at local midnight counts the time elapsed
+/// since 00:00:00, which IS the time of day — the same trick the system Clock
+/// widget uses (the only per-second self-updating element WidgetKit allows).
+/// Each per-minute timeline entry re-anchors it, so the midnight rollover is
+/// picked up within a minute. Known limitation of the timer style: a
+/// single-digit hour renders without the leading zero ("8:05:09").
+private struct LiveClock: View {
+    let clock: Date
+    let fontSize: CGFloat
+    var body: some View {
+        Text(Calendar.current.startOfDay(for: clock), style: .timer)
+            .font(.system(size: fontSize, weight: .bold, design: .monospaced))
+            .foregroundColor(WidgetTheme.amber)
+            .lineLimit(1)
+            // Timer Texts greedily expand and left-align; center the digits
+            // inside that expanded frame so the clock stays mid-board.
+            .multilineTextAlignment(.center)
+    }
+}
+
 /// Footer, matching the Android board's bottom row: Stationly maker mark
-/// (left) + wall clock (CENTER, near-station size) + live "M:SS ago" (right,
-/// the smallest type on the board). Clock is minute-accurate via the
-/// per-minute timeline entries; "ago" ticks per second via `.timer`.
+/// (left) + live HH:MM:SS clock (CENTER, near-station size) + live "M:SS ago"
+/// (right, the smallest type on the board). Both clock and "ago" tick per
+/// second via `.timer`.
 struct DotMatrixFooter: View {
     let data: WidgetData
     let clock: Date
     let m: BoardMetrics
     var body: some View {
-        LitCell(vPad: 3, radius: m.cellRadius) {
+        // Bottom cell: the corner mask intrudes ~9–12pt at the logo/ago height
+        // (iOS 26 corner radii are generous) — 20pt of side breathing keeps the
+        // maker mark and the "ago" timer comfortably clear of the curve.
+        LitCell(vPad: 4, hPad: 20, radius: m.cellRadius) {
             ZStack {
                 HStack {
                     StationlyMark(diameter: m.logo)
                     Spacer(minLength: 0)
                     LiveAgo(data: data, fontSize: m.ago)
                 }
-                Text(clockFormatter.string(from: clock))
-                    .font(.system(size: m.clock, weight: .bold, design: .monospaced))
-                    .foregroundColor(WidgetTheme.amber)
+                LiveClock(clock: clock, fontSize: m.clock)
             }
         }
     }
@@ -365,7 +403,7 @@ struct BoardWidgetView: View {
                 .frame(minHeight: metrics.clock + 12)
                 .layoutPriority(2)
         }
-        .padding(5)
+        .overlay(DotGrid().allowsHitTesting(false))
     }
 }
 
@@ -384,7 +422,9 @@ struct SmallWidgetView: View {
                 EmptyWidgetView(size: .small)
             } else {
                 VStack(spacing: 2) {
-                    LitCell(vPad: 3, radius: 5) {
+                    // Corner-zone cells (first/last) get the deeper inset —
+                    // same reasoning as the medium/large header/footer.
+                    LitCell(vPad: 3, hPad: 14) {
                         HStack(spacing: 6) {
                             ModeIconView(mode: data.mode, size: 14)
                             Text(data.stationName)
@@ -403,7 +443,7 @@ struct SmallWidgetView: View {
                             .frame(maxHeight: .infinity)
                     } else {
                         ForEach(data.departures.prefix(3)) { dep in
-                            LitCell(radius: 5) {
+                            LitCell {
                                 HStack(spacing: 4) {
                                     Text(dep.destination)
                                         .font(.system(size: 11))
@@ -419,22 +459,20 @@ struct SmallWidgetView: View {
                         }
                     }
 
-                    LitCell(vPad: 2, radius: 5) {
+                    LitCell(vPad: 3, hPad: 16) {
                         ZStack {
                             HStack {
                                 StationlyMark(diameter: 11)
                                 Spacer(minLength: 0)
                                 LiveAgo(data: data, fontSize: 8)
                             }
-                            Text(clockFormatter.string(from: clock))
-                                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                .foregroundColor(WidgetTheme.amber)
+                            LiveClock(clock: clock, fontSize: 12)
                         }
                     }
                     .frame(minHeight: 20)
                     .layoutPriority(2)
                 }
-                .padding(4)
+                .overlay(DotGrid().allowsHitTesting(false))
             }
         }
         .containerBackground(WidgetTheme.background, for: .widget)

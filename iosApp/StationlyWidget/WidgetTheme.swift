@@ -25,11 +25,9 @@ enum WidgetTheme {
     static let textMuted     = Color(white: 0.40)
 
     // MARK: - Status colours
+    // (No per-severity tinting: the line-status strip is board-amber like every
+    // other cell — severity is carried by the bold weight, not colour.)
 
-    /// Good Service / Normal: #4CAF50
-    static let goodService   = Color(red: 0.298, green: 0.686, blue: 0.314)
-    /// Disruption / Delay: TfL disruption orange #F16130
-    static let disruption    = Color(red: 0.945, green: 0.384, blue: 0.169)
     /// Stationly brand red (#E32017) — the footer maker mark.
     static let stationlyRed  = Color(red: 0.890, green: 0.125, blue: 0.090)
 
@@ -61,17 +59,5 @@ enum WidgetTheme {
             if mins <= 5 { return textPrimary }
         }
         return textSecondary
-    }
-
-    /// Colour for the service status indicator dot / label.
-    static func statusColor(status: String) -> Color {
-        let lower = status.lowercased()
-        if lower.contains("good") || lower.contains("normal") || lower.contains("no issues") {
-            return goodService
-        }
-        if lower.contains("suspend") || lower.contains("close") || lower.contains("no service") {
-            return Color.red
-        }
-        return disruption
     }
 }
