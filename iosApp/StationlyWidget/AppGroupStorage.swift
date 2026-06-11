@@ -1,4 +1,60 @@
 import Foundation
+import UIKit
+
+// MARK: - ModeIconProvider
+
+/// Reads the per-mode roundel icons + tint map that KMP's ModeIconStore
+/// downloads from the backend `/modes` endpoint into the App Group container —
+/// the iOS analog of Android's ModeIconCache (same file layout:
+/// `mode_icons/<mode>.png`, `mode_icons/tints.json`).
+///
+/// Fall-back chain at render time (same as Android):
+///   1. cached PNG          → real backend roundel
+///   2. tints.json colour   → drawn roundel tinted per backend
+///   3. nil                 → caller's hardcoded mode colour
+enum ModeIconProvider {
+    private static let appGroupID = "group.com.stationly.mobile"
+
+    private static var iconsDir: URL? {
+        FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
+            .appendingPathComponent("mode_icons", isDirectory: true)
+    }
+
+    /// Lowercase, a-z/0-9/- only — must match KMP ModeIconStore.safeName.
+    private static func safeName(_ mode: String) -> String {
+        mode.lowercased().replacingOccurrences(
+            of: "[^a-z0-9-]", with: "_", options: .regularExpression)
+    }
+
+    static func icon(_ mode: String) -> UIImage? {
+        guard !mode.isEmpty, let dir = iconsDir else { return nil }
+        let url = dir.appendingPathComponent("\(safeName(mode)).png")
+        return UIImage(contentsOfFile: url.path)
+    }
+
+    static func tint(_ mode: String) -> UIColor? {
+        guard !mode.isEmpty, let dir = iconsDir,
+              let data = try? Data(contentsOf: dir.appendingPathComponent("tints.json")),
+              let map = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+              let hex = map[mode.lowercased()] else { return nil }
+        return UIColor(hex: hex)
+    }
+}
+
+extension UIColor {
+    /// "#RRGGBB" / "RRGGBB" parser for the tints.json values.
+    convenience init?(hex: String) {
+        var s = hex.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("#") { s.removeFirst() }
+        guard s.count == 6, let v = UInt64(s, radix: 16) else { return nil }
+        self.init(
+            red:   CGFloat((v >> 16) & 0xFF) / 255.0,
+            green: CGFloat((v >> 8)  & 0xFF) / 255.0,
+            blue:  CGFloat(v         & 0xFF) / 255.0,
+            alpha: 1.0)
+    }
+}
 
 // MARK: - DepartureRow
 // Mirrors the JSON schema written by KMP AppGroupKeys / Platform.ios.kt:
