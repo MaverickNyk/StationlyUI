@@ -123,7 +123,13 @@ class SummaryViewModel(
         // we reload the board immediately rather than waiting on the 30 s poll.
         viewModelScope.launch {
             FreshDataNotifier.events.collect {
-                _selections.value.forEach { loadPredictions(it) }
+                _selections.value.forEach {
+                    loadPredictions(it)
+                    // A LineStatus_* push only touches the status table — reload
+                    // the board's status strip too, like Android's home VM does
+                    // on its line_status_data prefs ping.
+                    loadLineStatus(it)
+                }
             }
         }
     }
