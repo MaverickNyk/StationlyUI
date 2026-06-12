@@ -1,11 +1,46 @@
 # iOS Parity Plan — bring the iOS app to the redesigned Android feature set
 
-**Status as of 2026-06-12 (Session 6).** Living handoff doc; update it as phases land.
+**Status as of 2026-06-12 (Session 7).** Living handoff doc; update it as phases land.
 
 ## ⏯️ RESUME HERE (continuation for a fresh agent / new session)
 
-**CURRENT (2026-06-12, end of Session 6) — authoritative detail lives in
-`docs/IOS_BUILD_AND_HANDOFF.md` §7f; read that FIRST.** One-paragraph summary:
+**CURRENT (2026-06-12, end of Session 7).** Session 7 work (all built, deployed
+to the device, and verified except where noted; UNCOMMITTED on `ios-parity`):
+
+1. **Medium widget de-crumbled** — fixed 6-cell content budget (station + ONE
+   platform group header + 3 rows + footer), status strip is backfill-only,
+   footer shed under 150pt, surplus height now shared EVENLY across cells
+   (the layoutPriority ladder was removed — it made only header/footer balloon
+   on 1–2-row boards). Full rationale: `IOS_WIDGET_DESIGN.md` §3.6.
+2. **Mode roundel un-squashed** — `ModeIconProvider.rerendered` no longer
+   forces a 48×48 square (keeps source aspect); `ModeIconView` is
+   height-anchored with natural width like Android's fitCenter
+   (`IOS_WIDGET_DESIGN.md` §3.7).
+3. **"?" avatar / "User" profile fixed (root cause)** — Firebase keeps its
+   session in the KEYCHAIN (survives app delete/reinstall) but the identity
+   keys (`firebase_user_email/_display_name/_photo_url/_uid`,
+   `signin_provider`, `member_since`) lived in NSUserDefaults (wiped on
+   delete) and were ONLY written during an explicit sign-in. Restored
+   sessions therefore launched "logged in" with no identity. Fix:
+   `AuthBridge.swift` now has `persistUserIdentity(_:)`, called from the
+   auth-state listener (synchronously) AND `refreshTokenIfNeeded()` (every
+   foreground) — self-healing. Verified healed on-device by pulling
+   `Library/Preferences/com.stationly.mobile.plist` via
+   `xcrun devicectl device copy from --domain-type appDataContainer …`.
+4. **Cold-start race guards (KMP)** — `SummaryViewModel.loadUserInitial` and
+   `ProfileViewModel.loadProfile` re-read once after 1.5s if identity keys
+   are empty while logged in (the VM could read before the Swift listener's
+   first write landed).
+5. **Backend device-session re-registration (KMP)** — restored sessions never
+   passed through LoginViewModel, so `/user/sync/profile` (which records
+   deviceId + deviceInfo session data) was never re-sent after a reinstall.
+   `SummaryViewModel.registerDeviceSession()` now re-upserts it best-effort
+   at home-screen creation (after loadUserInitial settles). NOT yet verified
+   against the staging backend's session store — next agent: confirm a
+   session doc exists for this deviceId (App-Group key `stationly_device_id`).
+
+**HISTORY — Session 6 (2026-06-12) — authoritative detail lives in
+`docs/IOS_BUILD_AND_HANDOFF.md` §7f.** One-paragraph summary:
 FCM→board/widget client chain is COMPLETE (Swift awaits KMP via the composeApp
 suspend bridge; home board reloads predictions+status on push; widget rewrites
 pull-model from the PRIMARY selection on every trigger incl. selection changes;

@@ -207,6 +207,55 @@ its own (§3.2), the entries' remaining job is re-anchoring the clock across
 midnight (and giving the system per-minute flip points generally). Do not
 remove them.
 
+### 3.6 Medium content budget (2026-06-12)
+
+Problem: the medium board stacked up to 8 cells (station + platform header(s)
++ 4 rows + status strip + footer). Cell minimums sum to ~176pt against a
+fixed ~155–170pt canvas (Android's 5×3 widget gets ~200–240dp and is
+user-resizable — iOS medium never grows), so SwiftUI compressed every cell
+below its minimum and the board read as crumbled. The TfL look (fonts, amber,
+row surfaces, 2pt bezel gaps) is intentional and was NOT the problem — the
+board simply had more rows than the canvas could pay for.
+
+Fix (`BoardMetrics.singlePlatform` + `BoardWidgetView`):
+
+- **Medium budget = 6 cells (~156pt of minimums)**: station + ONE platform
+  header (first `groupedByPlatform` group only — a second group would cost a
+  second header cell) + exactly 3 departure rows (`maxRows` 4 → 3) + footer.
+- **Status strip is backfill-only on medium**: it renders only when the
+  primary group has fewer than `maxRows` departures (spare slot — quiet
+  boards never show dead space) or when there are no departures at all (the
+  board's one shot at saying WHY, e.g. "Service Closed"). Large keeps it
+  unconditionally.
+- **Footer shed below 150pt** (`GeometryReader`): only SE-class mediums
+  (321×148) fall under the threshold; every other family keeps the live
+  clock/ago footer.
+- **Large is untouched**: every platform group + status + footer — full
+  Android parity (large ≈ the Android widget's real canvas).
+- **Even surplus distribution (same day, follow-up)**: the original
+  layoutPriority ladder (header/footer 2, platform/status 1, rows 0) made
+  ONLY the header and footer balloon when the board had 1–2 departures —
+  mid rows stayed pinned at minimum height. All `.layoutPriority` modifiers
+  were removed: every cell is `maxHeight: .infinity` at equal priority, so
+  the VStack splits spare height evenly; the per-cell `minHeight`s remain
+  as compression floors. Priorities had no remaining job once the medium
+  board was budgeted to fit its canvas.
+
+### 3.7 Mode roundel aspect ratio (2026-06-12)
+
+The station-lockup roundel rendered visibly squashed. Two compounding bugs:
+
+1. `ModeIconProvider.rerendered` (the §3.4 archive-safety re-encode) drew the
+   backend PNG into a FORCED 48×48 square — the TfL roundel is wider than
+   tall (~1.22:1). Now renders onto a canvas that keeps the source aspect
+   (longest side 48pt).
+2. `ModeIconView` pinned the image into a square `size × size` frame. Now
+   height-anchored (full `size` height, natural width clamped 0.6–1.6×) —
+   the iOS equivalent of the Android lockup's 22dp `fitCenter` ImageView.
+
+No cache invalidation needed: the distortion happened at render time; the
+cached PNG on disk was never modified.
+
 ---
 
 ## 4. Quick build + deploy (Swift-only widget changes)
