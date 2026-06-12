@@ -85,31 +85,47 @@ struct DepartureRow: Codable, Identifiable {
     let eta: String
     let isDue: Bool
     let stopLetter: String?
+    /// Absolute arrival time (epoch ms) — present in the KMP JSON
+    /// (PredictionDisplay.targetEpochMs, encodeDefaults=true). Lets the
+    /// timeline re-derive the eta label per minute entry instead of blitting
+    /// the receipt-time string. Nil for defensive-fallback rows; those render
+    /// their stored eta unchanged, same as Android.
+    let targetEpochMs: Double?
 
     // Memberwise init (used for previews / placeholders)
-    init(destination: String, platform: String, eta: String, isDue: Bool, stopLetter: String?) {
-        self.id          = UUID()
-        self.destination = destination
-        self.platform    = platform
-        self.eta         = eta
-        self.isDue       = isDue
-        self.stopLetter  = stopLetter
+    init(destination: String, platform: String, eta: String, isDue: Bool, stopLetter: String?,
+         targetEpochMs: Double? = nil) {
+        self.id            = UUID()
+        self.destination   = destination
+        self.platform      = platform
+        self.eta           = eta
+        self.isDue         = isDue
+        self.stopLetter    = stopLetter
+        self.targetEpochMs = targetEpochMs
     }
 
     // Only JSON-encode the fields that actually appear in the KMP output.
     // `id` is synthesised locally and is not part of the wire format.
     private enum CodingKeys: String, CodingKey {
-        case destination, platform, eta, isDue, stopLetter
+        case destination, platform, eta, isDue, stopLetter, targetEpochMs
     }
 
     init(from decoder: Decoder) throws {
-        let container    = try decoder.container(keyedBy: CodingKeys.self)
-        self.id          = UUID()
-        self.destination = try container.decode(String.self, forKey: .destination)
-        self.platform    = try container.decode(String.self, forKey: .platform)
-        self.eta         = try container.decode(String.self, forKey: .eta)
-        self.isDue       = try container.decode(Bool.self,   forKey: .isDue)
-        self.stopLetter  = try container.decodeIfPresent(String.self, forKey: .stopLetter)
+        let container      = try decoder.container(keyedBy: CodingKeys.self)
+        self.id            = UUID()
+        self.destination   = try container.decode(String.self, forKey: .destination)
+        self.platform      = try container.decode(String.self, forKey: .platform)
+        self.eta           = try container.decode(String.self, forKey: .eta)
+        self.isDue         = try container.decode(Bool.self,   forKey: .isDue)
+        self.stopLetter    = try container.decodeIfPresent(String.self, forKey: .stopLetter)
+        self.targetEpochMs = try container.decodeIfPresent(Double.self, forKey: .targetEpochMs)
+    }
+
+    /// Copy with a re-derived label (id intentionally regenerated — it's
+    /// local-only ForEach identity, not wire data).
+    func relabelled(eta: String, isDue: Bool) -> DepartureRow {
+        DepartureRow(destination: destination, platform: platform, eta: eta,
+                     isDue: isDue, stopLetter: stopLetter, targetEpochMs: targetEpochMs)
     }
 }
 
@@ -190,6 +206,75 @@ struct WidgetData {
             lastUpdated: Date(),
             isEmpty: true
         )
+    }
+
+    // MARK: Tick layer (Android consistency contract)
+    //
+    // Swift mirror of android ui/util/PredictionTicker.tickPredictions +
+    // core StationlyFormatters.formatMinutesRemaining. The Android widget
+    // NEVER blits the stored eta string — it was current at write time and is
+    // stale a minute later. Each timeline entry re-derives every row against
+    // that entry's wall-clock date, so the pre-rendered per-minute entries
+    // count down ("5 min" → "4 min"), shed departed trains, and shift the
+    // queue — with zero WidgetKit refresh-budget cost and no network.
+    // Keep the three constants in lockstep with Android:
+    //   departed grace 30 s (DEPARTED_GRACE_MS) · "Due" < 60 s · isDue < 30 s.
+
+    /// Rows re-derived for the given instant. Platform order of first
+    /// appearance is preserved (matches Kotlin groupBy+flatMap semantics).
+    func ticked(at date: Date) -> WidgetData {
+        guard !departures.isEmpty else { return self }
+        let nowMs = date.timeIntervalSince1970 * 1000.0
+
+        // Step 1: drop departed rows (>30 s past target). Null-target rows
+        // pass through untouched — no target to tick from.
+        let survivors = departures.filter { row in
+            guard let target = row.targetEpochMs else { return true }
+            return target >= nowMs - 30_000
+        }
+
+        // Step 2: per-platform monotonic bump — two trains on one platform
+        // can't share a label; rounding collisions shift the later one up
+        // ("Due, Due, Due" → "Due, 1 min, 2 min").
+        let groups = Dictionary(grouping: survivors, by: { $0.platform })
+        var seen = Set<String>()
+        var result: [DepartureRow] = []
+        for row in survivors where !seen.contains(row.platform) {
+            seen.insert(row.platform)
+            result.append(contentsOf: Self.bumpPlatformGroup(groups[row.platform] ?? [], nowMs: nowMs))
+        }
+
+        return WidgetData(
+            stationName: stationName, lineName: lineName, direction: direction,
+            mode: mode, departures: result, status: status,
+            lastUpdated: lastUpdated, isEmpty: isEmpty
+        )
+    }
+
+    private static func bumpPlatformGroup(_ group: [DepartureRow], nowMs: Double) -> [DepartureRow] {
+        if group.count <= 1 {
+            // Single row still re-derives against current now.
+            return group.map { row in
+                guard let target = row.targetEpochMs else { return row }
+                let secs = (target - nowMs) / 1000.0
+                let eta = secs < 60 ? "Due" : "\(Int(secs / 60)) min"
+                return row.relabelled(eta: eta, isDue: secs < 30)
+            }
+        }
+        let withTarget = group.filter { $0.targetEpochMs != nil }
+            .sorted { $0.targetEpochMs! < $1.targetEpochMs! }
+        let withoutTarget = group.filter { $0.targetEpochMs == nil }
+        var prevMin = -1   // "Due" == 0; -1 means nothing taken yet
+        let bumped = withTarget.map { row -> DepartureRow in
+            let secs = (row.targetEpochMs! - nowMs) / 1000.0
+            let raw = secs < 60 ? 0 : Int(secs / 60)   // floor, same as Kotlin Long division
+            let effective = max(raw, prevMin + 1)
+            prevMin = effective
+            return row.relabelled(eta: effective == 0 ? "Due" : "\(effective) min",
+                                  isDue: effective == 0)
+        }
+        // Null-target rows pin to the end of the group, unchanged.
+        return bumped + withoutTarget
     }
 }
 
