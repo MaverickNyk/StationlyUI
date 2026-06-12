@@ -11,6 +11,8 @@ import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.FormatDeparturesUseCase
 import com.stationly.core.usecase.ProcessFcmPayloadUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
+import com.stationly.core.util.GlobalBoardProcessor
+import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -82,8 +84,64 @@ class IosWidgetManager : WidgetManager {
     private val appGroupDefaults: NSUserDefaults?
         get() = NSUserDefaults(suiteName = APP_GROUP_ID)
 
-    override suspend fun updateWidget(state: WidgetState) = withContext(Dispatchers.IO) {
+    // Android parity (pull model): AndroidWidgetManager ignores the state it
+    // is handed — every method just broadcasts ACTION_UPDATE_WIDGET and the
+    // provider re-reads the PRIMARY (first) selection from SQL at render
+    // time. iOS has no provider process, so the re-read happens here: every
+    // trigger (FCM write, the home VM reloading ANY board, station add or
+    // remove) rewrites the App Group from the primary selection's SQL state.
+    // Writing the caller's state verbatim made the widget "last writer
+    // wins" — the home VM reloading a second board put a non-primary station
+    // on the widget, and deleting one of two boards blanked it.
+    override suspend fun updateWidget(state: WidgetState) = refreshFromPrimary()
+
+    override suspend fun showWaitingState(station: String, line: String) = refreshFromPrimary()
+
+    override suspend fun clearWidgetData() = withContext(Dispatchers.IO) {
         val d = appGroupDefaults ?: return@withContext
+        wipe(d)
+    }
+
+    private suspend fun refreshFromPrimary() = withContext(Dispatchers.IO) {
+        val d = appGroupDefaults ?: return@withContext
+        val sql = Platform.sqlStorage
+        val primary = sql.getAllSelections().firstOrNull()
+        if (primary == null) {
+            // Nothing left to show (last board deleted / logged out): wipe to
+            // the widget's designed empty state ("No station set") — the iOS
+            // analog of Android's "No boards yet" fallback rows.
+            wipe(d)
+            return@withContext
+        }
+
+        // Same shape ProcessFcmPayloadUseCase.refreshWidgetFromStorage and the
+        // SummaryViewModel poll produce, so the widget never flips format
+        // depending on which trigger refreshed it.
+        val preds = GlobalBoardProcessor.processPredictions(
+            sql.getPredictions(primary.station, primary.line)
+        )
+        val tsMs = sql.getLastUpdatedTimestamp(primary.station, primary.line)
+            ?: (NSDate().timeIntervalSince1970 * 1000).toLong()
+        val status = sql.getLineStatus(primary.mode, primary.line)?.let { s ->
+            val reason = StationlyFormatters.formatStatusReason(s.reason ?: "").trim()
+            if (reason.isNotEmpty()) "${s.statusSeverityDescription}: $reason"
+            else s.statusSeverityDescription
+        }
+        write(
+            d,
+            WidgetState(
+                stationName = primary.stationName,
+                lineName = primary.line,
+                predictions = preds,
+                status = status,
+                lastUpdated = tsMs / 1000,
+                direction = primary.direction,
+                mode = primary.mode,
+            )
+        )
+    }
+
+    private fun write(d: NSUserDefaults, state: WidgetState) {
         val predictionsJson = try {
             json.encodeToString(ListSerializer(PredictionDisplay.serializer()), state.predictions)
         } catch (_: Exception) { "[]" }
@@ -95,25 +153,11 @@ class IosWidgetManager : WidgetManager {
         d.setObject(state.direction,             forKey = AppGroupKeys.WIDGET_DIRECTION)
         d.setObject(state.mode,                  forKey = AppGroupKeys.WIDGET_MODE)
         d.setDouble(state.lastUpdated.toDouble(), forKey = AppGroupKeys.WIDGET_LAST_UPDATED)
-        // Bumping the signal tells Swift WidgetReloadObserver to call WidgetCenter.reloadAllTimelines()
-        val sig = d.integerForKey(AppGroupKeys.WIDGET_RELOAD_SIGNAL)
-        d.setInteger(sig + 1, forKey = AppGroupKeys.WIDGET_RELOAD_SIGNAL)
+        bumpReloadSignal(d)
         d.synchronize()
     }
 
-    override suspend fun showWaitingState(station: String, line: String) = withContext(Dispatchers.IO) {
-        val d = appGroupDefaults ?: return@withContext
-        d.setObject(station, forKey = AppGroupKeys.WIDGET_STATION_NAME)
-        d.setObject(line,    forKey = AppGroupKeys.WIDGET_LINE_NAME)
-        d.setObject("[]",    forKey = AppGroupKeys.WIDGET_PREDICTIONS)
-        d.setObject("",      forKey = AppGroupKeys.WIDGET_STATUS)
-        val sig = d.integerForKey(AppGroupKeys.WIDGET_RELOAD_SIGNAL)
-        d.setInteger(sig + 1, forKey = AppGroupKeys.WIDGET_RELOAD_SIGNAL)
-        d.synchronize()
-    }
-
-    override suspend fun clearWidgetData() = withContext(Dispatchers.IO) {
-        val d = appGroupDefaults ?: return@withContext
+    private fun wipe(d: NSUserDefaults) {
         d.removeObjectForKey(AppGroupKeys.WIDGET_STATION_NAME)
         d.removeObjectForKey(AppGroupKeys.WIDGET_LINE_NAME)
         d.removeObjectForKey(AppGroupKeys.WIDGET_PREDICTIONS)
@@ -121,10 +165,15 @@ class IosWidgetManager : WidgetManager {
         d.removeObjectForKey(AppGroupKeys.WIDGET_DIRECTION)
         d.removeObjectForKey(AppGroupKeys.WIDGET_MODE)
         d.removeObjectForKey(AppGroupKeys.WIDGET_LAST_UPDATED)
-        // Bump signal so widget reloads to empty state
+        bumpReloadSignal(d)
+        d.synchronize()
+    }
+
+    // Bumping the signal tells Swift WidgetReloadObserver to call
+    // WidgetCenter.reloadAllTimelines()
+    private fun bumpReloadSignal(d: NSUserDefaults) {
         val sig = d.integerForKey(AppGroupKeys.WIDGET_RELOAD_SIGNAL)
         d.setInteger(sig + 1, forKey = AppGroupKeys.WIDGET_RELOAD_SIGNAL)
-        d.synchronize()
     }
 
     override suspend fun formatForWidget(predictions: List<UserSelection>): WidgetState {
