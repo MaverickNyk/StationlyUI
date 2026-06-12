@@ -41,13 +41,21 @@ enum ModeIconProvider {
     /// chronod reject the whole collection (WidgetArchiver ArchivingError
     /// Code=2 → widget stuck on redacted placeholder). A 48pt re-render is
     /// visually identical at roundel sizes and guaranteed archive-safe.
+    ///
+    /// The canvas keeps the source's aspect ratio (longest side 48pt) — an
+    /// earlier fixed 48×48 square stretched the wider-than-tall TfL roundel
+    /// into a visibly squashed blob next to the station name. Android never
+    /// had the problem because its ImageView uses fitCenter.
     private static func rerendered(_ image: UIImage) -> UIImage {
-        let side: CGFloat = 48
+        let maxSide: CGFloat = 48
+        let w = max(image.size.width, 1), h = max(image.size.height, 1)
+        let scale = maxSide / max(w, h)
+        let size = CGSize(width: w * scale, height: h * scale)
         let format = UIGraphicsImageRendererFormat()
         format.opaque = false
         format.scale = 3
-        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
-            image.draw(in: CGRect(x: 0, y: 0, width: side, height: side))
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
         }
     }
 
