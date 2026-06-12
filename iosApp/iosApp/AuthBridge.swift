@@ -44,7 +44,15 @@ class AuthBridge {
         guard FirebaseApp.app() != nil else { return }
         Auth.auth().addStateDidChangeListener { [weak self] _, user in
             guard let self else { return }
-            if user != nil {
+            if let user {
+                // Persist identity SYNCHRONOUSLY, before the async token fetch.
+                // Firebase restores sessions from the keychain — which survives
+                // an app delete/reinstall while NSUserDefaults does not — so
+                // without this re-write the app launched "logged in" but with
+                // every identity key missing: the home avatar showed "?" and
+                // the profile "User" / "Stationly" / "Since Recently" until
+                // the next explicit sign-in.
+                self.persistUserIdentity(user)
                 Task { await self.refreshTokenIfNeeded() }
             } else {
                 self.clearUserInfo()
@@ -241,6 +249,11 @@ class AuthBridge {
 
     func refreshTokenIfNeeded() async {
         guard let user = Auth.auth().currentUser else { return }
+        // Re-persist identity on every refresh too — this runs on each
+        // app foreground (handleDidBecomeActive), making it the ongoing
+        // self-heal for any state where the token exists but the identity
+        // keys were lost.
+        persistUserIdentity(user)
         do {
             let token = try await user.getIDToken()
             UserDefaults.standard.set(token, forKey: "firebase_auth_token")
@@ -253,8 +266,16 @@ class AuthBridge {
     // MARK: - NSUserDefaults persistence (read by KMP IosPlatformAuthProvider)
 
     private func storeUserInfo(user: FirebaseAuth.User, token: String) {
+        UserDefaults.standard.set(token, forKey: "firebase_auth_token")
+        persistUserIdentity(user)
+    }
+
+    /// Everything KMP reads about WHO is signed in, minus the token. Written
+    /// on explicit sign-in, on every auth-state restore and on every token
+    /// refresh — the keys must survive reinstalls that wipe NSUserDefaults
+    /// but not the Firebase keychain session.
+    private func persistUserIdentity(_ user: FirebaseAuth.User) {
         let ud = UserDefaults.standard
-        ud.set(token,                         forKey: "firebase_auth_token")
         ud.set(user.email,                    forKey: "firebase_user_email")
         ud.set(user.displayName,              forKey: "firebase_user_display_name")
         ud.set(user.photoURL?.absoluteString, forKey: "firebase_user_photo_url")
