@@ -41,8 +41,21 @@ class ProfileViewModel(
         storageManager = Platform.storageManager
     )
 
-    private val _uiState = MutableStateFlow(ProfileUiState())
+    private val _uiState = MutableStateFlow(initialState())
     val uiState: StateFlow<ProfileUiState> = _uiState.asStateFlow()
+
+    /// Seed the card synchronously — the auth provider's reads are plain
+    /// non-suspend getters, so the FIRST composition already has
+    /// name/email/photo. Seeding from inside the loadProfile coroutine left
+    /// the default-empty state (rendered as "User" + blank monogram via the
+    /// screen's ifBlank fallback) visible for as long as the main dispatcher
+    /// was contended — the intermittent ~1-in-10 "User" card.
+    private fun initialState() = ProfileUiState(
+        email = authProvider.currentUserEmail() ?: "",
+        displayName = authProvider.currentUserDisplayName()
+            ?: authProvider.currentUserEmail()?.substringBefore("@") ?: "",
+        photoUrl = authProvider.currentUserPhotoUrl()
+    )
 
     init {
         loadProfile()
