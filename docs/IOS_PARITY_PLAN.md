@@ -1,10 +1,25 @@
 # iOS Parity Plan — bring the iOS app to the redesigned Android feature set
 
-**Status as of 2026-06-09.** Living handoff doc; update it as phases land.
+**Status as of 2026-06-12 (Session 6).** Living handoff doc; update it as phases land.
 
 ## ⏯️ RESUME HERE (continuation for a fresh agent / new session)
 
-**Where we are (2026-06-09, end of Session 2):**
+**CURRENT (2026-06-12, end of Session 6) — authoritative detail lives in
+`docs/IOS_BUILD_AND_HANDOFF.md` §7f; read that FIRST.** One-paragraph summary:
+FCM→board/widget client chain is COMPLETE (Swift awaits KMP via the composeApp
+suspend bridge; home board reloads predictions+status on push; widget rewrites
+pull-model from the PRIMARY selection on every trigger incl. selection changes;
+widget ETAs self-tick per minute like Android). App displays as **"Stationly"**.
+Push DELIVERY is still hard-blocked on signing (personal team — §7e/§7f
+evidence + unblock steps). **Working tree has UNCOMMITTED Session-6 changes**
+(file list in §7f) and a built staging .app is staged for deploy — the owner
+disconnected the device mid-session; redeploy runbook in §7f. Owner constraints:
+never touch `android/` or shared `core/commonMain`; Syncer repo read-only;
+dot-matrix board look is intentional brand.
+
+---
+
+**HISTORY — Where we were (2026-06-09, end of Session 2):**
 - Working on git branch **`ios-parity`** (off `dev_25Apr`). 8 commits landed (list
   below). Nothing merged to `dev_25Apr`/`master` yet.
 - **All four screens + the full theme system are ported and compile-verified for
