@@ -40,13 +40,23 @@ struct BoardMetrics {
     let logo: CGFloat         // Stationly maker mark in the footer
     let cellRadius: CGFloat   // LED cell corner radius
     let maxRows: Int
+    /// Medium budgets exactly one platform group (one section header + up to
+    /// `maxRows` rows); large renders every group like Android's 5×3 board.
+    let singlePlatform: Bool
 
+    // Medium's content budget: station + platform + 3 rows + footer is
+    // ~156pt of cell minimums — the most a fixed ~155–170pt medium canvas
+    // can carry without compressing cells below their minimums (the
+    // "crumbled" look). The status strip only appears when a departure
+    // slot is spare; on <150pt canvases the footer is shed too.
     static let medium = BoardMetrics(
         station: 16, platform: 13, row: 12.5, status: 10.5,
-        clock: 15, ago: 8.5, icon: 18, logo: 16, cellRadius: 0, maxRows: 4)
+        clock: 15, ago: 8.5, icon: 18, logo: 16, cellRadius: 0, maxRows: 3,
+        singlePlatform: true)
     static let large = BoardMetrics(
         station: 19, platform: 15, row: 14.5, status: 12.5,
-        clock: 18, ago: 10, icon: 22, logo: 19, cellRadius: 0, maxRows: 10)
+        clock: 18, ago: 10, icon: 22, logo: 19, cellRadius: 0, maxRows: 10,
+        singlePlatform: false)
 }
 
 private let DueRed = Color(red: 1.0, green: 0.32, blue: 0.32)
@@ -137,10 +147,15 @@ struct ModeIconView: View {
     var size: CGFloat = 18
     var body: some View {
         if let ui = ModeIconProvider.icon(mode) {
+            // Height-anchored like Android's fitCenter lockup: the TfL
+            // roundel is wider than tall (~1.22:1), so a square frame either
+            // squashed it or left it undersized. Full height + natural width
+            // (clamped against pathological assets) lets it fill out.
+            let aspect = ui.size.height > 0 ? ui.size.width / ui.size.height : 1
             Image(uiImage: ui)
                 .resizable()
                 .scaledToFit()
-                .frame(width: size, height: size)
+                .frame(width: size * min(max(aspect, 0.6), 1.6), height: size)
         } else {
             TflRoundelMark(color: tint, diameter: size)
         }
@@ -350,9 +365,19 @@ struct DotMatrixFooter: View {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MARK: - The board (medium + large)
-// Every cell is height-flexible (`maxHeight: .infinity` inside LitCell) with
-// layoutPriority steering the share-out, so the board always fills the whole
-// widget canvas — no dead band under the footer, no clipped rectangle.
+// Every cell is height-flexible (`maxHeight: .infinity` inside LitCell) at
+// EQUAL layout priority, so surplus height is shared evenly across all cells
+// and the board always fills the whole canvas. (An earlier layoutPriority
+// 2/1/0 ladder made ONLY the header and footer balloon on sparse boards —
+// 1–2 departures left the mid rows pinned at minimum height. The minHeights
+// remain as compression floors; priorities had no other job once the medium
+// board was budgeted to fit.)
+//
+// Medium vs large content budget (see BoardMetrics): medium carries station +
+// one platform header + 3 rows + footer; the status strip rides along only
+// when a departure slot is spare, and the footer is shed on SE-class canvases
+// (<150pt). Large keeps full Android parity: every platform group + status +
+// footer, always.
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct BoardWidgetView: View {
@@ -372,38 +397,83 @@ struct BoardWidgetView: View {
     }
 
     private var board: some View {
-        VStack(spacing: 2) {
-            DotMatrixHeader(data: data, m: metrics)
-                .frame(minHeight: metrics.station + 14)
-                .layoutPriority(2)
+        GeometryReader { geo in
+            VStack(spacing: 2) {
+                DotMatrixHeader(data: data, m: metrics)
+                    .frame(minHeight: metrics.station + 14)
 
-            if data.departures.isEmpty {
-                NoDeparturesRow()
-                    .frame(maxHeight: .infinity)
-            } else {
-                let groups = groupedByPlatform(Array(data.departures.prefix(metrics.maxRows)))
-                ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
-                    let header = data.platformHeader(platform: group.platform)
-                    if !header.isEmpty {
-                        DotMatrixSectionHeader(title: header, m: metrics)
-                            .frame(minHeight: metrics.platform + 8)
-                            .layoutPriority(1)
+                if data.departures.isEmpty {
+                    NoDeparturesRow()
+                        .frame(maxHeight: .infinity)
+                    // On medium the status strip is the empty board's one shot
+                    // at saying WHY ("Service Closed : …"); large adds it
+                    // unconditionally below.
+                    if metrics.singlePlatform {
+                        statusStrip
                     }
-                    ForEach(group.rows) { dep in
-                        DotMatrixRow(dep: dep, m: metrics)
-                            .frame(minHeight: metrics.row + 10)
-                    }
+                } else if metrics.singlePlatform {
+                    primaryPlatformSection
+                } else {
+                    allPlatformsSection
+                }
+
+                if !metrics.singlePlatform {
+                    statusStrip
+                }
+                // "If it doesn't fit, drop the last row" — only SE-class
+                // mediums (321×148) fall under 150pt; every other family
+                // keeps the live clock/ago footer.
+                if geo.size.height >= 150 {
+                    DotMatrixFooter(data: data, clock: clock, m: metrics)
+                        .frame(minHeight: metrics.clock + 12)
                 }
             }
-
-            DotMatrixStatusStrip(data: data, m: metrics)
-                .frame(minHeight: metrics.status + 8)
-                .layoutPriority(1)
-            DotMatrixFooter(data: data, clock: clock, m: metrics)
-                .frame(minHeight: metrics.clock + 12)
-                .layoutPriority(2)
+            .overlay(DotGrid().allowsHitTesting(false))
         }
-        .overlay(DotGrid().allowsHitTesting(false))
+    }
+
+    /// Medium: the first platform group only — one section header, up to
+    /// `maxRows` rows. A second group would cost a second header cell and
+    /// blow the 6-cell budget. When the group can't fill all row slots the
+    /// status strip backfills one, so a quiet board never shows dead space.
+    @ViewBuilder
+    private var primaryPlatformSection: some View {
+        if let group = groupedByPlatform(data.departures).first {
+            let header = data.platformHeader(platform: group.platform)
+            if !header.isEmpty {
+                DotMatrixSectionHeader(title: header, m: metrics)
+                    .frame(minHeight: metrics.platform + 8)
+            }
+            ForEach(group.rows.prefix(metrics.maxRows)) { dep in
+                DotMatrixRow(dep: dep, m: metrics)
+                    .frame(minHeight: metrics.row + 10)
+            }
+            if group.rows.count < metrics.maxRows {
+                statusStrip
+            }
+        }
+    }
+
+    /// Large: every platform group, Android-style.
+    @ViewBuilder
+    private var allPlatformsSection: some View {
+        let groups = groupedByPlatform(Array(data.departures.prefix(metrics.maxRows)))
+        ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+            let header = data.platformHeader(platform: group.platform)
+            if !header.isEmpty {
+                DotMatrixSectionHeader(title: header, m: metrics)
+                    .frame(minHeight: metrics.platform + 8)
+            }
+            ForEach(group.rows) { dep in
+                DotMatrixRow(dep: dep, m: metrics)
+                    .frame(minHeight: metrics.row + 10)
+            }
+        }
+    }
+
+    private var statusStrip: some View {
+        DotMatrixStatusStrip(data: data, m: metrics)
+            .frame(minHeight: metrics.status + 8)
     }
 }
 
@@ -435,7 +505,6 @@ struct SmallWidgetView: View {
                         }
                     }
                     .frame(minHeight: 24)
-                    .layoutPriority(2)
                     .widgetAccentable()
 
                     if data.departures.isEmpty {
@@ -470,7 +539,6 @@ struct SmallWidgetView: View {
                         }
                     }
                     .frame(minHeight: 20)
-                    .layoutPriority(2)
                 }
                 .overlay(DotGrid().allowsHitTesting(false))
             }
