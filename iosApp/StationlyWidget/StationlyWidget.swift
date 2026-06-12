@@ -25,12 +25,16 @@ struct DepartureBoardProvider: TimelineProvider {
     }
 
     // Called when WidgetKit needs a fresh set of entries to display.
-    // KMP bumps `widget_reload_signal` on every FCM push, triggering an immediate
-    // reload via WidgetReloadObserver / AppDelegate — that is the real-time path.
+    // KMP bumps `widget_reload_signal` on every App-Group write (FCM push,
+    // in-app refresh, selection change), triggering an immediate reload via
+    // WidgetReloadObserver / AppDelegate — that is the real-time path.
     //
-    // The timeline itself carries ONE ENTRY PER MINUTE for the next hour, all
-    // with the same board data: pre-rendered local entries are free (they don't
-    // consume Apple's ~40–70/day refresh budget). The footer clock ticks per
+    // The timeline itself carries ONE ENTRY PER MINUTE for the next hour, and
+    // every entry's rows are RE-DERIVED for that entry's wall-clock minute
+    // (`ticked(at:)` — Android tickPredictions parity): ETAs count down,
+    // departed trains drop, the queue shifts — all without the app running and
+    // without consuming Apple's ~40–70/day refresh budget. This is the iOS
+    // analog of Android's ACTION_ETA_TICK watchdog. The footer clock ticks per
     // second on its own (`.timer` Text, see LiveClock); the per-minute entries
     // re-anchor it across midnight. `.atEnd` re-reads the App Group once an
     // hour (~24 refreshes/day, comfortably inside budget).
@@ -45,10 +49,10 @@ struct DepartureBoardProvider: TimelineProvider {
             $0 > now ? calendar.date(byAdding: .minute, value: -1, to: $0) : $0
         } ?? now
 
-        var entries: [DepartureEntry] = [DepartureEntry(date: now, widgetData: data)]
+        var entries: [DepartureEntry] = [DepartureEntry(date: now, widgetData: data.ticked(at: now))]
         for offset in 1...60 {
             if let date = calendar.date(byAdding: .minute, value: offset, to: currentMinute) {
-                entries.append(DepartureEntry(date: date, widgetData: data))
+                entries.append(DepartureEntry(date: date, widgetData: data.ticked(at: date)))
             }
         }
         providerLog.notice("getTimeline family=\(String(describing: context.family), privacy: .public) returning \(entries.count) entries")
