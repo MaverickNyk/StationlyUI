@@ -1,16 +1,25 @@
 # Stationly iOS — Build, Architecture & Handoff
 
 **Audience:** the next engineer/agent picking up the iOS app.
-**Last updated:** 2026-06-10 (Session 3). **Branch:** `ios-parity` (off `dev_25Apr`, nothing merged).
+**Last updated:** 2026-06-12 (Session 6). **Branch:** `ios-parity` (off `dev_25Apr`, nothing merged).
 **Companion doc:** `docs/IOS_PARITY_PLAN.md` (the phased plan + "⏯️ RESUME HERE").
 
 This doc is the single source of truth for: how the iOS app is structured, how to
 build/run it (including every Xcode-26 gotcha we hit), what's been ported, how FCM
 and SDUI work on iOS, and what remains.
 
+> **➡️ FRESH AGENT: start at §7f (Session 6, 2026-06-12)** — latest state, the
+> owner's hard constraint (no `android/`, no shared commonMain edits), the
+> exact working-tree status (UNCOMMITTED changes!), and the pending
+> deploy-on-reconnect runbook. The "READ FIRST" block below is Session-3
+> HISTORY: that crash was properly fixed in Session 5 (§7e.4 composeResources
+> packaging) — kept because the failure mode explains the `composeResourcesBundled`
+> gate you'll see in code.
+
 ---
 
 ## ⚠️ READ FIRST — Session 3 (2026-06-10): on-device crash fix + composeResources caveat
+*(HISTORICAL — fixed in §7e.4. See banner above.)*
 
 **The app builds, installs, runs, and was tested on the physical iPhone this
 session. It crashed on first frame; the cause is found + fixed (committed). The
@@ -591,9 +600,11 @@ this session stay correct and dormant until then.
 (core, suspend) compiles but is NOT in the framework's ObjC header — Kotlin/
 Native only generates completionHandler bridging for suspend functions in the
 ROOT framework module (composeApp); exported dependency modules (core) get
-classes/plain funcs only. Fix next session: add a thin composeApp-iosMain
+classes/plain funcs only. ~~Fix next session: add a thin composeApp-iosMain
 wrapper object delegating to it, then call that from AppDelegate (currently
-falls back to fire-and-forget `processPayload` + 2.5 s held completion).
+falls back to fire-and-forget `processPayload` + 2.5 s held completion).~~
+**FIXED in Session 6 — see §7f.1.** The quirk itself is still real; any future
+core suspend func that Swift must await needs the same composeApp-side wrapper.
 
 **3. Device deploy VERIFIED 2026-06-11:** build + install + launch succeeded
 on Nick's iPhone (staging scheme, push-free provisioning); the
@@ -609,6 +620,239 @@ in the build log) → real logo + Inter Tight are in the bundle.
 - Google "G" glyph still drawn on Login.
 - iOS 26 WidgetKit push tokens for true background widget refresh (backend).
 
+## 7f. Landed in Session 6 (2026-06-12) — branch `ios-parity`
+
+**Theme: finish the FCM→board/widget parity chain (the §7e leftovers), make the
+widget track selection changes like Android, brand the app "Stationly".**
+Built + installed + launched on Nick's iPhone (staging scheme) this session.
+
+**⚠️ HARD CONSTRAINT from the product owner (2026-06-12, mid-session):
+`android/` and shared `core/commonMain` code must NOT be touched — Android is
+live and working.** Everything below lives in iOS-only compilation units:
+`core/src/iosMain` (never compiled into any Android artifact),
+`composeApp` (the CMP iOS app — the shipping Android app is the separate
+`android/` tree with its own ViewModels), and `iosApp/` Swift. A planned
+`sdui_payload` handler in commonMain `ProcessFcmPayloadUseCase` was dropped
+for this reason (see "deliberately NOT done" below).
+
+### 1. Suspend bridge: Swift can now truly await KMP FCM processing
+The §7e discovery-2 fix, exactly as prescribed:
+- `composeApp/src/iosMain/kotlin/com/stationly/app/platform/FcmPayloadBridge.kt`
+  — added `suspend fun processPayloadAndWait(jsonString: String)` delegating to
+  core's `FcmPayloadBridge.processPayloadAndWait`. Because composeApp is the
+  ROOT framework module, K/N emits the ObjC bridge
+  `processPayloadAndWait(jsonString:completionHandler:)` → Swift
+  `async throws`. Verified present in the regenerated
+  `composeApp.framework/Headers/composeApp.h`.
+- The wrapper hops `withContext(Dispatchers.Default)` immediately because
+  K/N exported suspend functions must be **CALLED from the main thread**
+  (default `objcExportSuspendFunctionLaunchThreadRestriction=main`; this
+  project does not override it in gradle.properties) — so Swift calls it from
+  `Task { @MainActor in … }` and the hop keeps parsing/SQLite off main.
+- `iosApp/iosApp/AppDelegate.swift` — BOTH receive paths now await:
+  - `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`
+    (background + foreground data-only pushes, i.e. every real Syncer topic
+    push): `Task { @MainActor in try? await …processPayloadAndWait…;
+    WidgetCenter reload; completionHandler(.newData) }`. The old
+    fire-and-forget + fixed 2.5 s `asyncAfter` raced iOS suspension.
+  - `processFcmPayload(_:)` (the `willPresent`/notification-tap helper): same
+    await pattern, widget reload right after the write lands (was +2.0 s blind
+    delay).
+  - `FCMBridge.processPendingPayload` intentionally stays fire-and-forget
+    (`processPayload`) — it runs in-foreground where WidgetReloadObserver
+    covers the reload; no completion handler to hold open.
+
+### 2. Home board now applies LineStatus_* pushes immediately
+`composeApp/src/commonMain/kotlin/com/stationly/app/ui/summary/SummaryViewModel.kt`
+(iOS app's home VM — NOT the Android one): the `FreshDataNotifier.events`
+collector now calls `loadLineStatus(selection)` in addition to
+`loadPredictions(selection)`. Android parity reference:
+`android/.../ui/summary/SummaryViewModel.kt` prefsListener reloads BOTH on its
+`line_status_data` ping (lines ~160-164). Before this, a line-status push
+updated SQLite + widget strip but the in-app board's status line stayed stale
+until the next selections re-collect.
+
+### 3. iOS widget now tracks selection changes (pull model, Android parity)
+**The architectural insight (read this before touching widget update code):**
+Android's `AndroidWidgetManager` (core/androidMain) IGNORES the `WidgetState`
+it is handed — `updateWidget` / `showWaitingState` / `clearWidgetData` all just
+broadcast `ACTION_UPDATE_WIDGET`, and `DepartureWidgetProvider.updateFromStorage`
+re-reads the PRIMARY (first) selection from SQL at render time. The widget is
+pull-based; callers only say "something changed".
+
+The old `IosWidgetManager` (core/src/iosMain/kotlin/platform/Platform.ios.kt)
+was push-based — it wrote the caller's state verbatim into the App Group. Two
+user-visible bugs followed:
+- **Last-writer-wins:** `SummaryViewModel.loadPredictions` pushes the widget
+  for EVERY board it reloads, and `StationLifecycleUseCase.completeSetupAsync`
+  pushes the board being added — so with 2+ boards the widget showed whichever
+  selection happened to be written last, not the primary.
+- **Delete blanked the widget:** `discardStation` always calls
+  `showWaitingState("No Station", …)` even when other boards remain.
+
+Fix: `IosWidgetManager` is now pull-based like Android. `updateWidget(state)`
+and `showWaitingState(…)` both run `refreshFromPrimary()`: re-read
+`sqlStorage.getAllSelections().firstOrNull()`; if present, rebuild the
+App-Group state from SQL (predictions via `GlobalBoardProcessor
+.processPredictions`, status as `"Severity: reason"` via
+`StationlyFormatters.formatStatusReason`, `lastUpdated` from
+`getLastUpdatedTimestamp` in SECONDS, direction/mode from the selection — the
+exact shape `ProcessFcmPayloadUseCase.refreshWidgetFromStorage` and the home
+poll produce); if no selections remain, wipe the keys so the Swift widget
+renders its designed empty state ("No station set" — the analog of Android's
+"No boards yet" fallback). Every path still bumps `widget_reload_signal`.
+The incoming `WidgetState`/strings are now just triggers, exactly like
+Android's broadcast. Callers were NOT changed — `StationLifecycleUseCase` and
+`ProcessFcmPayloadUseCase` (commonMain) are untouched.
+
+Selection-change triggers that now all converge on the primary board:
+station add (Selection flow + login cloud-restore → `setupStation`), board
+delete (`discardStation`), logout (`cleanupAll` → `clearWidgetData` wipe),
+FCM pushes, home VM reloads, pull-to-refresh.
+
+### 4. App is named "Stationly" everywhere user-visible
+`iosApp/project.yml`:
+- app target `info.properties`: `CFBundleDisplayName: Stationly` +
+  `CFBundleName: Stationly` → home screen, Settings, permission dialogs,
+  app switcher.
+- widget target `info.properties`: `CFBundleDisplayName: Stationly` → widget
+  gallery header (per-widget title/description were already branded in
+  `StationlyWidget.swift`: "Stationly Departures").
+- **Deliberately NOT renamed:** xcodegen project/target/scheme names and
+  PRODUCT_NAME stay `iosApp` — renaming them churns every documented build/
+  deploy command (`iosApp.xcodeproj`, `"iosApp Staging"`, `iosApp.app` paths)
+  and provisioning, for zero user-visible gain. Branding lives in the
+  Info.plist properties. No "iosApp" string literals exist in UI code
+  (grepped composeApp + Swift).
+
+### 5. Widget tick layer — rows now count down between data writes
+Root cause of "widget frozen at N min while 'ago' climbs": the widget rendered
+the eta STRINGS written at App-Group-write time; only the `.timer` "ago" text
+ticked. Android's widget never does this — its consistency contract
+(android/.../widget/CLAUDE.md) says every render re-derives eta from
+`targetEpochMs` (`tickPredictions`), and its ACTION_ETA_TICK watchdog re-renders
+each minute. The KMP JSON already carried `targetEpochMs`
+(PredictionDisplay, encodeDefaults=true) — Swift simply dropped it.
+
+Fix (Swift-only, `iosApp/StationlyWidget/`):
+- `AppGroupStorage.swift`: `DepartureRow` now decodes `targetEpochMs`;
+  `WidgetData.ticked(at:)` is a line-for-line mirror of Android
+  `tickPredictions` + `formatMinutesRemaining`: drop rows >30 s past target
+  (DEPARTED_GRACE_MS), label "Due" < 60 s / floor minutes, isDue < 30 s,
+  per-platform monotonic bump (labels strictly increase within a platform;
+  null-target rows pass through unchanged at group end). **Keep these
+  constants in lockstep with Android — they are duplicated by necessity
+  (RemoteViews-Kotlin vs WidgetKit-Swift); change one, change both.**
+- `StationlyWidget.swift` getTimeline: the 61 per-minute entries each get
+  `data.ticked(at: entryDate)` — pre-rendered countdown for the next hour at
+  zero refresh-budget cost; the iOS analog of Android's watchdog.
+
+### Deliberately NOT done (and why) — next-agent candidates
+- **`sdui_payload` FCM route on iOS** — Android's
+  `FcmMessagingService.handleSduiUpdate` persists `sdui_layout_<id>` +
+  extracts predictions into SQL. The natural home is commonMain
+  (`ProcessFcmPayloadUseCase`) which is now off-limits per the owner
+  constraint. If needed later: implement inside core/iosMain
+  `FcmPayloadBridge.processPayloadAndWait` (route `root["sdui_payload"]`
+  before topic routing; write via `Platform.storageManager.saveString` —
+  composeApp SummaryViewModel already READS `sdui_layout_<station>`). Note the
+  live Syncer only sends `payload` on `Station_*`/`LineStatus_*` topics, so
+  this path is dormant capability, not a live gap.
+- **`user_sync` route + `notification_payload` display + line-status
+  transition local notifications** — Android-only for now; all are
+  notification-UX parity (not board updates) and need UNUserNotificationCenter
+  work. Pointless to build while push is signing-blocked (§7e discovery 1).
+- **`stationly_all` topic subscribe** (Android does it in
+  StationlyApplication.onCreate) — skipped ON PURPOSE: on iOS every data-only
+  push burns the silent-push budget (~few/hour); broadcast announcements would
+  starve the Station_* prediction pushes the widget depends on. Revisit only
+  with alert-bearing pushes.
+
+### Verification (all green this session)
+1. `./gradlew :composeApp:compileKotlinIosSimulatorArm64` — green after each
+   Kotlin change.
+2. `processPayloadAndWait(jsonString:completionHandler:)` present in
+   `composeApp/build/bin/iosArm64/debugFramework/…/composeApp.h`.
+3. Full device pipeline (§7e sequence): XCFramework + resources → xcodegen →
+   xcodebuild "iosApp Staging" → **BUILD SUCCEEDED** (validates the Swift
+   changes) → devicectl install + launch on Nick's iPhone OK.
+
+### On-device QA checklist (testable NOW, no push needed)
+1. Home screen icon label reads **Stationly** (delete old install if cached).
+2. Widget gallery header reads **Stationly**.
+3. Two boards configured → widget shows the FIRST (primary) board, including
+   after pull-to-refresh and app relaunch (previously could flip to board #2).
+4. Delete the NON-primary board → widget unchanged (primary stays).
+5. Delete the PRIMARY board → widget switches to the remaining board within
+   ~5 s (WidgetReloadObserver) instead of blanking.
+6. Delete ALL boards / log out → widget shows "No station set" empty state.
+7. Widget ETAs COUNT DOWN each minute ("5 min" → "4 min"), Due trains drop off
+   ~30 s after target, queue shifts up — without opening the app (§7f.5).
+8. (Blocked on push signing) FCM push foreground → board rows AND status strip
+   update instantly; background push → widget refreshes without reopening app.
+   NOTE the in-app board can LOOK push-fed without push: it ticks per minute
+   and REST-fetches on open/resume/pull — don't mistake that for FCM delivery.
+   Proof of no delivery: `codesign -d --entitlements :- <built .app>` shows NO
+   aps-environment → iOS never issues an APNs token → firebase-ios-sdk 11 has
+   no channel at all (foreground included).
+
+### SESSION-6 END STATE — working tree, staged build, deploy-on-reconnect
+
+**⚠️ ALL Session-6 changes are UNCOMMITTED on `ios-parity`** (owner hasn't asked
+for a commit). If you need to branch-switch, commit or stash FIRST or you lose
+the session. The modified files and why (git status as of session end):
+
+| File | Change |
+|---|---|
+| `composeApp/src/iosMain/.../platform/FcmPayloadBridge.kt` | added suspend `processPayloadAndWait` (root-module ObjC async bridge; §7f.1) |
+| `iosApp/iosApp/AppDelegate.swift` | both FCM receive paths `Task { @MainActor in try? await … }` then widget reload (+ completionHandler in bg path); replaced 2.5 s/2.0 s blind timers (§7f.1) |
+| `composeApp/src/commonMain/.../summary/SummaryViewModel.kt` | FreshDataNotifier collector also calls `loadLineStatus` (§7f.2) — composeApp = iOS app; NOT the shipping Android app |
+| `core/src/iosMain/kotlin/platform/Platform.ios.kt` | `IosWidgetManager` rewritten pull-model: `refreshFromPrimary()` re-reads primary selection from SQL on every trigger; wipe-to-empty when none (§7f.3) |
+| `iosApp/project.yml` | `CFBundleDisplayName`/`CFBundleName: Stationly` (app), `CFBundleDisplayName: Stationly` (widget) (§7f.4) |
+| `iosApp/iosApp/Info.plist`, `iosApp/StationlyWidget/Info.plist` | xcodegen-GENERATED from project.yml — never hand-edit; re-run `iosApp/xcodegen.sh` instead |
+| `iosApp/StationlyWidget/AppGroupStorage.swift` | `DepartureRow.targetEpochMs` decode + `WidgetData.ticked(at:)` tick layer (§7f.5) |
+| `iosApp/StationlyWidget/StationlyWidget.swift` | per-minute timeline entries use `ticked(at:)`; doc comment updated (§7f.5) |
+| `docs/IOS_BUILD_AND_HANDOFF.md`, `docs/IOS_PARITY_PLAN.md` | this documentation |
+
+Suggested commit split if asked: (1) FCM await bridge [FcmPayloadBridge.kt +
+AppDelegate.swift], (2) line-status reload [SummaryViewModel.kt], (3) widget
+pull-model [Platform.ios.kt], (4) widget tick layer [StationlyWidget/*.swift],
+(5) Stationly naming [project.yml + both Info.plist], (6) docs.
+
+**Staged build, ready to deploy:** `iosApp/build/DD/Build/Products/Debug
+Staging-iphoneos/iosApp.app` — built 2026-06-12 13:53 with ALL session changes
+(verified: post-edit relink, `CFBundleDisplayName=Stationly` in both bundles).
+It was already INSTALLED on Nick's iPhone at ~13:55; the launch attempt
+returned `BSErrorCodeDescription = Locked` (screen locked — not an error in
+the build). The owner then disconnected the device; deploy is PENDING
+reconnection.
+
+**Deploy-on-reconnect runbook (no rebuild needed unless code changed):**
+```bash
+# 0. device present? (UDID 00008030-001E0D9C3EFB802E is the one xcodebuild/
+#    devicectl use; `xcrun devicectl list devices` shows a different CoreDevice
+#    UUID — don't confuse them. Device must be UNLOCKED for launch.)
+xcrun devicectl list devices
+# 1. install the staged app
+xcrun devicectl device install app --device 00008030-001E0D9C3EFB802E \
+  "iosApp/build/DD/Build/Products/Debug Staging-iphoneos/iosApp.app"
+# 2. launch (—console to capture stdout if debugging)
+xcrun devicectl device process launch --terminate-existing \
+  --device 00008030-001E0D9C3EFB802E com.stationly.mobile
+```
+If Kotlin changed since: `./gradlew :composeApp:assembleComposeAppDebugXCFramework
+:composeApp:assembleIosArm64MainResources` first; if project.yml changed:
+`cd iosApp && ./xcodegen.sh`; then the §7e xcodebuild line. Then steps 1–2.
+
+**Device-log how-to (what worked this session):**
+- App stdout/os_log live: `xcrun devicectl device process launch --console …`
+  (blocks; prints arrive on flush — Swift `print` is line-buffered, be patient).
+- Whole-device unified log (apsd/dasd push activity): `sudo /usr/bin/log collect
+  --device-udid 00008030-001E0D9C3EFB802E --last 30m --output x.logarchive`
+  (NEEDS ROOT; type the full `/usr/bin/log` path — plain `log` is shadowed in
+  this zsh). Parse with `log show --archive x.logarchive --predicate …`.
+- `idevicesyslog`/`idevicescreenshot` DO NOT work on iOS 26 (§7c note).
+
 ## 8. What's REMAINING (priority order)
 
 1. **On-device QA of the rebuilt board + widget (TOP — needs the iPhone).** The
@@ -619,8 +863,9 @@ in the build log) → real logo + Inter Tight are in the bundle.
    Platform 1 (Eastbound)`), and the live "ago" ticking. If anything overflows,
    tune the per-family caps in `WidgetViews.swift` (small 3 / medium 4 / large 9).
    (Build the widget via Xcode — `swiftc -typecheck` passes but can't render.)
-2. **FCM in-app immediacy** — optional fresh-data signal so the in-app board
-   updates instantly instead of on the 30 s poll / foreground reload.
+2. ~~**FCM in-app immediacy**~~ DONE — `FreshDataNotifier` collector (Session 3)
+   now also reloads line status (Session 6 §7f.2); board + status strip update
+   instantly on push. Untestable on device until push signing is unblocked.
 3. **On-device visual QA pass** — colours/spacing/alignment vs Android, screen by
    screen (esp. the re-ported Selection + Summary). Needs the device build (§2).
 4. **Login email-verification flow** — Android has `VerifyEmailScreen` +
