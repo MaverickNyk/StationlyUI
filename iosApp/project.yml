@@ -36,6 +36,12 @@ targets:
     info:
       path: iosApp/Info.plist
       properties:
+        # User-visible name everywhere iOS surfaces it (home screen, Settings,
+        # permission dialogs, app switcher). Target/product stay "iosApp" so
+        # the documented build/deploy pipeline (iosApp.app paths, schemes)
+        # doesn't churn — branding lives here, not in PRODUCT_NAME.
+        CFBundleDisplayName: Stationly
+        CFBundleName: Stationly
         CADisableMinimumFrameDurationOnPhone: true
         NSLocationWhenInUseUsageDescription: "Stationly uses your location to show nearby stops."
         StationlyEnvironment: $(STATIONLY_ENVIRONMENT)
@@ -138,6 +144,9 @@ targets:
     info:
       path: StationlyWidget/Info.plist
       properties:
+        # Widget-gallery header title (the per-widget name/description are set
+        # in StationlyWidget.swift via configurationDisplayName/description).
+        CFBundleDisplayName: Stationly
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
