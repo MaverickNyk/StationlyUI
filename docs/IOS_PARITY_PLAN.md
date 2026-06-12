@@ -39,6 +39,19 @@ to the device, and verified except where noted; UNCOMMITTED on `ios-parity`):
    against the staging backend's session store — next agent: confirm a
    session doc exists for this deviceId (App-Group key `stationly_device_id`).
 
+6. **Profile "User" flash eliminated** — `ProfileScreen` renders
+   `displayName.ifBlank { "User" }` and the VM state was seeded ASYNC (two
+   IO-hopping reads before the first state write), so under main-thread
+   contention the empty default state stayed visible (~1-in-10 visits:
+   "User" + blank photo, photo slowest since AsyncImage starts only after
+   state lands). `ProfileViewModel` now seeds the StateFlow synchronously
+   from the non-suspend auth-provider getters. LATENT, not yet addressed:
+   a stale-token 401 on any non-auth endpoint triggers
+   `signOutFromAuthExpiry` → full identity wipe + Firebase sign-out
+   (NetworkModule HttpResponseValidator); iOS refreshes the token only on
+   foreground, so a >1h-old token used right at foreground could force a
+   spurious logout. `/user/sync/*` and `/auth/*` are excluded.
+
 **HISTORY — Session 6 (2026-06-12) — authoritative detail lives in
 `docs/IOS_BUILD_AND_HANDOFF.md` §7f.** One-paragraph summary:
 FCM→board/widget client chain is COMPLETE (Swift awaits KMP via the composeApp
