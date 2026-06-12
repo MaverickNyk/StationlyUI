@@ -798,9 +798,11 @@ Fix (Swift-only, `iosApp/StationlyWidget/`):
 
 ### SESSION-6 END STATE — working tree, staged build, deploy-on-reconnect
 
-**⚠️ ALL Session-6 changes are UNCOMMITTED on `ios-parity`** (owner hasn't asked
-for a commit). If you need to branch-switch, commit or stash FIRST or you lose
-the session. The modified files and why (git status as of session end):
+**UPDATE (end of session): all Session-6 changes are COMMITTED AND PUSHED** to
+`origin/ios-parity` as six commits, `82ee0d6..53048f0` (FCM await bridge →
+line-status reload → widget pull-model → widget tick layer → Stationly naming
+→ docs), and the staged build was deployed + launched on Nick's iPhone. Tree
+clean except this paragraph's follow-up commit. The per-file map below stands:
 
 | File | Change |
 |---|---|
