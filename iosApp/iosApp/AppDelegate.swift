@@ -160,15 +160,14 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
             completionHandler(.noData)
             return
         }
-        // KMP exposes a suspend processPayloadAndWait, but Kotlin/Native only
-        // bridges suspend functions (completionHandler form) for the ROOT
-        // framework module (composeApp) — core's suspend funcs are silently
-        // omitted from the ObjC header. Until a composeApp-side wrapper is
-        // added (next session), hold the background task open ~2.5 s after
-        // the fire-and-forget call so the SQLite + App Group writes land
-        // before iOS suspends us, then reload the widget and complete.
-        FcmPayloadBridge.shared.processPayload(jsonString: jsonString)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+        // Await KMP so SQLite + the App Group are fully written before the
+        // widget reloads and iOS is told we're done — completing early lets
+        // iOS suspend the process mid-write. K/N exported suspend functions
+        // must be CALLED from the main thread (default launch-thread
+        // restriction); the Kotlin wrapper hops to a background dispatcher
+        // immediately, so nothing heavy runs on main.
+        Task { @MainActor in
+            try? await FcmPayloadBridge.shared.processPayloadAndWait(jsonString: jsonString)
             WidgetCenter.shared.reloadAllTimelines()
             completionHandler(.newData)
         }
@@ -179,12 +178,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     private func processFcmPayload(_ userInfo: [AnyHashable: Any]) {
         guard let jsonData = try? JSONSerialization.data(withJSONObject: userInfo),
               let jsonString = String(data: jsonData, encoding: .utf8) else { return }
-        FcmPayloadBridge.shared.processPayload(jsonString: jsonString)
-        // KMP writes the App Group asynchronously (GlobalScope). Reload the
-        // widget shortly after so a background push refreshes it even when the
-        // foreground WidgetReloadObserver timer isn't running. (The observer
-        // still handles foreground immediacy via the reload signal.)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        // Await the KMP write, then reload the widget — covers deliveries where
+        // the foreground WidgetReloadObserver timer isn't running. (The
+        // observer still handles in-session immediacy via the reload signal.)
+        Task { @MainActor in
+            try? await FcmPayloadBridge.shared.processPayloadAndWait(jsonString: jsonString)
             WidgetCenter.shared.reloadAllTimelines()
         }
     }
