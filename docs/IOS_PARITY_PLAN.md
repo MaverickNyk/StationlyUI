@@ -4,8 +4,9 @@
 
 ## ⏯️ RESUME HERE (continuation for a fresh agent / new session)
 
-**CURRENT (2026-06-12, end of Session 7).** Session 7 work (all built, deployed
-to the device, and verified except where noted; UNCOMMITTED on `ios-parity`):
+**CURRENT (2026-06-12, end of Session 7).** Session 7 work — all built,
+deployed to the device, COMMITTED AND PUSHED on `ios-parity`
+(`3374887..99f5966`); verified on-device except where noted:
 
 1. **Medium widget de-crumbled** — fixed 6-cell content budget (station + ONE
    platform group header + 3 rows + footer), status strip is backfill-only,
