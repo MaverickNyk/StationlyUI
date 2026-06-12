@@ -90,7 +90,7 @@ class SummaryViewModel(
     init {
         viewModelScope.launch { fetchAnnouncement() }
         viewModelScope.launch { fetchHomeConfig() }
-        viewModelScope.launch { loadUserInitial() }
+        viewModelScope.launch { loadUserInitial(); registerDeviceSession() }
         viewModelScope.launch {
             selectionRepository.initialize()
             selectionRepository.selections.value.firstOrNull()?.let { refreshDataIfStale(it) }
@@ -335,14 +335,53 @@ class SummaryViewModel(
     }
 
     private suspend fun loadUserInitial() {
-        val name = Platform.storageManager.loadString("firebase_user_display_name")
+        // Swift AuthBridge re-persists the identity keys at launch via the
+        // auth-state listener — a cold start can race it and read nothing
+        // (the intermittent "?" avatar). One delayed re-read covers the gap
+        // instead of pinning "?" until the next foreground.
+        var name = Platform.storageManager.loadString("firebase_user_display_name")
             ?: Platform.storageManager.loadString("firebase_user_email")
+        if (name == null) {
+            delay(1500)
+            name = Platform.storageManager.loadString("firebase_user_display_name")
+                ?: Platform.storageManager.loadString("firebase_user_email")
+        }
         val initial = name?.firstOrNull { it.isLetter() }?.uppercaseChar()?.toString() ?: "?"
         // Firebase profile photo (Google sign-in) — written by AuthBridge.swift
         // to NSUserDefaults under "firebase_user_photo_url". Rendered as the
         // top-bar avatar; falls back to the monogram when absent.
         val photoUrl = Platform.storageManager.loadString("firebase_user_photo_url")
         _uiState.value = _uiState.value.copy(userInitial = initial, photoUrl = photoUrl)
+    }
+
+    /**
+     * Re-register this device's backend session (`/user/sync/profile` with
+     * deviceId + deviceInfo). LoginViewModel does this at explicit sign-in,
+     * but an iOS keychain-restored session (Firebase survives app
+     * delete/reinstall in the keychain) never passes through login — without
+     * this the backend's per-device session record goes missing or stale.
+     * Idempotent backend upsert, best-effort, runs after loadUserInitial so
+     * the identity keys have settled.
+     */
+    private suspend fun registerDeviceSession() {
+        try {
+            val uid = Platform.storageManager.loadString("firebase_user_uid") ?: return
+            sduiApi.syncProfile(
+                com.stationly.core.model.sdui.SyncProfileRequest(
+                    uid            = uid,
+                    email          = Platform.storageManager.loadString("firebase_user_email") ?: "",
+                    displayName    = Platform.storageManager.loadString("firebase_user_display_name"),
+                    photoURL       = Platform.storageManager.loadString("firebase_user_photo_url"),
+                    signInProvider = when (Platform.storageManager.loadString("signin_provider")) {
+                        "Google" -> "google.com"
+                        "Apple"  -> "apple.com"
+                        else     -> "email"
+                    },
+                    deviceId       = com.stationly.app.platform.DeviceIdentity.deviceId(),
+                    deviceInfo     = com.stationly.app.platform.DeviceIdentity.deviceInfo()
+                )
+            )
+        } catch (_: Exception) {}
     }
 
     private suspend fun fetchAnnouncement() {

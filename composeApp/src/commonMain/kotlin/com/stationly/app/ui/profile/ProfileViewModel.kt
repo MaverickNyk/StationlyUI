@@ -13,6 +13,7 @@ import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,6 +53,17 @@ class ProfileViewModel(
 
     private fun loadProfile() {
         viewModelScope.launch {
+            // Identity keys are written by Swift AuthBridge's auth-state
+            // listener at launch; a keychain-restored session can reach this
+            // screen before that write lands, which rendered the card as
+            // "User" / "Stationly" / "Since Recently". One delayed re-read
+            // closes the race.
+            if (authProvider.currentUserDisplayName() == null &&
+                authProvider.currentUserEmail() == null &&
+                authProvider.isLoggedIn()
+            ) {
+                delay(1500)
+            }
             val provider    = storageManager.loadString("signin_provider") ?: "Stationly"
             val memberSince = storageManager.loadString("member_since") ?: ""
             _uiState.value = _uiState.value.copy(
