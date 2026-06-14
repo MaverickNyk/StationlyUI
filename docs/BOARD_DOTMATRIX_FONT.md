@@ -1,6 +1,15 @@
 # The dot-matrix board font (TfL / National Rail LED look)
 
-**Added:** Session 8 (2026-06-14), branch `ios-parity`.
+> ## ⛔ REVERTED in Session 9 (2026-06-14) — NOT in use
+> The owner's goal is **iOS identical to Android**, and **Android's board uses no
+> special font** (system font + monospace on the hero countdown only — see
+> `IOS_BUILD_AND_HANDOFF.md` §7h). So DotGothic16 was removed: `dot_matrix.ttf`
+> (composeResources + widget), `licenses/DotGothic16-OFL.txt`, the widget
+> `UIAppFonts`, and the `Board.kt`/`WidgetViews.swift` font wiring are all gone.
+> This doc is kept only as a record of how to source/subset/wire a board font **if
+> the idea is ever revisited for BOTH platforms**. Everything below is historical.
+
+**Added:** Session 8 (2026-06-14), branch `ios-parity`. **Reverted:** Session 9.
 **Goal:** make the departure board read like a real London platform dot-matrix
 display — every glyph built from round lit amber points on a faint unlit dot
 grid (the owner's two reference photos: a National Rail concourse board and a

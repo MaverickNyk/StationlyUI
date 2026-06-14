@@ -2,17 +2,6 @@ import SwiftUI
 import UIKit
 import WidgetKit
 
-extension Font {
-    /// The dot-matrix LED board face — DotGothic16 (OFL), bundled in the widget
-    /// (UIAppFonts in StationlyWidget/Info.plist; the same `dot_matrix.ttf` the
-    /// in-app board uses). `fixedSize` so it never scales with Dynamic Type (the
-    /// board layout is fixed). SwiftUI falls back to the system font automatically
-    /// if the font failed to register, so the board never renders blank.
-    static func dotMatrix(_ size: CGFloat) -> Font {
-        .custom("DotGothic16-Regular", fixedSize: size)
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // MARK: - Entry view router
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,13 +51,15 @@ struct BoardMetrics {
     // slot is spare; on <150pt canvases the footer is shed too.
     static let medium = BoardMetrics(
         station: 16, platform: 13, row: 12.5, status: 10.5,
-        clock: 15, ago: 8.5, icon: 18, logo: 16, cellRadius: 0, maxRows: 3,
+        clock: 15, ago: 8.5, icon: 18, logo: 22, cellRadius: 0, maxRows: 3,
         singlePlatform: true)
     static let large = BoardMetrics(
         station: 19, platform: 15, row: 14.5, status: 12.5,
-        clock: 18, ago: 10, icon: 22, logo: 19, cellRadius: 0, maxRows: 10,
+        clock: 18, ago: 10, icon: 22, logo: 22, cellRadius: 0, maxRows: 10,
         singlePlatform: false)
 }
+
+private let DueRed = Color(red: 1.0, green: 0.32, blue: 0.32)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MARK: - Shared marks
@@ -208,7 +199,7 @@ private struct LiveAgo: View {
                 Text("—")
             }
         }
-        .font(.dotMatrix(fontSize))
+        .font(.system(size: fontSize).italic())
         .foregroundColor(WidgetTheme.amber.opacity(0.85))
         .lineLimit(1)
         .frame(maxWidth: 72, alignment: .trailing)
@@ -243,7 +234,7 @@ struct DotMatrixHeader: View {
             HStack(spacing: 8) {
                 ModeIconView(mode: data.mode, size: m.icon)
                 Text(data.stationName)
-                    .font(.dotMatrix(m.station))
+                    .font(.system(size: m.station, weight: .bold))
                     .foregroundColor(WidgetTheme.amber)
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
@@ -260,7 +251,7 @@ struct DotMatrixSectionHeader: View {
     var body: some View {
         LitCell(vPad: 2, radius: m.cellRadius) {
             Text(title)
-                .font(.dotMatrix(m.platform))
+                .font(.system(size: m.platform, weight: .bold))
                 .foregroundColor(WidgetTheme.amber)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -268,8 +259,7 @@ struct DotMatrixSectionHeader: View {
     }
 }
 
-/// Destination (left) + ETA (right). Monochrome amber — "Due" stays amber too,
-/// matching the in-app board (real platform signs are single-colour).
+/// Destination (left) + ETA (right). All amber; "Due" in red — matches the board.
 struct DotMatrixRow: View {
     let dep: DepartureRow
     let m: BoardMetrics
@@ -277,13 +267,13 @@ struct DotMatrixRow: View {
         LitCell(radius: m.cellRadius) {
             HStack(spacing: 8) {
                 Text(dep.destination)
-                    .font(.dotMatrix(m.row))
+                    .font(.system(size: m.row))
                     .foregroundColor(WidgetTheme.amber)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(dep.isDue ? "Due" : dep.eta)
-                    .font(.dotMatrix(m.row + 0.5))
-                    .foregroundColor(WidgetTheme.amber)
+                    .font(.system(size: m.row + 0.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(dep.isDue ? DueRed : WidgetTheme.amber)
             }
         }
     }
@@ -310,13 +300,13 @@ struct DotMatrixStatusStrip: View {
         LitCell(vPad: 2, radius: m.cellRadius) {
             HStack(spacing: 0) {
                 Text(parts.severity)
-                    .font(.dotMatrix(m.status))
+                    .font(.system(size: m.status, weight: .bold))
                     .foregroundColor(WidgetTheme.amber)
                     .lineLimit(1)
                     .fixedSize()
                 if !parts.reason.isEmpty {
                     Text(" : \(parts.reason)")
-                        .font(.dotMatrix(m.status))
+                        .font(.system(size: m.status))
                         .foregroundColor(WidgetTheme.amber)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -339,7 +329,7 @@ private struct LiveClock: View {
     let fontSize: CGFloat
     var body: some View {
         Text(Calendar.current.startOfDay(for: clock), style: .timer)
-            .font(.dotMatrix(fontSize))
+            .font(.system(size: fontSize, weight: .bold, design: .monospaced))
             .foregroundColor(WidgetTheme.amber)
             .lineLimit(1)
             // Timer Texts greedily expand and left-align; center the digits
@@ -508,7 +498,7 @@ struct SmallWidgetView: View {
                         HStack(spacing: 6) {
                             ModeIconView(mode: data.mode, size: 14)
                             Text(data.stationName)
-                                .font(.dotMatrix(13))
+                                .font(.system(size: 13, weight: .bold))
                                 .foregroundColor(WidgetTheme.amber)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.6)
@@ -525,13 +515,13 @@ struct SmallWidgetView: View {
                             LitCell {
                                 HStack(spacing: 4) {
                                     Text(dep.destination)
-                                        .font(.dotMatrix(11))
+                                        .font(.system(size: 11))
                                         .foregroundColor(WidgetTheme.amber)
                                         .lineLimit(1)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                     Text(dep.isDue ? "Due" : dep.eta)
-                                        .font(.dotMatrix(11.5))
-                                        .foregroundColor(WidgetTheme.amber)
+                                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                                        .foregroundColor(dep.isDue ? DueRed : WidgetTheme.amber)
                                 }
                             }
                             .frame(minHeight: 20)
@@ -564,7 +554,7 @@ struct SmallWidgetView: View {
 struct NoDeparturesRow: View {
     var body: some View {
         Text("No departures right now")
-            .font(.dotMatrix(12))
+            .font(.system(size: 12))
             .foregroundColor(WidgetTheme.textMuted)
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, 18)

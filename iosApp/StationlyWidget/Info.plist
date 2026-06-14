@@ -25,9 +25,5 @@
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.widgetkit-extension</string>
 	</dict>
-	<key>UIAppFonts</key>
-	<array>
-		<string>dot_matrix.ttf</string>
-	</array>
 </dict>
 </plist>

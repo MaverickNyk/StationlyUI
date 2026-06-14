@@ -149,11 +149,6 @@ targets:
         CFBundleDisplayName: Stationly
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
-        # Register the bundled dot-matrix board font (DotGothic16, OFL) so the
-        # widget's DotMatrix* views can use Font.custom("DotGothic16-Regular").
-        # The .ttf is globbed in from StationlyWidget/ by this target's sources.
-        UIAppFonts:
-          - dot_matrix.ttf
     entitlements:
       path: StationlyWidget/StationlyWidget.entitlements
       properties:
