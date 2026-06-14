@@ -1,15 +1,18 @@
 # Stationly iOS — Build, Architecture & Handoff
 
 **Audience:** the next engineer/agent picking up the iOS app.
-**Last updated:** 2026-06-12 (Session 6). **Branch:** `ios-parity` (off `dev_25Apr`, nothing merged).
+**Last updated:** 2026-06-14 (Session 8). **Branch:** `ios-parity` (off `dev_25Apr`, nothing merged).
 **Companion doc:** `docs/IOS_PARITY_PLAN.md` (the phased plan + "⏯️ RESUME HERE").
 
 This doc is the single source of truth for: how the iOS app is structured, how to
 build/run it (including every Xcode-26 gotcha we hit), what's been ported, how FCM
 and SDUI work on iOS, and what remains.
 
-> **➡️ FRESH AGENT: start at §7f (Session 6, 2026-06-12)** — latest state, the
-> owner's hard constraint (no `android/`, no shared commonMain edits), the
+> **➡️ FRESH AGENT: start at §7g (Session 8, 2026-06-14)** — latest state (the
+> dot-matrix board font + the in-progress home-screen polish); then §7f (Session
+> 6) for the deploy runbook context, the owner's hard constraint (no `android/`,
+> no shared commonMain edits — note: `composeApp` _is_ the iOS app, edit freely;
+> only the `android/` module is off-limits), the
 > exact working-tree status (UNCOMMITTED changes!), and the pending
 > deploy-on-reconnect runbook. The "READ FIRST" block below is Session-3
 > HISTORY: that crash was properly fixed in Session 5 (§7e.4 composeResources
@@ -854,6 +857,160 @@ If Kotlin changed since: `./gradlew :composeApp:assembleComposeAppDebugXCFramewo
   (NEEDS ROOT; type the full `/usr/bin/log` path — plain `log` is shadowed in
   this zsh). Parse with `log show --archive x.logarchive --predicate …`.
 - `idevicesyslog`/`idevicescreenshot` DO NOT work on iOS 26 (§7c note).
+
+## 7g. Landed in Session 8 (2026-06-14) — branch `ios-parity`
+
+**Focus:** the home screen, owner-driven — _"make it iPhone-worthy, like Bevel."_
+Four asks (board sharpness, profile "User" flash, pull-to-refresh, overall
+polish). This entry covers what's **DONE** (the board) and what's **IN PROGRESS**.
+
+> Session 7 (commits `3374887..99f5966`, already on `origin/ios-parity`) has no
+> section of its own — it covered the widget budget/even share-out, auth
+> identity-key heal, device-session re-upsert, and the synchronous profile-card
+> seed. Noted here so the §7f → §7g numbering gap is explained.
+
+### 1. Real dot-matrix board font + crisp LED rework ✅ (in-app board)
+The owner sent two reference photos (a National Rail concourse board and a LU
+platform sign "1 Hampstead … 4 mins / 23:29:54") — the board must read as round
+lit amber dots on an unlit dot grid. Until now the board (in-app **and** widget)
+only ever *approximated* that with system/monospace fonts.
+
+**→ Full detail in the dedicated doc `docs/BOARD_DOTMATRIX_FONT.md`** (font
+sourcing, OFL license, the subset command, the `BoardFont` switch-point, the
+widget TODO). Summary of what changed in
+`composeApp/.../ui/summary/components/Board.kt`:
+- Bundled **DotGothic16** (Google Fonts, **OFL** — a true round-dot matrix face),
+  subset to Latin (2.0 MB → **38 KB**) at
+  `composeApp/src/commonMain/composeResources/font/dot_matrix.ttf`; license at
+  `licenses/DotGothic16-OFL.txt`.
+- `BoardFont` is a `@Composable get()` → `FontFamily(Font(Res.font.dot_matrix))`,
+  falling back to `FontFamily.Monospace` behind the `composeResourcesBundled`
+  gate. **Single switch-point** — applied to every board glyph (station name,
+  platform headers, departures, ETAs, status strip, footer clock + "ago").
+- Crisp rework: **removed the pulsing radial glow halo** (the main "not sharp"
+  cause) → `Surface(shadowElevation = 14.dp)`; **per-row lit highlighters**
+  (`ActiveStrip` = `#181818` lift + faint per-row dot texture) so each departure
+  reads as its own LED cell; `PanelBg = #0A0B07` olive-black; removed section
+  hairlines; footer clock is lit dot-matrix text.
+- **v2 — owner feedback, verified on device:** (a) brought the **row
+  highlighters back** — a first pass went continuous-grid/transparent-rows, which
+  the owner disliked, so it was reverted; (b) fixed **"vertically stretched / too
+  tall"** by pinning a tight `lineHeight ≈ fontSize` on every board line
+  (DotGothic16 ships a large CJK line-gap) + slimmer sizes + 2 dp row padding;
+  (c) **"Due" no longer turns red** — monochrome amber board now (`buildBoardLines`
+  drops the `#FF5252` fallback). Detail in `docs/BOARD_DOTMATRIX_FONT.md` §4.
+- **Deployed:** board v1 then board v2 both built (`assembleComposeAppDebugXCFramework`)
+  + installed + launched on Nick's iPhone (Staging) and verified.
+- **TODO — owner wants it "everywhere we show the board":** the iOS **widget**
+  (`StationlyWidget/WidgetViews.swift` `DotMatrix*` views) still uses system
+  fonts. Wire DotGothic16 into the widget bundle — steps in
+  `docs/BOARD_DOTMATRIX_FONT.md` §5.
+
+### 2. Profile "User" flash — fixed ✅
+Root cause unchanged (auth identity-key race; `AuthBridge.swift:277`
+`persistUserIdentity` writes the keys then posts `.authStateDidChange`). Fixed
+entirely in shared Kotlin — **no Swift change needed**:
+- `ProfileUiState` gains **`isIdentityLoading`**. `ProfileViewModel.initialState()`
+  seeds it `true` when logged-in but the keys aren't readable yet;
+  `loadProfile()` replaced the blunt `delay(1500)` with a **poll**
+  (`IDENTITY_POLL_STEP_MS = 120`, `IDENTITY_POLL_TIMEOUT_MS = 3000`) that resolves
+  the instant the keys land, then clears the flag.
+- `ProfileScreen.ProfileHeaderCard(loading = …)` renders **`SkeletonBar`s** for
+  the name + email (and a blank avatar monogram) while loading — never the literal
+  "User"/"Recently". Falls back to "User" only if genuinely unresolved after 3 s.
+- Same race on the home **top-bar avatar**: `SummaryViewModel.loadUserInitial()`
+  now polls the same way (was a fixed `delay(1500)` → intermittent "?").
+
+### 3. Pull-to-refresh — native Cupertino indicator ✅
+`SummaryScreen`'s `PullToRefreshBox` now passes a custom
+`indicator = { CupertinoRefreshIndicator(...) }`, replacing Material's Android
+spinner-in-a-pill: a thin amber ring that **fills with `state.distanceFraction`**
+as you pull, then becomes an indeterminate **spinner** while refreshing — riding
+down with the existing rubber-band translation and fading/scaling in. Drawn with
+`Canvas` + `drawArc`; the infinite-transition hook is called unconditionally and
+visibility is gated after it (Compose rule).
+
+> #2 + #3 compile (`compileCommonMainKotlinMetadata` BUILD SUCCESSFUL) and were
+> built + deployed to device (Staging) in the same session.
+
+### 4. Bevel home-screen pass ✅
+`SummaryScreen` lifted toward a premium native feel (owner ref: the **Bevel**
+app) — **boards-only, no greeting header**:
+- **Soft gradient canvas** — the flat background is replaced by a faint amber wash
+  up top fading into the base (`Brush.verticalGradient`, ~4.5–6% primary over
+  `canvas`), drawn behind a **transparent Scaffold + transparent top bar** so it
+  bleeds edge-to-edge (incl. behind the status bar).
+- **Scroll-aware top bar** — `CenterAlignedTopAppBar` container is now
+  `Color.Transparent`; a 1 px **hairline fades in only once content scrolls**
+  (`rememberLazyListState` + `derivedStateOf` → `animateFloatAsState`), the iOS
+  inline-nav cue. Top bar wrapped in a `Column` (bar + hairline).
+- **Spacing rhythm** — list `contentPadding` top 8 / bottom 28, `spacedBy(22)`.
+- Board cards already carry a crisp drop shadow (§1); the bottom amber glow stays
+  for symmetric ambient depth.
+- **NOT done (deliberately — low-risk to skip):** true content-scrolls-*under*-blur
+  (hard in CMP on iOS — needs a backdrop-blur API), per-card shadow on the Explore
+  cards, staggered entrance motion. Easy candidates if the owner wants more.
+
+### 5. Widget dot-matrix font ✅
+The iOS widget now uses the same DotGothic16 board face as the in-app board:
+- `dot_matrix.ttf` **copied into `iosApp/StationlyWidget/`** (globbed in by the
+  target's `sources`); registered via **`UIAppFonts`** in the widget Info.plist
+  (added to `project.yml` → **`xcodegen` regenerate now REQUIRED**, done by the build).
+- `WidgetViews.swift`: a `Font.dotMatrix(_:)` helper
+  (`.custom("DotGothic16-Regular", fixedSize:)`, auto system-fallback) replaces
+  `.font(.system(...))` on **every** board glyph (station, section headers,
+  departures, ETAs, status, live clock, "ago") across small/medium/large.
+- **"Due" is now amber** (the `DueRed` constant + its two uses were removed) — the
+  widget matches the in-app monochrome-amber board. The no-station **branding**
+  screen (`EmptyWidgetView`) intentionally stays system font.
+- ⚠️ Widget rendering is the **only thing not yet eyeballed** — WidgetKit caches
+  aggressively; remove + re-add the widget (or wait for a timeline reload) to see
+  the new font. If `Font.custom` silently fell back to system, the font didn't
+  register → check `UIAppFonts` + that `dot_matrix.ttf` is in the widget bundle.
+
+### Build + deploy this session (STAGING, on-device)
+Owner: _"build the iOS app in staging only, we're testing locally."_ Standard §2
+pipeline with the `iosApp Staging` scheme. The only addition vs §2 is assembling
+the iOS resources so the **new font** is packaged by the existing "Copy Compose
+Resources" phase:
+```bash
+./gradlew :composeApp:assembleComposeAppDebugXCFramework :composeApp:assembleIosArm64MainResources
+DD=iosApp/build/DD
+xcodebuild -project iosApp/iosApp.xcodeproj -scheme "iosApp Staging" \
+  -destination 'id=00008030-001E0D9C3EFB802E' -derivedDataPath "$DD" -allowProvisioningUpdates build
+xcrun devicectl device install app --device 00008030-001E0D9C3EFB802E \
+  "$DD/Build/Products/Debug Staging-iphoneos/iosApp.app"
+xcrun devicectl device process launch --device 00008030-001E0D9C3EFB802E com.stationly.mobile
+```
+**NOTE:** later in the session `project.yml` gained the widget `UIAppFonts` (#5),
+so from then on `cd iosApp && ./xcodegen.sh` IS required before `xcodebuild`
+(regenerates the widget Info.plist with the font registration).
+
+### Working tree (Session 8) — UNCOMMITTED
+- **New:** `composeApp/src/commonMain/composeResources/font/dot_matrix.ttf`,
+  `licenses/DotGothic16-OFL.txt`, `docs/BOARD_DOTMATRIX_FONT.md`.
+- **Modified — board (#1):** `composeApp/.../ui/summary/components/Board.kt`.
+- **Modified — profile "User" fix (#2):**
+  `composeApp/.../ui/profile/ProfileUiState.kt` (`isIdentityLoading`),
+  `ProfileViewModel.kt` (synchronous seed + poll), `ProfileScreen.kt`
+  (`loading` param + `SkeletonBar`), `composeApp/.../ui/summary/SummaryViewModel.kt`
+  (`loadUserInitial` poll).
+- **Modified — pull-to-refresh (#3) + Bevel home pass (#4):**
+  `composeApp/.../ui/summary/SummaryScreen.kt` (`CupertinoRefreshIndicator` +
+  custom `indicator`; gradient canvas + transparent Scaffold/top-bar +
+  scroll hairline + spacing).
+- **New — widget font (#5):** `iosApp/StationlyWidget/dot_matrix.ttf`.
+  **Modified (#5):** `iosApp/StationlyWidget/WidgetViews.swift` (`Font.dotMatrix`,
+  Due→amber, `DueRed` removed), `iosApp/project.yml` (widget `UIAppFonts`).
+- **Modified — docs:** `docs/IOS_BUILD_AND_HANDOFF.md`, `docs/BOARD_DOTMATRIX_FONT.md`.
+- All five owner asks (#1 board, #2 profile, #3 pull-refresh, #4 Bevel home,
+  #5 widget font) are **code-complete**. Only the **widget font render** is
+  un-eyeballed (WidgetKit cache — see §5).
+- Suggested commit split: (1) dot-matrix board font + crisp/v2 rework
+  [Board.kt + font + license + BOARD_DOTMATRIX_FONT.md]; (2) profile "User"-flash
+  fix [ProfileUiState/ViewModel/Screen + SummaryViewModel]; (3) native pull-refresh
+  + Bevel home pass [SummaryScreen.kt]; (4) widget dot-matrix font
+  [WidgetViews.swift + project.yml + StationlyWidget/dot_matrix.ttf]; (5) docs.
 
 ## 8. What's REMAINING (priority order)
 

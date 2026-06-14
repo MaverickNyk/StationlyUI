@@ -341,8 +341,12 @@ class SummaryViewModel(
         // instead of pinning "?" until the next foreground.
         var name = Platform.storageManager.loadString("firebase_user_display_name")
             ?: Platform.storageManager.loadString("firebase_user_email")
-        if (name == null) {
-            delay(1500)
+        // Poll briefly so the avatar resolves the instant the keys land, instead
+        // of a single fixed 1.5 s re-read (mirrors ProfileViewModel's poll).
+        var waited = 0L
+        while (name == null && waited < 3000L) {
+            delay(120L)
+            waited += 120L
             name = Platform.storageManager.loadString("firebase_user_display_name")
                 ?: Platform.storageManager.loadString("firebase_user_email")
         }

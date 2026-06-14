@@ -1,7 +1,9 @@
 package com.stationly.app.ui.summary.components
 
 import com.stationly.app.resources.Res
+import com.stationly.app.resources.dot_matrix
 import com.stationly.app.resources.stationly_logo
+import org.jetbrains.compose.resources.Font
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.RepeatMode
@@ -90,9 +92,28 @@ import kotlinx.datetime.toLocalDateTime
 // Fixed TfL dot-matrix amber — the signage board is locked to this regardless
 // of app theme (matches android `@color/tfl_amber` = #FFC819).
 private val BoardAmber = Color(0xFFFFC819)
-private val PanelBg = Color(0xFF0C0C0C)
-private val ActiveRowBg = Color(0xFF161616)
+// Dark LED substrate — near-black with a faint warm/olive bias, like the unlit
+// phosphor of a real TfL / National Rail platform dot-matrix display.
+private val PanelBg = Color(0xFF0A0B07)
+// Lit "active row" cell — a subtle lift off the panel so each departure reads as
+// its own illuminated strip (the TfL-board row highlighters the owner liked).
+private val ActiveRowBg = Color(0xFF181818)
+// Unlit matrix dots, drawn within each lit row — dim amber points so the row
+// reads as an LED cell, not a flat chip.
+private val UnlitDot = BoardAmber.copy(alpha = 0.06f)
 private val StationlyRed = Color(0xFFE32017)
+
+/**
+ * The board face: a true dot-matrix LED font (DotGothic16, OFL — see
+ * `licenses/DotGothic16-OFL.txt`) so every glyph is built from round lit
+ * points, the authentic TfL / National Rail departure-board look. Falls back
+ * to monospace until composeResources are bundled (same guard as
+ * [com.stationly.app.ui.theme.DisplayFamily]) so the board never renders blank.
+ */
+private val BoardFont: FontFamily
+    @Composable get() = if (com.stationly.app.platform.composeResourcesBundled) FontFamily(
+        Font(Res.font.dot_matrix)
+    ) else FontFamily.Monospace
 
 val TFL_LINE_COLORS = mapOf(
     "bakerloo" to Color(0xFFB36305), "central" to Color(0xFFE32017),
@@ -187,12 +208,6 @@ fun Board(
     val isUrgent = effectiveNext != null && (effectiveNext.isDue ||
         effectiveNext.eta.replace(" min", "").trim().toIntOrNull()?.let { it <= 1 } == true)
 
-    val glowAlpha by rememberInfiniteTransition(label = "board_fx").animateFloat(
-        initialValue = 0.06f, targetValue = 0.18f,
-        animationSpec = infiniteRepeatable(tween(3200, easing = EaseInOut), RepeatMode.Reverse),
-        label = "glow"
-    )
-
     // ── Outer column: chrome on the themed canvas, only the dot-matrix is dark ──
     Column(modifier = Modifier.fillMaxWidth()) {
 
@@ -270,30 +285,26 @@ fun Board(
             Spacer(Modifier.height(10.dp))
         }
 
-        // ── Dot-matrix board (the only dark section) with ambient glow ──
-        Box(modifier = Modifier.fillMaxWidth()) {
-            Box(
-                modifier = Modifier.matchParentSize()
-                    .graphicsLayer { clip = false; scaleX = 1.18f; scaleY = 1.22f; alpha = glowAlpha }
-                    .background(Brush.radialGradient(listOf(lineColor.copy(alpha = 0.55f), Color.Transparent)), RoundedCornerShape(20.dp))
+        // ── Dot-matrix board (the only dark section) — a crisp physical panel.
+        // Real depth via a soft drop shadow instead of the old pulsing radial
+        // halo, which bloomed the edges and was the main "not sharp" culprit.
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = PanelBg,
+            shape = RoundedCornerShape(16.dp),
+            shadowElevation = 14.dp,
+            border = BorderStroke(if (isUrgent) 1.5.dp else 1.dp, lineColor.copy(alpha = 0.30f))
+        ) {
+            DotMatrixPanel(
+                selection = selection,
+                ticked = ticked,
+                sduiPayload = sduiPayload,
+                lineStatus = lineStatus,
+                lineStatusFailed = lineStatusFailed,
+                lastUpdated = lastUpdated,
+                linePrefix = linePrefix,
+                homeConfig = homeConfig,
             )
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = PanelBg,
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(if (isUrgent) 1.5.dp else 1.dp, lineColor.copy(alpha = 0.22f))
-            ) {
-                DotMatrixPanel(
-                    selection = selection,
-                    ticked = ticked,
-                    sduiPayload = sduiPayload,
-                    lineStatus = lineStatus,
-                    lineStatusFailed = lineStatusFailed,
-                    lastUpdated = lastUpdated,
-                    linePrefix = linePrefix,
-                    homeConfig = homeConfig,
-                )
-            }
         }
     }
 
@@ -345,12 +356,19 @@ private fun DotMatrixPanel(
     linePrefix: String,
     homeConfig: Map<String, String>,
 ) {
-    Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    val boardFont = BoardFont
+    // Each lit row (ActiveStrip) carries its own dot texture + highlight, so the
+    // panel is just the dark substrate with tight padding — keeps the board
+    // compact instead of bulky.
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
 
         // ── Station strip: centered roundel + station name ──
         ActiveStrip {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -372,8 +390,8 @@ private fun DotMatrixPanel(
                 Spacer(Modifier.width(8.dp))
                 Text(
                     selection.stationName,
-                    color = BoardAmber, fontSize = 16.sp, fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.2.sp,
+                    color = BoardAmber, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                    fontFamily = boardFont, letterSpacing = 0.2.sp, lineHeight = 15.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
             }
@@ -398,37 +416,39 @@ private fun DotMatrixPanel(
                     is BoardLine.Header -> ActiveStrip {
                         Text(
                             line.title, color = line.color ?: BoardAmber,
-                            fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.3.sp,
+                            fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                            fontFamily = boardFont, letterSpacing = 0.3.sp, lineHeight = 12.sp,
                             maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
+                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
                         )
                     }
                     is BoardLine.Departure -> ActiveStrip {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                line.destination, color = BoardAmber, fontSize = 15.sp,
-                                fontWeight = FontWeight.Medium, letterSpacing = 0.2.sp,
+                                line.destination, color = BoardAmber, fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium, fontFamily = boardFont, letterSpacing = 0.2.sp, lineHeight = 14.sp,
                                 modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis
                             )
                             if (line.eta.isNotBlank()) {
                                 Spacer(Modifier.width(8.dp))
-                                // Monospace ETAs: every "N min" occupies identical
+                                // Fixed-pitch ETAs: every "N min" occupies identical
                                 // width so the right column rags perfectly — the
                                 // tabular look real departure boards have.
                                 Text(
-                                    line.eta, color = line.etaColor ?: BoardAmber, fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace
+                                    line.eta, color = line.etaColor ?: BoardAmber, fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold, fontFamily = boardFont, lineHeight = 14.sp
                                 )
                             }
                         }
                     }
                     is BoardLine.Message -> ActiveStrip {
                         Text(
-                            line.text, color = line.color ?: BoardAmber, fontSize = 15.sp,
-                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp)
+                            line.text, color = line.color ?: BoardAmber, fontSize = 14.sp,
+                            fontFamily = boardFont, lineHeight = 16.sp,
+                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
                 }
@@ -447,12 +467,12 @@ private fun DotMatrixPanel(
             else -> { severity = homeConfig["board.good_service_label"] ?: "Good Service"; reason = "" }
         }
         ActiveStrip {
-            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(severity, color = BoardAmber, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(severity, color = BoardAmber, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = boardFont, lineHeight = 12.sp)
                 if (reason.isNotBlank()) {
-                    Text(" : ", color = BoardAmber, fontSize = 12.sp)
+                    Text(" : ", color = BoardAmber, fontSize = 11.sp, fontFamily = boardFont, lineHeight = 12.sp)
                     Text(
-                        reason, color = BoardAmber, fontSize = 12.sp, maxLines = 1,
+                        reason, color = BoardAmber, fontSize = 11.sp, fontFamily = boardFont, lineHeight = 12.sp, maxLines = 1,
                         modifier = Modifier.weight(1f).basicMarquee()
                     )
                 }
@@ -460,16 +480,14 @@ private fun DotMatrixPanel(
         }
 
         // ── Footer: roundel mark + live clock + "X ago" ──
-        BoardFooter(lastUpdated)
+        BoardFooter(lastUpdated, boardFont)
     }
 }
 
 /**
- * A "lit cell" strip on the dot-matrix panel. Matches the Android board's
- * `departure_board_active_row_background`: a SQUARE-cornered strip (the
- * Android original is a tiled pixel bitmap — no per-row radius; only the
- * outer panel is rounded) with a faint unlit-dot grid so the rows read as
- * LED matrix cells rather than flat chips.
+ * A lit "active row" strip — a subtle illuminated cell off the dark panel with a
+ * faint unlit-dot texture, so each departure reads as its own LED row (the
+ * TfL-board highlighters). Square corners; only the outer panel is rounded.
  */
 @Composable
 private fun ActiveStrip(content: @Composable () -> Unit) {
@@ -480,12 +498,11 @@ private fun ActiveStrip(content: @Composable () -> Unit) {
             .drawBehind {
                 val pitch = 3.dp.toPx()
                 val r = 0.6.dp.toPx()
-                val dot = Color.White.copy(alpha = 0.030f)
                 var y = pitch / 2f
                 while (y < size.height) {
                     var x = pitch / 2f
                     while (x < size.width) {
-                        drawCircle(dot, radius = r, center = Offset(x, y))
+                        drawCircle(UnlitDot, radius = r, center = Offset(x, y))
                         x += pitch
                     }
                     y += pitch
@@ -509,7 +526,7 @@ private fun TflRoundel(color: Color, size: androidx.compose.ui.unit.Dp) {
 }
 
 @Composable
-private fun BoardFooter(lastUpdated: Long) {
+private fun BoardFooter(lastUpdated: Long, boardFont: FontFamily) {
     // Per-second tick for the live clock + "X ago" relative timer.
     var nowSec by remember { mutableLongStateOf(Clock.System.now().toEpochMilliseconds()) }
     LaunchedEffect(Unit) {
@@ -546,14 +563,12 @@ private fun BoardFooter(lastUpdated: Long) {
                 Text("S", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Black)
             }
         }
-        // Live clock (center) on its own lit strip, like Android's TextClock
-        // with the active-row background.
-        Box(modifier = Modifier.background(ActiveRowBg).padding(horizontal = 6.dp)) {
-            Text(clock, color = BoardAmber, fontSize = 19.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-        }
+        // Live clock (center) — lit dot-matrix text directly on the panel grid,
+        // like the "23:29:54" readout on a real platform board.
+        Text(clock, color = BoardAmber, fontSize = 17.sp, fontWeight = FontWeight.Bold, fontFamily = boardFont, lineHeight = 17.sp)
         // X ago (right)
         Text(
-            ago, color = BoardAmber, fontSize = 12.sp, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+            ago, color = BoardAmber, fontSize = 11.sp, fontFamily = boardFont, lineHeight = 11.sp,
             modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp)
         )
     }
@@ -592,7 +607,10 @@ private fun buildBoardLines(
                 )
                 is SduiWidgetComponent.Row -> BoardLine.Departure(
                     c.destination, c.eta,
-                    c.etaColor?.let { parseColorSafe(it, null) } ?: if (c.eta.trim().equals("Due", true)) Color(0xFFFF5252) else null
+                    // Monochrome amber board: never recolour "Due" red — it read as
+                    // alarm, not arrival (owner feedback). Honour an explicit
+                    // backend etaColor if one is sent, else leave it amber.
+                    c.etaColor?.let { parseColorSafe(it, null) }
                 )
                 is SduiWidgetComponent.Message -> BoardLine.Message(c.text, c.color?.let { parseColorSafe(it, null) })
                 else -> null
@@ -607,8 +625,8 @@ private fun buildBoardLines(
         when (row) {
             is LegacyRow.Header -> BoardLine.Header(StationlyFormatters.platformHeaderText(linePrefix, row.title), null)
             is LegacyRow.Departure -> BoardLine.Departure(
-                row.destination, row.eta,
-                if (row.eta.trim().equals("Due", true)) Color(0xFFFF5252) else null
+                // Monochrome amber board — "Due" stays amber, never red (owner feedback).
+                row.destination, row.eta, null
             )
             is LegacyRow.Message -> BoardLine.Message(row.text, null)
         }

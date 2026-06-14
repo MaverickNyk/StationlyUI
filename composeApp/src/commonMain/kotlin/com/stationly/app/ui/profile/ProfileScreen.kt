@@ -1,5 +1,11 @@
 package com.stationly.app.ui.profile
 
+import androidx.compose.animation.core.EaseInOut
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -43,6 +49,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -144,7 +151,8 @@ fun ProfileScreen(
             ) {
                 item {
                     ProfileHeaderCard(
-                        name = uiState.displayName.ifBlank { "User" },
+                        name = uiState.displayName,
+                        loading = uiState.isIdentityLoading,
                         email = uiState.email,
                         photoUrl = uiState.photoUrl,
                         provider = uiState.signInProvider,
@@ -410,6 +418,7 @@ fun ProfileScreen(
 @Composable
 private fun ProfileHeaderCard(
     name: String,
+    loading: Boolean,
     email: String,
     photoUrl: String?,
     provider: String,
@@ -419,7 +428,8 @@ private fun ProfileHeaderCard(
     Surface(color = Surface1, shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, White08)) {
         Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             // Avatar with amber ring. Google sign-ins carry a photoUrl; email
-            // sign-ins fall back to the first-letter monogram.
+            // sign-ins fall back to the first-letter monogram (blank while the
+            // identity keys are still resolving — never an "U"-for-User).
             Box(contentAlignment = Alignment.Center) {
                 Box(Modifier.size(96.dp).border(2.5.dp, Brush.linearGradient(listOf(Amber, Amber.copy(0.3f))), CircleShape))
                 if (photoUrl != null) {
@@ -431,37 +441,62 @@ private fun ProfileHeaderCard(
                     )
                 } else {
                     Box(Modifier.size(86.dp).background(Surface2, CircleShape), contentAlignment = Alignment.Center) {
-                        Text(name.take(1).uppercase(), color = Amber, fontSize = 34.sp, fontWeight = FontWeight.Black)
+                        if (!loading && name.isNotBlank()) {
+                            Text(name.take(1).uppercase(), color = Amber, fontSize = 34.sp, fontWeight = FontWeight.Black)
+                        }
                     }
                 }
             }
             Spacer(Modifier.height(16.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(name, color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp)
-                Spacer(Modifier.width(6.dp))
-                IconButton(onClick = onEditName, modifier = Modifier.size(28.dp)) {
-                    Icon(Icons.Rounded.Edit, "Edit name", tint = White55, modifier = Modifier.size(16.dp))
-                }
-            }
-            Spacer(Modifier.height(4.dp))
-            Text(email, color = White55, fontSize = 14.sp)
-            Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Surface(color = White08, shape = RoundedCornerShape(20.dp)) {
-                    Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Icon(if (provider == "Google") Icons.Rounded.AlternateEmail else Icons.Outlined.Email, null, tint = Amber, modifier = Modifier.size(13.dp))
-                        Text(provider, color = White55, fontSize = 11.sp)
+            if (loading) {
+                // Identity not yet resolved — skeletons, not "User"/"Recently".
+                SkeletonBar(width = 150.dp, height = 22.dp)
+                Spacer(Modifier.height(8.dp))
+                SkeletonBar(width = 190.dp, height = 13.dp)
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(name.ifBlank { "User" }, color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                    Spacer(Modifier.width(6.dp))
+                    IconButton(onClick = onEditName, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Rounded.Edit, "Edit name", tint = White55, modifier = Modifier.size(16.dp))
                     }
                 }
-                Surface(color = White08, shape = RoundedCornerShape(20.dp)) {
-                    Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Icon(Icons.Rounded.CalendarMonth, null, tint = Amber, modifier = Modifier.size(13.dp))
-                        Text("Since $memberSince", color = White55, fontSize = 11.sp)
+                Spacer(Modifier.height(4.dp))
+                Text(email, color = White55, fontSize = 14.sp)
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(color = White08, shape = RoundedCornerShape(20.dp)) {
+                        Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Icon(if (provider == "Google") Icons.Rounded.AlternateEmail else Icons.Outlined.Email, null, tint = Amber, modifier = Modifier.size(13.dp))
+                            Text(provider, color = White55, fontSize = 11.sp)
+                        }
+                    }
+                    Surface(color = White08, shape = RoundedCornerShape(20.dp)) {
+                        Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Icon(Icons.Rounded.CalendarMonth, null, tint = Amber, modifier = Modifier.size(13.dp))
+                            Text("Since $memberSince", color = White55, fontSize = 11.sp)
+                        }
                     }
                 }
             }
         }
     }
+}
+
+/** Pulsing placeholder bar shown while the profile identity is still resolving. */
+@Composable
+private fun SkeletonBar(width: Dp, height: Dp) {
+    val pulse by rememberInfiniteTransition(label = "skeleton").animateFloat(
+        initialValue = 0.25f, targetValue = 0.6f,
+        animationSpec = infiniteRepeatable(tween(850, easing = EaseInOut), RepeatMode.Reverse),
+        label = "skeleton_alpha"
+    )
+    Box(
+        Modifier
+            .size(width, height)
+            .clip(RoundedCornerShape(height / 2))
+            .background(MaterialTheme.colorScheme.onBackground.copy(alpha = pulse * 0.18f))
+    )
 }
 
 @Composable

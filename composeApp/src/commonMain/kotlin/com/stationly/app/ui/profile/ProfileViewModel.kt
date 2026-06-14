@@ -19,6 +19,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+// Identity-key poll: re-read every STEP ms up to TIMEOUT ms, so the profile
+// card resolves the instant Swift AuthBridge writes the keys (a keychain
+// restore usually lands within a few hundred ms) instead of a fixed 1.5 s wait.
+private const val IDENTITY_POLL_STEP_MS = 120L
+private const val IDENTITY_POLL_TIMEOUT_MS = 3000L
+
 class ProfileViewModel(
     private val authProvider: PlatformAuthProvider
 ) : ViewModel() {
@@ -50,12 +56,19 @@ class ProfileViewModel(
     /// the default-empty state (rendered as "User" + blank monogram via the
     /// screen's ifBlank fallback) visible for as long as the main dispatcher
     /// was contended — the intermittent ~1-in-10 "User" card.
-    private fun initialState() = ProfileUiState(
-        email = authProvider.currentUserEmail() ?: "",
-        displayName = authProvider.currentUserDisplayName()
-            ?: authProvider.currentUserEmail()?.substringBefore("@") ?: "",
-        photoUrl = authProvider.currentUserPhotoUrl()
-    )
+    private fun initialState(): ProfileUiState {
+        val name = authProvider.currentUserDisplayName()
+            ?: authProvider.currentUserEmail()?.substringBefore("@")
+        return ProfileUiState(
+            email = authProvider.currentUserEmail() ?: "",
+            displayName = name ?: "",
+            photoUrl = authProvider.currentUserPhotoUrl(),
+            // Logged in but the keychain-restored session beat AuthBridge's
+            // identity-key write → render a name skeleton, never "User", until
+            // loadProfile()'s poll resolves it.
+            isIdentityLoading = name == null && authProvider.isLoggedIn(),
+        )
+    }
 
     init {
         loadProfile()
@@ -66,26 +79,33 @@ class ProfileViewModel(
 
     private fun loadProfile() {
         viewModelScope.launch {
-            // Identity keys are written by Swift AuthBridge's auth-state
-            // listener at launch; a keychain-restored session can reach this
-            // screen before that write lands, which rendered the card as
-            // "User" / "Stationly" / "Since Recently". One delayed re-read
-            // closes the race.
-            if (authProvider.currentUserDisplayName() == null &&
-                authProvider.currentUserEmail() == null &&
-                authProvider.isLoggedIn()
-            ) {
-                delay(1500)
+            // Identity keys (name/email/photo) are written by Swift AuthBridge's
+            // auth-state listener at launch; a keychain-restored session can
+            // reach this screen before that write lands, which rendered the card
+            // as "User" / "Stationly" / "Since Recently". Instead of a blunt
+            // fixed wait, POLL briefly and resolve the instant the keys appear
+            // (usually a few hundred ms) — no overshoot, and isIdentityLoading
+            // keeps a skeleton on screen rather than "User" until then.
+            var name = authProvider.currentUserDisplayName()
+                ?: authProvider.currentUserEmail()?.substringBefore("@")
+            if (name == null && authProvider.isLoggedIn()) {
+                var waited = 0L
+                while (name == null && waited < IDENTITY_POLL_TIMEOUT_MS) {
+                    delay(IDENTITY_POLL_STEP_MS)
+                    waited += IDENTITY_POLL_STEP_MS
+                    name = authProvider.currentUserDisplayName()
+                        ?: authProvider.currentUserEmail()?.substringBefore("@")
+                }
             }
             val provider    = storageManager.loadString("signin_provider") ?: "Stationly"
             val memberSince = storageManager.loadString("member_since") ?: ""
             _uiState.value = _uiState.value.copy(
                 email = authProvider.currentUserEmail() ?: "",
-                displayName = authProvider.currentUserDisplayName()
-                    ?: authProvider.currentUserEmail()?.substringBefore("@") ?: "User",
+                displayName = name ?: "User",
                 photoUrl = authProvider.currentUserPhotoUrl(),
                 signInProvider = provider,
-                memberSince = memberSince
+                memberSince = memberSince,
+                isIdentityLoading = false,
             )
         }
     }

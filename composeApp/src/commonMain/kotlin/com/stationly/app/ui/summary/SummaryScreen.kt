@@ -2,14 +2,21 @@
 package com.stationly.app.ui.summary
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -25,6 +32,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -46,6 +54,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,9 +62,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
@@ -78,6 +92,7 @@ import com.stationly.app.ui.summary.components.Board
 import com.stationly.app.ui.summary.components.EmptyStationsState
 import com.stationly.app.ui.summary.components.StationExploreSection
 import com.stationly.app.ui.theme.DisplayFamily
+import com.stationly.app.ui.theme.LocalThemeTokens
 import com.stationly.app.ui.theme.TflAmber
 import org.jetbrains.compose.resources.painterResource
 
@@ -115,24 +130,48 @@ fun SummaryScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            SummaryTopBar(
-                onNavigateToProfile = onNavigateToProfile,
-                onNavigateToSelection = onNavigateToSelection,
-                selectionsEmpty = selections.isEmpty(),
-                userInitial = uiState.userInitial,
-                photoUrl = uiState.photoUrl,
+    // Bevel-style soft canvas: a faint amber wash up top fading into the base —
+    // depth instead of a flat fill. Drawn behind a transparent Scaffold + top bar
+    // so it bleeds edge-to-edge (incl. behind the status bar and top bar).
+    val tokens = LocalThemeTokens.current
+    val canvas = MaterialTheme.colorScheme.background
+    val isDark = canvas.luminance() < 0.5f
+    val canvasBrush = remember(canvas, tokens.primary, isDark) {
+        Brush.verticalGradient(
+            colorStops = arrayOf(
+                0f to tokens.primary.copy(alpha = if (isDark) 0.06f else 0.045f),
+                0.32f to canvas,
+                1f to canvas,
             )
-        }
-    ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .padding(padding)
-        ) {
+        )
+    }
+
+    // Top-bar hairline fades in only once the content has scrolled (iOS inline-nav
+    // behaviour). Shared list state so the bar (a Scaffold sibling) can observe it.
+    val listState = rememberLazyListState()
+    val topBarScrolled by remember {
+        derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 6 }
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(canvasBrush)) {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                SummaryTopBar(
+                    onNavigateToProfile = onNavigateToProfile,
+                    onNavigateToSelection = onNavigateToSelection,
+                    selectionsEmpty = selections.isEmpty(),
+                    userInitial = uiState.userInitial,
+                    photoUrl = uiState.photoUrl,
+                    scrolled = topBarScrolled,
+                )
+            }
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
             // Discreet theme toggle pinned bottom-right, truly at the screen's
             // end — the daily-use light/dark/system shortcut (the full picker
             // lives in Profile → Appearance). NOTE: the Scaffold content
@@ -164,9 +203,20 @@ fun SummaryScreen(
                         isRefreshing = uiState.isRefreshing,
                         onRefresh = { viewModel.refreshAll() },
                         state = pullState,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize(),
+                        // Replace Material's Android spinner-in-a-pill with a
+                        // Cupertino-style amber ring that fills as you pull, then
+                        // spins while refreshing — rides down with the rubber-band.
+                        indicator = {
+                            CupertinoRefreshIndicator(
+                                state = pullState,
+                                isRefreshing = uiState.isRefreshing,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                     ) {
                         LazyColumn(
+                            state = listState,
                             modifier = Modifier
                                 .fillMaxSize()
                                 // iOS rubber-band: the WHOLE screen follows the pull,
@@ -178,8 +228,8 @@ fun SummaryScreen(
                                     val f = pullState.distanceFraction
                                     translationY = (f / (1f + 0.5f * f)) * 72.dp.toPx()
                                 },
-                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-                            verticalArrangement = Arrangement.spacedBy(20.dp)
+                            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 28.dp),
+                            verticalArrangement = Arrangement.spacedBy(22.dp)
                         ) {
                             // SummaryHeader (greeting + "Live · N boards") intentionally
                             // removed to match the redesigned Android home — the top-bar
@@ -255,6 +305,7 @@ fun SummaryScreen(
                         )
                     )
             )
+            }
         }
     }
 }
@@ -266,11 +317,14 @@ private fun SummaryTopBar(
     selectionsEmpty: Boolean,
     userInitial: String = "?",
     photoUrl: String? = null,
+    scrolled: Boolean = false,
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val onPrimary = MaterialTheme.colorScheme.onPrimary
     val onBackground = MaterialTheme.colorScheme.onBackground
-    CenterAlignedTopAppBar(
+    val hairlineAlpha by animateFloatAsState(if (scrolled) 1f else 0f, tween(220), label = "topbar_hairline")
+    Column {
+        CenterAlignedTopAppBar(
         title = {
             // Single-line brand lockup matching the redesigned Android home.
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
@@ -329,10 +383,16 @@ private fun SummaryTopBar(
             }
         },
         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-            containerColor = MaterialTheme.colorScheme.background,
+            containerColor = Color.Transparent,
             titleContentColor = MaterialTheme.colorScheme.onBackground
         )
     )
+        // Hairline separator fades in only once content scrolls under the bar.
+        Box(
+            Modifier.fillMaxWidth().height(1.dp)
+                .background(onBackground.copy(alpha = 0.08f * hairlineAlpha))
+        )
+    }
 }
 
 @Composable
@@ -385,6 +445,66 @@ private fun UpdateNudgeDialog(
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
                     Text(dismiss, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.40f), fontSize = 14.sp)
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Cupertino-style pull-to-refresh indicator: a thin amber ring that fills as you
+ * pull (progress arc tracking `distanceFraction`), then becomes an indeterminate
+ * spinner while refreshing. Rides down with the rubber-band and fades/scales in,
+ * replacing Material's Android spinner-in-a-pill so refresh feels native on iOS.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BoxScope.CupertinoRefreshIndicator(
+    state: androidx.compose.material3.pulltorefresh.PullToRefreshState,
+    isRefreshing: Boolean,
+    color: Color,
+) {
+    // Hook is always called (never conditionally) — spin only matters while refreshing.
+    val spin by rememberInfiniteTransition(label = "ptr").animateFloat(
+        initialValue = 0f, targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(700, easing = LinearEasing)),
+        label = "ptr_spin"
+    )
+    val fraction = state.distanceFraction
+    if (!isRefreshing && fraction <= 0.01f) return  // hidden at rest
+
+    val appear = fraction.coerceIn(0f, 1f)
+    val shownAlpha = if (isRefreshing) 1f else appear
+    val shownScale = 0.7f + 0.3f * (if (isRefreshing) 1f else appear)
+
+    Box(
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .graphicsLayer {
+                translationY = if (isRefreshing) 22.dp.toPx()
+                else (fraction / (1f + 0.5f * fraction)) * 60.dp.toPx()
+                alpha = shownAlpha
+                scaleX = shownScale
+                scaleY = shownScale
+                rotationZ = if (isRefreshing) spin else 0f
+            }
+            .size(26.dp)
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val stroke = 2.5.dp.toPx()
+            val arcSize = Size(size.width - stroke, size.height - stroke)
+            val topLeft = Offset(stroke / 2f, stroke / 2f)
+            if (isRefreshing) {
+                drawArc(
+                    color, startAngle = -90f, sweepAngle = 285f, useCenter = false,
+                    style = Stroke(stroke, cap = StrokeCap.Round), topLeft = topLeft, size = arcSize
+                )
+            } else {
+                // faint full-ring track + amber progress arc filling with the pull
+                drawArc(color.copy(alpha = 0.22f), 0f, 360f, false, style = Stroke(stroke), topLeft = topLeft, size = arcSize)
+                drawArc(
+                    color, startAngle = -90f, sweepAngle = 360f * appear, useCenter = false,
+                    style = Stroke(stroke, cap = StrokeCap.Round), topLeft = topLeft, size = arcSize
+                )
             }
         }
     }
