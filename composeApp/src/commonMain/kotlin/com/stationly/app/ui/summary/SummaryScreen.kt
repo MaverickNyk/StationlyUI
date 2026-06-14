@@ -4,7 +4,6 @@ package com.stationly.app.ui.summary
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -32,7 +31,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -54,7 +52,6 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,7 +64,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
@@ -92,7 +88,6 @@ import com.stationly.app.ui.summary.components.Board
 import com.stationly.app.ui.summary.components.EmptyStationsState
 import com.stationly.app.ui.summary.components.StationExploreSection
 import com.stationly.app.ui.theme.DisplayFamily
-import com.stationly.app.ui.theme.LocalThemeTokens
 import com.stationly.app.ui.theme.TflAmber
 import org.jetbrains.compose.resources.painterResource
 
@@ -130,48 +125,24 @@ fun SummaryScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Bevel-style soft canvas: a faint amber wash up top fading into the base —
-    // depth instead of a flat fill. Drawn behind a transparent Scaffold + top bar
-    // so it bleeds edge-to-edge (incl. behind the status bar and top bar).
-    val tokens = LocalThemeTokens.current
-    val canvas = MaterialTheme.colorScheme.background
-    val isDark = canvas.luminance() < 0.5f
-    val canvasBrush = remember(canvas, tokens.primary, isDark) {
-        Brush.verticalGradient(
-            colorStops = arrayOf(
-                0f to tokens.primary.copy(alpha = if (isDark) 0.06f else 0.045f),
-                0.32f to canvas,
-                1f to canvas,
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            SummaryTopBar(
+                onNavigateToProfile = onNavigateToProfile,
+                onNavigateToSelection = onNavigateToSelection,
+                selectionsEmpty = selections.isEmpty(),
+                userInitial = uiState.userInitial,
+                photoUrl = uiState.photoUrl,
             )
-        )
-    }
-
-    // Top-bar hairline fades in only once the content has scrolled (iOS inline-nav
-    // behaviour). Shared list state so the bar (a Scaffold sibling) can observe it.
-    val listState = rememberLazyListState()
-    val topBarScrolled by remember {
-        derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 6 }
-    }
-
-    Box(modifier = Modifier.fillMaxSize().background(canvasBrush)) {
-        Scaffold(
-            containerColor = Color.Transparent,
-            topBar = {
-                SummaryTopBar(
-                    onNavigateToProfile = onNavigateToProfile,
-                    onNavigateToSelection = onNavigateToSelection,
-                    selectionsEmpty = selections.isEmpty(),
-                    userInitial = uiState.userInitial,
-                    photoUrl = uiState.photoUrl,
-                    scrolled = topBarScrolled,
-                )
-            }
-        ) { padding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            ) {
+        }
+    ) { padding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(padding)
+        ) {
             // Discreet theme toggle pinned bottom-right, truly at the screen's
             // end — the daily-use light/dark/system shortcut (the full picker
             // lives in Profile → Appearance). NOTE: the Scaffold content
@@ -216,7 +187,6 @@ fun SummaryScreen(
                         }
                     ) {
                         LazyColumn(
-                            state = listState,
                             modifier = Modifier
                                 .fillMaxSize()
                                 // iOS rubber-band: the WHOLE screen follows the pull,
@@ -228,8 +198,8 @@ fun SummaryScreen(
                                     val f = pullState.distanceFraction
                                     translationY = (f / (1f + 0.5f * f)) * 72.dp.toPx()
                                 },
-                            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 28.dp),
-                            verticalArrangement = Arrangement.spacedBy(22.dp)
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(20.dp)
                         ) {
                             // SummaryHeader (greeting + "Live · N boards") intentionally
                             // removed to match the redesigned Android home — the top-bar
@@ -305,7 +275,6 @@ fun SummaryScreen(
                         )
                     )
             )
-            }
         }
     }
 }
@@ -317,14 +286,11 @@ private fun SummaryTopBar(
     selectionsEmpty: Boolean,
     userInitial: String = "?",
     photoUrl: String? = null,
-    scrolled: Boolean = false,
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val onPrimary = MaterialTheme.colorScheme.onPrimary
     val onBackground = MaterialTheme.colorScheme.onBackground
-    val hairlineAlpha by animateFloatAsState(if (scrolled) 1f else 0f, tween(220), label = "topbar_hairline")
-    Column {
-        CenterAlignedTopAppBar(
+    CenterAlignedTopAppBar(
         title = {
             // Single-line brand lockup matching the redesigned Android home.
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
@@ -383,16 +349,10 @@ private fun SummaryTopBar(
             }
         },
         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-            containerColor = Color.Transparent,
+            containerColor = MaterialTheme.colorScheme.background,
             titleContentColor = MaterialTheme.colorScheme.onBackground
         )
     )
-        // Hairline separator fades in only once content scrolls under the bar.
-        Box(
-            Modifier.fillMaxWidth().height(1.dp)
-                .background(onBackground.copy(alpha = 0.08f * hairlineAlpha))
-        )
-    }
 }
 
 @Composable

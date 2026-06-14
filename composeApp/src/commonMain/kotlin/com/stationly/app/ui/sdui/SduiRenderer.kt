@@ -20,6 +20,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -32,14 +33,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.stationly.app.ui.theme.TflAmber
 import com.stationly.core.model.sdui.SduiAppComponent
 
-private val Surface1 = Color(0xFF141414)
-private val White90 = Color.White.copy(alpha = 0.90f)
-private val White55 = Color.White.copy(alpha = 0.55f)
-private val White25 = Color.White.copy(alpha = 0.25f)
-private val White08 = Color.White.copy(alpha = 0.08f)
+// Theme-aware so SDUI content flips correctly in light/dark — matches Android's
+// SduiComponentRenderer.kt exactly (was hardcoded dark on iOS, broke light mode).
+private val Surface1 @Composable get() = MaterialTheme.colorScheme.surface
+private val White90  @Composable get() = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.90f)
+private val White55  @Composable get() = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+private val White25  @Composable get() = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f)
+private val White08  @Composable get() = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
 
 /**
  * Renders any SduiAppComponent in the profile/about SDUI context.
@@ -70,7 +72,7 @@ private fun SduiText(component: SduiAppComponent.Text) {
         "title"    -> Triple(White90, 20.sp, FontWeight.Bold)
         "subtitle" -> Triple(White55, 16.sp, FontWeight.SemiBold)
         "caption"  -> Triple(White25, 12.sp, FontWeight.Normal)
-        "amber"    -> Triple(TflAmber, 16.sp, FontWeight.SemiBold)
+        "amber"    -> Triple(MaterialTheme.colorScheme.primary, 16.sp, FontWeight.SemiBold)
         else       -> Triple(White55, 14.sp, FontWeight.Normal)
     }
     val align = when (component.textAlign) {
@@ -105,7 +107,7 @@ fun SduiCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             component.title?.let {
-                Text(it, color = if (component.style == "brand") TflAmber else White90,
+                Text(it, color = if (component.style == "brand") MaterialTheme.colorScheme.primary else White90,
                     fontWeight = FontWeight.Bold, fontSize = 17.sp)
             }
             component.body?.let {
@@ -174,8 +176,8 @@ private fun SduiButton(component: SduiAppComponent.Button, onAction: (String) ->
             enabled = isEnabled,
             modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, if (isEnabled) TflAmber.copy(alpha = 0.5f) else White08),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = TflAmber)
+            border = BorderStroke(1.dp, if (isEnabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else White08),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary)
         ) { Text(component.label, fontWeight = FontWeight.SemiBold) }
 
         "ghost" -> TextButton(
@@ -198,7 +200,7 @@ private fun SduiButton(component: SduiAppComponent.Button, onAction: (String) ->
             enabled = isEnabled,
             modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = TflAmber, contentColor = Color.Black)
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary)
         ) { Text(component.label, fontWeight = FontWeight.Bold) }
     }
 }
@@ -211,12 +213,12 @@ private fun SduiAnnouncementBanner(
     val borderColor = when (component.variant) {
         "warning" -> Color(0xFFFFB300).copy(alpha = 0.5f)
         "tip"     -> Color(0xFF4CAF50).copy(alpha = 0.5f)
-        else      -> TflAmber.copy(alpha = 0.3f)
+        else      -> MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
     }
     val accentColor = when (component.variant) {
         "warning" -> Color(0xFFFFB300)
         "tip"     -> Color(0xFF4CAF50)
-        else      -> TflAmber
+        else      -> MaterialTheme.colorScheme.primary
     }
     Surface(
         color = Surface1,

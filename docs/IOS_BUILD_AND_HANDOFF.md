@@ -1,16 +1,18 @@
 # Stationly iOS — Build, Architecture & Handoff
 
 **Audience:** the next engineer/agent picking up the iOS app.
-**Last updated:** 2026-06-14 (Session 8). **Branch:** `ios-parity` (off `dev_25Apr`, nothing merged).
+**Last updated:** 2026-06-14 (Session 9 — Android-parity pivot). **Branch:** `ios-parity` (off `dev_25Apr`, nothing merged).
 **Companion doc:** `docs/IOS_PARITY_PLAN.md` (the phased plan + "⏯️ RESUME HERE").
 
 This doc is the single source of truth for: how the iOS app is structured, how to
 build/run it (including every Xcode-26 gotcha we hit), what's been ported, how FCM
 and SDUI work on iOS, and what remains.
 
-> **➡️ FRESH AGENT: start at §7g (Session 8, 2026-06-14)** — latest state (the
-> dot-matrix board font + the in-progress home-screen polish); then §7f (Session
-> 6) for the deploy runbook context, the owner's hard constraint (no `android/`,
+> **➡️ FRESH AGENT: start at §7h (Session 9, 2026-06-14) — the Android-PARITY
+> pivot** (iOS must be identical to Android, SDUI-driven; several Session-8
+> changes were reverted as divergences, and there's a queued DEFERRED list of
+> owner feedback). Then §7g (Session 8) for the changes that survived, then §7f
+> (Session 6) for the deploy runbook context, the owner's hard constraint (no `android/`,
 > no shared commonMain edits — note: `composeApp` _is_ the iOS app, edit freely;
 > only the `android/` module is off-limits), the
 > exact working-tree status (UNCOMMITTED changes!), and the pending
@@ -1011,6 +1013,78 @@ so from then on `cd iosApp && ./xcodegen.sh` IS required before `xcodebuild`
   fix [ProfileUiState/ViewModel/Screen + SummaryViewModel]; (3) native pull-refresh
   + Bevel home pass [SummaryScreen.kt]; (4) widget dot-matrix font
   [WidgetViews.swift + project.yml + StationlyWidget/dot_matrix.ttf]; (5) docs.
+
+## 7h. Session 9 (2026-06-14, cont.) — the Android-PARITY pivot
+
+**The north star clarified mid-session and OVERRIDES the Session-8 "Bevel"
+framing:** iOS must be an **identical port of Android** (look + behaviour) on iOS
+infrastructure, **all SDUI-driven**. `android/` is the source of truth — **match
+it, do not invent**. This reverted several Session-8 changes that were
+divergences. (Owner, verbatim: _"the whole goal is to make the same looking /
+identical looking and working app as we do in android but in ios infrastructure"_.)
+
+### Reverted — they were divergences from Android
+- **DotGothic16 dot-matrix board font (#1).** Android's board uses **no special
+  font**: system font everywhere + `FontFamily.Monospace` ONLY on the hero
+  countdown number (`android/.../summary/components/Board.kt:921`), and the
+  dot-matrix panel is `res/layout/widget_departure_board.xml` (system font, not
+  bundled, not SDUI-driven). So `Board.kt` + `WidgetViews.swift` were restored
+  from `c826688`; `dot_matrix.ttf` (both copies), `licenses/DotGothic16-OFL.txt`,
+  and the widget `UIAppFonts` (project.yml) all removed.
+  `docs/BOARD_DOTMATRIX_FONT.md` kept but banner-marked **REVERTED**.
+- **Bevel home gradient (#4).** Owner disliked the "faded black" top wash; the
+  whole Bevel pass (gradient canvas, transparent Scaffold/top-bar, scroll
+  hairline, spacing tweaks) reverted in `SummaryScreen.kt` — Android home has none
+  of it. (The Cupertino pull-to-refresh #3 was KEPT, see below.)
+- **`StationlyType` scale.** A type-scale object Android doesn't have. Removed from
+  `Type.kt`; **kept `BodyFamily`** (Android HAS it). Type stays inline
+  per-component, matching Android's structure.
+
+### Android-parity fixes that LANDED
+- **SDUI renderer light/dark** (`ui/sdui/SduiRenderer.kt`) — was hardcoded dark
+  (`Color(0xFF141414)`, `Color.White.copy(...)`); now **theme-aware**
+  (`MaterialTheme.colorScheme.surface`/`onSurface`/`primary`) **exactly like
+  Android's `ui/common/SduiComponentRenderer.kt`**. Fixes **light mode** for the
+  Profile About cards / link rows / announcements / SDUI buttons (they stayed
+  dark-on-light before). Primary SDUI button text → `onPrimary`.
+- **Board dot-to-dot** (`Board.kt`) aligned to `widget_departure_row.xml` +
+  `widget_departure_board.xml`:
+  - Row padding **4dp horizontal / 0 vertical** (was 6/3 — the "too much padding /
+    stretched" complaint). Station/header → 2dp.
+  - Destination weight **Normal** (was Medium; Android row has no `textStyle`).
+  - ETA: bold **DEFAULT font** (removed `FontFamily.Monospace` — monospace bold
+    read heavier than Android; this was the "Due/5 min looks bold" complaint).
+  - Footer logo **22dp** (was 20; Android `stationly_logo` ImageView = 22dp).
+  - "Due" stays **amber** (removed the client `#FF5252`; Android = `etaColor ?:
+    tfl_amber`).
+- **Widget logo** 16/19 → **22** (Android = 22dp).
+
+### KEPT from Session 8 (iOS-correctness, NOT divergence)
+- **Profile "User"-flash fix (#2)** — an iOS-only auth race (Android has none);
+  poll + skeleton. Makes iOS *behave* like Android (no broken "User").
+- **Pull-to-refresh Cupertino indicator (#3)** — ⚠️ a **mild divergence** (Android
+  uses Material pull-refresh). Owner asked to fix the iOS look earlier; flag for a
+  parity decision if strict Android-matching is wanted.
+
+### DEFERRED — owner feedback, queued (TOP of the next session)
+1. **Widget rows stretch to fill** — `LitCell` uses `.frame(maxHeight: .infinity)`
+   so cells expand to fill the canvas; Android rows are text-height
+   (`rows_container` weight=1, each row `wrap_content`). Structural — do carefully
+   (the `maxHeight` was tuned to avoid a "crumbled" look; see WidgetViews comment).
+2. **systemSmall (2×2) widget footer overlap** — the centered `LiveClock` overlaps
+   `LiveAgo` in the narrow canvas. Redesign the small-widget footer.
+3. **Dark-mode bg not fully black to the bottom + theme toggle should pin to the
+   screen bottom** (`SummaryScreen.kt`; Android uses
+   `windowInsetsPadding(WindowInsets.navigationBars)` on the toggle, BottomEnd).
+4. **Hero countdown weight** — owner felt it reads bold; Android + iOS are both
+   `FontWeight.Black` 28sp Monospace (code matches) → likely SF-Mono rendering
+   heavier than Android's mono. Revisit if it still looks off on device.
+
+### Build + working tree (Session 9)
+Staging pipeline per §2, **`xcodegen` REQUIRED** (project.yml reverted to drop
+`UIAppFonts`). Built + installed + launched on Nick's iPhone across several
+iterations. The board dot-to-dot build was verified last. **Being committed now**
+(this doc is part of that commit).
 
 ## 8. What's REMAINING (priority order)
 

@@ -44,3 +44,12 @@ val DisplayFamily: FontFamily
         Font(Res.font.inter_tight_extrabold, FontWeight.ExtraBold),
         Font(Res.font.inter_tight_black,     FontWeight.Black),
     ) else FontFamily.Default
+
+/**
+ * BodyFamily — the system face (SF on iOS). Mirrors Android's `BodyFamily =
+ * FontFamily.Default` so body text/labels match Android exactly (system glyphs,
+ * font-scale, RTL). [DisplayFamily] (Inter Tight) carries the brand on the
+ * wordmark/headings, same split as Android. Type sizes/weights stay inline
+ * per-component to match Android's structure (no separate scale object).
+ */
+val BodyFamily: FontFamily = FontFamily.Default
