@@ -141,23 +141,12 @@ fun SummaryScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
-                .padding(padding)
         ) {
-            // Discreet theme toggle pinned bottom-right, truly at the screen's
-            // end — the daily-use light/dark/system shortcut (the full picker
-            // lives in Profile → Appearance). NOTE: the Scaffold content
-            // padding already includes the bottom safe-area inset on iOS, so
-            // adding windowInsetsPadding(navigationBars) here (the Android
-            // placement code) double-applied it and floated the toggle well
-            // above the bottom edge.
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 4.dp)
-                    .zIndex(2f),
-            ) {
-                ThemeToggleButton(compact = true)
-            }
+            // Main content carries the Scaffold's content padding (top bar +
+            // safe-area insets). The theme toggle below is intentionally placed
+            // OUTSIDE this padded box so it can pin to the TRUE screen bottom
+            // instead of floating above the home-indicator inset.
+            Box(modifier = Modifier.fillMaxSize().padding(padding)) {
 
             AnimatedContent(
                 targetState = selections,
@@ -229,6 +218,7 @@ fun SummaryScreen(
                                         onDelete = { if (deletingBoardId == null) viewModel.deleteSelection(selection) },
                                         nextPrediction = selectionPredictions.firstOrNull(),
                                         homeConfig = homeConfig,
+                                        isOnline = !uiState.isBackendOffline,
                                         isDeleting = deletingBoardId == selection.station
                                     )
                                 }
@@ -275,6 +265,23 @@ fun SummaryScreen(
                         )
                     )
             )
+            } // end padded content box
+
+            // Discreet theme toggle pinned to the TRUE screen bottom-right, just
+            // above the home indicator — the daily-use light/dark/system shortcut
+            // (the full picker lives in Profile → Appearance). Matches Android's
+            // BottomEnd + WindowInsets.navigationBars placement. Sits OUTSIDE the
+            // padded content box, so the bottom safe-area inset is applied exactly
+            // once (here) instead of stacking on the Scaffold's content padding.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(end = 6.dp, bottom = 2.dp)
+                    .zIndex(2f),
+            ) {
+                ThemeToggleButton(compact = true)
+            }
         }
     }
 }
