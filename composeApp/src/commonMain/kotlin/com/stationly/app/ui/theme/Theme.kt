@@ -1,6 +1,9 @@
 package com.stationly.app.ui.theme
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -13,6 +16,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
 import com.stationly.core.model.sdui.SduiThemeTokens
 import kotlinx.coroutines.launch
 
@@ -53,10 +58,32 @@ fun StationlyTheme(
         MaterialTheme(
             colorScheme = resolvedTokens.toColorScheme(darkTheme),
             typography  = MaterialTheme.typography,
-            content     = content,
-        )
+        ) {
+            // Edge-to-edge canvas backdrop. The iOS host (ContentView) draws the
+            // Compose surface UNDER the status bar + home-indicator safe areas
+            // (`.ignoresSafeArea()`), but a per-screen Scaffold only paints its
+            // own bounds — so the bottom safe-area strip showed the window
+            // through ("dark bg not black to the bottom"). This fills the whole
+            // window with the theme canvas behind every screen. Theme-aware, so
+            // it follows the light/dark toggle. No-op on Android (composeApp's
+            // androidTarget is unused by the shipped app).
+            Box(modifier = Modifier.fillMaxSize().background(resolvedTokens.canvas)) {
+                content()
+            }
+        }
     }
 }
+
+/**
+ * Whether the active app theme is dark — derived from the resolved canvas
+ * luminance, so it's correct no matter how the theme was chosen (explicit
+ * Light/Dark or System). Use for the occasional light/dark branch that lives
+ * OUTSIDE the Material colour slots (e.g. brand-fixed social buttons, the
+ * dot-matrix line-colour lift). One definition instead of repeating the
+ * `…background.luminance() < 0.5f` check at every call site.
+ */
+@Composable
+fun isDarkTheme(): Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
 @Composable
 fun StationlyThemeHost(content: @Composable () -> Unit) {

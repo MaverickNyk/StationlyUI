@@ -65,7 +65,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -74,6 +73,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.stationly.app.ui.theme.LocalThemeTokens
 import com.stationly.app.ui.theme.TflAmber
+import com.stationly.app.ui.theme.isDarkTheme
+import com.stationly.app.ui.util.BOARD_FALLBACK_ROW_COUNT
+import com.stationly.app.ui.util.BoardFallbackDefaults
+import com.stationly.app.ui.util.BoardFallbackState
+import com.stationly.app.ui.util.computeBoardFallbackState
+import com.stationly.app.ui.util.parseHHmm
+import com.stationly.app.ui.util.resolveBoardFallbackCopy
 import com.stationly.app.ui.util.rememberMinuteTick
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.UserSelection
@@ -84,6 +90,7 @@ import com.stationly.core.util.LegacyRow
 import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.delay
 import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
@@ -127,6 +134,22 @@ fun lineColorForTheme(line: String?, isDark: Boolean): Color {
     return TFL_LINE_COLORS[key] ?: TflAmber
 }
 
+/**
+ * Split a TfL "Severity: Reason" line-status string into its two parts —
+ * `severity to reason`, where reason is null when there's no `:` or it's blank.
+ * One parser for the several places the board needs this split (disruption
+ * banner, status strip, fallback detection, legacy rows).
+ */
+private fun splitLineStatus(lineStatus: String?): Pair<String?, String?> {
+    if (lineStatus == null) return null to null
+    return if (lineStatus.contains(":")) {
+        lineStatus.substringBefore(":").trim() to
+            lineStatus.substringAfter(":").trim().takeIf { it.isNotBlank() }
+    } else {
+        lineStatus.trim() to null
+    }
+}
+
 /** TfL roundel tint per transport mode (used on the dot-matrix station strip). */
 private fun modeRoundelColor(mode: String): Color = when (mode.lowercase()) {
     "tube", "underground" -> Color(0xFFDC241F)
@@ -151,9 +174,10 @@ fun Board(
     onDelete: () -> Unit,
     nextPrediction: PredictionDisplay? = null,
     homeConfig: Map<String, String> = emptyMap(),
+    isOnline: Boolean = true,
     isDeleting: Boolean = false
 ) {
-    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val isDark = isDarkTheme()
     val lineColor = lineColorForTheme(selection.line, isDark)
 
     // Self-tick ETAs each wall-clock minute so "5 min" drops to "4 min" between
@@ -171,15 +195,44 @@ fun Board(
     }
     val effectiveNext = remember(ticked) { StationlyFormatters.sortPredictions(ticked).firstOrNull() }
 
+    // Empty-board fallback message (Offline / Live updates paused / Service
+    // ended for tonight / Disrupted / Nothing departing right now / …) — parity
+    // with Android's Board, which overrides the legacy placeholder rows with
+    // this state machine whenever there are no predictions. SDUI-driven via the
+    // backend `homeConfig` (`board.fallback.*`). iOS uses `isOnline =
+    // !isBackendOffline`; the age-based SIGNAL_LOST also covers a silent drop.
+    val londonTime = remember(nowMin) {
+        Instant.fromEpochMilliseconds(nowMin)
+            .toLocalDateTime(TimeZone.of("Europe/London")).time
+    }
+    val fallbackState = remember(ticked, isOnline, lastUpdated, nowMin, homeConfig, lineStatus, londonTime) {
+        val (sev, reason) = splitLineStatus(lineStatus)
+        computeBoardFallbackState(
+            hasPredictions = ticked.isNotEmpty(),
+            isOnline = isOnline,
+            lastUpdatedMs = lastUpdated,
+            nowMs = nowMin,
+            londonTime = londonTime,
+            lineStatusSeverity = sev,
+            lineStatusReason = reason,
+            signalLostMin = homeConfig["board.fallback.signalLostMin"]?.toLongOrNull()
+                ?: BoardFallbackDefaults.SIGNAL_LOST_MIN,
+            lateNightStart = parseHHmm(homeConfig["board.fallback.lateNightStart"], BoardFallbackDefaults.LATE_NIGHT_START),
+            lateNightEnd = parseHHmm(homeConfig["board.fallback.lateNightEnd"], BoardFallbackDefaults.LATE_NIGHT_END),
+            earlyMorningEnd = parseHHmm(homeConfig["board.fallback.earlyMorningEnd"], BoardFallbackDefaults.EARLY_MORNING_END),
+        )
+    }
+
     val linePrefix = remember(selection.mode, selection.line, homeConfig) {
         StationlyFormatters.formatLinePrefix(selection.mode, selection.line, homeConfig)
     }
 
     val isDisrupted = lineStatus != null && !lineStatus.trim().lowercase().startsWith("good service")
-    val disruptionSeverity = if (isDisrupted && lineStatus?.contains(":") == true)
-        lineStatus.substringBefore(":").trim() else lineStatus?.trim() ?: ""
-    val disruptionReason = if (isDisrupted && lineStatus?.contains(":") == true)
-        lineStatus.substringAfter(":").trim() else ""
+    // Only read when isDisrupted (the banner); splitLineStatus gives the same
+    // severity/reason the old inline parse did for that case.
+    val (parsedSeverity, parsedReason) = splitLineStatus(lineStatus)
+    val disruptionSeverity = parsedSeverity ?: ""
+    val disruptionReason = parsedReason ?: ""
 
     var showFullReason by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -292,6 +345,7 @@ fun Board(
                     lastUpdated = lastUpdated,
                     linePrefix = linePrefix,
                     homeConfig = homeConfig,
+                    fallbackState = fallbackState,
                 )
             }
         }
@@ -344,6 +398,7 @@ private fun DotMatrixPanel(
     lastUpdated: Long,
     linePrefix: String,
     homeConfig: Map<String, String>,
+    fallbackState: BoardFallbackState?,
 ) {
     Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
 
@@ -371,15 +426,29 @@ private fun DotMatrixPanel(
                 }
                 Spacer(Modifier.width(8.dp))
                 Text(
+                    // Match Android widget_departure_board.xml line_name: 16sp bold,
+                    // system font (no letter-spacing).
                     selection.stationName,
                     color = BoardAmber, fontSize = 16.sp, fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.2.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
             }
         }
 
-        // ── Rows (SDUI payload preferred, else legacy processor) ──
+        // ── Rows: empty-board fallback message wins (parity with Android's
+        //    applyBoardFallbackToRows), else the SDUI payload, else the legacy
+        //    processor. The fallback is a bold title + normal detail lines,
+        //    padded to BOARD_FALLBACK_ROW_COUNT so the panel keeps its size. ──
+        val fallbackRows: List<Pair<String, Boolean>>? = remember(fallbackState, homeConfig) {
+            fallbackState?.let { st ->
+                val copy = resolveBoardFallbackCopy(st, homeConfig)
+                buildList {
+                    add(copy.title to true)
+                    copy.detailLines.forEach { add(it to false) }
+                    while (size < BOARD_FALLBACK_ROW_COUNT) add("" to false)
+                }
+            }
+        }
         val rows: List<BoardLine> = remember(sduiPayload, ticked, lineStatus, linePrefix) {
             buildBoardLines(sduiPayload, ticked, selection, lineStatus, linePrefix)
         }
@@ -393,14 +462,31 @@ private fun DotMatrixPanel(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
+            if (fallbackRows != null) {
+                // Departure-row style (15sp, 4dp horizontal pad, centered);
+                // title bold, details normal — like Android's fallback rows.
+                fallbackRows.forEach { (text, bold) ->
+                    ActiveStrip {
+                        Text(
+                            text, color = BoardAmber, fontSize = 15.sp,
+                            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+                            textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 0.dp)
+                        )
+                    }
+                }
+            } else {
             rows.forEach { line ->
                 when (line) {
                     is BoardLine.Header -> ActiveStrip {
                         Text(
+                            // Match Android widget_platform_header.xml: 15sp bold,
+                            // centered, 2dp horizontal padding, system font (no
+                            // letter-spacing — the Android TextView sets none).
                             line.title, color = line.color ?: BoardAmber,
-                            fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.3.sp,
+                            fontSize = 15.sp, fontWeight = FontWeight.Bold,
                             maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp)
                         )
                     }
                     is BoardLine.Departure -> ActiveStrip {
@@ -409,10 +495,11 @@ private fun DotMatrixPanel(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                // Match Android widget_departure_row.xml: destination is
-                                // REGULAR weight (no textStyle), default font.
+                                // Match Android widget_departure_row.xml destination_text:
+                                // 15sp, REGULAR weight (no textStyle), system font (no
+                                // letter-spacing).
                                 line.destination, color = BoardAmber, fontSize = 15.sp,
-                                fontWeight = FontWeight.Normal, letterSpacing = 0.2.sp,
+                                fontWeight = FontWeight.Normal,
                                 modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis
                             )
                             if (line.eta.isNotBlank()) {
@@ -434,6 +521,7 @@ private fun DotMatrixPanel(
                     }
                 }
             }
+            }
         }
 
         // ── Status strip: severity : reason (marquee) ──
@@ -441,8 +529,9 @@ private fun DotMatrixPanel(
         val reason: String
         when {
             lineStatus != null -> {
-                severity = if (lineStatus.contains(":")) lineStatus.substringBefore(":").trim() else lineStatus.trim()
-                reason = if (lineStatus.contains(":")) lineStatus.substringAfter(":").trim() else ""
+                val (s, r) = splitLineStatus(lineStatus)
+                severity = s ?: ""
+                reason = r ?: ""
             }
             lineStatusFailed -> { severity = homeConfig["board.status_label"] ?: "Status"; reason = homeConfig["board.status_failed_label"] ?: "Status unavailable — pull down to retry" }
             else -> { severity = homeConfig["board.good_service_label"] ?: "Good Service"; reason = "" }
@@ -550,7 +639,9 @@ private fun BoardFooter(lastUpdated: Long) {
         // Live clock (center) on its own lit strip, like Android's TextClock
         // with the active-row background.
         Box(modifier = Modifier.background(ActiveRowBg).padding(horizontal = 6.dp)) {
-            Text(clock, color = BoardAmber, fontSize = 19.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+            // Match Android TextClock (widget_departure_board.xml): 19sp bold,
+            // system font — Android's board clock is NOT monospace.
+            Text(clock, color = BoardAmber, fontSize = 19.sp, fontWeight = FontWeight.Bold)
         }
         // X ago (right)
         Text(
@@ -602,8 +693,7 @@ private fun buildBoardLines(
             }
         }
     }
-    val severity = lineStatus?.let { if (it.contains(":")) it.substringBefore(":").trim() else it.trim() }
-    val reason = lineStatus?.let { if (it.contains(":")) it.substringAfter(":").trim().takeIf { r -> r.isNotBlank() } else null }
+    val (severity, reason) = splitLineStatus(lineStatus)
     return GlobalBoardProcessor.prepareLegacyRows(
         ticked, selection.line, true, lineStatusSeverity = severity, lineStatusReason = reason
     ).map { row ->
