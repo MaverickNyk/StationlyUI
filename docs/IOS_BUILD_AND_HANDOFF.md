@@ -1,8 +1,15 @@
 # Stationly iOS — Build, Architecture & Handoff
 
 **Audience:** the next engineer/agent picking up the iOS app.
-**Last updated:** 2026-06-14 (Session 9 — Android-parity pivot). **Branch:** `ios-parity` (off `dev_25Apr`, nothing merged).
-**Companion doc:** `docs/IOS_PARITY_PLAN.md` (the phased plan + "⏯️ RESUME HERE").
+**Last updated:** 2026-06-15. **Branch:** `ios-parity` (off `dev_25Apr`, nothing merged).
+**Companion docs:** `docs/IOS_PARITY_GAP_ANALYSIS.md` (the current gap map + latest
+session state — **READ THAT FIRST**), `docs/IOS_PARITY_PLAN.md` (phased plan).
+
+> **🆕 2026-06-15:** the freshest work + the authoritative "what still differs"
+> list now live in **`docs/IOS_PARITY_GAP_ANALYSIS.md`** — start there (it has a
+> "⏯️ START HERE — current state" block with the uncommitted-file table and the
+> deploy status). This doc remains the source of truth for the **build runbook
+> (§2)** and the architecture/FCM/SDUI deep-dives.
 
 This doc is the single source of truth for: how the iOS app is structured, how to
 build/run it (including every Xcode-26 gotcha we hit), what's been ported, how FCM
