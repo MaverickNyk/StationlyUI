@@ -55,12 +55,17 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.stationly.app.ui.common.AppleLogo
+import com.stationly.app.ui.common.GoogleGLogo
 import com.stationly.app.ui.common.LocalOpenUrl
 import com.stationly.app.ui.theme.LocalThemeTokens
+import com.stationly.app.ui.theme.isDarkTheme
 import com.stationly.core.config.AppConfig
 import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.model.sdui.SduiCondition
@@ -153,22 +158,90 @@ private fun PrimaryButton(text: String, enabled: Boolean = true, modifier: Modif
     ) { Text(text, fontWeight = FontWeight.Bold, fontSize = 15.sp, letterSpacing = 0.3.sp) }
 }
 
+// ── Social sign-in buttons ──────────────────────────────────────────────────
+// The brand glyphs (real 4-colour Google "G", Apple logo) live in
+// `ui/common/BrandGlyphs.kt` so they're reusable and defined once.
+
+/**
+ * Shared full-width social-button scaffold (logo slot + label), so the
+ * brand-specific buttons below don't duplicate the `Button` + `Row` geometry.
+ * [leading] receives the resolved content colour, so a tintable glyph (Apple)
+ * can match the label while a fixed-colour glyph (Google "G") just ignores it.
+ */
 @Composable
-private fun GoogleButton(label: String, onClick: () -> Unit) {
-    // Google brand colours are fixed — white bg, near-black text, in both themes.
+private fun SocialSignInButton(
+    label: String,
+    container: Color,
+    content: Color,
+    onClick: () -> Unit,
+    height: Dp = 54.dp,
+    elevation: Dp = 0.dp,
+    border: androidx.compose.foundation.BorderStroke? = null,
+    labelWeight: FontWeight = FontWeight.SemiBold,
+    labelSize: TextUnit = 15.sp,
+    leading: @Composable (content: Color) -> Unit,
+) {
     Button(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().height(54.dp),
+        modifier = Modifier.fillMaxWidth().height(height),
         shape = RoundedCornerShape(14.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF1F1F1F)),
-        elevation = ButtonDefaults.buttonElevation(0.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF747775).copy(0.20f))
+        colors = ButtonDefaults.buttonColors(containerColor = container, contentColor = content),
+        elevation = ButtonDefaults.buttonElevation(
+            defaultElevation = elevation,
+            pressedElevation = (elevation - 2.dp).coerceAtLeast(0.dp),
+        ),
+        border = border,
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.Black, fontSize = 18.sp)
+            leading(content)
             Spacer(Modifier.width(10.dp))
-            Text(label, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            Text(label, fontWeight = labelWeight, fontSize = labelSize)
         }
+    }
+}
+
+/**
+ * PRIMARY action. Apple HIG: white button on dark backgrounds, black on light —
+ * i.e. always the MAXIMUM-contrast button against the canvas, so it reads as
+ * primary in both themes (a black button blended into the near-black canvas and
+ * read as secondary). Taller + bold + a lift shadow reinforce the primacy.
+ */
+@Composable
+private fun AppleButton(label: String, onClick: () -> Unit) {
+    val isDark = isDarkTheme()
+    SocialSignInButton(
+        label = label,
+        container = if (isDark) Color.White else Color.Black,
+        content = if (isDark) Color.Black else Color.White,
+        onClick = onClick,
+        height = 56.dp,
+        elevation = 3.dp,
+        labelWeight = FontWeight.Bold,
+        labelSize = 16.sp,
+    ) { content ->
+        // Apple mark optically sits low; nudge up 1dp so it centres with text.
+        Icon(AppleLogo, null, tint = content, modifier = Modifier.size(19.dp).offset(y = (-1).dp))
+    }
+}
+
+/**
+ * SECONDARY to Apple. On dark themes, Google's dark-brand button (dark surface +
+ * white text + colour "G") so it recedes below the white Apple primary; on light
+ * themes the standard white button. The colour "G" is brand-fixed either way.
+ */
+@Composable
+private fun GoogleButton(label: String, onClick: () -> Unit) {
+    val isDark = isDarkTheme()
+    SocialSignInButton(
+        label = label,
+        container = if (isDark) Color(0xFF1C1C1E) else Color.White,
+        content = if (isDark) Color.White else Color(0xFF1F1F1F),
+        onClick = onClick,
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp, if (isDark) Color.White.copy(0.14f) else Color(0xFF747775).copy(0.22f),
+        ),
+    ) { _ ->
+        androidx.compose.foundation.Image(imageVector = GoogleGLogo, contentDescription = null, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -630,7 +703,7 @@ private fun FormScreenContent(
 
 // ── Landing ────────────────────────────────────────────────────────────────────
 @Composable
-private fun LandingContent(onGoogleClick: () -> Unit, onEmailClick: () -> Unit, onRegisterClick: () -> Unit) {
+private fun LandingContent(onAppleClick: () -> Unit, onGoogleClick: () -> Unit, onEmailClick: () -> Unit, onRegisterClick: () -> Unit) {
     var showMoreOptions by remember { mutableStateOf(false) }
     val chevronRotation by animateFloatAsState(if (showMoreOptions) 180f else 0f, label = "chevron")
 
@@ -649,6 +722,10 @@ private fun LandingContent(onGoogleClick: () -> Unit, onEmailClick: () -> Unit, 
         FeatureBullets()
 
         Spacer(Modifier.weight(0.55f))
+        // Primary: Sign in with Apple (iOS-native first), then Google. Email +
+        // "create account" stay tucked behind the "other ways" expander.
+        AppleButton("Continue with Apple", onAppleClick)
+        Spacer(Modifier.height(12.dp))
         GoogleButton("Continue with Google", onGoogleClick)
         Spacer(Modifier.height(12.dp))
 
@@ -852,6 +929,7 @@ fun LoginScreen(
     onNavigateToRegister: () -> Unit = {},
     onNavigateToForgotPassword: () -> Unit = {},
     onGoogleSignIn: (() -> Unit)? = null,
+    onAppleSignIn: (() -> Unit)? = null,
     resetOobCode: String? = null,
     showPasswordResetSuccess: Boolean = false,
     onPasswordResetBannerShown: () -> Unit = {},
@@ -875,6 +953,13 @@ fun LoginScreen(
     fun launchGoogle() {
         if (onGoogleSignIn != null) onGoogleSignIn.invoke()
         else viewModel.onGoogleSignInInteractive(onNavigateToSummary)
+    }
+
+    // Sign in with Apple — UI is in place; the ASAuthorization flow (via the
+    // Swift AuthBridge → Firebase OAuth credential) is wired later. For now this
+    // is a no-op unless a host passes onAppleSignIn. See IOS_PARITY_GAP_ANALYSIS.md.
+    fun launchApple() {
+        onAppleSignIn?.invoke()
     }
 
     // Map SDUI navigation action ids to the nav callbacks.
@@ -913,6 +998,7 @@ fun LoginScreen(
                         )
                     } else {
                         LandingContent(
+                            onAppleClick = ::launchApple,
                             onGoogleClick = ::launchGoogle,
                             onEmailClick = { showEmailForm = true },
                             onRegisterClick = onNavigateToRegister
