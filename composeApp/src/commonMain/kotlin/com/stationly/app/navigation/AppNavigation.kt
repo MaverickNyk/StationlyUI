@@ -23,7 +23,11 @@ fun AppNavigation(
     deepLinkOobCode: String? = null
 ) {
     val navController = rememberNavController()
-    val startDestination = if (startLoggedIn) "summary" else "auth/login"
+    val startDestination = when {
+        !startLoggedIn -> "auth/login"
+        authProvider.isEmailProvider() && !authProvider.isEmailVerified() -> "auth/verify-email"
+        else -> "summary"
+    }
 
     // Deep link: code passed directly from Swift on cold start
     LaunchedEffect(deepLinkOobCode) {
@@ -63,6 +67,11 @@ fun AppNavigation(
                         popUpTo("auth/login") { inclusive = true }
                     }
                 },
+                onNeedsEmailVerification = {
+                    navController.navigate("auth/verify-email") {
+                        popUpTo("auth/login") { inclusive = true }
+                    }
+                },
                 onNavigateToLogin = { navController.navigate("auth/login") },
                 onNavigateToRegister = { navController.navigate("auth/register") },
                 onNavigateToForgotPassword = { navController.navigate("auth/forgot-password") }
@@ -75,6 +84,11 @@ fun AppNavigation(
                 authProvider = authProvider,
                 onNavigateToSummary = {
                     navController.navigate("summary") {
+                        popUpTo("auth/login") { inclusive = true }
+                    }
+                },
+                onNeedsEmailVerification = {
+                    navController.navigate("auth/verify-email") {
                         popUpTo("auth/login") { inclusive = true }
                     }
                 },
@@ -109,6 +123,22 @@ fun AppNavigation(
                 },
                 onNavigateToRegister = {},
                 onNavigateToForgotPassword = {}
+            )
+        }
+
+        composable("auth/verify-email") {
+            com.stationly.app.ui.login.VerifyEmailScreen(
+                authProvider = authProvider,
+                onVerified = {
+                    navController.navigate("summary") {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+                onUseDifferentEmail = {
+                    navController.navigate("auth/login") {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
             )
         }
 

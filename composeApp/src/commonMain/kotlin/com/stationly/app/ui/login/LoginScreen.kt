@@ -925,6 +925,7 @@ fun LoginScreen(
     screenType: String,
     authProvider: PlatformAuthProvider,
     onNavigateToSummary: () -> Unit = {},
+    onNeedsEmailVerification: () -> Unit = {},
     onNavigateToLogin: () -> Unit = {},
     onNavigateToRegister: () -> Unit = {},
     onNavigateToForgotPassword: () -> Unit = {},
@@ -989,7 +990,7 @@ fun LoginScreen(
                                 viewModel.onInputChanged(id, value)
                                 if (uiState.error != null) viewModel.clearError()
                             },
-                            onSubmit = { viewModel.onSubmit("login", onNavigateToSummary) },
+                            onSubmit = { viewModel.onSubmit("login", onNavigateToSummary, onNeedsEmailVerification) },
                             onGoogle = ::launchGoogle,
                             onForgot = onNavigateToForgotPassword,
                             onNavigate = ::onNavigate,
@@ -1013,7 +1014,7 @@ fun LoginScreen(
                     viewModel.onInputChanged(id, value)
                     if (uiState.error != null) viewModel.clearError()
                 },
-                onSubmit = { viewModel.onSubmit("register", onNavigateToSummary) },
+                onSubmit = { viewModel.onSubmit("register", onNavigateToSummary, onNeedsEmailVerification) },
                 onGoogle = ::launchGoogle,
                 onForgot = onNavigateToForgotPassword,
                 onNavigate = ::onNavigate,

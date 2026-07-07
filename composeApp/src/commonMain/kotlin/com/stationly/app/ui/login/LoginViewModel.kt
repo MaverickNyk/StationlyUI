@@ -112,7 +112,12 @@ class LoginViewModel(
         return null
     }
 
-    fun onSubmit(screenType: String, onSuccess: () -> Unit, resetOobCode: String? = null) {
+    fun onSubmit(
+        screenType: String,
+        onSuccess: () -> Unit,
+        onNeedsEmailVerification: () -> Unit,
+        resetOobCode: String? = null
+    ) {
         val inputs = _uiState.value.inputs
         val email    = inputs["email"]?.trim() ?: ""
         val password = inputs["password"] ?: ""
@@ -139,7 +144,22 @@ class LoginViewModel(
             result.fold(
                 onSuccess = {
                     val isAuthFlow = screenType == "login" || screenType == "register"
-                    if (!isAuthFlow || syncUserAndSetupData(provider = "email")) {
+                    if (isAuthFlow) {
+                        if (authProvider.isEmailProvider() && !authProvider.isEmailVerified()) {
+                            // First register path must send verification email automatically
+                            if (screenType == "register") {
+                                runCatching { sduiApi.sendVerificationEmail() }
+                                    .onFailure { runCatching { authProvider.sendEmailVerification() } }
+                            }
+                            _uiState.value = _uiState.value.copy(isAuthenticating = false)
+                            onNeedsEmailVerification()
+                            return@fold
+                        }
+                        if (syncUserAndSetupData(provider = "email")) {
+                            _uiState.value = _uiState.value.copy(isAuthenticating = false)
+                            onSuccess()
+                        }
+                    } else {
                         _uiState.value = _uiState.value.copy(isAuthenticating = false)
                         onSuccess()
                     }
@@ -343,6 +363,77 @@ class LoginViewModel(
         val current = _uiState.value.passwordVisible.toMutableMap()
         current[field] = !(current[field] ?: false)
         _uiState.value = _uiState.value.copy(passwordVisible = current)
+    }
+
+    fun confirmEmailVerified(onAuthSuccess: () -> Unit) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isAuthenticating = true, error = null)
+            if (!authProvider.isLoggedIn()) {
+                _uiState.value = _uiState.value.copy(
+                    isAuthenticating = false,
+                    error = "Your session expired. Please sign in again."
+                )
+                return@launch
+            }
+            try {
+                authProvider.reloadUser().getOrThrow()
+            } catch (e: Exception) {
+                // Ignore reload error, we check verified flag directly next
+            }
+            if (authProvider.isEmailVerified()) {
+                if (syncUserAndSetupData(provider = "email")) {
+                    _uiState.value = _uiState.value.copy(isAuthenticating = false)
+                    onAuthSuccess()
+                }
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    isAuthenticating = false,
+                    error = "Still not verified — tap the link in the email and try again."
+                )
+            }
+        }
+    }
+
+    fun silentlyCheckEmailVerified(onAuthSuccess: () -> Unit) {
+        viewModelScope.launch {
+            if (!authProvider.isLoggedIn()) return@launch
+            try {
+                authProvider.reloadUser().getOrThrow()
+            } catch (e: Exception) {
+                return@launch
+            }
+            if (authProvider.isEmailVerified()) {
+                if (syncUserAndSetupData(provider = "email")) {
+                    _uiState.value = _uiState.value.copy(isAuthenticating = false)
+                    onAuthSuccess()
+                }
+            }
+        }
+    }
+
+    fun resendVerificationEmail() {
+        viewModelScope.launch {
+            try {
+                val sent = sduiApi.sendVerificationEmail()
+                if (!sent) throw IllegalStateException("Backend returned non-200")
+                _uiState.value = _uiState.value.copy(error = null)
+            } catch (e: Exception) {
+                authProvider.sendEmailVerification()
+                    .onSuccess { _uiState.value = _uiState.value.copy(error = null) }
+                    .onFailure {
+                        _uiState.value = _uiState.value.copy(
+                            error = "Couldn't resend right now. Please try again in a minute."
+                        )
+                    }
+            }
+        }
+    }
+
+    fun signOutAfterVerificationFlow(onSignedOut: () -> Unit) {
+        viewModelScope.launch {
+            authProvider.signOut()
+            onSignedOut()
+        }
     }
 
     private fun String.containsAny(vararg keywords: String) =

@@ -80,6 +80,18 @@ class IosPlatformAuthProvider : PlatformAuthProvider {
         return code.ifBlank { null }
     }
 
+    override fun isEmailVerified(): Boolean =
+        defaults.boolForKey(AppGroupKeys.FIREBASE_USER_EMAIL_VERIFIED)
+
+    override fun isEmailProvider(): Boolean =
+        defaults.boolForKey(AppGroupKeys.FIREBASE_USER_IS_EMAIL_PROVIDER)
+
+    override suspend fun sendEmailVerification(): Result<Unit> =
+        issueCommand("sendEmailVerification").map { }
+
+    override suspend fun reloadUser(): Result<Unit> =
+        issueCommand("reloadUser").map { }
+
     /**
      * Writes a command and polls every 250 ms until Swift writes
      * auth_command_done (its very last write for every command). Completion

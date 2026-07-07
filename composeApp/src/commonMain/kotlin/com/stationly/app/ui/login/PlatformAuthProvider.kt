@@ -14,4 +14,8 @@ interface PlatformAuthProvider {
     fun currentUserDisplayName(): String?
     fun currentUserPhotoUrl(): String?
     fun consumePendingResetCode(): String?
+    fun isEmailVerified(): Boolean
+    fun isEmailProvider(): Boolean
+    suspend fun sendEmailVerification(): Result<Unit>
+    suspend fun reloadUser(): Result<Unit>
 }

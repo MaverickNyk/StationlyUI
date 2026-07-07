@@ -11,7 +11,6 @@ struct StationlyApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .preferredColorScheme(.dark)
         }
         // SwiftUI runs the SCENE lifecycle: UIKit never calls the app
         // delegate's applicationDidBecomeActive, so the foreground work that
