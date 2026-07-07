@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import com.stationly.app.platform.performHaptic
+import com.stationly.app.platform.HapticType
 
 class SelectionViewModel(
     private val locationProvider: LocationProvider = platformLocationProvider()
@@ -250,6 +252,7 @@ class SelectionViewModel(
     }
 
     fun onDropdownSelected(componentId: String, value: String) {
+        performHaptic(HapticType.TAP)
         if (value.isBlank()) { removeSelection(componentId); return }
 
         val newSelections = _selections.value.toMutableMap()
@@ -322,6 +325,7 @@ class SelectionViewModel(
     }
 
     fun popLastSelection() {
+        performHaptic(HapticType.TAP)
         val sel = _selections.value
         when {
             "direction" in sel -> removeSelection("direction")
@@ -341,6 +345,7 @@ class SelectionViewModel(
 
         if (mode == null || line == null || direction == null || stationId == null) {
             _uiState.value = state.copy(error = "Please complete all selections")
+            performHaptic(HapticType.ERROR)
             return
         }
 
@@ -358,11 +363,13 @@ class SelectionViewModel(
                 stationLifecycleUseCase.cleanupAll()
                 stationLifecycleUseCase.setupStation(userSelection, isFirstTime = true)
                 _uiState.value = state.copy(isLoading = false, isSaving = false, showSuccessDialog = true)
+                performHaptic(HapticType.SUCCESS)
             } catch (e: Exception) {
                 _uiState.value = state.copy(
                     isLoading = false, isSaving = false,
                     error = "Failed to save: ${e.message}"
                 )
+                performHaptic(HapticType.ERROR)
             }
         }
     }

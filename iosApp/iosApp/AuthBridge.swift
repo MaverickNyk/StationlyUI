@@ -132,6 +132,35 @@ class AuthBridge {
                 ud.set("1", forKey: "auth_operation_success")
                 ud.synchronize()
 
+            case "sendEmailVerification":
+                guard let user = Auth.auth().currentUser else {
+                    writeError("No user signed in")
+                    markDone()
+                    return
+                }
+                do {
+                    try await user.sendEmailVerification()
+                    ud.set("1", forKey: "auth_operation_success")
+                    ud.synchronize()
+                } catch {
+                    writeError(error.localizedDescription)
+                }
+
+            case "reloadUser":
+                guard let user = Auth.auth().currentUser else {
+                    writeError("No user signed in")
+                    markDone()
+                    return
+                }
+                do {
+                    try await user.reload()
+                    persistUserIdentity(Auth.auth().currentUser ?? user)
+                    ud.set("1", forKey: "auth_operation_success")
+                    ud.synchronize()
+                } catch {
+                    writeError(error.localizedDescription)
+                }
+
             default:
                 writeError("Unknown command: \(verb)")
             }
@@ -280,6 +309,10 @@ class AuthBridge {
         ud.set(user.displayName,              forKey: "firebase_user_display_name")
         ud.set(user.photoURL?.absoluteString, forKey: "firebase_user_photo_url")
         ud.set(user.uid,                      forKey: "firebase_user_uid")
+        ud.set(user.isEmailVerified,          forKey: "firebase_user_email_verified")
+        
+        let hasPasswordProvider = user.providerData.contains { $0.providerID == "password" }
+        ud.set(hasPasswordProvider,           forKey: "firebase_user_is_email_provider")
 
         // Provider badge label for ProfileScreen
         let rawProvider = user.providerData
@@ -300,7 +333,8 @@ class AuthBridge {
 
     private func clearUserInfo() {
         ["firebase_auth_token", "firebase_user_email", "firebase_user_display_name",
-         "firebase_user_photo_url", "firebase_user_uid", "signin_provider", "member_since"]
+         "firebase_user_photo_url", "firebase_user_uid", "signin_provider", "member_since",
+         "firebase_user_email_verified", "firebase_user_is_email_provider"]
             .forEach { UserDefaults.standard.removeObject(forKey: $0) }
         UserDefaults.standard.synchronize()
     }

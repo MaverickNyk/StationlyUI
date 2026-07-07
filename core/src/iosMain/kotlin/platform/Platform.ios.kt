@@ -70,6 +70,8 @@ object AppGroupKeys {
     // Profile metadata
     const val SIGNIN_PROVIDER         = "signin_provider"
     const val MEMBER_SINCE            = "member_since"
+    const val FIREBASE_USER_EMAIL_VERIFIED = "firebase_user_email_verified"
+    const val FIREBASE_USER_IS_EMAIL_PROVIDER = "firebase_user_is_email_provider"
 
     // Deep link — written by Swift AppDelegate, consumed once by KMP on app start
     const val PENDING_RESET_OOB_CODE  = "pending_reset_oob_code"

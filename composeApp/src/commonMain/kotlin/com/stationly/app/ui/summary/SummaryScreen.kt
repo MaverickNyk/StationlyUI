@@ -218,7 +218,7 @@ fun SummaryScreen(
                                         onDelete = { if (deletingBoardId == null) viewModel.deleteSelection(selection) },
                                         nextPrediction = selectionPredictions.firstOrNull(),
                                         homeConfig = homeConfig,
-                                        isOnline = !uiState.isBackendOffline,
+                                        isOnline = uiState.isOnline,
                                         isDeleting = deletingBoardId == selection.station
                                     )
                                 }

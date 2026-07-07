@@ -22,6 +22,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import com.stationly.app.platform.performHaptic
+import com.stationly.app.platform.HapticType
+import com.stationly.app.platform.getConnectivityFlow
 
 class SummaryViewModel(
     private val selectionRepository: SelectionRepository = SelectionRepository(
@@ -91,6 +94,11 @@ class SummaryViewModel(
         viewModelScope.launch { fetchAnnouncement() }
         viewModelScope.launch { fetchHomeConfig() }
         viewModelScope.launch { loadUserInitial(); registerDeviceSession() }
+        viewModelScope.launch {
+            getConnectivityFlow().collect { online ->
+                _uiState.value = _uiState.value.copy(isOnline = online)
+            }
+        }
         viewModelScope.launch {
             selectionRepository.initialize()
             selectionRepository.selections.value.firstOrNull()?.let { refreshDataIfStale(it) }
@@ -280,6 +288,7 @@ class SummaryViewModel(
     }
 
     fun refreshAll() {
+        performHaptic(HapticType.TAP)
         _uiState.value = _uiState.value.copy(isRefreshing = true)
         viewModelScope.launch {
             try {
@@ -290,11 +299,13 @@ class SummaryViewModel(
                 }
                 val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
                 _uiState.value = _uiState.value.copy(isRefreshing = false, lastUpdated = now)
+                performHaptic(HapticType.SUCCESS)
             } catch (_: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isRefreshing = false,
                     isBackendOffline = true
                 )
+                performHaptic(HapticType.ERROR)
                 scheduleAutoRetry()
             }
         }
@@ -327,7 +338,9 @@ class SummaryViewModel(
                         sduiApi.syncStations(uid, mapped)
                     } catch (_: Exception) {}
                 }
+                performHaptic(HapticType.SUCCESS)
             } catch (_: Exception) {
+                performHaptic(HapticType.ERROR)
             } finally {
                 _isDeletingBoard.value = null
             }
