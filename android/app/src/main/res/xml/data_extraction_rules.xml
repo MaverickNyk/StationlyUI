@@ -1,26 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Backup / transfer rules for Android 12+ (android:dataExtractionRules).
+
+  Same policy as backup_rules.xml: restore the user's app data, but never
+  carry Firebase Auth tokens/session across cloud backup OR device-to-device
+  transfer. The user re-authenticates on the new device.
+-->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- Include shared preferences -->
         <include domain="sharedpref" path="." />
-        
-        <!-- Include database files -->
         <include domain="database" path="." />
-        
-        <!-- Exclude cache directories -->
-        <exclude domain="cache" path="." />
-        <exclude domain="no_backup" path="." />
+
+        <exclude domain="sharedpref" path="com.google.firebase.auth.api.Store.xml" />
+        <exclude domain="sharedpref" path="com.google.android.gms.appid.xml" />
+        <exclude domain="sharedpref" path="com.google.android.gms.measurement.prefs.xml" />
     </cloud-backup>
-    
+
     <device-transfer>
-        <!-- Include shared preferences -->
         <include domain="sharedpref" path="." />
-        
-        <!-- Include database files -->
         <include domain="database" path="." />
-        
-        <!-- Exclude cache directories -->
-        <exclude domain="cache" path="." />
-        <exclude domain="no_backup" path="." />
+
+        <exclude domain="sharedpref" path="com.google.firebase.auth.api.Store.xml" />
+        <exclude domain="sharedpref" path="com.google.android.gms.appid.xml" />
+        <exclude domain="sharedpref" path="com.google.android.gms.measurement.prefs.xml" />
     </device-transfer>
 </data-extraction-rules>

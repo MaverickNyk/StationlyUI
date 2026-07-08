@@ -81,6 +81,14 @@
     animation: pulse-glow 2s ease-in-out infinite;
     flex-shrink: 0;
 }
+.launch-badge-green {
+    background: var(--green-dim);
+    border-color: rgba(74, 222, 128, 0.28);
+    color: var(--green);
+}
+.launch-badge-green .launch-dot {
+    background: var(--green);
+}
 
 .hero-subtitle {
     font-size: 1.2rem;

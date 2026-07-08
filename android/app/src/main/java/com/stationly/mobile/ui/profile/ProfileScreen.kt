@@ -86,7 +86,7 @@ private val ProfileAboutFallback: List<SduiAppComponent> = listOf(
             SduiAppComponent.LinkRow(id = "website", title = "Visit Website", subtitle = "stationly.co.uk", url = STATIONLY_WEB_URL, icon = "public"),
             SduiAppComponent.LinkRow(id = "privacy", title = "Privacy Policy", subtitle = "How we handle your data", url = "$STATIONLY_WEB_URL/privacy", icon = "privacy_tip"),
             SduiAppComponent.LinkRow(id = "terms", title = "Terms of Service", subtitle = "Usage terms and conditions", url = "$STATIONLY_WEB_URL/terms", icon = "description"),
-            SduiAppComponent.LinkRow(id = "contact", title = "Contact Us", subtitle = "Questions or feedback", url = "mailto:hello@stationly.co.uk", icon = "email"),
+            SduiAppComponent.LinkRow(id = "contact", title = "Contact Us", subtitle = "Questions or feedback", url = "mailto:info@stationly.co.uk", icon = "email"),
             SduiAppComponent.LinkRow(id = "rate", title = "Rate Stationly", subtitle = "Love the app? Let us know", url = "market://details?id=com.stationly.mobile", icon = "star"),
         )
     )
