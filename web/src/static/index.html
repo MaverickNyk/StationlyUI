@@ -95,7 +95,7 @@
             { "@type": "Question", "name": "How accurate is the departure data?",
               "acceptedAnswer": { "@type": "Answer", "text": "Stationly pulls data directly from TfL Open Data, the same source used by official TfL apps and journey planners. Every board shows exactly when the data was last refreshed." } },
             { "@type": "Question", "name": "Which platforms will Stationly be on?",
-              "acceptedAnswer": { "@type": "Answer", "text": "Stationly is mobile-first, on iOS and Android. Join the waitlist and we will let you know the moment it is available to download." } }
+              "acceptedAnswer": { "@type": "Answer", "text": "Stationly is available now on Android, with the iOS version coming soon-ish. iOS users can join the waitlist to be notified the moment it goes live." } }
           ]
         }
       ]
@@ -143,19 +143,15 @@
                 <div class="container" style="position: relative; z-index: 1;">
                     <div class="hero-inner">
                         <div class="hero-text">
-                            <div class="launch-badge">
-                                <span class="launch-dot"></span>
-                                Launching Summer 2026
-                            </div>
                             <h1 class="gradient-text">The only departure<br>board you need.</h1>
                             <p class="hero-subtitle">Live TfL departures on your home screen. Just glance at your phone. No tapping, no unlocking, no apps to open.</p>
                             <div class="store-badges">
-                                <a href="#" class="store-badge" onclick="openWaitlist(event, 'Google Play')">
+                                <a href="/mobile/app/android" class="store-badge" target="_blank" rel="noopener noreferrer">
                                     <svg class="store-badge-icon" viewBox="0 0 24 24" fill="currentColor">
                                         <path d="M3.18 23.76c.37.2.8.22 1.2.06l11.4-6.58-2.5-2.5-10.1 9.02zM.5 1.5C.19 1.88 0 2.42 0 3.1v17.8c0 .68.19 1.22.5 1.6l.08.08 9.97-9.97v-.24L.58 1.42.5 1.5zM20.3 10.37l-2.65-1.53-2.8 2.8 2.8 2.8 2.67-1.54c.76-.44.76-1.09-.02-1.53zM4.38.18L15.78 6.76l-2.5 2.5L3.18.24C3.58.08 4.01.1 4.38.18z"/>
                                     </svg>
                                     <div class="store-badge-text">
-                                        <span class="store-badge-label">Summer 2026</span>
+                                        <span class="store-badge-label">GET IT ON</span>
                                         <span class="store-badge-name">Google Play</span>
                                     </div>
                                 </a>
@@ -164,7 +160,7 @@
                                         <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
                                     </svg>
                                     <div class="store-badge-text">
-                                        <span class="store-badge-label">Summer 2026</span>
+                                        <span class="store-badge-label">Coming Soon</span>
                                         <span class="store-badge-name">App Store</span>
                                     </div>
                                 </a>
@@ -389,14 +385,14 @@
                 <div class="container">
                     <div class="notify-inner reveal">
                         <div class="notify-glow"></div>
-                        <div class="notify-label">Coming Summer 2026</div>
-                        <h2>Be the first to board.</h2>
-                        <p>Stationly is launching in Summer 2026. Drop your email and we'll let you know the moment doors open.</p>
+                        <div class="notify-label" style="color: var(--green);">Android: Live · iOS: Coming Soon</div>
+                        <h2>Be the first on iOS.</h2>
+                        <p>Stationly is live on Android! iOS is coming soon. Drop your email to get notified the moment it launches.</p>
                         <form class="notify-form" id="notify-form">
                             <input type="email" placeholder="your@email.com" class="notify-input" required>
-                            <button type="submit" class="notify-btn">Notify Me</button>
+                            <button type="submit" class="notify-btn">Join iOS Waitlist</button>
                         </form>
-                        <p class="notify-fine" id="notify-success" style="display:none; color: var(--amber);">You're on the list. We'll be in touch!</p>
+                        <p class="notify-fine" id="notify-success" style="display:none; color: var(--green);">You're on the list. We'll let you know the moment iOS launches!</p>
                     </div>
                 </div>
             </section>
@@ -562,7 +558,7 @@
                                 <span class="faq-chevron">+</span>
                             </button>
                             <div class="faq-answer">
-                                <p>Stationly is mobile-first, on iOS and Android. Join the waitlist and we will let you know the moment it is available to download.</p>
+                                <p>Stationly is available now on Android, with the iOS version coming soon-ish. iOS users can join the waitlist to be notified the moment it goes live.</p>
                             </div>
                         </div>
                         <div class="faq-item">
@@ -590,7 +586,7 @@
             <div class="footer-content">
                 <div class="footer-brand">
                     <div style="font-weight: 800; font-size: 1.2rem; color: white; letter-spacing: -0.02em;">Stationly</div>
-                    <div style="opacity: 0.45; margin-top: 0.4rem; font-size: 0.82rem; line-height: 1.6;">Powered by TfL Open Data.<br>Contains OS data © Crown copyright 2026.</div>
+                    <div style="opacity: 0.45; margin-top: 0.4rem; font-size: 0.82rem; line-height: 1.6;">Powered by TfL Open Data. Contains OS data &copy; Crown copyright 2026.<br>Google Play and the Google Play logo are trademarks of Google LLC. Apple, the Apple logo, and App Store are trademarks of Apple Inc.</div>
                 </div>
                 <div class="footer-links">
                     <a href="#" onclick="switchTab('support')">Contact Us</a>
@@ -611,9 +607,9 @@
     <div class="wl-overlay" id="waitlist-modal" hidden>
         <div class="wl-dialog" role="dialog" aria-modal="true" aria-labelledby="wl-title" aria-describedby="wl-desc">
             <button class="wl-close" type="button" aria-label="Close" onclick="closeWaitlist()">&times;</button>
-            <div class="wl-badge"><span class="launch-dot"></span><span id="wl-store-label">Summer 2026</span></div>
+            <div class="wl-badge"><span class="launch-dot"></span><span id="wl-store-label">iOS · Coming Soon</span></div>
             <h2 class="wl-title" id="wl-title">Be first on board.</h2>
-            <p class="wl-desc" id="wl-desc">Stationly lands on <span id="wl-store-name">the store</span> in Summer 2026. Leave your email and we'll tell you the moment it goes live.</p>
+            <p class="wl-desc" id="wl-desc">iOS is coming soon. Leave your email and we'll let you know the moment it goes live.</p>
             <form class="wl-form" id="waitlist-form" novalidate>
                 <label class="wl-label" for="wl-email">Email address</label>
                 <input class="wl-input" id="wl-email" type="email" name="email" placeholder="you@email.com" autocomplete="email" required>
@@ -766,9 +762,16 @@
             // Tailor copy to the store the user tapped
             var label = document.getElementById('wl-store-label');
             var name = document.getElementById('wl-store-name');
-            if (store === 'App Store') { label.textContent = 'iOS · Summer 2026'; name.textContent = 'the App Store'; }
-            else if (store === 'Google Play') { label.textContent = 'Android · Summer 2026'; name.textContent = 'Google Play'; }
-            else { label.textContent = 'Summer 2026'; name.textContent = 'iOS and Android'; }
+            var desc = document.getElementById('wl-desc');
+            if (store === 'App Store') {
+                label.textContent = 'iOS · Coming Soon';
+                if (name) name.textContent = 'the App Store';
+                if (desc) desc.innerHTML = 'iOS is coming soon. Leave your email and we\'ll let you know the moment it goes live.';
+            } else {
+                label.textContent = 'iOS · Coming Soon';
+                if (name) name.textContent = 'the App Store';
+                if (desc) desc.innerHTML = 'iOS is coming soon. Leave your email and we\'ll let you know the moment it goes live.';
+            }
             // Reset to a clean form state every time it opens
             var form = document.getElementById('waitlist-form');
             form.style.display = '';
