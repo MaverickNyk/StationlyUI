@@ -112,6 +112,7 @@
     filter: blur(55px);
     border-radius: 50%;
     z-index: 0;
+    pointer-events: none;
     animation: pulse-glow 4s ease-in-out infinite;
 }
 .widget-hero-img {
@@ -178,10 +179,12 @@
     transition: background 0.2s var(--ease-out), border-color 0.2s var(--ease-out), transform 0.18s var(--ease-out);
     cursor: pointer;
 }
-.store-badge:hover {
-    background: rgba(255,255,255,0.08);
-    border-color: rgba(255,255,255,0.18);
-    transform: translateY(-2px);
+@media (hover: hover) and (pointer: fine) {
+    .store-badge:hover {
+        background: rgba(255,255,255,0.08);
+        border-color: rgba(255,255,255,0.18);
+        transform: translateY(-2px);
+    }
 }
 .store-badge:active { transform: scale(0.97); }
 .store-badge-icon {
@@ -314,10 +317,12 @@
     padding: 2rem;
     transition: transform 0.28s var(--ease-out), background 0.28s var(--ease-out), border-color 0.28s var(--ease-out);
 }
-.feature-card:hover {
-    transform: translateY(-6px);
-    background: var(--glass-hover);
-    border-color: rgba(255,255,255,0.14);
+@media (hover: hover) and (pointer: fine) {
+    .feature-card:hover {
+        transform: translateY(-6px);
+        background: var(--glass-hover);
+        border-color: rgba(255,255,255,0.14);
+    }
 }
 
 /* Large bento cell: copy on top, real screenshot peeking from the base */
@@ -345,7 +350,9 @@
     box-shadow: 0 -8px 44px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
     transition: transform 0.4s var(--ease-out);
 }
-.feature-card-lg:hover .feature-card-shot img { transform: translateY(-6px); }
+@media (hover: hover) and (pointer: fine) {
+    .feature-card-lg:hover .feature-card-shot img { transform: translateY(-6px); }
+}
 .feature-icon-wrap {
     width: 46px;
     height: 46px;
@@ -416,6 +423,7 @@
     filter: blur(70px);
     border-radius: 50%;
     z-index: 0;
+    pointer-events: none;
     animation: pulse-glow 5s ease-in-out infinite;
 }
 .spotlight-img {
@@ -443,9 +451,11 @@
     transition: transform 0.3s ease, border-color 0.3s ease;
     height: 100%;
 }
-.step-card:hover {
-    transform: translateY(-5px);
-    border-color: rgba(255,255,255,0.15);
+@media (hover: hover) and (pointer: fine) {
+    .step-card:hover {
+        transform: translateY(-5px);
+        border-color: rgba(255,255,255,0.15);
+    }
 }
 .step-num {
     font-size: 3.25rem;
@@ -586,7 +596,9 @@
     white-space: nowrap;
     flex-shrink: 0;
 }
-.notify-btn:hover { background: var(--primary-dark); transform: translateY(-1px); }
+@media (hover: hover) and (pointer: fine) {
+    .notify-btn:hover { background: var(--primary-dark); transform: translateY(-1px); }
+}
 .notify-fine {
     font-size: 0.9rem;
     margin-top: 1rem;
@@ -621,6 +633,7 @@
     filter: blur(60px);
     border-radius: 50%;
     z-index: 0;
+    pointer-events: none;
     animation: pulse-glow 5s ease-in-out infinite;
 }
 
