@@ -150,6 +150,7 @@
     font-size: 0.9rem;
     background: rgba(8, 13, 26, 0.95);
     border-top: 1px solid rgba(255, 255, 255, 0.06);
+    flex-shrink: 0;
 }
 
 .footer-content {
