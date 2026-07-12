@@ -11,6 +11,12 @@ body {
     line-height: 1.6;
     overflow-x: hidden;
     min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+main {
+    flex: 1 0 auto;
 }
 
 h1, h2, h3, h4 {
