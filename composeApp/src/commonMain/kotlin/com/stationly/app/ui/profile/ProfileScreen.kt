@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.stationly.app.ui.common.LoadingOverlay
 import com.stationly.app.ui.common.LocalOpenUrl
 import com.stationly.app.ui.login.PlatformAuthProvider
 import com.stationly.app.ui.theme.DisplayFamily
@@ -244,17 +245,17 @@ fun ProfileScreen(
                 }
             }
 
-            if (uiState.isSigningOut || uiState.isDeletingAccount) {
-                Box(
-                    Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.6f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        CircularProgressIndicator(color = Amber)
-                        Text(if (uiState.isDeletingAccount) "Deleting account…" else "Signing out…", color = White90, fontSize = 14.sp)
-                    }
-                }
-            }
+            // Shared modal overlay (Android parity) — unlike the previous
+            // hand-rolled scrim it CONSUMES all pointer input, so a stray tap
+            // on a station card can't interrupt a destructive auth op mid-call.
+            LoadingOverlay(
+                visible = uiState.isSigningOut,
+                label = "Signing out…",
+            )
+            LoadingOverlay(
+                visible = uiState.isDeletingAccount,
+                label = "Deleting account…",
+            )
         }
     }
 
