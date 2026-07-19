@@ -1,7 +1,9 @@
 # Stationly iOS — Build, Architecture & Handoff
 
 **Audience:** the next engineer/agent picking up the iOS app.
-**Last updated:** 2026-06-15. **Branch:** `ios-parity` (off `dev_25Apr`, nothing merged).
+**Last updated:** 2026-07-20 (see the gap doc's "🆕 2026-07-20 SESSION" block —
+Apple Sign-In dormant integration, dream/screensaver full port, tick-contract
+port; branch rebased onto latest master). **Branch:** `ios-parity`.
 **Companion docs:** `docs/IOS_PARITY_GAP_ANALYSIS.md` (the current gap map + latest
 session state — **READ THAT FIRST**), `docs/IOS_PARITY_PLAN.md` (phased plan).
 

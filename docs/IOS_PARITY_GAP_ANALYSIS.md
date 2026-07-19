@@ -1,10 +1,66 @@
-# iOS ↔ Android Parity — Deep Gap Analysis (2026-06-15)
+# iOS ↔ Android Parity — Deep Gap Analysis (2026-06-15, updated 2026-07-20)
 
 > **Read this first if you are continuing the iOS-parity effort.** It is the
 > single, current map of *what still differs* between the live Android app
 > (`android/`, the source of truth) and the iOS Compose-Multiplatform port
 > (`composeApp/` + `iosApp/`). It supersedes the scattered "REMAINING" notes in
 > `IOS_BUILD_AND_HANDOFF.md` §8 (those are still accurate but less complete).
+
+---
+
+## 🆕 2026-07-20 SESSION — full-component sweep + DREAM PORT (read this block first)
+
+Branch `ios-parity` was **rebased onto latest `origin/master`** (0 behind) and
+force-pushed. Then a fresh file-by-file sweep of EVERY Android component
+(owner ask: *"anything in Android should look alike and match nicely on iOS —
+dreams, widget, fonts, navigation"*). Zero-regression gate: `android/` and
+`core/commonMain` untouched; `:android:app:compileProdReleaseKotlin` compiles
+green.
+
+**Landed this session (all `composeApp`/`iosApp` only):**
+
+| Item | Status |
+|---|---|
+| P1 Email verification · P2 ConnectivityMonitor · P4 Haptics · BUG-1 status bar | ✅ were closed by the Jul-7 commit (`1d22fd3`, now `f25f1fd` post-rebase) — §3/§4 below are STALE for these |
+| **P1b Sign in with Apple — full integration** | ✅ CODE COMPLETE + dormant: `AuthBridge.signInWithApple` (ASAuthorizationController + nonce + Firebase `appleCredential`) behind the `appleSignInInteractive` command; `signInWithAppleInteractive()` through `PlatformAuthProvider`/`LoginViewModel` (provider "apple", same post-login sync as Google); LoginScreen default-wires the button. **Entitlement NOT added** — personal team cannot provision it (same wall as push; see project.yml UNBLOCK). Until then the button shows a friendly "isn't available" banner. Firebase console Apple provider must be enabled when unblocking. |
+| **P5 board-delete LoadingOverlay** | ✅ ported (`ui/common/LoadingOverlay.kt`) + wired in SummaryScreen (zIndex 10, "Deleting board…") |
+| **Login-path ServiceUnavailableScreen** | ✅ real gap — Android showed the branded full-screen state on login backend-offline, iOS only suppressed the error. Ported Android's component to `ui/common/ServiceUnavailableScreen.kt` (brand row via StationlyLogo, CloudOff, context copy) and wired it in LoginScreen (`login_sync`) AND SelectionScreen (replacing the old divergent private version). |
+| **🌙 DREAM / SCREENSAVER — full port** (was "skipped for v1"; owner reversed) | ✅ `ui/dream/` (9 files): DreamTheme, DreamSettings (+`DreamPrefsBackend` app-group prefs — survives logout clearAll like Android's separate prefs file), DreamData, DreamClock (digital + analog + glow), DreamWeatherStrip + WeatherStation (met.no via NSURLSession expect/actual, last-known `CLLocationManager().location` only, London fallback), DreamSummary (StationHeader/NextTrainHero/EmptyStatePanel), **DreamBoard as pure Compose** (same `prepareLegacyRows` + fallback + StaleColor ago + ROW_BASE 14sp × textScale as Android's XML board), DreamHost (30:70 / 35:65 layouts, DreamDims, FreshDataNotifier-driven refresh — no polling), DreamFullscreenBoard (symmetric cutout mirroring, 2.8× cap, portrait penalty), DreamSettingsScreen (full picker port: big preview, layout chips, theme tiles, clock tiles, station picker). **iOS infra differences (no system screensaver API):** hosted as routes `dream/settings` + `dream`; entry = Profile → "Screensaver" row; `KeepScreenAwake` (`idleTimerDisabled`) while composed; exit = tap canvas → "Done" pill (+ back-swipe). Android's FCM broadcast refresh ≙ `FreshDataNotifier.events`. |
+| **Prediction tick contract** | ✅ ported Android `ui/util/PredictionTicker.kt` (30s grace + per-platform monotonic bump) and switched the home Board's inline tick to it — the bump was MISSING on iOS (two same-platform trains could share a label). Swift widget already mirrors it. |
+| **composeApp android target un-broken** | ✅ was failing to compile (missing Jul-7 interface methods in `AndroidPlatformAuthProvider`; orphan `AndroidLocationProvider` + wrong-package actual). Fixed/removed — target compiles again (it ships nothing; it's a verification surface). |
+
+**Sweep verdicts (no action needed):**
+- **Fonts** — parity ✅ (DisplayFamily Inter Tight: GMS-downloadable on Android, bundled TTFs on iOS; BodyFamily system on both).
+- **Navigation routes** — parity ✅ (`webview/` route intentionally replaced by SFSafari). **Transitions:** Android NavHost uses defaults; iOS adds a UIKit-style push/pop slide — kept as an iOS-native divergence (same class as the owner-approved Cupertino pull-refresh). ⚠️ Owner may veto: delete the enter/exit/pop transition args in `AppNavigation.kt` to match Android's default fade.
+- **ScrollWrap / StationStripFitter** — Android View-system workarounds for the widget XML; iOS's pure-Compose board scrolls/ellipsizes natively. Not gaps.
+- **StagingBanner / UrlOpener / WebViewScreen / NotificationPermissionEffect / AuthState** — equivalents exist or intentionally omitted (see §5).
+- **SduiCache / HomeConfigStore** — Android caches SDUI strings on disk for instant cold-start + cold surfaces; iOS fetches per-screen (dream + dream-settings fetch best-effort with hardcoded fallbacks). A disk cache port is a nice-to-have: **P6 (open)**.
+- **ModeColors / BackendErrorUtil / AppConstants** — tiny Android-only helpers; iOS covers via ModeIconStore tint fallback + `friendlyAuthError`. Not user-visible gaps.
+
+**Late-session additions (same day):**
+- **P6 CLOSED** — `ui/util/HomeConfigCache.kt` (Android `HomeConfigStore`
+  analogue): SDUI home-config strings persist via `Platform.storageManager`;
+  SummaryViewModel + DreamHost + DreamSettingsScreen read cache-first then
+  refresh. Cold launches render last-synced SDUI copy instantly.
+- **Widget ago staleness colour** — `LiveAgo` now walks amber→grey→red
+  (`StaleColor` thresholds 60s/180s) per timeline entry, matching the Android
+  widget's AlarmManager colour fades. Was static amber.
+
+**SDUI contract (owner principle: the apps are SDUI-driven everywhere;
+stationly-backend is the SDUI backend):** every label in the dream port reads
+the SAME home-config keys Android's dream reads (`dream.settings.title`,
+`dream.settings.section.theme/clock/station`,
+`dream.settings.layout.<storedAs>.name/.desc`,
+`dream.settings.theme.<storedAs>`, `dream.settings.clock.<storedAs>`,
+`dream.settings.station.auto.title/subtitle`, `board.fallback.*`) — backend
+copy changes flow to BOTH platforms; hardcoded strings are offline fallbacks
+only. NEW iOS-only keys the backend may want to add:
+`profile.screensaver.title` / `profile.screensaver.subtitle` (Profile entry
+row) and `dream.settings.start` (Start button) — safe fallbacks until then.
+
+**Still open after this session:** Apple/push entitlements (paid team) ·
+on-device QA of everything above (device was unreachable this session — see
+§8b checklist).
 
 **North star (owner, unchanged):** iOS must be an *identical* port of Android
 (look + behaviour) on iOS infrastructure, **all SDUI-driven**. Match `android/`,
@@ -47,10 +103,9 @@ New files: `ui/util/BoardFallback.kt`, `ui/common/BrandGlyphs.kt`,
 - Everything **compiles green** (`:composeApp:compileKotlinIosSimulatorArm64`); each
   commit is its own compiling snapshot.
 
-**Top of the backlog (see §3):** P1 email-verification flow · **P1b Apple
-Sign-In *integration*** (button UI is done, the `ASAuthorization` plumbing is not)
-· P2 real `NWPathMonitor` offline signal · P4 haptics. Plus **BUG-1** (§4):
-`.preferredColorScheme(.dark)` breaks the light theme's status bar.
+**Top of the backlog — SUPERSEDED, see the 2026-07-20 block above.** (P1, P1b,
+P2, P4 and BUG-1 are all closed; remaining: P6 SDUI disk cache, paid-team
+entitlements, on-device QA §8b.)
 
 ---
 
@@ -331,3 +386,36 @@ team `6D3CXG8U25`, Apple ID `nikhilkumar11896@gmail.com`. Unlock the phone befor
 6. **Login landing (NEW):** the **Apple** button (black) sits above **Google**
    (white, real 4-colour "G"); both render their logos crisply, no flat "G".
    Tapping Apple is a no-op for now (integration deferred). Check both themes.
+
+## 8b. On-device QA checklist for the 2026-07-20 session (device was offline)
+1. **Screensaver entry:** Profile shows a "Screensaver" row (amber moon icon)
+   above About → opens the settings screen (big 16:9 preview, layout chips,
+   theme tiles, clock tiles, station picker when >1 board, amber **Start
+   screensaver** button).
+2. **Dream — Clock + Board:** Start → clock cluster (digital by default) +
+   date/weather strip + station header + NEXT DEPARTURE hero + dot-matrix
+   board. Portrait stacks 35:65; rotate for 30:70. Rows tick per minute, board
+   matches the home board's fonts dot-to-dot at larger scale, ago-colour
+   amber→grey→red with age. Screen must NOT auto-lock while the dream is up
+   (and must auto-lock again after leaving).
+3. **Dream — Fullscreen Board:** switch layout → amber-bordered signage card
+   centred on black, built-in ticking clock in the footer, symmetric notch
+   margins in landscape.
+4. **Dream themes:** System/Light/Dark tiles change the canvas (board card
+   stays dark). Fullscreen pins dark and hides the theme section.
+5. **Dream exit:** tap canvas → "Done" pill appears top-right (auto-hides
+   ~4s); tapping it (or back-swipe) exits.
+6. **Dream refresh:** while the dream is up, a pull-refresh-driven or FCM
+   data change on another surface should update the rows (FreshDataNotifier).
+7. **Weather chip:** temperature + emoji under the clock (London fallback when
+   no location permission). May take a few seconds on first entry.
+8. **Apple Sign-In (dormant):** sign out → tap "Continue with Apple" → expect
+   the friendly "Sign in with Apple isn't available right now…" banner (no
+   crash, no hang) — full flow unblocks with the paid-team entitlement.
+9. **Login offline state:** airplane-mode a signed-out app → login shows the
+   branded full-screen "Can't reach servers" (STATIONLY brand row, CloudOff,
+   Try again) instead of a bare form; Retry works after reconnecting.
+10. **Board delete:** deleting a board shows the modal "Deleting board…"
+    overlay that blocks taps until the backend unsubscribe completes.
+11. **Same-platform label bump:** a station with two imminent trains on ONE
+    platform must never show duplicate ETAs ("Due, Due" → "Due, 1 min").
