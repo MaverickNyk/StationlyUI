@@ -189,6 +189,8 @@ struct StationlyMark: View {
 /// frame keeps "M:SS ago" together as one unit.
 private struct LiveAgo: View {
     let data: WidgetData
+    /// The timeline entry's render date — drives the staleness colour below.
+    let entryDate: Date
     var fontSize: CGFloat = 8.5
     var body: some View {
         Group {
@@ -200,9 +202,22 @@ private struct LiveAgo: View {
             }
         }
         .font(.system(size: fontSize).italic())
-        .foregroundColor(WidgetTheme.amber.opacity(0.85))
+        .foregroundColor(staleColor)
         .lineLimit(1)
         .frame(maxWidth: 72, alignment: .trailing)
+    }
+
+    /// Freshness palette shared with the home board + dream (core
+    /// `StaleColor`, same thresholds as the Android widget's AlarmManager
+    /// colour fades): amber < 60s, grey < 180s, red beyond — anchored to the
+    /// data's true age at THIS entry's date, so the per-minute timeline
+    /// entries walk amber → grey → red exactly like Android.
+    private var staleColor: Color {
+        guard data.hasTimestamp else { return WidgetTheme.amber.opacity(0.85) }
+        let age = entryDate.timeIntervalSince(data.lastUpdated)
+        if age < 60  { return Color(red: 1.000, green: 0.702, blue: 0.000) } // #FFB300 amber
+        if age < 180 { return Color(red: 0.533, green: 0.533, blue: 0.533) } // #888888 grey
+        return         Color(red: 1.000, green: 0.231, blue: 0.188)          // #FF3B30 red
     }
 }
 
@@ -355,7 +370,7 @@ struct DotMatrixFooter: View {
                 HStack {
                     StationlyMark(diameter: m.logo)
                     Spacer(minLength: 0)
-                    LiveAgo(data: data, fontSize: m.ago)
+                    LiveAgo(data: data, entryDate: clock, fontSize: m.ago)
                 }
                 LiveClock(clock: clock, fontSize: m.clock)
             }
@@ -533,7 +548,7 @@ struct SmallWidgetView: View {
                             HStack {
                                 StationlyMark(diameter: 11)
                                 Spacer(minLength: 0)
-                                LiveAgo(data: data, fontSize: 8)
+                                LiveAgo(data: data, entryDate: clock, fontSize: 8)
                             }
                             LiveClock(clock: clock, fontSize: 12)
                         }
