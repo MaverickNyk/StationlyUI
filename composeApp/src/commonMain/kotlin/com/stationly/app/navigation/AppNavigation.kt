@@ -10,6 +10,8 @@ import androidx.compose.runtime.remember
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.stationly.app.ui.dream.DreamHost
+import com.stationly.app.ui.dream.DreamSettingsScreen
 import com.stationly.app.ui.login.LoginScreen
 import com.stationly.app.ui.login.PlatformAuthProvider
 import com.stationly.app.ui.profile.ProfileScreen
@@ -168,8 +170,23 @@ fun AppNavigation(
                     navController.navigate("auth/login") {
                         popUpTo(0) { inclusive = true }
                     }
-                }
+                },
+                onOpenScreensaver = { navController.navigate("dream/settings") }
             )
+        }
+
+        // Screensaver (dream) — iOS home for Android's Daydream port. The
+        // settings route mirrors DreamSettingsActivity; the dream route hosts
+        // the actual screensaver with keep-awake while composed.
+        composable("dream/settings") {
+            DreamSettingsScreen(
+                onBack = { navController.popBackStack() },
+                onStartDream = { navController.navigate("dream") }
+            )
+        }
+
+        composable("dream") {
+            DreamHost(onExit = { navController.popBackStack() })
         }
     }
 }

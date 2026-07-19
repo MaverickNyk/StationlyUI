@@ -25,8 +25,10 @@ import androidx.compose.material.icons.filled.Tram
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Train as TrainOutlined
+import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.rounded.AlternateEmail
 import androidx.compose.material.icons.rounded.ArrowBackIosNew
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
@@ -111,6 +113,7 @@ fun ProfileScreen(
     authProvider: PlatformAuthProvider,
     onNavigateBack: () -> Unit,
     onLoggedOut: () -> Unit,
+    onOpenScreensaver: () -> Unit = {},
     viewModel: ProfileViewModel = viewModel { ProfileViewModel(authProvider) }
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -187,6 +190,20 @@ fun ProfileScreen(
                             onDelete = { if (uiState.deletingStationId == null) showDeleteStationDialog = station }
                         )
                     }
+                }
+
+                // Screensaver entry — iOS home for the dream. On Android the
+                // dream is configured from system Settings → Screen saver;
+                // iOS has no such surface, so the port's settings + start
+                // live behind this row instead.
+                item {
+                    Spacer(Modifier.height(4.dp))
+                    ScreensaverRow(
+                        title = homeConfig["profile.screensaver.title"] ?: "Screensaver",
+                        subtitle = homeConfig["profile.screensaver.subtitle"]
+                            ?: "Clock + live departure board for your desk",
+                        onClick = onOpenScreensaver
+                    )
                 }
 
                 item {
@@ -569,6 +586,35 @@ private fun AboutCard(card: SduiAppComponent.Card) {
                     InfoChip("Made in London")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ScreensaverRow(title: String, subtitle: String, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = Surface1,
+    ) {
+        Row(
+            modifier = Modifier
+                .clickable(onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Rounded.Bedtime, contentDescription = null, tint = Amber, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = White90, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, color = White55, fontSize = 12.sp)
+            }
+            Icon(
+                Icons.AutoMirrored.Rounded.ArrowForwardIos,
+                contentDescription = null,
+                tint = White25,
+                modifier = Modifier.size(14.dp)
+            )
         }
     }
 }
