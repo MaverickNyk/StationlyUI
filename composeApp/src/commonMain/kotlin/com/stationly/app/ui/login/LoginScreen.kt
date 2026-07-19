@@ -64,6 +64,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.stationly.app.ui.common.AppleLogo
 import com.stationly.app.ui.common.GoogleGLogo
 import com.stationly.app.ui.common.LocalOpenUrl
+import com.stationly.app.ui.common.ServiceUnavailableScreen
 import com.stationly.app.ui.theme.LocalThemeTokens
 import com.stationly.app.ui.theme.isDarkTheme
 import com.stationly.core.config.AppConfig
@@ -956,11 +957,15 @@ fun LoginScreen(
         else viewModel.onGoogleSignInInteractive(onNavigateToSummary)
     }
 
-    // Sign in with Apple — UI is in place; the ASAuthorization flow (via the
-    // Swift AuthBridge → Firebase OAuth credential) is wired later. For now this
-    // is a no-op unless a host passes onAppleSignIn. See IOS_PARITY_GAP_ANALYSIS.md.
+    // Sign in with Apple — mirrors launchGoogle: hosts may override via
+    // onAppleSignIn; by default the ViewModel drives the native
+    // ASAuthorization flow through the Swift AuthBridge → Firebase OAuth
+    // credential (see AuthBridge.signInWithApple). NOTE: until the paid-team
+    // `applesignin` entitlement lands (project.yml UNBLOCK), the sheet fails
+    // fast and surfaces a friendly error banner.
     fun launchApple() {
-        onAppleSignIn?.invoke()
+        if (onAppleSignIn != null) onAppleSignIn.invoke()
+        else viewModel.onAppleSignInInteractive(onNavigateToSummary)
     }
 
     // Map SDUI navigation action ids to the nav callbacks.
@@ -1046,6 +1051,18 @@ fun LoginScreen(
 
         AnimatedVisibility(uiState.isAuthenticating, enter = fadeIn(tween(300)), exit = fadeOut(tween(300))) {
             AuthenticatingOverlay(overlayMessage)
+        }
+        // Full-screen offline state when the SDUI layout can't be fetched —
+        // Android parity (LoginScreen renders ServiceUnavailableScreen over
+        // everything when isBackendOffline). Retry re-fetches this screen's
+        // layout; dismiss returns to the (cached) form underneath.
+        AnimatedVisibility(uiState.isBackendOffline, enter = fadeIn(tween(400)), exit = fadeOut(tween(300))) {
+            ServiceUnavailableScreen(
+                context                = "login_sync",
+                overridingErrorMessage = uiState.error,
+                onRetry                = { viewModel.setScreenType(screenType) },
+                onDismiss              = { viewModel.clearOfflineState() }
+            )
         }
     }
 }

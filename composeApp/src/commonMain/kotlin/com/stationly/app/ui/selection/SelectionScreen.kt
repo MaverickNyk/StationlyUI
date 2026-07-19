@@ -110,6 +110,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.stationly.app.ui.common.ServiceUnavailableScreen
 import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.model.sdui.SduiAppScreen
 import com.stationly.core.model.sdui.SduiDropdownOption
@@ -378,9 +379,10 @@ fun SelectionScreen(
             enter = fadeIn(tween(400)), exit = fadeOut(tween(300))
         ) {
             ServiceUnavailableScreen(
-                error = st.error,
-                onRetry = { viewModel.retryLoad() },
-                onDismiss = onNavigateBack
+                context                = "selection",
+                overridingErrorMessage = st.error,
+                onRetry                = { viewModel.retryLoad() },
+                onDismiss              = onNavigateBack
             )
         }
     }
@@ -1117,29 +1119,6 @@ private fun Err(msg: String, primary: Color, onRetry: () -> Unit) {
                 Icon(Icons.Rounded.Refresh, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Retry", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-            }
-        }
-    }
-}
-
-@Composable
-private fun ServiceUnavailableScreen(error: String?, onRetry: () -> Unit, onDismiss: () -> Unit) {
-    Box(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background.copy(0.97f)).padding(32.dp),
-        Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Icon(Icons.Rounded.WifiOff, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(52.dp))
-            Text("Can't reach Stationly", color = White90, fontWeight = FontWeight.Bold, fontSize = 20.sp, textAlign = TextAlign.Center)
-            Text(error ?: "Check your connection and try again.", color = White55, fontSize = 14.sp, textAlign = TextAlign.Center, lineHeight = 20.sp)
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onRetry, colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = MaterialTheme.colorScheme.onPrimary),
-                shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Text("Try Again", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            }
-            OutlinedButton(onClick = onDismiss, shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, White25), modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Text("Go Back", color = White55, fontSize = 15.sp)
             }
         }
     }

@@ -82,6 +82,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.stationly.app.resources.Res
 import com.stationly.app.resources.stationly_logo
 import com.stationly.app.ui.common.AnnouncementBanner
+import com.stationly.app.ui.common.LoadingOverlay
 import com.stationly.app.ui.common.OfflineBanner
 import com.stationly.app.ui.common.ThemeToggleButton
 import com.stationly.app.ui.summary.components.Board
@@ -147,6 +148,18 @@ fun SummaryScreen(
             // OUTSIDE this padded box so it can pin to the TRUE screen bottom
             // instead of floating above the home-indicator inset.
             Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+
+            // Modal loader while a board delete is in flight. Lives here at
+            // the screen level (not inside the board card) because the card
+            // unmounts the instant its selection is removed from the list —
+            // any spinner inside it would vanish before the backend
+            // unsubscribe + sync completes. zIndex keeps it above content
+            // regardless of declaration order within this Box.
+            LoadingOverlay(
+                visible = deletingBoardId != null,
+                label = "Deleting board…",
+                modifier = Modifier.zIndex(10f),
+            )
 
             AnimatedContent(
                 targetState = selections,
