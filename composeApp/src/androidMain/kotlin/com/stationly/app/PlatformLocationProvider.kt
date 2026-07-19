@@ -1,10 +1,9 @@
-package com.stationly.app
+// The actual must live in the SAME package as the commonMain expect
+// (ui.selection) — this file previously declared `com.stationly.app`, which
+// left the expect unmatched and broke the (unshipped) android target.
+package com.stationly.app.ui.selection
 
-import com.stationly.app.ui.selection.LocationProvider
-import com.stationly.app.ui.selection.NoOpLocationProvider
-import com.stationly.app.ui.selection.platformLocationProvider
-
-// On Android, SelectionScreen wires the real AndroidLocationProvider
-// via the onGoogleSignIn / Activity callback pattern.
-// The ViewModel default falls back to NoOp; the Activity overrides it.
+// This composeApp android target is a build-verification surface only — the
+// shipped Android app (android/) has its own location stack, so NoOp is the
+// honest provider here.
 actual fun platformLocationProvider(): LocationProvider = NoOpLocationProvider
