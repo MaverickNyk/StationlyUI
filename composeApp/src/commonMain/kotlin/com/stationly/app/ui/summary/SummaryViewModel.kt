@@ -414,9 +414,18 @@ class SummaryViewModel(
     }
 
     private suspend fun fetchHomeConfig() {
+        // Cache-first (Android HomeConfigStore parity): cold launches render
+        // last-synced SDUI copy instantly instead of flashing the hardcoded
+        // fallbacks until the network returns.
+        if (_homeConfig.value.isEmpty()) {
+            com.stationly.app.ui.util.HomeConfigCache.load()
+                .takeIf { it.isNotEmpty() }
+                ?.let { _homeConfig.value = it }
+        }
         try {
             val config = NetworkModule.sduiApi.getHomeConfig().strings
             _homeConfig.value = config
+            com.stationly.app.ui.util.HomeConfigCache.save(config)
         } catch (_: Exception) {}
     }
 
