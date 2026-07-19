@@ -356,6 +356,36 @@ composeApp/src/commonMain/kotlin/com/stationly/app/ui/common/BrandGlyphs.kt   (N
 in `Board.kt`; `GoogleGLogo`/`AppleLogo` in `ui/common/BrandGlyphs.kt`.
 Working tree on branch `ios-parity`, **uncommitted** pending owner on-device QA.
 
+## 7a. 🆕 SIMULATOR QA LOOP (verified working 2026-07-20)
+
+The old "do NOT build the simulator" rule was a disk-space constraint (3 GB
+free at the time) — disk is now healthy and the loop below was verified end
+to end (app installs, launches, renders the login landing in BOTH themes
+with the real logo + Inter Tight):
+
+```bash
+# 1. sim-arch compose resources (REQUIRED once per resource change — without
+#    it the copy phase warns and the app silently falls back to the drawn
+#    "S" + system font, which looks like a regression but isn't)
+./gradlew :composeApp:assembleIosSimulatorArm64MainResources
+# 2. build + install + launch (iPhone 17 / iOS 26.5 sim; no signing needed)
+cd iosApp && xcodebuild -project iosApp.xcodeproj -scheme "iosApp Staging" \
+  -destination 'id=76EF2139-0430-4849-BDFC-8728409D53F4' -derivedDataPath build/DD build
+xcrun simctl boot 76EF2139-0430-4849-BDFC-8728409D53F4
+xcrun simctl install 76EF2139-0430-4849-BDFC-8728409D53F4 \
+  "build/DD/Build/Products/Debug Staging-iphonesimulator/iosApp.app"
+xcrun simctl launch 76EF2139-0430-4849-BDFC-8728409D53F4 com.stationly.mobile
+xcrun simctl io 76EF2139-0430-4849-BDFC-8728409D53F4 screenshot /tmp/shot.png
+xcrun simctl ui 76EF2139-0430-4849-BDFC-8728409D53F4 appearance dark   # theme flip
+```
+
+Verified on 2026-07-20 via this loop: no first-frame crash, light theme with
+legible dark status bar (BUG-1 fix confirmed on-screen), dark theme flip,
+Apple button adaptive contrast (black-on-light / white-on-dark), real
+4-colour Google "G", real roundel logo + Inter Tight wordmark. Signed-in
+surfaces (summary/dream/profile) still need a device or credentials — the
+sim loop has no tap automation.
+
 ## 7. Build & deploy (recap — full detail in IOS_BUILD_AND_HANDOFF.md §2)
 ```bash
 ./gradlew :composeApp:assembleComposeAppDebugXCFramework        # ~7 min when composeApp changed
