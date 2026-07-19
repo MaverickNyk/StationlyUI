@@ -1,5 +1,8 @@
 import Foundation
 import UIKit
+import AuthenticationServices
+import CryptoKit
+import Security
 import FirebaseCore
 import FirebaseAuth
 import FirebaseMessaging
@@ -19,12 +22,19 @@ import GoogleSignIn
 ///   signIn|<email>|<password>
 ///   register|<email>|<password>
 ///   googleSignIn|<idToken>
+///   googleSignInInteractive
+///   appleSignInInteractive
 ///   resetConfirm|<oobCode>|<newPassword>
 class AuthBridge {
     static let shared = AuthBridge()
     private init() {}
 
     private var observerAdded = false
+
+    // Retains the one-shot Apple coordinator while its sheet is up — the
+    // ASAuthorizationController delegate is weak, so without this the flow
+    // would silently die the moment the local variable went out of scope.
+    private var appleCoordinator: AppleSignInCoordinator?
 
     // MARK: - KMP wiring
 
@@ -98,6 +108,10 @@ class AuthBridge {
                     return
                 }
                 let r = await signInWithGoogle(presentingViewController: rootVC)
+                if case .failure(let e) = r { writeError(e.localizedDescription) }
+
+            case "appleSignInInteractive":
+                let r = await signInWithApple()
                 if case .failure(let e) = r { writeError(e.localizedDescription) }
 
             case "resetConfirm" where parts.count >= 3:
@@ -240,6 +254,64 @@ class AuthBridge {
         } catch { return .failure(error) }
     }
 
+    // MARK: - Sign in with Apple
+
+    /// Native ASAuthorization flow → Firebase `apple.com` OAuth credential,
+    /// mirroring the Google interactive path above.
+    ///
+    /// ENTITLEMENT GATE: `com.apple.developer.applesignin` is NOT in
+    /// iosApp.entitlements — Apple forbids the capability on personal (free)
+    /// development teams, the same wall that keeps push disabled (see the
+    /// UNBLOCK notes in project.yml). Until the paid-team entitlement lands,
+    /// the sheet fails immediately and the error is mapped to a friendly
+    /// message below; this code needs no change once the entitlement exists.
+    ///
+    /// Apple only returns `fullName`/`email` on the FIRST authorization for
+    /// an Apple ID — `OAuthProvider.appleCredential(fullName:)` forwards the
+    /// name so Firebase can seed the user's displayName on that first pass.
+    func signInWithApple() async -> Result<String, Error> {
+        let rawNonce = AppleSignInCoordinator.randomNonceString()
+        let coordinator = AppleSignInCoordinator()
+        appleCoordinator = coordinator
+        defer { appleCoordinator = nil }
+        do {
+            let authorization = try await coordinator.authorize(
+                hashedNonce: AppleSignInCoordinator.sha256(rawNonce)
+            )
+            guard
+                let appleCredential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                let tokenData = appleCredential.identityToken,
+                let idToken = String(data: tokenData, encoding: .utf8)
+            else {
+                return .failure(AuthBridgeError.missingAppleToken)
+            }
+            let credential = OAuthProvider.appleCredential(
+                withIDToken: idToken,
+                rawNonce: rawNonce,
+                fullName: appleCredential.fullName
+            )
+            let authResult = try await Auth.auth().signIn(with: credential)
+            let token = try await authResult.user.getIDToken()
+            storeUserInfo(user: authResult.user, token: token)
+            return .success(token)
+        } catch {
+            return .failure(Self.friendlyAppleError(error))
+        }
+    }
+
+    /// ASAuthorization errors are opaque codes ("error 1000") — translate the
+    /// ones the user can actually hit into copy the KMP error banner can show
+    /// verbatim. Firebase errors pass through with their own message.
+    private static func friendlyAppleError(_ error: Error) -> Error {
+        guard let asError = error as? ASAuthorizationError else { return error }
+        switch asError.code {
+        case .canceled: return AuthBridgeError.appleCancelled
+        // .unknown (1000) = missing entitlement or no iCloud session;
+        // .failed/.invalidResponse/.notHandled are equally unactionable.
+        default:        return AuthBridgeError.appleUnavailable
+        }
+    }
+
     // MARK: - Display name
 
     func updateDisplayName(_ name: String) async -> Result<Void, Error> {
@@ -340,15 +412,86 @@ class AuthBridge {
     }
 }
 
+// MARK: - Apple Sign-In coordinator
+
+/// One-shot ASAuthorizationController wrapper bridging the delegate callbacks
+/// into async/await. NSObject because both controller protocols require it;
+/// a fresh instance per attempt (retained by AuthBridge.appleCoordinator)
+/// keeps the continuation single-use by construction.
+final class AppleSignInCoordinator: NSObject,
+                                    ASAuthorizationControllerDelegate,
+                                    ASAuthorizationControllerPresentationContextProviding {
+
+    private var continuation: CheckedContinuation<ASAuthorization, Error>?
+
+    @MainActor
+    func authorize(hashedNonce: String) async throws -> ASAuthorization {
+        let request = ASAuthorizationAppleIDProvider().createRequest()
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = hashedNonce
+        let controller = ASAuthorizationController(authorizationRequests: [request])
+        controller.delegate = self
+        controller.presentationContextProvider = self
+        return try await withCheckedThrowingContinuation { cont in
+            continuation = cont
+            controller.performRequests()
+        }
+    }
+
+    func authorizationController(controller: ASAuthorizationController,
+                                 didCompleteWithAuthorization authorization: ASAuthorization) {
+        continuation?.resume(returning: authorization)
+        continuation = nil
+    }
+
+    func authorizationController(controller: ASAuthorizationController,
+                                 didCompleteWithError error: Error) {
+        continuation?.resume(throwing: error)
+        continuation = nil
+    }
+
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow } ?? ASPresentationAnchor()
+    }
+
+    // MARK: Nonce helpers (the standard Firebase Apple-sign-in recipe: send
+    // SHA256(nonce) to Apple, hand the raw nonce to Firebase for replay
+    // protection)
+
+    static func randomNonceString(length: Int = 32) -> String {
+        precondition(length > 0)
+        var randomBytes = [UInt8](repeating: 0, count: length)
+        let errorCode = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
+        precondition(errorCode == errSecSuccess, "Unable to generate nonce. SecRandomCopyBytes failed with \(errorCode)")
+        let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
+        return String(randomBytes.map { charset[Int($0) % charset.count] })
+    }
+
+    static func sha256(_ input: String) -> String {
+        SHA256.hash(data: Data(input.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+}
+
 // MARK: - Errors
 
 enum AuthBridgeError: LocalizedError {
     case missingIDToken
     case notSignedIn
+    case missingAppleToken
+    case appleCancelled
+    case appleUnavailable
     var errorDescription: String? {
         switch self {
-        case .missingIDToken: return "Google Sign-In did not return an ID token."
-        case .notSignedIn:    return "Not signed in."
+        case .missingIDToken:    return "Google Sign-In did not return an ID token."
+        case .notSignedIn:       return "Not signed in."
+        case .missingAppleToken: return "Apple Sign-In did not return an identity token."
+        case .appleCancelled:    return "Sign-in was cancelled."
+        case .appleUnavailable:  return "Sign in with Apple isn't available right now. Please use Google or email instead."
         }
     }
 }

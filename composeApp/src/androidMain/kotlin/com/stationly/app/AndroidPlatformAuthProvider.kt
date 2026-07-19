@@ -67,6 +67,11 @@ class AndroidPlatformAuthProvider(private val context: Context) : PlatformAuthPr
     override suspend fun signInWithGoogleInteractive(): Result<String> =
         Result.failure(Exception("Use the Google Sign-In button to continue."))
 
+    // Sign in with Apple is an iOS-only surface (the shipped Android app has
+    // no Apple button); this composeApp android target is never shipped.
+    override suspend fun signInWithAppleInteractive(): Result<String> =
+        Result.failure(Exception("Sign in with Apple is not available on Android."))
+
     override suspend fun signOut(): Result<Unit> = try {
         auth.signOut()
         Result.success(Unit)
@@ -75,4 +80,25 @@ class AndroidPlatformAuthProvider(private val context: Context) : PlatformAuthPr
     }
 
     override fun consumePendingResetCode(): String? = null
+
+    override fun isEmailVerified(): Boolean = auth.currentUser?.isEmailVerified == true
+
+    override fun isEmailProvider(): Boolean =
+        auth.currentUser?.providerData?.any { it.providerId == "password" } == true
+
+    override suspend fun sendEmailVerification(): Result<Unit> = try {
+        val user = auth.currentUser ?: throw IllegalStateException("Not signed in.")
+        user.sendEmailVerification().await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    override suspend fun reloadUser(): Result<Unit> = try {
+        val user = auth.currentUser ?: throw IllegalStateException("Not signed in.")
+        user.reload().await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
 }

@@ -27,6 +27,7 @@ import platform.Foundation.NSUserDefaults
  *   register|<email>|<password>
  *   googleSignIn|<idToken>
  *   googleSignInInteractive
+ *   appleSignInInteractive
  *   resetConfirm|<oobCode>|<newPassword>
  *   updateDisplayName|<name>
  *   signOut
@@ -63,6 +64,11 @@ class IosPlatformAuthProvider : PlatformAuthProvider {
     // give the interactive flow 3 minutes, not the regular network timeout.
     override suspend fun signInWithGoogleInteractive(): Result<String> =
         issueCommand("googleSignInInteractive", timeoutMillis = 180_000L)
+
+    // Same interactive allowance as Google: the ASAuthorization sheet can sit
+    // waiting on Face ID / the user's Apple-ID password indefinitely.
+    override suspend fun signInWithAppleInteractive(): Result<String> =
+        issueCommand("appleSignInInteractive", timeoutMillis = 180_000L)
 
     override suspend fun confirmPasswordReset(oobCode: String, newPassword: String): Result<Unit> =
         issueCommand("resetConfirm|$oobCode|$newPassword").map { }

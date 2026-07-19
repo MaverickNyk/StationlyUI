@@ -214,6 +214,26 @@ class LoginViewModel(
         }
     }
 
+    fun onAppleSignInInteractive(onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isAuthenticating = true, error = null)
+            authProvider.signInWithAppleInteractive().fold(
+                onSuccess = {
+                    if (syncUserAndSetupData(provider = "apple")) {
+                        _uiState.value = _uiState.value.copy(isAuthenticating = false)
+                        onSuccess()
+                    }
+                },
+                onFailure = { e ->
+                    _uiState.value = _uiState.value.copy(
+                        isAuthenticating = false,
+                        error = friendlyAuthError(e.message ?: "")
+                    )
+                }
+            )
+        }
+    }
+
     /**
      * Post-auth backend session sync — the iOS counterpart of Android
      * `LoginViewModel.syncUserAndSyncData`:

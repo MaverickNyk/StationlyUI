@@ -76,6 +76,17 @@ targets:
         # Firebase console (project mindthetimefcm → Cloud Messaging → Apple),
         # then RESTORE the line:
         #   aps-environment: development
+        #
+        # ⚠️ SIGN IN WITH APPLE IS BLOCKED ON THE SAME WALL. The client flow is
+        # fully wired (AuthBridge.signInWithApple → ASAuthorization → Firebase
+        # apple.com credential → same post-login sync as Google), but personal
+        # teams cannot carry the Sign in with Apple capability either — with
+        # the entitlement present provisioning fails exactly like push. Until
+        # unblocked the Apple button surfaces a friendly "isn't available"
+        # banner. UNBLOCK: on a paid team, enable the Apple provider in
+        # Firebase console (mindthetimefcm → Authentication → Sign-in method;
+        # native iOS needs no Services ID), then ADD the line:
+        #   com.apple.developer.applesignin: [Default]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stationly.mobile
