@@ -81,6 +81,7 @@ import com.stationly.app.ui.util.computeBoardFallbackState
 import com.stationly.app.ui.util.parseHHmm
 import com.stationly.app.ui.util.resolveBoardFallbackCopy
 import com.stationly.app.ui.util.rememberMinuteTick
+import com.stationly.app.ui.util.tickPredictions
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.sdui.SduiWidgetComponent
@@ -181,18 +182,12 @@ fun Board(
     val lineColor = lineColorForTheme(selection.line, isDark)
 
     // Self-tick ETAs each wall-clock minute so "5 min" drops to "4 min" between
-    // FCM pushes (the 30s SummaryViewModel poll handles fresh data).
+    // FCM pushes (the 30s SummaryViewModel poll handles fresh data). Shared
+    // tick contract (ui/util/PredictionTicker) — same 30s departed grace PLUS
+    // Android's per-platform monotonic bump, so two same-platform trains never
+    // collide on one label ("Due, Due" → "Due, 1 min") on any surface.
     val nowMin by rememberMinuteTick()
-    val ticked = remember(predictions, nowMin) {
-        predictions.mapNotNull { p ->
-            val t = p.targetEpochMs ?: return@mapNotNull p
-            if (t < nowMin - 30_000L) null
-            else p.copy(
-                eta = StationlyFormatters.formatMinutesRemaining(t, nowMin, p.eta),
-                isDue = (t - nowMin) / 1000 < 30,
-            )
-        }
-    }
+    val ticked = remember(predictions, nowMin) { tickPredictions(predictions, nowMin) }
     val effectiveNext = remember(ticked) { StationlyFormatters.sortPredictions(ticked).firstOrNull() }
 
     // Empty-board fallback message (Offline / Live updates paused / Service
