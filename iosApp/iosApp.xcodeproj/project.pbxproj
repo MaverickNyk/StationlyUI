@@ -19,6 +19,7 @@
 		56B0305B5D3847FC6B326502 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE8509E5A49E4A5CAAEB3ADB /* ContentView.swift */; };
 		73956648F92E8FEC62F6D73D /* AuthBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88370C3FDDC238D3448AC2D1 /* AuthBridge.swift */; };
 		A566BB023C1056C96F41D335 /* StationlyWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EE7E10119EC01AC8676B703D /* StationlyWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A774AD58CF3505F914CB83D7 /* WidgetPageIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 306E4366DEB79A6AD438619D /* WidgetPageIntent.swift */; };
 		B7C4F6137AC8345E71E92063 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */; };
 		C0D402F91C254C0EFB1C3A91 /* StationlyWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC75E3E8045F2DC8D1922D50 /* StationlyWidget.swift */; };
 		C3E3BCF8F138F630927C544F /* StationlyWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F7BF3D0F900FDF96129BA89 /* StationlyWidgetBundle.swift */; };
@@ -69,6 +70,7 @@
 		118F41A10A55B84CE576769B /* composeApp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = composeApp.xcframework; path = ../composeApp/build/XCFrameworks/debug/composeApp.xcframework; sourceTree = "<group>"; };
 		17F56BCEA93D417E080182A7 /* AppGroupStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorage.swift; sourceTree = "<group>"; };
 		258D481022F14E09267EE7BD /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		306E4366DEB79A6AD438619D /* WidgetPageIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPageIntent.swift; sourceTree = "<group>"; };
 		5BA8E3A8CB73FA587D96BD12 /* DepartureEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DepartureEntry.swift; sourceTree = "<group>"; };
 		668CECA83ACC03A83C85A623 /* iOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSApp.swift; sourceTree = "<group>"; };
 		725E230C3D1AA4C519DEBC68 /* WidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetViews.swift; sourceTree = "<group>"; };
@@ -154,6 +156,7 @@
 				E6E60D8AB263A747C2061338 /* Info.plist */,
 				DC75E3E8045F2DC8D1922D50 /* StationlyWidget.swift */,
 				8F7BF3D0F900FDF96129BA89 /* StationlyWidgetBundle.swift */,
+				306E4366DEB79A6AD438619D /* WidgetPageIntent.swift */,
 				8FD2D2AA7865370F9D9B2E85 /* WidgetTheme.swift */,
 				725E230C3D1AA4C519DEBC68 /* WidgetViews.swift */,
 			);
@@ -313,6 +316,7 @@
 				15004BFF21C3E1734FA5E510 /* DepartureEntry.swift in Sources */,
 				C0D402F91C254C0EFB1C3A91 /* StationlyWidget.swift in Sources */,
 				C3E3BCF8F138F630927C544F /* StationlyWidgetBundle.swift in Sources */,
+				A774AD58CF3505F914CB83D7 /* WidgetPageIntent.swift in Sources */,
 				CB006310D02489A5D2220318 /* WidgetTheme.swift in Sources */,
 				C549E9404F60E91D428ED213 /* WidgetViews.swift in Sources */,
 			);
