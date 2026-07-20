@@ -154,14 +154,16 @@ struct WidgetData {
     /// (avoids a decades-long count from the epoch-0 sentinel).
     var hasTimestamp: Bool { lastUpdated.timeIntervalSince1970 > 0 }
 
-    /// "Piccadilly: Platform 1 (Eastbound)" — the dot-matrix platform header,
-    /// mirroring Android's StationlyFormatters.platformHeaderText + formatLinePrefix.
+    /// "Piccadilly: Platform 1" — the dot-matrix platform header. EXACT
+    /// parity with Android's `StationlyFormatters.platformHeaderText` +
+    /// `formatLinePrefix`, which never append the selection's travel
+    /// direction here — a past iOS-only session added a client-side
+    /// " (Eastbound)"/" (Inbound)" suffix that Android never shows and the
+    /// owner never asked for; removed. If the backend's platform string is
+    /// already fully formed with a direction in parens (e.g. bus stops:
+    /// "Platform 2 (Westbound)") that passes through untouched — it's
+    /// backend-owned SDUI content, not client-invented text.
     /// Collapses cleanly when a part is missing ("Piccadilly", "Platform 1", "").
-    ///
-    /// The platform value KMP writes can already be fully formed (e.g.
-    /// "Platform 2 (Westbound)") — never re-prefix "Platform" or re-append the
-    /// direction in that case (it rendered as
-    /// "Platform Platform 2 (Westbound) (Inbound)" on device).
     func platformHeader(platform: String) -> String {
         let rawPlat = platform.trimmingCharacters(in: .whitespaces)
         let line = lineName.isEmpty ? "" : lineName.capitalized
@@ -171,14 +173,11 @@ struct WidgetData {
             let lower = rawPlat.lowercased()
             plat = (lower.hasPrefix("platform") || lower.hasPrefix("stop")) ? rawPlat : "Platform \(rawPlat)"
         }
-        // Skip the selection direction when the platform string already carries
-        // one ("… (Westbound)").
-        let dir = (direction.isEmpty || plat.contains("(")) ? "" : " (\(direction.capitalized))"
 
         switch (line.isEmpty, plat.isEmpty) {
-        case (false, false): return "\(line): \(plat)\(dir)"
-        case (false, true):  return "\(line)\(dir)"
-        case (true, false):  return "\(plat)\(dir)"
+        case (false, false): return "\(line): \(plat)"
+        case (false, true):  return line
+        case (true, false):  return plat
         default:             return ""
         }
     }
