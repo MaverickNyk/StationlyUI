@@ -45,6 +45,14 @@ green.
 - **Widget ago staleness colour** — `LiveAgo` now walks amber→grey→red
   (`StaleColor` thresholds 60s/180s) per timeline entry, matching the Android
   widget's AlarmManager colour fades. Was static amber.
+- **Widget platform PAGING (owner ask: scrollable rows "within iOS limits")**
+  — WidgetKit forbids scrolling outright (static snapshots; same hard wall as
+  the shed status row and no-marquee), so Android's scrollable `rows_list`
+  becomes paging: on iOS 17+ the medium board's platform-header cell is an
+  interactive `Button(intent:)` (`WidgetPageIntent.swift`) cycling through
+  platform groups, labelled "… ‣ p/N". Raw counter increments forever;
+  readers normalise `% groupCount`. Below iOS 17 / single-platform → exactly
+  the old render.
 
 **SDUI contract (owner principle: the apps are SDUI-driven everywhere;
 stationly-backend is the SDUI backend):** every label in the dream port reads
