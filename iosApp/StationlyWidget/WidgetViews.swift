@@ -447,17 +447,39 @@ struct BoardWidgetView: View {
         }
     }
 
-    /// Medium: the first platform group only — one section header, up to
+    /// Medium: ONE platform group per render — one section header, up to
     /// `maxRows` rows. A second group would cost a second header cell and
     /// blow the 6-cell budget. When the group can't fill all row slots the
     /// status strip backfills one, so a quiet board never shows dead space.
+    ///
+    /// Multi-platform stations: WidgetKit can't scroll (static snapshots),
+    /// so where Android's widget scrolls a `rows_list` the medium board
+    /// PAGES — on iOS 17+ the header cell is an interactive Button cycling
+    /// through the platform groups, labelled "… ‣ p/N". Below 17 (and on
+    /// single-platform stations) it renders exactly as before.
     @ViewBuilder
     private var primaryPlatformSection: some View {
-        if let group = groupedByPlatform(data.departures).first {
-            let header = data.platformHeader(platform: group.platform)
+        let groups = groupedByPlatform(data.departures)
+        if !groups.isEmpty {
+            let page = groups.count > 1 ? WidgetBoardPage.current % groups.count : 0
+            let group = groups[page]
+            let baseHeader = data.platformHeader(platform: group.platform)
+            let header: String = {
+                guard groups.count > 1 else { return baseHeader }
+                let indicator = "‣ \(page + 1)/\(groups.count)"
+                return baseHeader.isEmpty ? indicator : "\(baseHeader)  \(indicator)"
+            }()
             if !header.isEmpty {
-                DotMatrixSectionHeader(title: header, m: metrics)
+                if #available(iOS 17.0, *), groups.count > 1 {
+                    Button(intent: NextPlatformPageIntent()) {
+                        DotMatrixSectionHeader(title: header, m: metrics)
+                    }
+                    .buttonStyle(.plain)
                     .frame(minHeight: metrics.platform + 8)
+                } else {
+                    DotMatrixSectionHeader(title: header, m: metrics)
+                        .frame(minHeight: metrics.platform + 8)
+                }
             }
             ForEach(group.rows.prefix(metrics.maxRows)) { dep in
                 DotMatrixRow(dep: dep, m: metrics)
