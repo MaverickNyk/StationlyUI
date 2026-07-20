@@ -1006,7 +1006,16 @@ fun LoginScreen(
                         LandingContent(
                             onAppleClick = ::launchApple,
                             onGoogleClick = ::launchGoogle,
-                            onEmailClick = { showEmailForm = true },
+                            onEmailClick = {
+                                // A failed Apple/Google landing attempt leaves
+                                // uiState.error set; without clearing it here
+                                // the stale banner ("Sign in with Apple isn't
+                                // available...") rode along into the email
+                                // form and rendered before the user typed
+                                // anything.
+                                if (uiState.error != null) viewModel.clearError()
+                                showEmailForm = true
+                            },
                             onRegisterClick = onNavigateToRegister
                         )
                     }
