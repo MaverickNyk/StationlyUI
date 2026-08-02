@@ -214,7 +214,8 @@ polls. This is complete and robust — do not rewrite it.
 - Framework dep: `composeApp/build/XCFrameworks/debug/composeApp.xcframework`
   (build via `./gradlew :composeApp:assembleXCFramework` — **needs Xcode** for
   the Kotlin/Native linker).
-- App Group `group.com.stationly.mobile` (shared with widget). URL scheme for
+- App Group `group.com.stationly.shared` (shared with widget; renamed from
+  `group.com.stationly.mobile` on 2026-07-25 — see the gap doc). URL scheme for
   Google + Firebase reset deep links already wired.
 - Configs: Debug/Release × Staging/Production (`STATIONLY_ENVIRONMENT`).
 

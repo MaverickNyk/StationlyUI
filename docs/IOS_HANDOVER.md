@@ -1,0 +1,349 @@
+# iOS — consolidated handover
+
+**Branch:** `ios-parity` · **Last updated:** 2026-08-02
+**Status:** builds clean, deployed and running on a physical iPhone 11 against
+**staging**. All four compile gates green (§6).
+
+This is the **one document to open first**. Everything else in `docs/` is a
+deep-dive appendix; §7 says which one to reach for and when. Nothing here
+duplicates them — where a topic has a dedicated doc, this file gives the
+one-paragraph version and a pointer.
+
+---
+
+## 1. What this branch is
+
+iOS is a **Compose Multiplatform port of the Android app**, not a separate
+product. The guiding rule for every decision on this branch: *match Android's
+behaviour unless the platform makes that impossible, and when it does, write
+down why.* Deliberate divergences are listed in §4 — each one is a case where
+copying Android exactly was not an option.
+
+### Module topology — read this before worrying about Android regressions
+
+```
+:core          ← shared KMP (commonMain / androidMain / iosMain)
+:android:app   → depends on :core ONLY
+:composeApp    → depends on :core   (com.android.library; nothing consumes its android target)
+:web           → standalone
+```
+
+**`:android:app` does not depend on `:composeApp`.** Every screen, ViewModel
+and UI file under `composeApp/` is therefore *structurally incapable* of
+affecting the shipped Android app, however much it lives in `commonMain`. The
+only shared-code surface that can reach Android is **`core/commonMain`**.
+
+`composeApp`'s `androidTarget` is kept compiling purely as a build-verification
+canary (hence `HomePromoPlatform.android.kt`, whose actuals only have to
+exist). Do not mistake it for a shipping target.
+
+This is the fact that makes the whole branch safe, and it is worth re-checking
+if the dependency graph ever changes.
+
+---
+
+## 2. Current state, by area
+
+| Area | State |
+|---|---|
+| **Auth** | Email/password, Google, **Sign in with Apple** (live since the paid team landed), email verification, reset deep links. Keychain-restored sessions self-heal their identity keys. |
+| **Home / board** | Full Android parity: dot-matrix board, per-minute tick, pull-to-refresh, promos, offline banner, SDUI strings with hardcoded fallbacks. |
+| **Live departures** | **WebSocket stream**, iOS-only. Replaces REST polling for predictions + line status. See §3. |
+| **Widget** | Full-bleed board, interactive platform paging, interactive refresh button, live clock, per-minute tick, departed-row retention. |
+| **Dream / screensaver** | Full port as an in-app route (iOS has no system screensaver slot). SDUI-driven. |
+| **Push** | APNs + FCM live on the paid team. `aps-environment` tracks the build config. |
+| **Signing** | Stationly Limited org team **`7T7D5LLYSL`**. App Group **`group.com.stationly.shared`**. |
+
+### Not done / known gaps
+
+1. **Nothing on this branch is committed** beyond the commits already listed in
+   `git log master..HEAD`. The working tree carries two sessions of work
+   (home promos + live stream) — see §5 for the suggested commit split.
+2. **No automated tests anywhere on the iOS side.** `LiveStreamManager`'s
+   reconnect/backoff and force-resubscribe logic are the highest-value targets;
+   `WidgetData.ticked` retention and `isVersionBelow` are the easiest.
+3. **Stream tested with 1 station + 1 line only.** The 25-subscription cap and
+   `unknown_station` handling are implemented but unexercised.
+4. **Prod nginx** needs the stream `location` block verified before pointing
+   production builds at it. Staging is verified.
+5. **Owner-side console steps** (APNs `.p8` upload to Firebase, Apple provider
+   enable) are outside this repo — see `IOS_PARITY_GAP_ANALYSIS.md`.
+6. **App Store URL is a placeholder.** `ProfileScreen.APP_STORE_URL` 404s until
+   a real listing exists; swap in the `itms-apps://…?action=write-review` deep
+   link then.
+
+---
+
+## 3. The live departure stream (the big architectural change)
+
+iOS no longer calls REST for departures or line status — both arrive over
+`wss://…/api/v1/stream`. Full protocol/ops detail lives in
+**`IOS_LIVE_STREAM.md`**; the essentials:
+
+**The single most important design point:** inbound frames are handed to the
+*exact same* `ProcessFcmPayloadUseCase` methods FCM pushes already used.
+Parsing, SQLite writes, widget refresh and `FreshDataNotifier` are unchanged —
+only the transport differs. **Do not add a parallel write path.**
+
+Second: `StreamBackedTflApiService` implements the existing `TflApiService`
+interface, so `DepartureRepository` and every caller were left untouched; their
+`getPredictions()`/`getLineStatuses()` calls simply resolve over the socket.
+
+**Android safety.** Both `core/commonMain` touches are `expect`/`actual` seams
+whose Android actual is a no-op or the pre-existing code verbatim:
+
+| Seam | Android actual |
+|---|---|
+| `expect object LiveStream` | three empty no-ops |
+| `expect fun createTflApiService` | `TflApiServiceImpl(httpClient)` — byte-identical to the old inline construction |
+
+The ktor websockets dependency is scoped to **`iosMain` only**.
+
+**Three on-device bugs are already fixed here — do not regress them.** They are
+written up in `IOS_LIVE_STREAM.md` §4: the lenient-JSON flags for line frames,
+the `lastUpdated` timestamp that made a live stream look like 30s polling, and
+the ~10s pull-to-refresh. The third one has a trap: **pull-to-refresh
+deliberately reuses a healthy socket** rather than reconnecting. The `expect`
+declaration in `core/commonMain/platform/Platform.kt` used to document the
+opposite; that has been corrected, but if you see "force-close and reopen"
+anywhere, it is stale.
+
+---
+
+## 4. Deliberate divergences from Android
+
+Each of these is a case where copying Android was impossible, not a shortcut.
+Do not "fix" them without deciding to change the product on purpose.
+
+| Divergence | Why |
+|---|---|
+| **Widget promo has no CTA button** | No iOS API adds a widget on the user's behalf. Android already handles this exact case — it passes `cta = null` when `isRequestPinAppWidgetSupported` is false — so this is Android's own fallback branch, not an invention. The instruction moved into the subtitle. |
+| **Widget-installed detection via Swift probe** | `WidgetCenter` is Swift-only (no ObjC interface), so Kotlin/Native cannot see it. `HomeStateProbe.swift` writes the answer to the App Group; `hasHomeScreenWidget()` returns `null` when un-probed so the promo never flashes at someone who already has one. |
+| **Dream promo = "has ever run it"** | iOS has no system screensaver slot to be chosen for; the dream is an in-app route. `DreamSettings.hasEverStarted()` is the honest analogue of Android reading `Settings.Secure.screensaver_components`. |
+| **"Enable" opens the app's Settings page** | iOS has no per-app notifications deep link like Android's `ACTION_APP_NOTIFICATION_SETTINGS`. |
+| **Notification prompt fires from `SummaryScreen`, not launch** | iOS gives exactly one chance per install and a denial is permanent. Android asks from the first authenticated screen; iOS now matches. `AppDelegate` only re-registers for APNs when already authorized. |
+| **Widget paging via interactive header** | WidgetKit cannot scroll. See `IOS_WIDGET_DESIGN.md`. |
+| **Widget refreshes itself over REST** | The extension is a separate process that can reach neither KMP nor the SQLite file. Accepted gap: its refresh reaches the widget but not the app's store; the app re-syncs on next foreground. |
+| **iOS-specific pull-to-refresh indicator + haptic** | `IosActivityRefreshIndicator` (a real `UIActivityIndicatorView`, spokes that never rotate) and a haptic latched at the trigger threshold. Android keeps its amber ring and its on-release haptic, both untouched. |
+| **`lastUpdated` reads the real sync time on iOS only** | Android keeps `now`. See §3 / `IOS_LIVE_STREAM.md` §4.2 — an "ago" value climbing past 30s is now *correct* behaviour. |
+
+### Checked and confirmed NOT gaps — don't "fix" these
+
+- **Profile provider chip shows a generic mail icon for Apple users.** Android
+  does the same (`if (provider == "Google") AlternateEmail else Email`, no Apple
+  branch). Adding an Apple glyph would *invent* a divergence.
+- **`WelcomeEmptyState` / `FeatureChip`** (~100 lines in Android's
+  `EmptyStates.kt`) have no iOS counterpart because they are **dead code on
+  Android** — nothing references them.
+- **`hideWidgetPromoForSession()`** exists on Android but not iOS: it is only
+  reachable from Android's "Add" CTA, which iOS structurally cannot have.
+
+---
+
+## 5. Uncommitted work on this branch
+
+Two sessions' worth, plus this session's cleanup. Suggested commit split:
+
+**a) Home promos + parity fixes (2026-07-25)**
+`SummaryScreen.kt`, `SummaryViewModel.kt`, `HomePromoPlatform.{kt,ios,android}`,
+`NotificationPermissionEffect.kt`, `VersionCompare.kt`, `HomeStateProbe.swift`,
+`AppNavigation.kt`, `DreamSettings*.kt`, `ProfileScreen.kt`, `LoginScreen.kt`,
+`AppDelegate.swift`, `project.yml`, entitlements, app-group rename.
+
+Closed gaps: the **force-update gate was dead code** (`_forceUpdate` was
+declared but never assigned, so `UpdateNudgeDialog` was unreachable on iOS
+however low the installed version); the missing Profile "Rate Stationly" row;
+notification-prompt timing; ~300 lines of Android home surface iOS never had.
+
+**b) Live departure stream (2026-08-01/02)**
+`LiveStreamManager.kt`, `LiveStream.{ios,android}.kt`,
+`StreamBackedTflApiService.kt`, `TflApiServiceFactory.{ios,android}.kt`,
+`LiveStreamBridge.kt`, `Platform.kt`, `NetworkModule.kt`, `core/build.gradle.kts`,
+`Platform.ios.kt`, `iOSApp.swift`, `IOS_LIVE_STREAM.md`.
+
+**c) Backend-sync and teardown fixes** (bundled with (a) chronologically but
+independent — these are the highest-risk-if-lost changes):
+- `SelectionViewModel` — **the board was never reaching the backend.**
+  `syncStations` now runs *before* cleanup, and `clearBoardsPreservingIdentity()`
+  replaces `cleanupAll()` on the board-swap path. `cleanupAll()` calls
+  `storageManager.clearAll()`, which on iOS is
+  `removePersistentDomainForName(bundleId)` — it wipes the whole standard
+  NSUserDefaults domain including `firebase_user_uid` / `firebase_auth_token`.
+  So one board change left the app with no uid and no bearer token, and every
+  auth-gated call in between failed silently. The helper is exactly
+  `cleanupAll()` minus that one wipe. **Android is unaffected** — its
+  `clearAll()` only clears a SharedPrefs file and its identity lives in
+  `FirebaseAuth.currentUser`.
+- `ProfileViewModel` — backend teardown (`logOut`, FCM token unregister) now
+  runs *before* `signOut()`, because both are auth-gated and read a token that
+  `signOut()` clears.
+- `FcmTokenRegistrar` — keychain-restored sessions and rotated tokens never
+  reached the backend. Now driven from `SummaryViewModel` init + every
+  foreground, cheap when unchanged (one string compare, no network).
+
+**d) This session's review pass** — see §6.
+
+---
+
+## 6. This session: review, fixes, verification
+
+A full read of every changed file. Findings, all fixed:
+
+### Correctness
+
+1. **`LiveStreamManager.openIfNeeded()` had a check-then-act race across two
+   lock acquisitions.** Two coroutines could both observe "no live job" and
+   both launch a `runConnection`; the second overwrote `socketJob`, leaving the
+   first as an orphan that no `closeCurrentSession` could cancel and that
+   reconnected forever. Easy to hit on a cold start, where `notifyForeground()`
+   and the board's first `ensureStation` fire within milliseconds on different
+   coroutines. **This is the most likely root cause of the reconnect churn
+   `IOS_LIVE_STREAM.md` §7.2 flagged as never root-caused.** Test and launch
+   are now inside one `withLock`.
+2. **`ensureStation`/`ensureLine` leaked pending awaiters on timeout.** A
+   `CompletableDeferred` has no parent job, so `withTimeout` did not discard it;
+   the entry outlived the call and every subsequent timeout on the same id
+   appended another. Now removed in a `finally`, with the key dropped once its
+   last awaiter is gone.
+3. **The widget's "Refresh failed, tap to retry" glyph lied.** The 15s debounce
+   window was claimed before the network call and held on failure, so every
+   retry tap inside it silently returned `.debounced`. A short
+   `failedRetrySeconds = 3` window now applies while the failed flag is set —
+   honest retry, still bounded against spam-tapping a broken backend.
+4. **Double FCM token POST on every login.** `LoginViewModel` registered inline
+   without seeding `FcmTokenRegistrar`'s cache, so `SummaryViewModel.init`
+   re-POSTed the identical token seconds later. Login now goes through the
+   registrar, passing `uid` explicitly to avoid racing the Swift AuthBridge's
+   write of `firebase_user_uid`.
+5. **Stale contract doc.** `expect fun notifyPullToRefresh`'s KDoc said
+   "force-close and reopen the connection" — the exact behaviour that was
+   removed to fix the ~10s pull. A future reader restoring it would have
+   reintroduced the bug. Corrected, along with the same wording in
+   `SummaryViewModel.refreshAll()`.
+
+### Dead code / cost removed
+
+- Two unused imports (`kotlinx.cinterop.cValue`, `NSProcessInfo`) in
+  `Platform.ios.kt`.
+- **Two SQLite queries per push** (`getAllSelections` + `getLastUpdatedTimestamp`)
+  that existed only to build a trace string, in the push handler's hot path.
+- `hideWidgetPromoForSession()` — unreachable on iOS (see §4); replaced with a
+  doc note so it doesn't read as a missing port.
+- Stray blank line / dangling comma in the `Board(...)` call.
+
+### Consolidation
+
+- **The App Group literal was copy-pasted into 18 places.** The 2026-07-25
+  rename had to find every one, and a missed copy does not fail the build — it
+  silently opens an empty suite, which looks exactly like "the data was never
+  written". Now: one Kotlin constant (`IosAppGroup.ID` in `core/iosMain`,
+  which `composeApp/iosMain` reads) and one per Swift target
+  (`AppGroupID.swift` × 2 — separate compilation units cannot share one).
+  Only those three declarations plus the two `project.yml` entitlements now
+  carry the literal.
+- `LiveStreamManager`'s tuning magic numbers are named constants
+  (`ENSURE_TIMEOUT_MS`, `HEARTBEAT_MS`, `RECONNECT_*`).
+- `PushTraceSwift` was living inside `HomeStateProbe.swift` **wearing
+  `HomeStateProbe`'s doc comment** — two unrelated types, merged docs. Split
+  into its own file, both correctly documented.
+- Widget deployment target said `16.0` at target level and `17.0` in build
+  settings (only the latter took effect). Aligned to 17.0, with the reason
+  recorded.
+
+### Verification
+
+```bash
+# iOS
+./gradlew :core:compileKotlinIosSimulatorArm64 :composeApp:compileKotlinIosSimulatorArm64
+# Android no-regression proof
+./gradlew :core:compileDebugKotlinAndroid :android:app:compileProdDebugKotlin
+```
+
+All four green. Full device build + install + launch on the iPhone 11 also
+green (§8 pipeline).
+
+---
+
+## 7. Which doc to open
+
+| Doc | Reach for it when |
+|---|---|
+| **`IOS_HANDOVER.md`** (this) | Starting a session. Always first. |
+| `IOS_BUILD_AND_HANDOFF.md` | Build/deploy mechanics, Xcode setup, per-session history. The long one. |
+| `IOS_PARITY_GAP_ANALYSIS.md` | "Does iOS have X yet?" Component-by-component sweep vs Android. |
+| `IOS_LIVE_STREAM.md` | Anything touching the WebSocket, its protocol or its three fixed bugs. |
+| `IOS_WIDGET_DESIGN.md` | Widget layout, the archiver pitfall, paging decision. |
+| `IOS_PARITY_PLAN.md` | Original plan + environment/config setup. |
+| `IOS_INFRA_AUDIT.md` | Security / testing / a11y / architecture audit findings. |
+| `BOARD_DOTMATRIX_FONT.md` | Board typography — **the board uses no special font**, and DotGothic16 was tried and reverted for parity. |
+
+---
+
+## 8. Build + deploy (device, staging)
+
+⚠️ **You must rebuild the XCFramework after any Kotlin edit.** Xcode links a
+prebuilt artifact, so editing Kotlin and running only `xcodebuild` silently
+ships stale code. This has cost real time more than once.
+
+```bash
+# 1. Regenerate the project (required after any project.yml change)
+cd iosApp && ./xcodegen.sh && cd ..
+
+# 2. Kotlin framework + Compose resources  (~6-9 min)
+./gradlew :composeApp:assembleComposeAppDebugXCFramework \
+          :composeApp:assembleIosArm64MainResources
+
+# 3. Build, install, launch
+DD=iosApp/build/DD
+xcodebuild -project iosApp/iosApp.xcodeproj -scheme "iosApp Staging" \
+  -destination 'id=00008030-001E0D9C3EFB802E' -derivedDataPath "$DD" \
+  -allowProvisioningUpdates build
+xcrun devicectl device install app --device 00008030-001E0D9C3EFB802E \
+  "$DD/Build/Products/Debug Staging-iphoneos/iosApp.app"
+xcrun devicectl device process launch --terminate-existing \
+  --device 00008030-001E0D9C3EFB802E com.stationly.mobile
+```
+
+`./gradlew :composeApp:embedAndSignAppleFrameworkForXcode` does **not** work
+from a plain shell — it needs Xcode's env vars.
+
+### On-device debugging: the push/stream trace
+
+`log stream` cannot target a device on recent macOS, and
+`devicectl … --console` does not capture `print()` from a Compose/KMP process,
+so on-device behaviour was effectively unobservable. Both sides of the app
+write a bounded ring buffer to the App Group instead:
+
+```bash
+xcrun devicectl device copy from --device 00008030-001E0D9C3EFB802E \
+  --domain-type appGroupDataContainer \
+  --domain-identifier group.com.stationly.shared --source / --destination /tmp/pull
+plutil -convert xml1 -o /tmp/ag.xml \
+  /tmp/pull/Library/Preferences/group.com.stationly.shared.plist
+python3 -c "import plistlib;print(*plistlib.load(open('/tmp/ag.xml','rb')).get('push_trace',[]),sep='\n')"
+```
+
+Keys: `stream:ready`, `stream:subscribe … force=`, `stream:update station=`/`line=`,
+`stream:refresh reusing live socket`, `stream:reconnect backoff=`,
+`stream:error code=`, `stream:decodeError`, `stream:heartbeatFailed`,
+`stream:EXCEPTION`, `kmp:*`, `apns:*`, `bgRefresh=`. The widget extension keeps
+its own `widget_refresh_trace`.
+
+---
+
+## 9. Next steps, in priority order
+
+1. **Commit the working tree** using the §5 split. It is the single biggest
+   risk on this branch — two sessions of unversioned work.
+2. **QA the promos and the stream on device**: widget promo appears only with
+   no widget installed; dream promo retires after one run; notification banner
+   tracks the Settings toggle; force-update dialog fires against a raised
+   `app.minVersion`.
+3. **Re-check reconnect churn** now that the `openIfNeeded` race is fixed — the
+   trace should show no `stream:reconnect` bursts in steady state. If it still
+   churns, the foreground/background-cycling hypothesis in
+   `IOS_LIVE_STREAM.md` §7.2 is back on the table.
+4. **Exercise the stream past one station** — the 25-cap and `unknown_station`
+   paths are unexercised.
+5. **First tests**: `LiveStreamManager` reconnect/backoff and force-resubscribe.
+6. **Verify prod nginx** before pointing production builds at the stream.

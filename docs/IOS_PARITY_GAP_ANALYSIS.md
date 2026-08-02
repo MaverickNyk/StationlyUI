@@ -8,7 +8,121 @@
 
 ---
 
-## 🆕 2026-07-20 SESSION — full-component sweep + DREAM PORT (read this block first)
+## 🆕 2026-07-25 SESSION — PAID TEAM UNBLOCK + home promos (read this block first)
+
+**The signing wall is gone.** The owner enrolled **Stationly Limited** in the
+Apple Developer Program — an *Organization* enrollment, team **`7T7D5LLYSL`**
+(was the personal team `6D3CXG8U25`). Everything that had been written,
+compiled and left dormant since June is now switched on:
+
+| Item | What changed |
+|---|---|
+| **Push (APNs → FCM)** | `aps-environment` restored in `iosApp/project.yml`, as **`$(APS_ENVIRONMENT)`** — a per-config build setting (`development` on Debug, **`production` on both Release configs**). Hard-coding `development` would have made every push silently fail against Apple's production gateway on the first TestFlight build; this makes the right value automatic. |
+| **Sign in with Apple** | `com.apple.developer.applesignin: [Default]` added. **No code change was needed** — the ASAuthorization → Firebase `apple.com` flow has been complete since 2026-07-20 and was failing only at the entitlement. The friendly "isn't available" banner is a runtime error mapping, so it simply stops appearing. |
+| `DEVELOPMENT_TEAM` | `6D3CXG8U25` → `7T7D5LLYSL` on **both** targets (app + widget extension). |
+
+**⚠️ Moving to a paid team is NOT just a `DEVELOPMENT_TEAM` edit.** Free
+personal teams auto-register devices and issue throwaway 7-day profiles with
+no portal presence; paid teams require every identifier and device to exist in
+the portal first. First build on `7T7D5LLYSL` failed with *"No profiles for
+'com.stationly.mobile' were found"* + *"Device 'Nick's iPhone' isn't
+registered"* until all of this existed. **Portal setup checklist:**
+
+1. **Xcode → Settings → Accounts** must list the team. Verify with
+   `defaults read com.apple.dt.Xcode IDEProvisioningTeams` — if it shows only
+   `6D3CXG8U25 / isFreeProvisioningTeam = 1`, automatic signing has no paid
+   team to work from and every other step is wasted. Remove + re-add the Apple
+   ID to force a team refresh.
+2. **App Group** `group.com.stationly.shared` (create FIRST — the App IDs
+   can't be configured to use it until it exists).
+   ⚠️ **Renamed from `group.com.stationly.mobile` on 2026-07-25.** Apple
+   rejected the original with *"An Application Group with Identifier
+   'group.com.stationly.mobile' is not available"* — App Group identifiers are
+   globally unique, and the free personal team had already claimed it while
+   auto-provisioning. Free teams have no Certificates/Identifiers/Profiles
+   portal section, so there is nowhere to go and release it; renaming is the
+   only self-service fix. 14 references across 10 source files
+   (`core/iosMain`, `composeApp/iosMain`, both Swift targets, `project.yml`).
+   Existing installs orphan their app-group data — device ID, screensaver
+   prefs, widget payload — all of which regenerate on next launch.
+3. **App ID** `com.stationly.mobile` — capabilities: **App Groups**,
+   **Push Notifications**, **Sign In with Apple** (Configure → "Enable as a
+   primary App ID"). Nothing else.
+4. **App ID** `com.stationly.mobile.StationlyWidget` — **App Groups only**.
+   Easy to forget; the widget is a separate binary with its own bundle ID and
+   the build fails on it independently.
+5. **Devices → +** → UDID `00008030-001E0D9C3EFB802E` (Nick's iPhone).
+
+**Owner-side steps that are NOT in this repo** (client code can't substitute for them):
+1. developer.apple.com → Keys → new key with **APNs** enabled → download the
+   `.p8` **once** → Firebase console (`mindthetimefcm`) → Cloud Messaging →
+   upload with its Key ID + team `7T7D5LLYSL`. Without this, FCM has nothing
+   to talk to APNs with and delivery stays dead despite the entitlement.
+2. Firebase console → Authentication → Sign-in method → **Apple → Enable**.
+   The native iOS flow needs no Services ID.
+3. The **backend must send `content-available: 1`** on `Station_*` /
+   `LineStatus_*` pushes, or iOS never wakes a backgrounded app and the
+   widget only refreshes when the app is opened. (StationlySyncer is a
+   separate, read-only repo — verify there.)
+
+**Parity gaps closed this session** (`composeApp`/`iosApp` only; `android/`
+and `core/commonMain` untouched):
+
+| Gap | Detail |
+|---|---|
+| **Home promos + notification banner** (~300 lines of Android surface iOS never had) | `PromoBanner` / `WidgetPromoCard` / `DreamPromoCard` / `NotificationDeniedBanner` in `SummaryScreen.kt` + `checkWidgetPromo` / `checkDreamPromo` / `checkNotificationDeniedBanner` / dismiss+hide in `SummaryViewModel`. Same SDUI keys as Android (`home.promo.widget.*`, `home.promo.dream.*`, `home.notif_denied.*`) **including the `.show` master switches**. The original "promos omitted for iOS v1" decision was made when iOS had neither a widget nor a dream — it now has both, so the omission had expired. |
+| **Force-update gate was dead code** | `SummaryViewModel._forceUpdate` was declared but **never assigned**, so `UpdateNudgeDialog` was unreachable on iOS however low the installed version — the SDUI `app.minVersion` lever worked on Android only. Now wired via new `ui/util/isVersionBelow()` (port of Android's private helper) + `appVersionName()` (`CFBundleShortVersionString`). |
+| **Profile "Rate Stationly" row** | Android's About fallback has five link rows, iOS had four — the `rate` row was missing entirely. Added pointing at the App Store (Android's `market://…` has no handler on iOS and would dead-end). Swap in the `itms-apps://…?action=write-review` deep link once an App Store ID exists. |
+| **Notification prompt timing** | iOS asked for notification permission in `didFinishLaunching` — before the user had seen anything. Android asks from the first authenticated screen, and iOS gives exactly one chance per install (a denial is permanent until the user digs through Settings). Ported `NotificationPermissionEffect` to `composeApp/ui/common/`, invoked from `SummaryScreen`; `AppDelegate` now only re-registers for APNs when already authorized. |
+
+**iOS-infra substitutions made (documented divergences, same class as the
+widget-paging decision):**
+- **Widget-installed detection** — Android reads `AppWidgetManager`
+  from shared code. `WidgetCenter` is **Swift-only** (no ObjC interface), so
+  Kotlin/Native cannot see it: new `iosApp/iosApp/HomeStateProbe.swift`
+  probes `getCurrentConfigurations` on launch + every foreground and writes
+  `home_widget_installed` into the App Group; `hasHomeScreenWidget()` reads
+  it. Returns **`null` when un-probed** so the promo never flashes at
+  someone who already has the widget.
+- **Widget promo has no CTA button** — iOS has no API to add a widget on the
+  user's behalf. Android already handles this exact case (it passes
+  `cta = null` when `isRequestPinAppWidgetSupported` is false), so this is
+  Android's own fallback branch, not an invention. The instruction moved into
+  the subtitle; backends may override with `home.promo.widget.subtitle.ios`.
+- **Dream promo detection** — Android asks whether Stationly is the system
+  screensaver. iOS has no screensaver slot (the dream is an in-app route), so
+  the analogue is "has the user ever run it": `DreamSettings.hasEverStarted()`,
+  marked on the Start button, stored in the app-group dream prefs. Its CTA
+  goes straight to `dream/settings` (fewer taps than Android's trip through
+  system Settings).
+- **"Enable" on the notification banner** opens the app's Settings page —
+  iOS has no per-app notifications deep link like Android's
+  `ACTION_APP_NOTIFICATION_SETTINGS`.
+
+**Checked this session, NOT gaps (don't "fix" these):**
+- **Profile provider chip icon** — iOS shows the generic mail icon for an
+  Apple-signed-in user. So does Android: its chip is
+  `if (provider == "Google") AlternateEmail else Email`, with no Apple branch.
+  iOS matches character for character; giving iOS an Apple glyph would
+  *invent* a divergence.
+- **`WelcomeEmptyState` / `FeatureChip`** (Android `EmptyStates.kt`, ~100
+  lines with no iOS counterpart) — **dead code on Android**: nothing
+  references either. Only `EmptyStationsState` is used, and iOS has it.
+- **`UpdateNudgeDialog`** — already present on iOS; only its *trigger* was
+  dead (see the force-update row above).
+
+**New SDUI keys the backend may optionally add:**
+`home.promo.widget.subtitle.ios` (iOS-worded how-to; falls back to the shared
+`home.promo.widget.subtitle`). All other promo keys are the Android ones,
+unchanged.
+
+**Files added:** `composeApp/commonMain/platform/HomePromoPlatform.kt` (+
+`iosMain`/`androidMain` actuals), `composeApp/commonMain/ui/common/NotificationPermissionEffect.kt`,
+`composeApp/commonMain/ui/util/VersionCompare.kt`, `iosApp/iosApp/HomeStateProbe.swift`.
+
+---
+
+## 🆕 2026-07-20 SESSION — full-component sweep + DREAM PORT
 
 Branch `ios-parity` was **rebased onto latest `origin/master`** (0 behind) and
 force-pushed. Then a fresh file-by-file sweep of EVERY Android component
