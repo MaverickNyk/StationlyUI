@@ -75,6 +75,7 @@ object DreamSettings {
     private const val KEY_THEME      = "theme"
     private const val KEY_CLOCK_STYLE = "clock_style"
     private const val KEY_STATION_ID  = "station_id"  // optional override
+    private const val KEY_EVER_STARTED = "ever_started"
 
     fun getLayout(): DreamLayout = DreamLayout.fromStored(DreamPrefsBackend.get(KEY_LAYOUT))
     fun setLayout(layout: DreamLayout) = DreamPrefsBackend.set(KEY_LAYOUT, layout.storedAs)
@@ -91,4 +92,18 @@ object DreamSettings {
      */
     fun getStationId(): String? = DreamPrefsBackend.get(KEY_STATION_ID)?.ifBlank { null }
     fun setStationId(stationId: String?) = DreamPrefsBackend.set(KEY_STATION_ID, stationId)
+
+    /**
+     * Has the user ever actually run the screensaver?
+     *
+     * Drives the home "Set as Screensaver" promo. Android asks the system
+     * (`Settings.Secure.screensaver_components` — is Stationly the active
+     * dream?), which iOS has no equivalent for: there is no system screensaver
+     * slot to be chosen for, the dream is an in-app surface. "Has run it at
+     * least once" is the honest iOS analogue of "has picked us" — the promo's
+     * job is to tell people the feature exists, and once they've seen it, it
+     * has done that job.
+     */
+    fun hasEverStarted(): Boolean = DreamPrefsBackend.get(KEY_EVER_STARTED) == "true"
+    fun markStarted() = DreamPrefsBackend.set(KEY_EVER_STARTED, "true")
 }

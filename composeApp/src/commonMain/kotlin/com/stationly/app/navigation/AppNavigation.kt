@@ -147,7 +147,8 @@ fun AppNavigation(
         composable("summary") {
             SummaryScreen(
                 onNavigateToSelection = { navController.navigate("selection") },
-                onNavigateToProfile = { navController.navigate("profile") }
+                onNavigateToProfile = { navController.navigate("profile") },
+                onOpenScreensaver = { navController.navigate("dream/settings") }
             )
         }
 

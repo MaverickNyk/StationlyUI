@@ -360,7 +360,59 @@ class SelectionViewModel(
                     station = resolvedId, stationName = stationName,
                     direction = direction, destinations = emptyList(), destinationIds = emptyList()
                 )
-                stationLifecycleUseCase.cleanupAll()
+                // ── Tell the BACKEND about the new board — BEFORE cleanupAll ──
+                //
+                // Without this the station never lands in Firestore
+                // `metadata/subscribed_stations`, which is the exact list the
+                // Syncer polls — so TfL is never polled for it and NO FCM
+                // message is ever published for it. The client-side topic
+                // subscription still succeeds, which is what makes the failure
+                // so quiet: the device listens to a topic nobody publishes to.
+                // It also breaks board-restore-on-login, because the backend has
+                // nothing saved to hand back. Symptom: "Subscribed stations (0)"
+                // in admin while the board works fine locally.
+                //
+                // ⚠️ ORDER IS LOAD-BEARING ON iOS. `cleanupAll()` below calls
+                // `storageManager.clearAll()`, which on iOS is
+                // `removePersistentDomainForName(bundleId)` — it wipes the whole
+                // standard NSUserDefaults domain, including `firebase_user_uid`
+                // and `firebase_auth_token`. Run after it, this block reads a
+                // null uid and skips silently (and the POST would be
+                // unauthenticated anyway). Android places the same call in a
+                // detached tail AFTER its cleanup and is fine, because it reads
+                // the uid from `FirebaseAuth.currentUser` and its `clearAll()`
+                // only clears a SharedPrefs file — the identity is never in the
+                // wiped store. Same code, different blast radius.
+                //
+                // Backend semantics: `syncStations` is a full REPLACE that diffs
+                // old vs new ids to inc/dec subscription counts, and the product
+                // is deliberately single-board (`addStation` hardcodes
+                // `[station]`), so sending just the new one is correct and
+                // releases the previous station's hold.
+                //
+                // Best-effort: the board must still appear if this fails, and
+                // the Profile / board-delete paths re-sync the full list.
+                try {
+                    val uid = Platform.storageManager.loadString("firebase_user_uid")
+                    if (uid != null) {
+                        sduiService.syncStations(
+                            uid,
+                            listOf(
+                                com.stationly.core.model.sdui.SubscribedStation(
+                                    id        = userSelection.station,
+                                    name      = userSelection.stationName,
+                                    line      = userSelection.line,
+                                    mode      = userSelection.mode,
+                                    direction = userSelection.direction,
+                                )
+                            )
+                        )
+                    }
+                } catch (_: Exception) {
+                    // Retried by the Profile/delete sync paths.
+                }
+
+                clearBoardsPreservingIdentity()
                 stationLifecycleUseCase.setupStation(userSelection, isFirstTime = true)
                 _uiState.value = state.copy(isLoading = false, isSaving = false, showSuccessDialog = true)
                 performHaptic(HapticType.SUCCESS)
@@ -371,6 +423,48 @@ class SelectionViewModel(
                 )
                 performHaptic(HapticType.ERROR)
             }
+        }
+    }
+
+    /**
+     * Swap boards without destroying the signed-in session.
+     *
+     * `StationLifecycleUseCase.cleanupAll()` does exactly this PLUS
+     * `storageManager.clearAll()`. That last step is harmless on Android — it
+     * clears the "StationlyPrefs" file, and the identity lives in
+     * `FirebaseAuth.currentUser`, not prefs. On iOS it is
+     * `removePersistentDomainForName(bundleId)`, which wipes the ENTIRE
+     * standard NSUserDefaults domain — including the `firebase_user_uid` /
+     * `firebase_auth_token` keys the Swift AuthBridge owns.
+     *
+     * The damage cascades: after one board change the app has no uid and no
+     * bearer token until AuthBridge happens to re-persist them on a later
+     * foreground, so every auth-gated call in between fails — silently, since
+     * they're all best-effort. That is what kept `syncStations` from ever
+     * reaching the backend, which in turn kept the Syncer from polling the
+     * station, which is why the widget never got a push. `LoginViewModel`
+     * already carries a comment warning never to call `cleanupAll()` there for
+     * this same reason; a board swap has no more business wiping the session
+     * than a login does.
+     *
+     * So: same teardown, minus the storage wipe. Board state lives in SQLite +
+     * the selection repo + the widget's app-group payload, all of which are
+     * cleared here; the leftover NSUserDefaults entries (SDUI layout caches,
+     * dismissed announcements) are per-station keys that the next setup
+     * overwrites anyway.
+     */
+    private suspend fun clearBoardsPreservingIdentity() {
+        val allSelections = Platform.sqlStorage.getAllSelections()
+        val allTopics = allSelections.flatMap { sel ->
+            listOf("Station_${sel.station}", "LineStatus_${sel.mode}_${sel.line}")
+        }.distinct()
+
+        selectionRepository.clearAll()
+        Platform.sqlStorage.clearAllData()
+        Platform.widgetManager.clearWidgetData()
+
+        if (allTopics.isNotEmpty()) {
+            Platform.notificationManager.unsubscribeFromTopics(allTopics)
         }
     }
 

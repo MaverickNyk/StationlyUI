@@ -960,9 +960,8 @@ fun LoginScreen(
     // Sign in with Apple — mirrors launchGoogle: hosts may override via
     // onAppleSignIn; by default the ViewModel drives the native
     // ASAuthorization flow through the Swift AuthBridge → Firebase OAuth
-    // credential (see AuthBridge.signInWithApple). NOTE: until the paid-team
-    // `applesignin` entitlement lands (project.yml UNBLOCK), the sheet fails
-    // fast and surfaces a friendly error banner.
+    // credential (see AuthBridge.signInWithApple). Live since 2026-07-25 —
+    // the `applesignin` entitlement landed with the Stationly Limited team.
     fun launchApple() {
         if (onAppleSignIn != null) onAppleSignIn.invoke()
         else viewModel.onAppleSignInInteractive(onNavigateToSummary)

@@ -1,5 +1,6 @@
 package com.stationly.app.platform
 
+import com.stationly.core.platform.IosAppGroup
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -23,7 +24,7 @@ import platform.Foundation.stringWithContentsOfFile
 import platform.Foundation.writeToFile
 import platform.posix.memcpy
 
-private const val APP_GROUP_ID = "group.com.stationly.mobile"
+private const val APP_GROUP_ID = IosAppGroup.ID
 private const val DIR          = "mode_icons"
 private const val TINTS_FILE   = "tints.json"
 private const val VERSION_FILE = "version.txt"

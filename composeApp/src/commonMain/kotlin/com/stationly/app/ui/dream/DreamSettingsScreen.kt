@@ -156,7 +156,13 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
                 // ── Start button — iOS-only entry (Android launches dreams
                 //    from the system dock trigger; in-app needs its own). ──
                 Button(
-                    onClick = onStartDream,
+                    onClick = {
+                        // Records that the screensaver has actually been used —
+                        // retires the home "Set as Screensaver" promo, the iOS
+                        // stand-in for Android reading the system's chosen dream.
+                        DreamSettings.markStarted()
+                        onStartDream()
+                    },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = accent,
                         contentColor   = MaterialTheme.colorScheme.onPrimary,

@@ -218,10 +218,41 @@ class ProfileViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSigningOut = true, error = null)
             try {
-                // Firebase sign-out first (iOS: triggers Swift AuthBridge.logout(); Android: direct)
+                // ── Backend teardown FIRST — both calls are auth-gated and the
+                // bearer token is read from storage that signOut() clears, so
+                // running them afterwards would 401 silently (the exact bug
+                // Android's FirebaseAuthManager documents). Both are capped so a
+                // slow backend can't strand the user "half signed out".
+                val uid = storageManager.loadString("firebase_user_uid")
+                if (uid != null) {
+                    // a) /user/logout → backend endSession: decrements this
+                    //    station's subscription count and flips loggedIn=false.
+                    //    Without it the Syncer keeps polling TfL for a user who
+                    //    has gone, and the station stays in the subscribed set.
+                    try {
+                        kotlinx.coroutines.withTimeoutOrNull(4000) {
+                            sduiApi.logOut(uid, com.stationly.app.platform.DeviceIdentity.deviceId())
+                        }
+                    } catch (_: Exception) {}
+
+                    // b) Unregister this device's FCM token so a push aimed at
+                    //    the now-signed-out user can't land here after someone
+                    //    else signs in on this device.
+                    try {
+                        kotlinx.coroutines.withTimeoutOrNull(3000) {
+                            val token = com.stationly.core.platform.Platform.notificationManager.registerDevice()
+                            if (token.isNotBlank()) sduiApi.unregisterFcmToken(token)
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                // Firebase sign-out (iOS: triggers Swift AuthBridge.logout(); Android: direct)
                 authProvider.signOut()
                 // Unsubscribe FCM, clear widget, clear all storage
                 stationLifecycleUseCase.cleanupAll()
+                // Forget the cached (token, uid) pair so the NEXT user on this
+                // device re-registers instead of being skipped as "unchanged".
+                com.stationly.app.util.FcmTokenRegistrar.clearCache()
                 _uiState.value = _uiState.value.copy(isSigningOut = false, signOutSuccess = true)
                 onSuccess()
             } catch (e: Exception) {
@@ -241,9 +272,24 @@ class ProfileViewModel(
                     _uiState.value = _uiState.value.copy(isDeletingAccount = false, error = "Not authenticated")
                     return@launch
                 }
+                // Drop this device's token BEFORE the account goes: deleting the
+                // Firestore user doc does NOT delete its `fcm_tokens`
+                // subcollection (Firestore keeps subcollections when a parent
+                // doc is removed), so an un-unregistered token would linger and
+                // could still resolve for uid-targeted sends.
+                try {
+                    kotlinx.coroutines.withTimeoutOrNull(3000) {
+                        val token = com.stationly.core.platform.Platform.notificationManager.registerDevice()
+                        if (token.isNotBlank()) sduiApi.unregisterFcmToken(token)
+                    }
+                } catch (_: Exception) {}
+
+                // Backend handles the rest atomically: endSession decrements the
+                // station subscriptions exactly once, then the doc + auth user go.
                 sduiApi.deleteAccount(uid)
                 authProvider.signOut()
                 stationLifecycleUseCase.cleanupAll()
+                com.stationly.app.util.FcmTokenRegistrar.clearCache()
                 _uiState.value = _uiState.value.copy(isDeletingAccount = false, deleteAccountSuccess = true)
                 onSuccess()
             } catch (e: Exception) {

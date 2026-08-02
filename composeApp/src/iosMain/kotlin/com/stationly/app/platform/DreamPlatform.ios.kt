@@ -1,5 +1,6 @@
 package com.stationly.app.platform
 
+import com.stationly.core.platform.IosAppGroup
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -29,7 +30,7 @@ import kotlin.coroutines.resume
  * the iOS mirror of Android's separate "StationlyDreamPrefs" file.
  */
 actual object DreamPrefsBackend {
-    private val suite = NSUserDefaults(suiteName = "group.com.stationly.mobile")
+    private val suite = NSUserDefaults(suiteName = IosAppGroup.ID)
 
     actual fun get(key: String): String? = suite.stringForKey("dream_$key")
 

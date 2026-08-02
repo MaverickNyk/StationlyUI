@@ -1,5 +1,6 @@
 package com.stationly.app.platform
 
+import com.stationly.core.platform.IosAppGroup
 import com.stationly.core.model.sdui.DeviceInfo
 import platform.Foundation.NSBundle
 import platform.Foundation.NSUserDefaults
@@ -12,7 +13,7 @@ actual object DeviceIdentity {
     // IosStorageManager.clearAll() → removePersistentDomainForName(bundleId),
     // which would wipe a standard-domain id and orphan the backend session
     // (same reason Android keeps its id in a separate prefs file).
-    private val suite = NSUserDefaults(suiteName = "group.com.stationly.mobile")
+    private val suite = NSUserDefaults(suiteName = IosAppGroup.ID)
 
     actual fun deviceId(): String {
         suite.stringForKey("stationly_device_id")?.let { if (it.isNotBlank()) return it }

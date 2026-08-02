@@ -25,6 +25,9 @@ import kotlinx.serialization.json.Json
 import com.stationly.app.platform.performHaptic
 import com.stationly.app.platform.HapticType
 import com.stationly.app.platform.getConnectivityFlow
+import com.stationly.app.platform.NotificationAuthState
+import com.stationly.app.platform.hasHomeScreenWidget
+import com.stationly.app.platform.notificationAuthState
 
 class SummaryViewModel(
     private val selectionRepository: SelectionRepository = SelectionRepository(
@@ -84,16 +87,32 @@ class SummaryViewModel(
     private val _isDeletingBoard = MutableStateFlow<String?>(null)
     val isDeletingBoard: StateFlow<String?> = _isDeletingBoard.asStateFlow()
 
-    // Always false on iOS — no Android widget infrastructure
     private val _showWidgetPromo = MutableStateFlow(false)
     val showWidgetPromo: StateFlow<Boolean> = _showWidgetPromo.asStateFlow()
+
+    private val _showDreamPromo = MutableStateFlow(false)
+    val showDreamPromo: StateFlow<Boolean> = _showDreamPromo.asStateFlow()
+
+    private val _showNotificationDeniedBanner = MutableStateFlow(false)
+    val showNotificationDeniedBanner: StateFlow<Boolean> = _showNotificationDeniedBanner.asStateFlow()
 
     private val jsonFormat = Json { ignoreUnknownKeys = true }
 
     init {
         viewModelScope.launch { fetchAnnouncement() }
         viewModelScope.launch { fetchHomeConfig() }
-        viewModelScope.launch { loadUserInitial(); registerDeviceSession() }
+        viewModelScope.launch {
+            loadUserInitial()
+            registerDeviceSession()
+            // Android does this from StationlyApplication.onCreate; Summary is
+            // the iOS equivalent "first authenticated surface". Without it a
+            // keychain-restored session (or a rotated token) never reaches the
+            // backend and every uid-targeted push fails NotRegistered.
+            com.stationly.app.util.FcmTokenRegistrar.ensureRegistered()
+        }
+        checkWidgetPromo()
+        checkDreamPromo()
+        checkNotificationDeniedBanner()
         viewModelScope.launch {
             getConnectivityFlow().collect { online ->
                 _uiState.value = _uiState.value.copy(isOnline = online)
@@ -181,7 +200,17 @@ class SummaryViewModel(
                 val rawPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line)
                 val dbPreds = GlobalBoardProcessor.processPredictions(rawPreds)
                 val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
-                val predsTimestamp = if (dbPreds.isNotEmpty()) now else 0L
+                // Android keeps "now" — unchanged behaviour. iOS uses the real
+                // last-sync time so the "ago" timer reflects genuine backend
+                // freshness instead of resetting on every periodic SQL re-read
+                // below, which would otherwise make a live stream look exactly
+                // like 30s polling from the UI's point of view.
+                val predsTimestamp = when {
+                    dbPreds.isEmpty() -> 0L
+                    Platform.getPlatformName() == "iOS" ->
+                        Platform.sqlStorage.getLastUpdatedTimestamp(selection.station, selection.line) ?: now
+                    else -> now
+                }
 
                 val currentMap = _predictions.value.toMutableMap()
                 currentMap[selection.station] = dbPreds
@@ -288,8 +317,17 @@ class SummaryViewModel(
     }
 
     fun refreshAll() {
-        performHaptic(HapticType.TAP)
+        // Android keeps its haptic here — unchanged behaviour. iOS moved it to
+        // the moment the pull crosses the trigger threshold (see
+        // `SummaryScreen`), which is where the platform puts it; firing here as
+        // well double-buzzed when the user released quickly.
+        if (Platform.getPlatformName() != "iOS") performHaptic(HapticType.TAP)
         _uiState.value = _uiState.value.copy(isRefreshing = true)
+        // No-op on Android. On iOS this forces a resubscribe on the live
+        // stream (the server replays a cached snapshot per subscribe), and
+        // reconnects only if the socket is actually dead — see
+        // core.platform.LiveStream.notifyPullToRefresh.
+        com.stationly.core.platform.LiveStream.notifyPullToRefresh()
         viewModelScope.launch {
             try {
                 _selections.value.forEach { selection ->
@@ -426,7 +464,85 @@ class SummaryViewModel(
             val config = NetworkModule.sduiApi.getHomeConfig().strings
             _homeConfig.value = config
             com.stationly.app.ui.util.HomeConfigCache.save(config)
+            // SDUI force-update gate (Android parity). Was declared but never
+            // set on iOS, so UpdateNudgeDialog could never appear however low
+            // the installed version was.
+            config["app.minVersion"]?.let { minVer ->
+                _forceUpdate.value = com.stationly.app.ui.util.isVersionBelow(
+                    com.stationly.app.platform.appVersionName(),
+                    minVer,
+                )
+            }
         } catch (_: Exception) {}
+    }
+
+    /**
+     * Show the "add a home screen widget" promo to people who don't have one.
+     *
+     * Android reads `AppWidgetManager.getAppWidgetIds` and filters by host
+     * category. iOS's `WidgetCenter` is Swift-only, so the Swift host probes
+     * it into the App Group and [hasHomeScreenWidget] reads that — `null`
+     * means the probe hasn't landed, in which case we decide nothing rather
+     * than flash a promo at someone who already has the widget.
+     */
+    fun checkWidgetPromo() {
+        _showWidgetPromo.value = hasHomeScreenWidget() == false
+    }
+
+    /**
+     * X button — hides until the next foreground re-evaluates (same
+     * non-persistent behaviour as Android's `dismissWidgetPromo`).
+     *
+     * Android also has `hideWidgetPromoForSession()` for its "Add" CTA. iOS
+     * has no counterpart on purpose: there is no API to add a widget on the
+     * user's behalf, so the card ships with `cta = null` permanently (see
+     * `WidgetPromoCard`) and a session-hide method would be unreachable code.
+     */
+    fun dismissWidgetPromo() {
+        _showWidgetPromo.value = false
+    }
+
+    /**
+     * Show the screensaver promo until the user has actually run the dream.
+     *
+     * Android asks the system whether Stationly is the selected screensaver
+     * (`Settings.Secure.screensaver_components` + the `screensaver_enabled`
+     * flag). iOS has no system screensaver slot — the dream is an in-app
+     * surface — so "has run it at least once" is the analogue, persisted in
+     * the app-group dream prefs so it survives the logout wipe.
+     */
+    fun checkDreamPromo() {
+        _showDreamPromo.value = !com.stationly.app.ui.dream.DreamSettings.hasEverStarted()
+    }
+
+    fun dismissDreamPromo() {
+        _showDreamPromo.value = false
+    }
+
+    fun hideDreamPromoForSession() {
+        _showDreamPromo.value = false
+    }
+
+    /**
+     * Surface the "notifications are off" banner when the OS says the user
+     * denied permission. Without it, line-status auto-alerts and admin pushes
+     * silently no-op with no way for the user to find out.
+     *
+     * Android has to consult its own "we asked" SharedPrefs flag because
+     * `checkSelfPermission` can't tell denial from never-prompted; iOS reports
+     * `notDetermined` natively, so DENIED alone is the whole condition.
+     * Re-runs on every foreground, so flipping the switch back on in Settings
+     * clears the banner without another nudge.
+     */
+    fun checkNotificationDeniedBanner() {
+        viewModelScope.launch {
+            _showNotificationDeniedBanner.value =
+                notificationAuthState() == NotificationAuthState.DENIED
+        }
+    }
+
+    fun dismissNotificationDeniedBanner() {
+        _showNotificationDeniedBanner.value = false
     }
 
     fun dismissAnnouncement() {
@@ -445,7 +561,16 @@ class SummaryViewModel(
             // edited on the Profile screen) — re-read them on every foreground.
             loadUserInitial()
             selectionRepository.initialize()
+            // Cheap when nothing changed (one string compare, no network) —
+            // catches a token that rotated while we were backgrounded.
+            com.stationly.app.util.FcmTokenRegistrar.ensureRegistered()
         }
+        // Same ON_RESUME re-evaluation Android does: the user may have added a
+        // widget, run the screensaver, or flipped notifications in Settings
+        // while we were backgrounded.
+        checkWidgetPromo()
+        checkDreamPromo()
+        checkNotificationDeniedBanner()
     }
 
     fun clearError() {
@@ -455,14 +580,6 @@ class SummaryViewModel(
     fun retryLoad() {
         _uiState.value = _uiState.value.copy(isBackendOffline = false)
         refreshAll()
-    }
-
-    fun dismissWidgetPromo() {
-        _showWidgetPromo.value = false
-    }
-
-    fun hideWidgetPromoForSession() {
-        _showWidgetPromo.value = false
     }
 
     private fun scheduleAutoRetry() {

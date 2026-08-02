@@ -284,17 +284,13 @@ class LoginViewModel(
             }
 
             // Best-effort — a failed token registration shouldn't block login;
-            // it is retried implicitly the next time the token rotates.
-            try {
-                val fcmToken = Platform.notificationManager.registerDevice()
-                if (fcmToken.isNotBlank()) {
-                    sduiApi.registerFcmToken(
-                        token      = fcmToken,
-                        platform   = Platform.getPlatformName().lowercase(),
-                        appVersion = DeviceIdentity.deviceInfo().appVersion
-                    )
-                }
-            } catch (_: Exception) {}
+            // it is retried on the next foreground.
+            //
+            // Goes through FcmTokenRegistrar rather than POSTing inline so the
+            // "last registered (token, uid)" cache is seeded here. Registering
+            // directly left that cache empty, and SummaryViewModel's init call
+            // then re-POSTed the identical token seconds later on EVERY login.
+            com.stationly.app.util.FcmTokenRegistrar.ensureRegistered(uid = uid)
 
             return true
         } catch (e: Exception) {

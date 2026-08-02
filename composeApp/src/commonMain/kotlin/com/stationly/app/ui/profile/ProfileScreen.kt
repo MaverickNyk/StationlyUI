@@ -90,6 +90,14 @@ private val DangerRed @Composable get() = LocalThemeTokens.current.error
 private const val STATIONLY_WEB_URL = "https://stationly.co.uk"
 private const val APP_VERSION = "1.0"
 
+/**
+ * Where "Rate Stationly" goes on iOS. Becomes a real listing once the app
+ * ships; until then it is a harmless 404 rather than a link that cannot open
+ * at all. Swap in the `itms-apps://…?action=write-review` deep link (which
+ * opens the review sheet directly) once the App Store ID exists.
+ */
+private const val APP_STORE_URL = "https://apps.apple.com/app/stationly"
+
 private val ProfileAboutFallback: List<SduiAppComponent> = listOf(
     SduiAppComponent.Card(
         id = "about_info",
@@ -104,6 +112,12 @@ private val ProfileAboutFallback: List<SduiAppComponent> = listOf(
             SduiAppComponent.LinkRow(id = "privacy", title = "Privacy Policy", subtitle = "How we handle your data", url = "$STATIONLY_WEB_URL/privacy", icon = "privacy_tip"),
             SduiAppComponent.LinkRow(id = "terms", title = "Terms of Service", subtitle = "Usage terms and conditions", url = "$STATIONLY_WEB_URL/terms", icon = "description"),
             SduiAppComponent.LinkRow(id = "contact", title = "Contact Us", subtitle = "Questions or feedback", url = "mailto:info@stationly.co.uk", icon = "email"),
+            // Android's fallback carries a fifth "rate" row pointing at
+            // `market://details?id=com.stationly.mobile`; iOS was missing the
+            // row entirely. Same row, App Store destination — `market://` has
+            // no handler on iOS and would dead-end (see the rewrite in
+            // AboutSection for backend-sent Android URLs).
+            SduiAppComponent.LinkRow(id = "rate", title = "Rate Stationly", subtitle = "Love the app? Let us know", url = APP_STORE_URL, icon = "star"),
         )
     )
 )
