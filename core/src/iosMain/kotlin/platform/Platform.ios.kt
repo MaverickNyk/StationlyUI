@@ -1,5 +1,6 @@
 package com.stationly.core.platform
 
+import com.stationly.core.config.AppConfig
 import com.stationly.core.model.FcmPayload
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.UserSelection
@@ -31,7 +32,25 @@ import platform.Foundation.timeIntervalSince1970
 
 private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-private const val APP_GROUP_ID = "group.com.stationly.mobile"
+/**
+ * The App Group shared by the app, the widget extension and all Kotlin/Native
+ * code — the single Kotlin-side source of truth.
+ *
+ * `composeApp/iosMain` reads it from here rather than re-declaring it: it was
+ * previously copied into four files, and the 2026-07-25 rename from
+ * `group.com.stationly.mobile` had to find every one. A missed copy does not
+ * fail the build — it silently opens an empty suite, which is indistinguishable
+ * from "the data was never written".
+ *
+ * Swift cannot import this, so both targets keep their own `AppGroupID.swift`;
+ * those two plus the `application-groups` entitlements in `project.yml` are
+ * the remaining copies that must move together.
+ */
+object IosAppGroup {
+    const val ID = "group.com.stationly.shared"
+}
+
+private const val APP_GROUP_ID = IosAppGroup.ID
 
 // ── All NSUserDefaults keys used across KMP and Swift ──
 object AppGroupKeys {
@@ -44,6 +63,17 @@ object AppGroupKeys {
     const val WIDGET_MODE             = "widget_mode"
     const val WIDGET_LAST_UPDATED     = "widget_last_updated"
     const val WIDGET_RELOAD_SIGNAL    = "widget_reload_signal"
+
+    // Everything the widget extension needs to refresh ITSELF against the
+    // REST API when the user taps refresh. The extension is a separate
+    // process that can't reach KMP or open the SQLite DB, so the primary
+    // selection's identity and the API coordinates have to be mirrored here
+    // — without the naptanId it has a station NAME but nothing addressable.
+    // Written on every widget write so they can never drift from the board
+    // actually on screen.
+    const val WIDGET_STATION_ID       = "widget_station_id"
+    const val WIDGET_API_BASE_URL     = "widget_api_base_url"
+    const val WIDGET_API_KEY          = "widget_api_key"
 
     // FCM topic management — written by KMP, processed by Swift FCMBridge
     const val FCM_TOPICS              = "fcm_topics"
@@ -119,8 +149,17 @@ class IosWidgetManager : WidgetManager {
         // Same shape ProcessFcmPayloadUseCase.refreshWidgetFromStorage and the
         // SummaryViewModel poll produce, so the widget never flips format
         // depending on which trigger refreshed it.
+        //
+        // Cap 8, not the default 3: the extension needs RESERVES, not just the
+        // visible window. The large family renders 6 rows, and the departed-row
+        // retention (WidgetData.ticked) can only hold a board together if
+        // already-departed trains are still in the payload to fall back on.
+        // At 3 the widget could never show more than 3 no matter its size, and
+        // emptied out the moment those 3 departed. Display caps stay in the
+        // views (BoardMetrics.maxRows); this is purely the buffer.
         val preds = GlobalBoardProcessor.processPredictions(
-            sql.getPredictions(primary.station, primary.line)
+            sql.getPredictions(primary.station, primary.line),
+            perPlatformCap = 8,
         )
         val tsMs = sql.getLastUpdatedTimestamp(primary.station, primary.line)
             ?: (NSDate().timeIntervalSince1970 * 1000).toLong()
@@ -129,6 +168,12 @@ class IosWidgetManager : WidgetManager {
             if (reason.isNotEmpty()) "${s.statusSeverityDescription}: $reason"
             else s.statusSeverityDescription
         }
+        // Written alongside the board so the widget's own refresh always
+        // targets the station currently displayed (see WIDGET_STATION_ID).
+        d.setObject(primary.station, forKey = AppGroupKeys.WIDGET_STATION_ID)
+        d.setObject(AppConfig.apiBaseUrl, forKey = AppGroupKeys.WIDGET_API_BASE_URL)
+        d.setObject(Platform.getApiKey(), forKey = AppGroupKeys.WIDGET_API_KEY)
+
         write(
             d,
             WidgetState(
@@ -160,6 +205,10 @@ class IosWidgetManager : WidgetManager {
     }
 
     private fun wipe(d: NSUserDefaults) {
+        // Clear the station id too — leaving it behind would let a refresh
+        // tap repopulate the widget with the board the user just deleted.
+        // The API coordinates are selection-independent, so they stay.
+        d.removeObjectForKey(AppGroupKeys.WIDGET_STATION_ID)
         d.removeObjectForKey(AppGroupKeys.WIDGET_STATION_NAME)
         d.removeObjectForKey(AppGroupKeys.WIDGET_LINE_NAME)
         d.removeObjectForKey(AppGroupKeys.WIDGET_PREDICTIONS)
@@ -205,6 +254,8 @@ class IosNotificationManager : NotificationManager {
         val pending = pendingList(AppGroupKeys.FCM_SUBSCRIBE_PENDING)
         defaults.setObject((pending + topics).distinct(), forKey = AppGroupKeys.FCM_SUBSCRIBE_PENDING)
         defaults.synchronize()
+        val (stations, lines) = parseTopics(topics)
+        LiveStreamManager.subscribeTopics(stations, lines)
         Unit
     }
 
@@ -214,7 +265,23 @@ class IosNotificationManager : NotificationManager {
         val pending = pendingList(AppGroupKeys.FCM_UNSUBSCRIBE_PENDING)
         defaults.setObject((pending + topics).distinct(), forKey = AppGroupKeys.FCM_UNSUBSCRIBE_PENDING)
         defaults.synchronize()
+        val (stations, lines) = parseTopics(topics)
+        LiveStreamManager.unsubscribeTopics(stations, lines)
         Unit
+    }
+
+    /**
+     * "Station_{naptanId}" / "LineStatus_{mode}_{line}" — the same topic
+     * identifiers FCM already uses — mapped onto the stream's station/line
+     * subscribe ids so a station add/remove keeps both channels in sync
+     * without a second call site.
+     */
+    private fun parseTopics(topics: List<String>): Pair<List<String>, List<String>> {
+        val stations = topics.mapNotNull { it.removePrefix("Station_").takeIf { s -> s != it } }
+        val lines = topics.mapNotNull {
+            it.removePrefix("LineStatus_").takeIf { rest -> rest != it }?.substringAfter("_", missingDelimiterValue = "")
+        }.filter { it.isNotEmpty() }
+        return stations to lines
     }
 
     override suspend fun clearAllTopics() = withContext(Dispatchers.IO) {
@@ -234,8 +301,21 @@ class IosNotificationManager : NotificationManager {
         // FCM payload processing is done by FcmPayloadBridge.processPayload()
     }
 
+    /**
+     * The device's FCM registration token, for backend registration.
+     *
+     * Reads the APP GROUP suite first: sign-out wipes the whole standard
+     * NSUserDefaults domain (`clearAll` → `removePersistentDomainForName`),
+     * which used to take the token with it. The next login then read "" and
+     * skipped registration silently, leaving the backend with no token for
+     * that user and every push failing "No registered tokens for uid".
+     * Swift's AppDelegate writes both locations; the standard-domain read
+     * stays as a fallback for a token persisted before that change.
+     */
     override suspend fun registerDevice(): String =
-        defaults.stringForKey(AppGroupKeys.FCM_TOKEN) ?: ""
+        NSUserDefaults(suiteName = APP_GROUP_ID).stringForKey(AppGroupKeys.FCM_TOKEN)
+            ?: defaults.stringForKey(AppGroupKeys.FCM_TOKEN)
+            ?: ""
 
     private fun pendingList(key: String): List<String> =
         (defaults.arrayForKey(key) as? List<*>)?.filterIsInstance<String>() ?: emptyList()
@@ -355,6 +435,37 @@ actual object Platform {
 // Swift serialises the push userInfo dict to JSON and calls processPayload().
 // ─────────────────────────────────────────────────────────
 
+/**
+ * Diagnostic ring buffer for the push pipeline, written to the APP GROUP so it
+ * can be pulled off a device with
+ * `devicectl device copy from --domain-type appGroupDataContainer`.
+ *
+ * Why not os_log/print: `log stream` cannot target a device from recent macOS,
+ * and `devicectl device process launch --console` does not capture `print()`
+ * from a Compose/KMP process — so on-device push behaviour was effectively
+ * unobservable. Silent-push failures give no user-visible signal by
+ * definition, so without this the only evidence is "the widget didn't change",
+ * which cannot distinguish "APNs never delivered it" from "we parsed it and
+ * dropped it".
+ *
+ * Bounded to the last 40 entries; cheap enough to leave enabled.
+ */
+object PushTrace {
+    private const val KEY = "push_trace"
+
+    fun log(msg: String) {
+        try {
+            val d = NSUserDefaults(suiteName = APP_GROUP_ID)
+            val existing = (d.arrayForKey(KEY) as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+            val ts = NSDate().timeIntervalSince1970.toLong()
+            d.setObject((existing + "$ts $msg").takeLast(40), forKey = KEY)
+            d.synchronize()
+        } catch (_: Exception) {
+            // Diagnostics must never break the path they observe.
+        }
+    }
+}
+
 object FcmPayloadBridge {
 
     private val processUseCase: ProcessFcmPayloadUseCase by lazy {
@@ -405,16 +516,22 @@ object FcmPayloadBridge {
             val root = json.parseToJsonElement(jsonString).jsonObject
             val topic = (root["from"] as? JsonPrimitive)?.contentOrNull
             val inner = (root["payload"] as? JsonPrimitive)?.contentOrNull
+            PushTrace.log("kmp:enter topic=${topic ?: "-"} innerLen=${inner?.length ?: -1}")
 
             when {
-                topic?.contains("LineStatus_") == true && inner != null ->
+                topic?.contains("LineStatus_") == true && inner != null -> {
+                    PushTrace.log("kmp:route=lineStatus")
                     processUseCase.processLineStatusUpdate(json.decodeFromString(inner))
+                }
 
-                topic?.contains("Station_") == true && inner != null ->
+                topic?.contains("Station_") == true && inner != null -> {
+                    val sid = topic.substringAfter("Station_")
+                    PushTrace.log("kmp:route=station sid=$sid")
                     processUseCase.processStationUpdate(
-                        topicStationId = topic.substringAfter("Station_"),
+                        topicStationId = sid,
                         payload = json.decodeFromString(inner)
                     )
+                }
 
                 // No topic (direct/test push) — sniff the payload shape.
                 inner != null -> {
@@ -431,6 +548,10 @@ object FcmPayloadBridge {
                     processUseCase.processStationUpdate(null, json.decodeFromString(jsonString))
             }
         } catch (e: Exception) {
+            // This used to be a bare println — invisible on device. A decode
+            // mismatch between the Syncer's payload and FcmPayload lands here
+            // and would otherwise look identical to "the push never arrived".
+            PushTrace.log("kmp:EXCEPTION ${e::class.simpleName}: ${e.message?.take(160)}")
             println("[FcmPayloadBridge] Failed to process payload: ${e.message}")
         }
     }

@@ -60,6 +60,7 @@ kotlin {
             dependsOn(commonMain)
             dependencies {
                 implementation("io.ktor:ktor-client-darwin:3.0.0-rc-1")
+                implementation("io.ktor:ktor-client-websockets:3.0.0-rc-1")
                 implementation("app.cash.sqldelight:native-driver:2.0.2")
             }
         }

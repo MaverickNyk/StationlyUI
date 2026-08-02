@@ -52,3 +52,31 @@ expect object Platform {
      */
     suspend fun signOutFromAuthExpiry()
 }
+
+/**
+ * Live-departure WebSocket stream lifecycle, driven by the platform's own
+ * foreground/background signal (Android has none of this — FCM + the
+ * existing SQLite-backed board poll are unchanged there, so every member is
+ * a no-op on that actual).
+ */
+expect object LiveStream {
+    /** App became foreground-active: connect (idempotent) and subscribe to
+     * every saved selection. */
+    fun notifyForeground()
+
+    /** App left the foreground: disconnect cleanly. No background execution
+     * is attempted — foreground-only, by design. */
+    fun notifyBackground()
+
+    /**
+     * Pull-to-refresh.
+     *
+     * ⚠️ Does NOT force a reconnect when the socket is healthy — it forces a
+     * *resubscribe*, because the server replays a cached snapshot on every
+     * subscribe frame. Tearing down a live connection here cost a TLS
+     * handshake plus an auth round-trip before the first byte of data and made
+     * a pull take ~10s; see `IOS_LIVE_STREAM.md` §4.3 before changing this.
+     * Only a dead or never-established socket gets the full reconnect.
+     */
+    fun notifyPullToRefresh()
+}

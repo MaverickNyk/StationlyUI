@@ -72,6 +72,16 @@ object NetworkModule {
     }
     
     // Lazy API Service singletons
-    val tflApi: TflApiService by lazy { TflApiServiceImpl(httpClient) }
+    val tflApi: TflApiService by lazy { createTflApiService(httpClient) }
     val sduiApi: SduiApiService by lazy { SduiApiServiceImpl(httpClient) }
 }
+
+/**
+ * Platform seam for predictions/line status. Android's actual is
+ * `TflApiServiceImpl(httpClient)` verbatim — unchanged REST behaviour. iOS's
+ * actual wraps it in [com.stationly.core.service.StreamBackedTflApiService]
+ * so predictions/line status resolve over the live WebSocket stream instead
+ * of REST, while every other endpoint (modes/lines/search/route) still goes
+ * through the same REST implementation.
+ */
+expect fun createTflApiService(httpClient: HttpClient): TflApiService
