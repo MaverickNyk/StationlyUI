@@ -63,30 +63,31 @@ targets:
       path: iosApp/iosApp.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.stationly.mobile
-        # ⚠️ PUSH IS BLOCKED ON SIGNING, NOT CODE. Team 6D3CXG8U25 is a
-        # PERSONAL (free) development team — Apple does not allow the Push
-        # Notifications capability on personal teams, so provisioning fails
-        # the moment aps-environment is present (this is also why Xcode
-        # auto-stripped it from the generated entitlements in Session 4/5).
-        # Without it the app never gets an APNs token and FCM cannot deliver
-        # AT ALL (modern firebase-ios-sdk has no non-APNs channel).
-        # UNBLOCK: enroll in the paid Apple Developer Program, set that team
-        # id in DEVELOPMENT_TEAM below, upload an APNs auth key (.p8) to
-        # Firebase console (project mindthetimefcm → Cloud Messaging → Apple),
-        # then RESTORE the line:
-        #   aps-environment: development
+          - group.com.stationly.shared
+        # Silent FCM data pushes (the station / line-status topic updates that
+        # keep the widget alive between app opens) need this — without it the
+        # app never gets an APNs token and modern firebase-ios-sdk has no
+        # non-APNs channel, so nothing is delivered at all, foreground included.
         #
-        # ⚠️ SIGN IN WITH APPLE IS BLOCKED ON THE SAME WALL. The client flow is
-        # fully wired (AuthBridge.signInWithApple → ASAuthorization → Firebase
-        # apple.com credential → same post-login sync as Google), but personal
-        # teams cannot carry the Sign in with Apple capability either — with
-        # the entitlement present provisioning fails exactly like push. Until
-        # unblocked the Apple button surfaces a friendly "isn't available"
-        # banner. UNBLOCK: on a paid team, enable the Apple provider in
-        # Firebase console (mindthetimefcm → Authentication → Sign-in method;
-        # native iOS needs no Services ID), then ADD the line:
-        #   com.apple.developer.applesignin: [Default]
+        # HISTORY: this was stripped from 2026-06-11 to 2026-07-25 because team
+        # 6D3CXG8U25 was a PERSONAL (free) team, and Apple forbids the Push
+        # capability there — provisioning failed outright with the key present.
+        # Restored on the Stationly Limited organization team (7T7D5LLYSL).
+        #
+        # The value tracks the build config (see APS_ENVIRONMENT below):
+        # development for Debug/device builds, production for Release —
+        # shipping a Release build with `development` here means every push
+        # silently fails against Apple's production APNs gateway.
+        aps-environment: $(APS_ENVIRONMENT)
+        # Sign in with Apple — the client flow has been fully wired since
+        # 2026-07-20 (AuthBridge.signInWithApple → ASAuthorization + nonce →
+        # Firebase apple.com credential → the same post-login sync as Google)
+        # and was dormant behind this same personal-team wall. With the
+        # entitlement present the ASAuthorization sheet works; the Apple
+        # provider must also be enabled in the Firebase console
+        # (mindthetimefcm → Authentication → Sign-in method; the native iOS
+        # flow needs no Services ID).
+        com.apple.developer.applesignin: [Default]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stationly.mobile
@@ -97,17 +98,23 @@ targets:
         CODE_SIGN_ENTITLEMENTS: iosApp/iosApp.entitlements
         FRAMEWORK_SEARCH_PATHS: $(inherited)
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: 6D3CXG8U25
+        DEVELOPMENT_TEAM: 7T7D5LLYSL
         STATIONLY_ENVIRONMENT: production
+        # Expanded into the aps-environment entitlement above. Release builds
+        # MUST be `production` — Apple's sandbox and production APNs gateways
+        # issue different device tokens, and a mismatch fails silently.
+        APS_ENVIRONMENT: development
       configs:
         Debug Staging:
           STATIONLY_ENVIRONMENT: staging
         Release Staging:
           STATIONLY_ENVIRONMENT: staging
+          APS_ENVIRONMENT: production
         Debug Production:
           STATIONLY_ENVIRONMENT: production
         Release Production:
           STATIONLY_ENVIRONMENT: production
+          APS_ENVIRONMENT: production
     dependencies:
       - package: Firebase
         product: FirebaseAuth
@@ -147,7 +154,11 @@ targets:
   StationlyWidget:
     type: app-extension
     platform: iOS
-    deploymentTarget: "16.0"
+    # 17.0, not the app's 16.0: the board header's refresh control is
+    # `Button(intent:)`, which is iOS 17+. Must match the explicit
+    # IPHONEOS_DEPLOYMENT_TARGET below — they used to disagree (16 here, 17
+    # there), and only the build setting was actually taking effect.
+    deploymentTarget: "17.0"
     sources:
       - path: StationlyWidget
         excludes:
@@ -164,7 +175,7 @@ targets:
       path: StationlyWidget/StationlyWidget.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.stationly.mobile
+          - group.com.stationly.shared
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stationly.mobile.StationlyWidget
@@ -174,7 +185,7 @@ targets:
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         CODE_SIGN_ENTITLEMENTS: StationlyWidget/StationlyWidget.entitlements
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: 6D3CXG8U25
+        DEVELOPMENT_TEAM: 7T7D5LLYSL
         STATIONLY_ENVIRONMENT: production
       configs:
         Debug Staging:

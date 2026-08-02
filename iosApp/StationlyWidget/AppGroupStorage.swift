@@ -13,7 +13,7 @@ import UIKit
 ///   2. tints.json colour   → drawn roundel tinted per backend
 ///   3. nil                 → caller's hardcoded mode colour
 enum ModeIconProvider {
-    private static let appGroupID = "group.com.stationly.mobile"
+    private static let appGroupID = AppGroupID.value
 
     private static var iconsDir: URL? {
         FileManager.default
@@ -129,6 +129,18 @@ struct DepartureRow: Codable, Identifiable {
         self.targetEpochMs = try container.decodeIfPresent(Double.self, forKey: .targetEpochMs)
     }
 
+    /// Label for a train that has already left but is being held on the board
+    /// (see `WidgetData.ticked`). Single source of truth so the renderer can
+    /// recognise the state without duplicating the string.
+    static let departedLabel = "Gone"
+
+    /// True when this row is a retained already-departed train, so the view
+    /// can dim it. Derived from the label rather than re-deriving from
+    /// `targetEpochMs`, which keeps the "is it departed" decision in ONE
+    /// place (`ticked`) — the grace period and retention rules live there,
+    /// and a second copy in the view would inevitably drift.
+    var hasDeparted: Bool { eta == Self.departedLabel }
+
     /// Copy with a re-derived label (id intentionally regenerated — it's
     /// local-only ForEach identity, not wire data).
     func relabelled(eta: String, isDue: Bool) -> DepartureRow {
@@ -227,28 +239,62 @@ struct WidgetData {
     // Keep the three constants in lockstep with Android:
     //   departed grace 30 s (DEPARTED_GRACE_MS) · "Due" < 60 s · isDue < 30 s.
 
+    static let departedGraceMs: Double = 30_000
+
     /// Rows re-derived for the given instant. Platform order of first
     /// appearance is preserved (matches Kotlin groupBy+flatMap semantics).
-    func ticked(at date: Date) -> WidgetData {
+    ///
+    /// `keepAtLeast` is the number of row slots the caller can actually
+    /// display. When there aren't enough live trains to fill them, the most
+    /// recently departed rows are RETAINED and labelled "Departed" instead of
+    /// vanishing — a board that empties itself looks broken and gives the user
+    /// nothing to react to, whereas a stale-but-labelled board reads as "this
+    /// needs a refresh". Pass 0 to keep the old drop-everything behaviour.
+    func ticked(at date: Date, keepAtLeast minRows: Int = 0) -> WidgetData {
         guard !departures.isEmpty else { return self }
         let nowMs = date.timeIntervalSince1970 * 1000.0
+        let cutoff = nowMs - Self.departedGraceMs
 
-        // Step 1: drop departed rows (>30 s past target). Null-target rows
-        // pass through untouched — no target to tick from.
-        let survivors = departures.filter { row in
-            guard let target = row.targetEpochMs else { return true }
-            return target >= nowMs - 30_000
+        // Group FIRST, then decide retention inside each platform. Retention
+        // is a per-platform question: a busy Platform 1 with six upcoming
+        // trains says nothing about whether a quiet Platform 2 should hold its
+        // last departures. Deciding globally let one crowded platform suppress
+        // "Gone" rows on every other one.
+        var order: [String] = []
+        var byPlatform: [String: [DepartureRow]] = [:]
+        for row in departures {
+            if byPlatform[row.platform] == nil {
+                byPlatform[row.platform] = []
+                order.append(row.platform)
+            }
+            byPlatform[row.platform]?.append(row)
         }
 
-        // Step 2: per-platform monotonic bump — two trains on one platform
-        // can't share a label; rounding collisions shift the later one up
-        // ("Due, Due, Due" → "Due, 1 min, 2 min").
-        let groups = Dictionary(grouping: survivors, by: { $0.platform })
-        var seen = Set<String>()
         var result: [DepartureRow] = []
-        for row in survivors where !seen.contains(row.platform) {
-            seen.insert(row.platform)
-            result.append(contentsOf: Self.bumpPlatformGroup(groups[row.platform] ?? [], nowMs: nowMs))
+        for platform in order {
+            // Split departed from live. Null-target rows can't be judged, so
+            // they count as live and pass through untouched.
+            var live: [DepartureRow] = []
+            var departed: [DepartureRow] = []
+            for row in byPlatform[platform] ?? [] {
+                guard let target = row.targetEpochMs else { live.append(row); continue }
+                if target >= cutoff { live.append(row) } else { departed.append(row) }
+            }
+
+            // Back-fill ONLY this platform's shortfall. Where its live rows
+            // already fill the slots, departed rows stay dropped — retaining
+            // them would push genuine upcoming trains out of view, since their
+            // earlier targets sort them to the top.
+            let shortfall = max(0, minRows - live.count)
+            let retained: [DepartureRow] = shortfall > 0
+                ? Array(departed
+                    .sorted { ($0.targetEpochMs ?? 0) < ($1.targetEpochMs ?? 0) }
+                    .suffix(shortfall))      // keep the most recent departures
+                : []
+
+            // bumpPlatformGroup applies the monotonic label bump — two trains
+            // on one platform can't share a label ("Due, Due" → "Due, 1 min").
+            result.append(contentsOf: Self.bumpPlatformGroup(retained + live, nowMs: nowMs))
         }
 
         return WidgetData(
@@ -259,9 +305,29 @@ struct WidgetData {
     }
 
     private static func bumpPlatformGroup(_ group: [DepartureRow], nowMs: Double) -> [DepartureRow] {
+        let cutoff = nowMs - departedGraceMs
+        func isDeparted(_ row: DepartureRow) -> Bool {
+            guard let t = row.targetEpochMs else { return false }
+            return t < cutoff
+        }
+
+        // Retained departed rows are labelled, never ticked: counting them
+        // down past zero ("Due" forever, or a negative minute) is exactly the
+        // confusion this feature exists to remove. They also sit OUT of the
+        // monotonic bump below, so they can't shift a real train's label.
+        //
+        // "Gone" over "Departed" on purpose: this column is monospaced and the
+        // widest label sets the destination's truncation point, so 4 chars
+        // keeps long station names intact where 8 would clip them. It also
+        // matches the rhythm of "Due" — both are states, not durations.
+        let departedRows = group.filter(isDeparted).map {
+            $0.relabelled(eta: DepartureRow.departedLabel, isDue: false)
+        }
+        let group = group.filter { !isDeparted($0) }
+
         if group.count <= 1 {
             // Single row still re-derives against current now.
-            return group.map { row in
+            return departedRows + group.map { row in
                 guard let target = row.targetEpochMs else { return row }
                 let secs = (target - nowMs) / 1000.0
                 let eta = secs < 60 ? "Due" : "\(Int(secs / 60)) min"
@@ -280,8 +346,8 @@ struct WidgetData {
             return row.relabelled(eta: effective == 0 ? "Due" : "\(effective) min",
                                   isDue: effective == 0)
         }
-        // Null-target rows pin to the end of the group, unchanged.
-        return bumped + withoutTarget
+        // Departed first (chronological), null-target rows pin to the end.
+        return departedRows + bumped + withoutTarget
     }
 }
 
@@ -294,7 +360,7 @@ class AppGroupStorage {
     static let shared = AppGroupStorage()
     private init() {}
 
-    private let appGroupID = "group.com.stationly.mobile"
+    private let appGroupID = AppGroupID.value
 
     private var defaults: UserDefaults? {
         UserDefaults(suiteName: appGroupID)

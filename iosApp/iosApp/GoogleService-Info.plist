@@ -31,7 +31,7 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:48865967804:ios:a33572bcbd0cbcb29e5ab9</string>
+	<string>1:48865967804:ios:1fad13257473a6a79e5ab9</string>
 	<key>DATABASE_URL</key>
 	<string>https://mindthetimefcm-default-rtdb.europe-west1.firebasedatabase.app</string>
 </dict>

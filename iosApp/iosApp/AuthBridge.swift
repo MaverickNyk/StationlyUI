@@ -259,12 +259,13 @@ class AuthBridge {
     /// Native ASAuthorization flow → Firebase `apple.com` OAuth credential,
     /// mirroring the Google interactive path above.
     ///
-    /// ENTITLEMENT GATE: `com.apple.developer.applesignin` is NOT in
-    /// iosApp.entitlements — Apple forbids the capability on personal (free)
-    /// development teams, the same wall that keeps push disabled (see the
-    /// UNBLOCK notes in project.yml). Until the paid-team entitlement lands,
-    /// the sheet fails immediately and the error is mapped to a friendly
-    /// message below; this code needs no change once the entitlement exists.
+    /// LIVE since 2026-07-25. `com.apple.developer.applesignin` was absent
+    /// until then because Apple forbids the capability on personal (free)
+    /// development teams — the same wall that kept push disabled — so the
+    /// sheet failed immediately and `friendlyAppleError` surfaced an "isn't
+    /// available" banner. The entitlement shipped with the Stationly Limited
+    /// team (7T7D5LLYSL) and this code needed no change. The friendly mapping
+    /// stays as the genuine-failure path (cancelled, no network, …).
     ///
     /// Apple only returns `fullName`/`email` on the FIRST authorization for
     /// an Apple ID — `OAuthProvider.appleCredential(fullName:)` forwards the

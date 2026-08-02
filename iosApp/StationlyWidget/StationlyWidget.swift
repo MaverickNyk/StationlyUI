@@ -49,10 +49,21 @@ struct DepartureBoardProvider: TimelineProvider {
             $0 > now ? calendar.date(byAdding: .minute, value: -1, to: $0) : $0
         } ?? now
 
-        var entries: [DepartureEntry] = [DepartureEntry(date: now, widgetData: data.ticked(at: now))]
+        // PER-PLATFORM retention target, not a whole-board one: each platform
+        // holds its own last 3 departures when it has fewer than 3 upcoming.
+        // 3 regardless of family — every family renders at most 3 rows for a
+        // given platform group (medium/small show one group of 3; large shows
+        // several groups), so a per-platform figure doesn't vary by size.
+        let slotsPerPlatform = 3
+
+        var entries: [DepartureEntry] = [
+            DepartureEntry(date: now, widgetData: data.ticked(at: now, keepAtLeast: slotsPerPlatform))
+        ]
         for offset in 1...60 {
             if let date = calendar.date(byAdding: .minute, value: offset, to: currentMinute) {
-                entries.append(DepartureEntry(date: date, widgetData: data.ticked(at: date)))
+                entries.append(DepartureEntry(
+                    date: date,
+                    widgetData: data.ticked(at: date, keepAtLeast: slotsPerPlatform)))
             }
         }
         providerLog.notice("getTimeline family=\(String(describing: context.family), privacy: .public) returning \(entries.count) entries")

@@ -11,6 +11,12 @@ struct DepartureBoardEntryView: View {
     let entry: DepartureEntry
     @Environment(\.widgetFamily) var family
 
+    // An in-flight "loading" treatment was tried here (dimmed board) and
+    // REMOVED after device testing: WidgetKit never rasterises a reload
+    // requested from inside an AppIntent's `perform()`, so the state was
+    // written and cleared without a single frame ever reaching the screen —
+    // all cost, no signal. Refresh feedback is therefore the result itself:
+    // the rows change and the "ago" timer snaps back to zero.
     var body: some View {
         switch family {
         case .systemSmall:  SmallWidgetView(data: entry.widgetData, clock: entry.date)
@@ -53,9 +59,15 @@ struct BoardMetrics {
         station: 16, platform: 13, row: 12.5, status: 10.5,
         clock: 15, ago: 8.5, icon: 18, logo: 22, cellRadius: 0, maxRows: 3,
         singlePlatform: true)
+    // Large carries 6 departure rows. The old cap of 10 was never reachable —
+    // it exceeded what the canvas can show once platform headers, the status
+    // strip and the footer take their cells, so rows past ~6 were either
+    // compressed or clipped. 6 is what actually fits at this type scale, and
+    // it's also the retention target that keeps the board full of "Departed"
+    // rows rather than emptying out.
     static let large = BoardMetrics(
         station: 19, platform: 15, row: 14.5, status: 12.5,
-        clock: 18, ago: 10, icon: 22, logo: 22, cellRadius: 0, maxRows: 10,
+        clock: 18, ago: 10, icon: 22, logo: 22, cellRadius: 0, maxRows: 6,
         singlePlatform: false)
 }
 
@@ -242,20 +254,108 @@ private func groupedByPlatform(_ deps: [DepartureRow]) -> [(platform: String, ro
 struct DotMatrixHeader: View {
     let data: WidgetData
     let m: BoardMetrics
+    /// Entry time, forwarded to the refresh control so its "just updated"
+    /// tick expires with the timeline entry rather than on a wall clock.
+    var clock: Date = .distantPast
+
+    /// Width reserved on BOTH sides: the button lives in the trailing one and
+    /// an empty spacer balances the leading one, so the name stays centred.
+    private var refreshSlot: CGFloat { m.icon * 0.72 + 6 }
+
     var body: some View {
         // Top cell lives in the widget's rounded-corner zone — deeper content
         // inset than mid-board rows so nothing clips against the corner mask.
         LitCell(vPad: 4, hPad: 14, radius: m.cellRadius) {
+            // Three columns, not an overlay. An overlaid button sits OUTSIDE
+            // the layout, so a long station name (large widget especially)
+            // expanded straight underneath it and the two collided. Equal
+            // side columns keep the name optically centred while physically
+            // reserving the button's width, so overlap is impossible at any
+            // family or name length.
             HStack(spacing: 8) {
-                ModeIconView(mode: data.mode, size: m.icon)
-                Text(data.stationName)
-                    .font(.system(size: m.station, weight: .bold))
-                    .foregroundColor(WidgetTheme.amber)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.65)
+                Color.clear
+                    .frame(width: refreshSlot, height: 1)
+                HStack(spacing: 8) {
+                    ModeIconView(mode: data.mode, size: m.icon)
+                    Text(data.stationName)
+                        .font(.system(size: m.station, weight: .bold))
+                        .foregroundColor(WidgetTheme.amber)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .truncationMode(.tail)
+                }
+                .frame(maxWidth: .infinity)
+                // Interactive widgets need iOS 17, which is also this
+                // extension's deployment target — so the availability check
+                // never actually fails and is here only to satisfy the
+                // compiler for `Button(intent:)`. The slot is reserved
+                // unconditionally regardless, so centring can't shift.
+                Group {
+                    if #available(iOS 17.0, *) {
+                        RefreshButton(size: m.icon * 0.72, clock: clock)
+                    }
+                }
+                .frame(width: refreshSlot)
             }
         }
         .widgetAccentable()
+    }
+}
+
+/// Header refresh control — the iOS analog of Android's `btn_refresh`.
+///
+/// There is no "loading" variant, and that's a platform limit rather than an
+/// omission: a widget is a sequence of static snapshots with no animation
+/// loop, and WidgetKit won't render at all while the intent is running, so
+/// neither a spinner nor a transient dim can ever appear (both were built and
+/// verified dead on device).
+///
+/// What it CAN show is the last outcome, because that outlives `perform()`.
+/// A failed refresh would otherwise be indistinguishable from a successful
+/// one — the board just silently keeps its old rows.
+@available(iOS 17.0, *)
+private struct RefreshButton: View {
+    let size: CGFloat
+    /// The entry's wall-clock minute — NOT `Date()`. Comparing against the
+    /// entry is what makes the success tick self-expiring: entry[0] (rendered
+    /// straight after the tap) falls inside the window, entry[1] a minute
+    /// later doesn't, so the tick reverts with no timer and no extra reload.
+    let clock: Date
+
+    private var defaults: UserDefaults? {
+        UserDefaults(suiteName: AppGroupID.value)
+    }
+
+    /// Read live rather than carried on the entry: entries are pre-rendered
+    /// for future minutes, so a flag baked into them would be stale.
+    private var lastRefreshFailed: Bool {
+        defaults?.bool(forKey: WidgetRefreshService.failedKey) ?? false
+    }
+
+    // A success tick was tried here and removed: swapping the arrow out on
+    // the HAPPY path destroys the affordance — a checkmark where a control
+    // used to be reads as un-tappable status, and success is the normal case
+    // so it shouldn't alter the control at all. Confirmation of a successful
+    // refresh belongs where it already lives: the rows change and the "ago"
+    // timer snaps back to zero. Only the FAILURE case changes the glyph,
+    // because that genuinely needs surfacing and still says "tap to retry".
+    private var symbol: String {
+        lastRefreshFailed ? "exclamationmark.arrow.circlepath" : "arrow.clockwise"
+    }
+
+    private var label: String {
+        lastRefreshFailed ? "Refresh failed, tap to retry" : "Refresh departures"
+    }
+
+    var body: some View {
+        Button(intent: RefreshBoardIntent()) {
+            Image(systemName: symbol)
+                .font(.system(size: size, weight: .bold))
+                .foregroundColor(lastRefreshFailed ? WidgetTheme.amberDim : WidgetTheme.amber)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 }
 
@@ -280,15 +380,29 @@ struct DotMatrixRow: View {
     let m: BoardMetrics
     var body: some View {
         LitCell(radius: m.cellRadius) {
+            // Three-step urgency ladder: DueRed = board now, amber = live,
+            // amberDim = already gone. The WHOLE row dims, destination
+            // included — a full-brightness destination beside a dim label
+            // still reads as a live train, which defeats the point of
+            // holding the row at all.
+            let tint = dep.hasDeparted ? WidgetTheme.amberDim
+                     : dep.isDue      ? DueRed
+                     : WidgetTheme.amber
             HStack(spacing: 8) {
                 Text(dep.destination)
                     .font(.system(size: m.row))
-                    .foregroundColor(WidgetTheme.amber)
+                    .foregroundColor(dep.hasDeparted ? WidgetTheme.amberDim : WidgetTheme.amber)
                     .lineLimit(1)
+                    .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(dep.isDue ? "Due" : dep.eta)
                     .font(.system(size: m.row + 0.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(dep.isDue ? DueRed : WidgetTheme.amber)
+                    .foregroundColor(tint)
+                    .lineLimit(1)
+                    // The status label is the widest thing this column holds;
+                    // fixedSize stops it wrapping or being squeezed, and the
+                    // destination truncates to make room instead.
+                    .fixedSize()
             }
         }
     }
@@ -366,13 +480,22 @@ struct DotMatrixFooter: View {
         // (iOS 26 corner radii are generous) — 20pt of side breathing keeps the
         // maker mark and the "ago" timer comfortably clear of the curve.
         LitCell(vPad: 4, hPad: 20, radius: m.cellRadius) {
-            ZStack {
-                HStack {
-                    StationlyMark(diameter: m.logo)
-                    Spacer(minLength: 0)
-                    LiveAgo(data: data, entryDate: clock, fontSize: m.ago)
-                }
+            // Three real columns rather than a ZStack. The clock is a `.timer`
+            // Text, which expands greedily — stacked on top of the mark/"ago"
+            // row it could grow straight over them. Laying all three out as
+            // siblings makes collision impossible, and equal-width outer
+            // columns keep the clock optically centred as before.
+            HStack(spacing: 6) {
+                StationlyMark(diameter: m.logo)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                // CAPPED frame, never `fixedSize()`: a `.timer` Text has no
+                // determinate ideal width (its digits are system-driven), so
+                // asking for one collapses the layout and the widget renders
+                // blank. A hard cap is the same tactic LiveAgo already uses.
                 LiveClock(clock: clock, fontSize: m.clock)
+                    .frame(maxWidth: m.clock * 6)
+                LiveAgo(data: data, entryDate: clock, fontSize: m.ago)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
     }
@@ -414,7 +537,7 @@ struct BoardWidgetView: View {
     private var board: some View {
         GeometryReader { geo in
             VStack(spacing: 2) {
-                DotMatrixHeader(data: data, m: metrics)
+                DotMatrixHeader(data: data, m: metrics, clock: clock)
                     .frame(minHeight: metrics.station + 14)
 
                 if data.departures.isEmpty {
@@ -550,15 +673,22 @@ struct SmallWidgetView: View {
                     } else {
                         ForEach(data.departures.prefix(3)) { dep in
                             LitCell {
+                                // Same three-step tint as the medium/large row.
                                 HStack(spacing: 4) {
                                     Text(dep.destination)
                                         .font(.system(size: 11))
-                                        .foregroundColor(WidgetTheme.amber)
+                                        .foregroundColor(dep.hasDeparted ? WidgetTheme.amberDim
+                                                                         : WidgetTheme.amber)
                                         .lineLimit(1)
+                                        .truncationMode(.tail)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                     Text(dep.isDue ? "Due" : dep.eta)
                                         .font(.system(size: 11.5, weight: .bold, design: .monospaced))
-                                        .foregroundColor(dep.isDue ? DueRed : WidgetTheme.amber)
+                                        .foregroundColor(dep.hasDeparted ? WidgetTheme.amberDim
+                                                        : dep.isDue      ? DueRed
+                                                                         : WidgetTheme.amber)
+                                        .lineLimit(1)
+                                        .fixedSize()
                                 }
                             }
                             .frame(minHeight: 20)
@@ -566,13 +696,20 @@ struct SmallWidgetView: View {
                     }
 
                     LitCell(vPad: 3, hPad: 16) {
-                        ZStack {
-                            HStack {
-                                StationlyMark(diameter: 11)
-                                Spacer(minLength: 0)
-                                LiveAgo(data: data, entryDate: clock, fontSize: 8)
-                            }
+                        // Same three-column fix as the medium/large footer —
+                        // most needed here, since this is the narrowest canvas
+                        // and a greedy `.timer` clock had the least room to
+                        // grow before running over the mark and the "ago".
+                        HStack(spacing: 4) {
+                            StationlyMark(diameter: 11)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            // Capped, not fixedSize — see the medium/large
+                            // footer note; a `.timer` Text has no determinate
+                            // ideal width and blanks the render if asked.
                             LiveClock(clock: clock, fontSize: 12)
+                                .frame(maxWidth: 68)
+                            LiveAgo(data: data, entryDate: clock, fontSize: 8)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
                         }
                     }
                     .frame(minHeight: 20)

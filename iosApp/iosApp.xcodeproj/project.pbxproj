@@ -18,14 +18,19 @@
 		4F51E6F943E79B5999B8A52B /* composeApp.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 118F41A10A55B84CE576769B /* composeApp.xcframework */; };
 		56B0305B5D3847FC6B326502 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE8509E5A49E4A5CAAEB3ADB /* ContentView.swift */; };
 		73956648F92E8FEC62F6D73D /* AuthBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88370C3FDDC238D3448AC2D1 /* AuthBridge.swift */; };
+		7ECDD355828B7FFCA7AF9072 /* AppGroupID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97E45A83D0043D7E5591F183 /* AppGroupID.swift */; };
+		8B590E4A471A5538649CEBCF /* WidgetRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AA433530A96563307A6CAA8 /* WidgetRefreshService.swift */; };
 		A566BB023C1056C96F41D335 /* StationlyWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EE7E10119EC01AC8676B703D /* StationlyWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A774AD58CF3505F914CB83D7 /* WidgetPageIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 306E4366DEB79A6AD438619D /* WidgetPageIntent.swift */; };
 		B7C4F6137AC8345E71E92063 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */; };
+		BAE7B40F755CB01E45657AA8 /* HomeStateProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57D3E21FAEDF7ED0B74AE07 /* HomeStateProbe.swift */; };
 		C0D402F91C254C0EFB1C3A91 /* StationlyWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC75E3E8045F2DC8D1922D50 /* StationlyWidget.swift */; };
 		C3E3BCF8F138F630927C544F /* StationlyWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F7BF3D0F900FDF96129BA89 /* StationlyWidgetBundle.swift */; };
 		C549E9404F60E91D428ED213 /* WidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 725E230C3D1AA4C519DEBC68 /* WidgetViews.swift */; };
+		C654091523394E0AFE6EA794 /* PushTraceSwift.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECA4FAF25F90834251640413 /* PushTraceSwift.swift */; };
 		C87B4FA04BDA1DA04158D48E /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = A55143988C4C8F291BE72E9A /* GoogleService-Info.plist */; };
 		CB006310D02489A5D2220318 /* WidgetTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FD2D2AA7865370F9D9B2E85 /* WidgetTheme.swift */; };
+		EEAED07AD42E134D78BBE3AD /* AppGroupID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96749FEEFB87671930DBEF31 /* AppGroupID.swift */; };
 		F5590281266A7B295361D031 /* FCMBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02C0D79CCE01D0B3BA51EC14 /* FCMBridge.swift */; };
 		FDE52B8D57A097A60A4CF366 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B6C1F485E0CF8BB70C9DDD2 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
@@ -71,6 +76,7 @@
 		17F56BCEA93D417E080182A7 /* AppGroupStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorage.swift; sourceTree = "<group>"; };
 		258D481022F14E09267EE7BD /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		306E4366DEB79A6AD438619D /* WidgetPageIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPageIntent.swift; sourceTree = "<group>"; };
+		4AA433530A96563307A6CAA8 /* WidgetRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetRefreshService.swift; sourceTree = "<group>"; };
 		5BA8E3A8CB73FA587D96BD12 /* DepartureEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DepartureEntry.swift; sourceTree = "<group>"; };
 		668CECA83ACC03A83C85A623 /* iOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSApp.swift; sourceTree = "<group>"; };
 		725E230C3D1AA4C519DEBC68 /* WidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetViews.swift; sourceTree = "<group>"; };
@@ -79,11 +85,15 @@
 		8B6C1F485E0CF8BB70C9DDD2 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		8F7BF3D0F900FDF96129BA89 /* StationlyWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationlyWidgetBundle.swift; sourceTree = "<group>"; };
 		8FD2D2AA7865370F9D9B2E85 /* WidgetTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetTheme.swift; sourceTree = "<group>"; };
+		96749FEEFB87671930DBEF31 /* AppGroupID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupID.swift; sourceTree = "<group>"; };
+		97E45A83D0043D7E5591F183 /* AppGroupID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupID.swift; sourceTree = "<group>"; };
 		A55143988C4C8F291BE72E9A /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		C117AD187833E2513BD2F553 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		CE8509E5A49E4A5CAAEB3ADB /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		DC75E3E8045F2DC8D1922D50 /* StationlyWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationlyWidget.swift; sourceTree = "<group>"; };
+		E57D3E21FAEDF7ED0B74AE07 /* HomeStateProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeStateProbe.swift; sourceTree = "<group>"; };
 		E6E60D8AB263A747C2061338 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		ECA4FAF25F90834251640413 /* PushTraceSwift.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushTraceSwift.swift; sourceTree = "<group>"; };
 		EE7E10119EC01AC8676B703D /* StationlyWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = StationlyWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F543015C899423D4B01CEB2E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -107,13 +117,16 @@
 			isa = PBXGroup;
 			children = (
 				8B6C1F485E0CF8BB70C9DDD2 /* AppDelegate.swift */,
+				97E45A83D0043D7E5591F183 /* AppGroupID.swift */,
 				F543015C899423D4B01CEB2E /* Assets.xcassets */,
 				88370C3FDDC238D3448AC2D1 /* AuthBridge.swift */,
 				CE8509E5A49E4A5CAAEB3ADB /* ContentView.swift */,
 				02C0D79CCE01D0B3BA51EC14 /* FCMBridge.swift */,
 				A55143988C4C8F291BE72E9A /* GoogleService-Info.plist */,
+				E57D3E21FAEDF7ED0B74AE07 /* HomeStateProbe.swift */,
 				C117AD187833E2513BD2F553 /* Info.plist */,
 				668CECA83ACC03A83C85A623 /* iOSApp.swift */,
+				ECA4FAF25F90834251640413 /* PushTraceSwift.swift */,
 			);
 			path = iosApp;
 			sourceTree = "<group>";
@@ -150,6 +163,7 @@
 		ADAB1A96BC30FA36DC37527C /* StationlyWidget */ = {
 			isa = PBXGroup;
 			children = (
+				96749FEEFB87671930DBEF31 /* AppGroupID.swift */,
 				17F56BCEA93D417E080182A7 /* AppGroupStorage.swift */,
 				258D481022F14E09267EE7BD /* Assets.xcassets */,
 				5BA8E3A8CB73FA587D96BD12 /* DepartureEntry.swift */,
@@ -157,6 +171,7 @@
 				DC75E3E8045F2DC8D1922D50 /* StationlyWidget.swift */,
 				8F7BF3D0F900FDF96129BA89 /* StationlyWidgetBundle.swift */,
 				306E4366DEB79A6AD438619D /* WidgetPageIntent.swift */,
+				4AA433530A96563307A6CAA8 /* WidgetRefreshService.swift */,
 				8FD2D2AA7865370F9D9B2E85 /* WidgetTheme.swift */,
 				725E230C3D1AA4C519DEBC68 /* WidgetViews.swift */,
 			);
@@ -220,11 +235,11 @@
 				LastUpgradeCheck = 2600;
 				TargetAttributes = {
 					2215E2ECEB5A6C7BC8352FA8 = {
-						DevelopmentTeam = 6D3CXG8U25;
+						DevelopmentTeam = 7T7D5LLYSL;
 						ProvisioningStyle = Automatic;
 					};
 					78B53CC79860CBFC2F5543C6 = {
-						DevelopmentTeam = 6D3CXG8U25;
+						DevelopmentTeam = 7T7D5LLYSL;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -301,9 +316,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				FDE52B8D57A097A60A4CF366 /* AppDelegate.swift in Sources */,
+				7ECDD355828B7FFCA7AF9072 /* AppGroupID.swift in Sources */,
 				73956648F92E8FEC62F6D73D /* AuthBridge.swift in Sources */,
 				56B0305B5D3847FC6B326502 /* ContentView.swift in Sources */,
 				F5590281266A7B295361D031 /* FCMBridge.swift in Sources */,
+				BAE7B40F755CB01E45657AA8 /* HomeStateProbe.swift in Sources */,
+				C654091523394E0AFE6EA794 /* PushTraceSwift.swift in Sources */,
 				307C2654CD5972A25FB7FD87 /* iOSApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -312,11 +330,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				EEAED07AD42E134D78BBE3AD /* AppGroupID.swift in Sources */,
 				38BC8C0A2A20C409AD35F500 /* AppGroupStorage.swift in Sources */,
 				15004BFF21C3E1734FA5E510 /* DepartureEntry.swift in Sources */,
 				C0D402F91C254C0EFB1C3A91 /* StationlyWidget.swift in Sources */,
 				C3E3BCF8F138F630927C544F /* StationlyWidgetBundle.swift in Sources */,
 				A774AD58CF3505F914CB83D7 /* WidgetPageIntent.swift in Sources */,
+				8B590E4A471A5538649CEBCF /* WidgetRefreshService.swift in Sources */,
 				CB006310D02489A5D2220318 /* WidgetTheme.swift in Sources */,
 				C549E9404F60E91D428ED213 /* WidgetViews.swift in Sources */,
 			);
@@ -336,12 +356,13 @@
 		2532FBAA0CDB270850CC20CE /* Debug Production */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = development;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = iosApp/iosApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"../composeApp/build/XCFrameworks/debug\"",
@@ -420,12 +441,13 @@
 		51CB68AC8D7F623AAE26B2CA /* Release Production */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = production;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = iosApp/iosApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"../composeApp/build/XCFrameworks/debug\"",
@@ -448,12 +470,13 @@
 		63955345AAF9DCCADD923128 /* Debug Staging */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = development;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = iosApp/iosApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"../composeApp/build/XCFrameworks/debug\"",
@@ -479,7 +502,7 @@
 				CODE_SIGN_ENTITLEMENTS = StationlyWidget/StationlyWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				INFOPLIST_FILE = StationlyWidget/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -558,7 +581,7 @@
 				CODE_SIGN_ENTITLEMENTS = StationlyWidget/StationlyWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				INFOPLIST_FILE = StationlyWidget/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -581,7 +604,7 @@
 				CODE_SIGN_ENTITLEMENTS = StationlyWidget/StationlyWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				INFOPLIST_FILE = StationlyWidget/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -664,12 +687,13 @@
 		E073F9AF736D8F40F1BA5AF0 /* Release Staging */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = production;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = iosApp/iosApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"../composeApp/build/XCFrameworks/debug\"",
@@ -695,7 +719,7 @@
 				CODE_SIGN_ENTITLEMENTS = StationlyWidget/StationlyWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				INFOPLIST_FILE = StationlyWidget/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (

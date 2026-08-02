@@ -1,7 +1,7 @@
 import SwiftUI
 import FirebaseCore
 import GoogleSignIn
-// import ComposeApp  // Uncomment after Xcode framework integration
+import composeApp
 
 @main
 struct StationlyApp: App {
@@ -20,9 +20,18 @@ struct StationlyApp: App {
         // starved waiting for a first timeline. scenePhase is the supported
         // hook; foreground reloads are also exempt from WidgetKit's refresh
         // budget, so this is the one reload path that's always honoured.
+        //
+        // Same hook drives the live departure stream (LiveStreamBridge):
+        // .active connects/resubscribes, .background disconnects cleanly.
+        // .inactive (Control Center, app switcher) is ignored on purpose —
+        // reconnecting on every brief interruption would thrash the socket.
         .onChange(of: scenePhase) { phase in
-            guard phase == .active else { return }
-            delegate.handleDidBecomeActive()
+            if phase == .active {
+                delegate.handleDidBecomeActive()
+                LiveStreamBridge.shared.notifyForeground()
+            } else if phase == .background {
+                LiveStreamBridge.shared.notifyBackground()
+            }
         }
     }
 }

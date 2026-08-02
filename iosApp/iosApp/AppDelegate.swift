@@ -13,8 +13,21 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         if firebaseReady {
             Messaging.messaging().delegate = self
             UNUserNotificationCenter.current().delegate = self
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
-            application.registerForRemoteNotifications()
+            // The permission PROMPT is deliberately NOT fired here. Android asks
+            // from the first authenticated screen (see the placement note in
+            // `NotificationPermissionEffect`) because asking before the user has
+            // seen what notifications buy them wastes the single chance iOS
+            // gives us — a denial is permanent until the user digs into
+            // Settings. `composeApp`'s NotificationPermissionEffect now drives
+            // it from SummaryScreen instead, and registers for APNs on grant.
+            //
+            // Already-authorized users still need the APNs token every launch
+            // (it can rotate), so re-register without prompting.
+            UNUserNotificationCenter.current().getNotificationSettings { settings in
+                guard settings.authorizationStatus == .authorized ||
+                      settings.authorizationStatus == .provisional else { return }
+                DispatchQueue.main.async { application.registerForRemoteNotifications() }
+            }
             if let clientID = FirebaseApp.app()?.options.clientID {
                 GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
             }
@@ -25,6 +38,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
 
         // Poll App Group UserDefaults every 5 s; reload widget when KMP bumps signal
         WidgetReloadObserver.shared.start()
+
+        // Tell shared code whether a widget is actually installed (WidgetKit is
+        // Swift-only, so Kotlin cannot look for itself) — drives the home
+        // "add a widget" promo, Android parity.
+        HomeStateProbe.start()
 
         // KMP queues topic (un)subscriptions in UserDefaults. Previously they
         // were only flushed on token receipt / app foreground, so adding a
@@ -72,14 +90,45 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
 
     func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
         guard let token = fcmToken else { return }
-        // Store under "fcm_token" — read by KMP IosNotificationManager.registerDevice()
-        UserDefaults.standard.set(token, forKey: "fcm_token")
-        UserDefaults.standard.synchronize()
+        Self.persistFcmToken(token)
         // Token may have ROTATED: re-subscribe everything in the fcm_topics
         // ledger (idempotent), then flush anything KMP queued before the token
         // was ready — Android does the same in onNewToken.
         FCMBridge.shared.resubscribeAllTopics()
         FCMBridge.shared.processPendingSubscriptions()
+    }
+
+    /// Persist the FCM token where KMP's `registerDevice()` reads it.
+    ///
+    /// ⚠️ Written to the **APP GROUP** suite, not just the standard domain.
+    /// Sign-out runs `storageManager.clearAll()`, which is
+    /// `removePersistentDomainForName(bundleId)` — it nukes the entire
+    /// standard domain, the token included. The old code stored the token
+    /// there only, so after any sign-out the next login read an empty token,
+    /// hit `if (fcmToken.isNotBlank())` and skipped backend registration
+    /// **silently**. The backend then reported "No registered tokens for uid"
+    /// and every push for that user went nowhere. Same reasoning that already
+    /// puts the device identity and dream prefs in the group suite.
+    ///
+    /// Still mirrored into the standard domain so an older KMP build (which
+    /// reads only there) keeps working.
+    static func persistFcmToken(_ token: String) {
+        UserDefaults(suiteName: AppGroupID.value)?
+            .set(token, forKey: "fcm_token")
+        UserDefaults.standard.set(token, forKey: "fcm_token")
+    }
+
+    /// Re-fetch the current token from Firebase and re-persist it.
+    ///
+    /// `didReceiveRegistrationToken` only fires on issue/rotation, so after a
+    /// sign-out wipe nothing would restore the token until FCM next rotated it
+    /// — potentially weeks. Called on every foreground; Firebase serves this
+    /// from its own cache, so it costs nothing when unchanged.
+    static func refreshFcmToken() {
+        Messaging.messaging().token { token, error in
+            guard let token, error == nil else { return }
+            persistFcmToken(token)
+        }
     }
 
     // MARK: - URL handling (Google Sign-In + Firebase password reset deep links)
@@ -124,9 +173,24 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     }
 
     func handleDidBecomeActive() {
+        // Why this is traced: `content-available` (silent) pushes are gated on
+        // the per-app Background App Refresh switch. When it's denied or
+        // restricted, iOS drops EVERY silent push while still delivering
+        // alerts — which is precisely the asymmetry seen on 2026-07-30, where
+        // an alert arrived and the identical silent push never did. Without
+        // this line that's indistinguishable from ordinary APNs throttling.
+        let bg = UIApplication.shared.backgroundRefreshStatus
+        let bgName = bg == .available ? "available"
+                   : bg == .denied    ? "DENIED"
+                   : bg == .restricted ? "RESTRICTED" : "unknown"
+        PushTraceSwift.log("bgRefresh=\(bgName) lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled)")
+
         if FirebaseApp.app() != nil {
             Task { await AuthBridge.shared.refreshTokenIfNeeded() }
             FCMBridge.shared.processPendingSubscriptions()
+            // Restore the token if a sign-out wiped the standard domain, so
+            // the next login/foreground can actually register it.
+            Self.refreshFcmToken()
         }
         WidgetCenter.shared.reloadAllTimelines()
     }
@@ -137,6 +201,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
                                  willPresent notification: UNNotification,
                                  withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         // Process FCM payload through KMP so the widget and SQLite cache update immediately
+        PushTraceSwift.log("apns:fg-willPresent from=\(notification.request.content.userInfo["from"] as? String ?? "-")")
         processFcmPayload(notification.request.content.userInfo)
         completionHandler([.banner, .sound])
     }
@@ -154,9 +219,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     func application(_ application: UIApplication,
                      didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        PushTraceSwift.log("apns:bg from=\(userInfo["from"] as? String ?? "-") state=\(application.applicationState.rawValue)")
         Messaging.messaging().appDidReceiveMessage(userInfo)
         guard let jsonData = try? JSONSerialization.data(withJSONObject: userInfo),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
+            PushTraceSwift.log("apns:bg SERIALISE-FAILED")
             completionHandler(.noData)
             return
         }
@@ -203,7 +270,7 @@ class WidgetReloadObserver {
     static let shared = WidgetReloadObserver()
     private init() {}
 
-    private let appGroupID = "group.com.stationly.mobile"
+    private let appGroupID = AppGroupID.value
     private let signalKey  = "widget_reload_signal"
     private var lastSignal: Int = -1
     private var timer: Timer?

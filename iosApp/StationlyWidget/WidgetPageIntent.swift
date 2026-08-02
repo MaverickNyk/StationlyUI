@@ -17,7 +17,7 @@ import WidgetKit
 enum WidgetBoardPage {
     private static let key = "widget_board_page"
     private static var defaults: UserDefaults? {
-        UserDefaults(suiteName: "group.com.stationly.mobile")
+        UserDefaults(suiteName: AppGroupID.value)
     }
 
     static var current: Int {
@@ -41,6 +41,24 @@ struct NextPlatformPageIntent: AppIntent {
         // WidgetKit reloads the tapped widget automatically after an
         // interactive intent; the explicit reload covers multiple instances
         // of the widget showing the same board.
+        WidgetCenter.shared.reloadTimelines(ofKind: StationlyDepartureBoardWidget.kind)
+        return .result()
+    }
+}
+
+/// The widget's refresh button — parity with Android's `btn_refresh`
+/// PendingIntent firing ACTION_MANUAL_REFRESH.
+///
+/// `perform()` is awaited by the system, so the network round trip happens
+/// before WidgetKit re-renders and the user sees fresh rows rather than a
+/// flash of the old ones. Debounce and fetch live in WidgetRefreshService.
+@available(iOS 17.0, *)
+struct RefreshBoardIntent: AppIntent {
+    static var title: LocalizedStringResource = "Refresh departures"
+    static var isDiscoverable: Bool = false
+
+    func perform() async throws -> some IntentResult {
+        _ = await WidgetRefreshService.refresh()
         WidgetCenter.shared.reloadTimelines(ofKind: StationlyDepartureBoardWidget.kind)
         return .result()
     }
