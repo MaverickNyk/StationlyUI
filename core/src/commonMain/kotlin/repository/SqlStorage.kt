@@ -2,6 +2,7 @@ package com.stationly.core.repository
 
 import com.stationly.db.StationlyDatabase
 import com.stationly.core.model.UserSelection
+import com.stationly.core.model.FilterMode
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.LineStatus
 import kotlinx.datetime.Clock
@@ -14,10 +15,18 @@ class SqlStorage(private val database: StationlyDatabase) {
             mode = selection.mode.lowercase(),
             line = selection.line.lowercase(),
             station = selection.station,
+            parentStationId = selection.parentStationId,
             stationName = selection.stationName,
             direction = selection.direction.lowercase(),
             destinations = selection.destinations.joinToString(","),
-            destinationIds = selection.destinationIds.joinToString(",")
+            destinationIds = selection.destinationIds.joinToString(","),
+            filterMode = selection.filterMode.name,
+            // CSV like `destinations`/`destinationIds` above — a junction line
+            // can have several via stops picked, and this keeps the schema flat
+            // rather than adding a join table for at most a handful of ids.
+            viaStationId = selection.viaStationIds.joinToString(","),
+            viaStationName = selection.viaStationNames.joinToString(","),
+            routeResolvedAt = selection.routeResolvedAt,
         )
     }
 
@@ -27,19 +36,38 @@ class SqlStorage(private val database: StationlyDatabase) {
                 mode = it.mode,
                 line = it.line,
                 station = it.station,
+                parentStationId = it.parentStationId,
                 stationName = it.stationName,
                 direction = it.direction,
-                destinations = it.destinations.split(",").filter { s -> s.isNotEmpty() },
-                destinationIds = it.destinationIds.split(",").filter { s -> s.isNotEmpty() }
+                destinations = it.destinations.splitCsv(),
+                destinationIds = it.destinationIds.splitCsv(),
+                filterMode = FilterMode.fromStorage(it.filterMode),
+                viaStationIds = it.viaStationId.orEmpty().splitCsv(),
+                viaStationNames = it.viaStationName.orEmpty().splitCsv(),
+                routeResolvedAt = it.routeResolvedAt,
             )
         }
     }
+
+    private fun String.splitCsv(): List<String> =
+        if (isEmpty()) emptyList() else split(",").filter { it.isNotEmpty() }
     
-    fun deleteSelection(station: String, line: String) {
+    /**
+     * Remove ONE tracked board: a (station, line, direction) triple.
+     *
+     * Direction-scoped because a user can track both directions of the same
+     * line at a station — deleting "Piccadilly westbound" must not take
+     * "Piccadilly eastbound" with it.
+     */
+    fun deleteSelection(station: String, line: String, direction: String) {
         val normalizedLine = line.lowercase()
+        val normalizedDirection = direction.lowercase()
         queries.transaction {
-            queries.deleteSelection(station, normalizedLine)
-            queries.clearPredictionsForStation(station, normalizedLine)
+            // Both normalized: saveSelection stores `direction.lowercase()`, so
+            // matching on the raw value silently deletes nothing and orphans the
+            // row — the board's predictions go but the selection stays.
+            queries.deleteSelection(station, normalizedLine, normalizedDirection)
+            queries.clearPredictionsForStation(station, normalizedLine, normalizedDirection)
         }
     }
 
@@ -50,6 +78,7 @@ class SqlStorage(private val database: StationlyDatabase) {
     fun savePredictions(
         stationId: String,
         lineId: String,
+        direction: String,
         predictions: List<PredictionDisplay>,
         // Caller may supply the sync instant so the prediction rows and the
         // SyncStatusEntity stamp share ONE timestamp — keeping the "X ago"
@@ -58,13 +87,17 @@ class SqlStorage(private val database: StationlyDatabase) {
         timestamp: Long = Clock.System.now().toEpochMilliseconds(),
     ) {
         val normalizedLineId = lineId.lowercase()
+        val normalizedDirection = direction.lowercase()
         queries.transaction {
-            queries.clearPredictionsForStation(stationId, normalizedLineId)
+            queries.clearPredictionsForStation(stationId, normalizedLineId, normalizedDirection)
             predictions.forEach {
                 queries.insertPrediction(
                     stationId = stationId,
                     lineId = normalizedLineId,
+                    direction = normalizedDirection,
                     destination = it.destination,
+                    destId = it.destId,
+                    matchesFilter = if (it.matchesFilter) 1L else 0L,
                     platform = it.platform,
                     eta = it.eta,
                     isDue = if (it.isDue) 1L else 0L,
@@ -76,8 +109,28 @@ class SqlStorage(private val database: StationlyDatabase) {
         }
     }
 
-    fun getPredictions(stationId: String, lineId: String): List<PredictionDisplay> {
-        val results = queries.getPredictionsForStation(stationId, lineId.lowercase()).executeAsList()
+    /**
+     * Departures for one board, filter applied.
+     *
+     * The filter is applied in SQL off the precomputed `matchesFilter` flag and
+     * the rows come back sorted, so callers do NO filtering and NO sorting —
+     * this is read on every recomposition and every one-second countdown tick.
+     *
+     * FAILS OPEN. If the filter currently matches nothing, the unfiltered list
+     * is returned instead: showing an extra train costs the user a glance,
+     * hiding the one they needed costs them the journey. The board detects the
+     * fallback from the rows themselves — every row having matchesFilter=false —
+     * so it can caption the case without a second query.
+     */
+    fun getPredictions(stationId: String, lineId: String, direction: String): List<PredictionDisplay> {
+        val normalizedLine = lineId.lowercase()
+        val normalizedDir = direction.lowercase()
+        val results = queries.getPredictionsForStation(stationId, normalizedLine, normalizedDir)
+            .executeAsList()
+            .ifEmpty {
+                queries.getAllPredictionsForStation(stationId, normalizedLine, normalizedDir)
+                    .executeAsList()
+            }
         if (results.isEmpty()) return emptyList()
 
         val now = Clock.System.now().toEpochMilliseconds()
@@ -99,13 +152,67 @@ class SqlStorage(private val database: StationlyDatabase) {
                 eta = it.eta,
                 isDue = it.isDue == 1L,
                 stopLetter = it.stopLetter,
+                destId = it.destId,
+                matchesFilter = it.matchesFilter == 1L,
                 targetEpochMs = it.targetEpochMs,
             )
         }
     }
 
-    fun hasPredictionsInDatabase(stationId: String, lineId: String): Boolean {
-        return queries.getPredictionsForStation(stationId, lineId.lowercase()).executeAsList().isNotEmpty()
+    /**
+     * Re-apply a changed filter to rows already on device, so toggling a filter
+     * takes effect immediately and offline rather than at the next stream frame.
+     */
+    fun reapplyFilter(
+        stationId: String,
+        lineId: String,
+        direction: String,
+        allowedDestIds: Set<String>,
+    ) {
+        val normalizedLine = lineId.lowercase()
+        val normalizedDir = direction.lowercase()
+        queries.transaction {
+            val rows = queries.getAllPredictionsForStation(stationId, normalizedLine, normalizedDir).executeAsList()
+            rows.forEach { row ->
+                queries.insertPrediction(
+                    stationId = row.stationId,
+                    lineId = row.lineId,
+                    direction = row.direction,
+                    destination = row.destination,
+                    destId = row.destId,
+                    matchesFilter = if (matchesFilter(row.destId, allowedDestIds)) 1L else 0L,
+                    platform = row.platform,
+                    eta = row.eta,
+                    isDue = row.isDue,
+                    stopLetter = row.stopLetter,
+                    timestamp = row.timestamp,
+                    targetEpochMs = row.targetEpochMs,
+                )
+            }
+        }
+    }
+
+    fun hasPredictionsInDatabase(stationId: String, lineId: String, direction: String): Boolean {
+        // Deliberately unfiltered: this answers "do we hold data for this
+        // board", which drives fetch/refresh decisions. An over-restrictive
+        // filter must not make a populated board look empty and trigger a
+        // pointless re-fetch.
+        return queries.getAllPredictionsForStation(stationId, lineId.lowercase(), direction.lowercase())
+            .executeAsList().isNotEmpty()
+    }
+
+    companion object {
+        /**
+         * The single runtime filter check, shared by ingest and re-apply so the
+         * two can never disagree about what a board shows.
+         *
+         * FAILS OPEN twice over: an empty allow-list means "no filter", and a
+         * departure with no usable destId is shown rather than hidden. TfL sends
+         * destinations like "Check Front of Train" and depot moves that map to
+         * no station at all — those must never silently disappear from a board.
+         */
+        fun matchesFilter(destId: String?, allowedDestIds: Set<String>): Boolean =
+            allowedDestIds.isEmpty() || destId.isNullOrBlank() || destId in allowedDestIds
     }
 
     /**
@@ -115,8 +222,8 @@ class SqlStorage(private val database: StationlyDatabase) {
      * supposed to mean "time since the last FCM / REST sync gave us
      * fresh data", and this is the only value that knows that.
      */
-    fun getPredictionsTimestamp(stationId: String, lineId: String): Long? {
-        return queries.getPredictionsTimestamp(stationId, lineId.lowercase())
+    fun getPredictionsTimestamp(stationId: String, lineId: String, direction: String): Long? {
+        return queries.getPredictionsTimestamp(stationId, lineId.lowercase(), direction.lowercase())
             .executeAsOneOrNull()
             ?.lastTimestamp
     }
@@ -130,9 +237,10 @@ class SqlStorage(private val database: StationlyDatabase) {
     fun saveSyncTimestamp(
         stationId: String,
         lineId: String,
+        direction: String,
         timestamp: Long = Clock.System.now().toEpochMilliseconds(),
     ) {
-        queries.upsertSyncStatus(stationId, lineId.lowercase(), timestamp)
+        queries.upsertSyncStatus(stationId, lineId.lowercase(), direction.lowercase(), timestamp)
     }
 
     /**
@@ -140,8 +248,9 @@ class SqlStorage(private val database: StationlyDatabase) {
      * we've never synced it. Unlike [getPredictionsTimestamp] this is present
      * even when the last sync returned zero rows.
      */
-    fun getSyncTimestamp(stationId: String, lineId: String): Long? {
-        return queries.getSyncStatus(stationId, lineId.lowercase()).executeAsOneOrNull()
+    fun getSyncTimestamp(stationId: String, lineId: String, direction: String): Long? {
+        return queries.getSyncStatus(stationId, lineId.lowercase(), direction.lowercase())
+            .executeAsOneOrNull()
     }
 
     /**
@@ -151,9 +260,9 @@ class SqlStorage(private val database: StationlyDatabase) {
      * prediction-row timestamp for boards last persisted before sync
      * tracking existed. Null only when we have neither.
      */
-    fun getLastUpdatedTimestamp(stationId: String, lineId: String): Long? {
-        return getSyncTimestamp(stationId, lineId)
-            ?: getPredictionsTimestamp(stationId, lineId)
+    fun getLastUpdatedTimestamp(stationId: String, lineId: String, direction: String): Long? {
+        return getSyncTimestamp(stationId, lineId, direction)
+            ?: getPredictionsTimestamp(stationId, lineId, direction)
     }
 
     fun saveLineStatus(status: LineStatus) {
@@ -185,8 +294,14 @@ class SqlStorage(private val database: StationlyDatabase) {
         queries.clearAllPredictions()
     }
 
-    fun clearPredictions(stationId: String, lineId: String) {
-        queries.clearPredictionsForStation(stationId, lineId.lowercase())
+    /** Clear one direction's board. */
+    fun clearPredictions(stationId: String, lineId: String, direction: String) {
+        queries.clearPredictionsForStation(stationId, lineId.lowercase(), direction.lowercase())
+    }
+
+    /** Clear every direction of a line at a station. */
+    fun clearPredictionsForLine(stationId: String, lineId: String) {
+        queries.clearPredictionsForLine(stationId, lineId.lowercase())
     }
 
     fun clearLineStatuses() {

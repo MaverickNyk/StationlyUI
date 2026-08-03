@@ -33,7 +33,7 @@ class SyncPredictionsUseCase(
         // rows agree to the millisecond and all three surfaces (home, widget,
         // dream) read one consistent time via getLastUpdatedTimestamp.
         val syncMs = Clock.System.now().toEpochMilliseconds()
-        sqlStorage.saveSyncTimestamp(selection.station, selection.line, syncMs)
+        sqlStorage.saveSyncTimestamp(selection.station, selection.line, selection.direction, syncMs)
 
         // 1. Extract line data (Loose matching for casing)
         val lineIdLower = selection.line.lowercase()
@@ -48,6 +48,14 @@ class SyncPredictionsUseCase(
             ?: lineData.dirs.entries.find { it.key.lowercase() == dirIdLower }?.value
         
         val rawPreds = dirData?.preds ?: emptyList()
+
+        // The board's destination/via allow-list, materialised ONCE per stream
+        // frame rather than per row and never at render time. This is the whole
+        // performance argument for the design: predictions are written once per
+        // frame but read on every recomposition and every one-second countdown
+        // tick, so the filter is evaluated on the write side and the answer is
+        // persisted as a boolean per row.
+        val allowedDestIds = selection.destinationIds.toSet()
 
         // 3. Format predictions for display. Capture the absolute arrival
         //    time (parsed from the FCM's ISO timestamp) alongside the
@@ -68,6 +76,8 @@ class SyncPredictionsUseCase(
                 eta = etaString,
                 isDue = etaString == "Due",
                 stopLetter = pred.stopLetter,
+                destId = pred.destId,
+                matchesFilter = SqlStorage.matchesFilter(pred.destId, allowedDestIds),
                 targetEpochMs = StationlyFormatters.parseTargetEpochMs(pred.eta),
             )
         // Dedupe on absolute arrival time, NOT the formatted eta string.
@@ -87,14 +97,37 @@ class SyncPredictionsUseCase(
         //    3-row window once the current top row has departed. The
         //    display layer still caps at 3 — these are reserves, not
         //    everything shown.
-        val processedPredictions = GlobalBoardProcessor.processPredictions(
-            predictions = formattedPredictions,
-            perPlatformCap = 8,
-        )
+        val processedPredictions = if (allowedDestIds.isEmpty()) {
+            GlobalBoardProcessor.processPredictions(
+                predictions = formattedPredictions,
+                perPlatformCap = 8,
+            )
+        } else {
+            // Cap matching and excluded rows SEPARATELY.
+            //
+            // Sharing one per-platform budget would let excluded trains crowd
+            // out the ones the user actually asked for: on a busy platform,
+            // eight Uxbridge departures would fill the cap and a board filtered
+            // to Heathrow would render thin or empty despite Heathrow trains
+            // being in the payload.
+            //
+            // Excluded rows are still persisted rather than dropped — they are
+            // what the fail-open read falls back to, and what lets a filter
+            // change be re-applied on device without waiting for a refetch.
+            val matching = GlobalBoardProcessor.processPredictions(
+                predictions = formattedPredictions.filter { it.matchesFilter },
+                perPlatformCap = 8,
+            )
+            val excluded = GlobalBoardProcessor.processPredictions(
+                predictions = formattedPredictions.filterNot { it.matchesFilter },
+                perPlatformCap = 8,
+            )
+            matching + excluded
+        }
 
         // 6. Save to SQL storage — same `syncMs` so the row timestamps match
         //    the sync stamp recorded above.
-        sqlStorage.savePredictions(selection.station, selection.line, processedPredictions, syncMs)
+        sqlStorage.savePredictions(selection.station, selection.line, selection.direction, processedPredictions, syncMs)
 
         return processedPredictions
     }

@@ -61,18 +61,50 @@ class SelectionRepository(
     }
     
     /**
+     * Replace a board's stored settings WITHOUT moving it in the list.
+     *
+     * [saveSelection] always inserts at index 0, which is right for a new board
+     * but wrong for editing one: changing a filter on an existing board would
+     * jump it to the top of its card and hand it the widget's primary slot. This
+     * matches on (station, line, direction) — a board's identity — and writes
+     * over it in place.
+     *
+     * No-op if the board is not tracked, so a stale edit cannot resurrect a
+     * board that was deleted meanwhile.
+     */
+    suspend fun updateSelectionInPlace(selection: UserSelection) {
+        val current = _selections.value.toMutableList()
+        val idx = current.indexOfFirst {
+            it.station == selection.station &&
+                it.line == selection.line &&
+                it.direction == selection.direction
+        }
+        if (idx < 0) return
+        current[idx] = selection
+        _selections.value = current
+
+        sqlStorage.clearSelections()
+        current.forEach { sqlStorage.saveSelection(it) }
+    }
+
+    /**
      * Delete a selection
      * @param selection The selection to delete
      */
     suspend fun deleteSelection(selection: UserSelection) {
         val currentSelections = _selections.value.toMutableList()
+        // Direction is part of a board's identity: both directions of one line
+        // can be tracked at the same station, and removing one must leave the
+        // other alone.
         currentSelections.removeAll {
-            it.station == selection.station && it.line == selection.line
+            it.station == selection.station &&
+                it.line == selection.line &&
+                it.direction == selection.direction
         }
         _selections.value = currentSelections
         // Always delete from SQLite — in-memory cache may not be initialized
         // (e.g. ProfileViewModel never calls initialize()), but SQLite is always authoritative.
-        sqlStorage.deleteSelection(selection.station, selection.line)
+        sqlStorage.deleteSelection(selection.station, selection.line, selection.direction)
     }
     
     /**

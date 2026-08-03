@@ -2,17 +2,55 @@ CREATE TABLE UserSelectionEntity (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     mode TEXT NOT NULL,
     line TEXT NOT NULL,
+    -- The naptan departures are FETCHED from: the resolved pole for this exact
+    -- (line, direction). On bus these differ per direction — Smithwood Close
+    -- resolves 39 inbound to 490008805N and outbound to 490012211N.
     station TEXT NOT NULL,
+    -- The hub the user picked; cards GROUP on this so several poles render as
+    -- one departure board. Blank means "same as station" (pre-hub rows).
+    parentStationId TEXT NOT NULL DEFAULT '',
     stationName TEXT NOT NULL,
     direction TEXT NOT NULL,
     destinations TEXT NOT NULL, -- JSON or comma-separated
-    destinationIds TEXT NOT NULL -- JSON or comma-separated
+    destinationIds TEXT NOT NULL, -- JSON or comma-separated
+    -- ALL | DESTINATIONS | VIA. Stored as the enum name rather than an ordinal
+    -- so adding a filter kind can never renumber the existing ones; anything
+    -- unrecognised decodes back to ALL (show everything).
+    filterMode TEXT NOT NULL DEFAULT 'ALL',
+    -- The station the user asked to travel through, preserved ALONGSIDE the
+    -- resolved id list in destinationIds. The resolution goes stale when a
+    -- branch closes, so the intent has to survive to be re-resolved.
+    viaStationId TEXT,
+    viaStationName TEXT,
+    -- Epoch millis of the last resolution, so a stale allow-list can be found
+    -- and refreshed without prompting the user again.
+    routeResolvedAt INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE PredictionEntity (
     stationId TEXT NOT NULL,
     lineId TEXT NOT NULL,
+    -- Which direction of the line these departures belong to (lowercased,
+    -- e.g. "westbound", "inner"). Part of the key because a user can track
+    -- BOTH directions of one line at a station: without it, syncing the
+    -- eastbound board would clear-and-replace the westbound board's rows
+    -- (savePredictions deletes by station+line before inserting), so the two
+    -- directions would overwrite each other on every stream frame.
+    direction TEXT NOT NULL DEFAULT '',
     destination TEXT NOT NULL,
+    -- Naptan id of the destination. Filters match on THIS, never on the
+    -- display name: the route sequence says "Hammersmith (Dist&Picc Line)"
+    -- where a prediction says "Hammersmith", so name comparison fails on
+    -- precisely the short-terminating services a via-filter must catch.
+    -- Not part of the primary key — it is an attribute of the train, and the
+    -- existing key already identifies the row.
+    destId TEXT NOT NULL DEFAULT '',
+    -- Precomputed answer to "does this row pass the board's filter", written
+    -- once at ingest. The board re-reads these rows on every recomposition and
+    -- every one-second countdown tick, so the filter is evaluated per WRITE
+    -- (once per stream frame) instead of per READ. Defaults to 1 so an
+    -- unfiltered board behaves exactly as it did before.
+    matchesFilter INTEGER NOT NULL DEFAULT 1,
     platform TEXT NOT NULL,
     eta TEXT NOT NULL,
     isDue INTEGER NOT NULL DEFAULT 0,
@@ -26,10 +64,10 @@ CREATE TABLE PredictionEntity (
     -- null and consumers fall back to the stored `eta` string rather than
     -- dropping the row entirely.
     targetEpochMs INTEGER,
-    PRIMARY KEY (stationId, lineId, destination, platform, eta)
+    PRIMARY KEY (stationId, lineId, direction, destination, platform, eta)
 );
 
-CREATE INDEX prediction_lookup ON PredictionEntity(stationId, lineId);
+CREATE INDEX prediction_lookup ON PredictionEntity(stationId, lineId, direction);
 
 CREATE TABLE LineStatusEntity (
     mode TEXT NOT NULL,
@@ -52,14 +90,17 @@ CREATE TABLE LineStatusEntity (
 CREATE TABLE SyncStatusEntity (
     stationId TEXT NOT NULL,
     lineId TEXT NOT NULL,
+    -- Scoped per direction for the same reason as PredictionEntity: the two
+    -- directions of one line are independent boards with their own "X ago".
+    direction TEXT NOT NULL DEFAULT '',
     lastSyncMs INTEGER NOT NULL,
-    PRIMARY KEY (stationId, lineId)
+    PRIMARY KEY (stationId, lineId, direction)
 );
 
 -- Queries
 insertSelection:
-INSERT INTO UserSelectionEntity(mode, line, station, stationName, direction, destinations, destinationIds)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO UserSelectionEntity(mode, line, station, parentStationId, stationName, direction, destinations, destinationIds, filterMode, viaStationId, viaStationName, routeResolvedAt)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 selectAllSelections:
 SELECT * FROM UserSelectionEntity;
@@ -68,19 +109,42 @@ clearSelections:
 DELETE FROM UserSelectionEntity;
 
 deleteSelection:
-DELETE FROM UserSelectionEntity WHERE station = ? AND line = ?;
+DELETE FROM UserSelectionEntity WHERE station = ? AND line = ? AND direction = ?;
 
 insertPrediction:
-INSERT OR REPLACE INTO PredictionEntity(stationId, lineId, destination, platform, eta, isDue, stopLetter, timestamp, targetEpochMs)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO PredictionEntity(stationId, lineId, direction, destination, destId, matchesFilter, platform, eta, isDue, stopLetter, timestamp, targetEpochMs)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
+-- Board reads. Filtered rows are excluded in SQL off the precomputed flag, and
+-- ordered here so the render path receives them ready to draw — it must do no
+-- filtering and no sorting of its own.
+--
+-- targetEpochMs sorts NULLS LAST: a row whose ISO timestamp failed to parse
+-- still has a usable `eta` string and must not jump to the head of the board.
 getPredictionsForStation:
-SELECT * FROM PredictionEntity WHERE stationId = ? AND lineId = ?;
+SELECT * FROM PredictionEntity
+WHERE stationId = ? AND lineId = ? AND direction = ? AND matchesFilter = 1
+ORDER BY targetEpochMs IS NULL, targetEpochMs;
+
+-- Same board, filter ignored. Used for the fail-open fallback: when a filter
+-- matches nothing right now, the board shows the unfiltered list with a note
+-- rather than an empty card.
+getAllPredictionsForStation:
+SELECT * FROM PredictionEntity
+WHERE stationId = ? AND lineId = ? AND direction = ?
+ORDER BY targetEpochMs IS NULL, targetEpochMs;
 
 getPredictionsTimestamp:
-SELECT MAX(timestamp) AS lastTimestamp FROM PredictionEntity WHERE stationId = ? AND lineId = ?;
+SELECT MAX(timestamp) AS lastTimestamp FROM PredictionEntity WHERE stationId = ? AND lineId = ? AND direction = ?;
 
 clearPredictionsForStation:
+DELETE FROM PredictionEntity WHERE stationId = ? AND lineId = ? AND direction = ?;
+
+-- Every direction of a line at a station, regardless of how many directions of
+-- it the user was tracking. Currently unused: teardown is direction-scoped
+-- (discardStation removes one board), and removing a whole card iterates its
+-- selections. Kept for the Android port, which still deletes per (station, line).
+clearPredictionsForLine:
 DELETE FROM PredictionEntity WHERE stationId = ? AND lineId = ?;
 
 clearAllPredictions:
@@ -97,11 +161,11 @@ clearLineStatuses:
 DELETE FROM LineStatusEntity;
 
 upsertSyncStatus:
-INSERT OR REPLACE INTO SyncStatusEntity(stationId, lineId, lastSyncMs)
-VALUES (?, ?, ?);
+INSERT OR REPLACE INTO SyncStatusEntity(stationId, lineId, direction, lastSyncMs)
+VALUES (?, ?, ?, ?);
 
 getSyncStatus:
-SELECT lastSyncMs FROM SyncStatusEntity WHERE stationId = ? AND lineId = ?;
+SELECT lastSyncMs FROM SyncStatusEntity WHERE stationId = ? AND lineId = ? AND direction = ?;
 
 clearSyncStatuses:
 DELETE FROM SyncStatusEntity;

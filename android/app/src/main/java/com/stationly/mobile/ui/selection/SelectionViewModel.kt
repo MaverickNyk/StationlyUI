@@ -519,10 +519,32 @@ class SelectionViewModel(application: Application) : AndroidViewModel(applicatio
 
                     try {
                         com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.let { user ->
-                            sduiService.syncStations(user.uid, listOf(SubscribedStation(
-                                id = userSelection.station, name = userSelection.stationName,
-                                line = userSelection.line, mode = userSelection.mode, direction = userSelection.direction
-                            )))
+                            // ⚠️ Post the FULL list, never just the board that was
+                            // saved. `syncStations` is a full REPLACE: it diffs the
+                            // old ids against the new ones to inc/dec subscription
+                            // counts, so a one-element post silently deletes every
+                            // OTHER board the account holds.
+                            //
+                            // That was harmless while both platforms were
+                            // single-board — the one element WAS the full list. It
+                            // is not any more: iOS saves several boards per station,
+                            // and on a shared account one save here wiped all of
+                            // them from the cloud, so the next iOS re-login restored
+                            // only this one. Read from SQLite (authoritative, and
+                            // already written by persistAndFetch above) rather than
+                            // the in-memory mirror, which this VM may never have
+                            // initialised.
+                            val all = Platform.sqlStorage.getAllSelections().map { sel ->
+                                SubscribedStation(
+                                    id = sel.station,
+                                    parentStationId = sel.parentStationId,
+                                    name = sel.stationName,
+                                    line = sel.line,
+                                    mode = sel.mode,
+                                    direction = sel.direction,
+                                )
+                            }
+                            if (all.isNotEmpty()) sduiService.syncStations(user.uid, all)
                         }
                     } catch (e: Exception) {
                         Log.e("SDUI", "Background syncStations failed", e)

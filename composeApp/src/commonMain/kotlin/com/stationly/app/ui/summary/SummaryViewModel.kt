@@ -63,6 +63,26 @@ class SummaryViewModel(
     private val _predictions = MutableStateFlow<Map<String, List<PredictionDisplay>>>(emptyMap())
     val predictions: StateFlow<Map<String, List<PredictionDisplay>>> = _predictions.asStateFlow()
 
+    /**
+     * Board identity for every per-selection map below.
+     *
+     * These used to be keyed by `selection.station` alone, which was correct
+     * only while the product was single-line: one station could appear at most
+     * once. Now that a user can track several lines at the same station, a
+     * station id no longer identifies a board — two selections at King's Cross
+     * would land on the same key and the second one written would silently
+     * erase the first's departures, SDUI payload and freshness timestamp.
+     *
+     * `station_line` is the same composite the board list has always used for
+     * its Compose item keys (SummaryScreen), so this just brings the state
+     * maps in line with what the UI already assumed.
+     */
+    private fun boardKey(selection: UserSelection): String =
+        boardKey(selection.station, selection.line, selection.direction)
+
+    private fun boardKey(station: String, line: String, direction: String): String =
+        "${station}_${line}_$direction"
+
     private val _lineStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
     val lineStatuses: StateFlow<Map<String, String>> = _lineStatuses.asStateFlow()
 
@@ -197,7 +217,9 @@ class SummaryViewModel(
     private fun loadPredictions(selection: UserSelection) {
         viewModelScope.launch {
             try {
-                val rawPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line)
+                val rawPreds = Platform.sqlStorage.getPredictions(
+                    selection.station, selection.line, selection.direction
+                )
                 val dbPreds = GlobalBoardProcessor.processPredictions(rawPreds)
                 val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
                 // Android keeps "now" — unchanged behaviour. iOS uses the real
@@ -208,19 +230,21 @@ class SummaryViewModel(
                 val predsTimestamp = when {
                     dbPreds.isEmpty() -> 0L
                     Platform.getPlatformName() == "iOS" ->
-                        Platform.sqlStorage.getLastUpdatedTimestamp(selection.station, selection.line) ?: now
+                        Platform.sqlStorage.getLastUpdatedTimestamp(
+                            selection.station, selection.line, selection.direction
+                        ) ?: now
                     else -> now
                 }
 
                 val currentMap = _predictions.value.toMutableMap()
-                currentMap[selection.station] = dbPreds
+                currentMap[boardKey(selection)] = dbPreds
                 _predictions.value = currentMap
 
                 loadSduiTemplateForSelection(selection, dbPreds)
 
                 if (predsTimestamp > 0) {
                     val updates = _stationUpdates.value.toMutableMap()
-                    updates[selection.station] = predsTimestamp
+                    updates[boardKey(selection)] = predsTimestamp
                     _stationUpdates.value = updates
 
                     if (predsTimestamp > _uiState.value.lastUpdated) {
@@ -258,7 +282,12 @@ class SummaryViewModel(
         selection: UserSelection,
         predictions: List<PredictionDisplay>
     ) {
+        // The SDUI *template* stays per-station (the backend serves one board
+        // layout per station), but the BOUND payload is per (station, line):
+        // binding injects that line's departures and status into the template,
+        // so two lines at one station produce two different payloads.
         val sduiJson = Platform.storageManager.loadString("sdui_layout_${selection.station}")
+        val key = boardKey(selection)
         if (sduiJson != null) {
             try {
                 val template = jsonFormat.decodeFromString<SduiWidgetPayload>(sduiJson)
@@ -270,16 +299,16 @@ class SummaryViewModel(
                     status?.reason
                 )
                 val current = _sduiPayloads.value.toMutableMap()
-                current[selection.station] = boundPayload
+                current[key] = boundPayload
                 _sduiPayloads.value = current
             } catch (_: Exception) {
                 val current = _sduiPayloads.value.toMutableMap()
-                current.remove(selection.station)
+                current.remove(key)
                 _sduiPayloads.value = current
             }
         } else {
             val current = _sduiPayloads.value.toMutableMap()
-            current.remove(selection.station)
+            current.remove(key)
             _sduiPayloads.value = current
         }
     }
@@ -303,9 +332,11 @@ class SummaryViewModel(
     }
 
     private suspend fun refreshDataIfStale(selection: UserSelection) {
-        val existingPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line)
+        val existingPreds = Platform.sqlStorage.getPredictions(
+            selection.station, selection.line, selection.direction
+        )
         val existingStatus = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
-        val lastUpdatedByStation = _stationUpdates.value[selection.station] ?: 0L
+        val lastUpdatedByStation = _stationUpdates.value[boardKey(selection)] ?: 0L
         val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
         val isStale = now - lastUpdatedByStation > 60_000
 
@@ -350,26 +381,66 @@ class SummaryViewModel(
     }
 
     fun deleteSelection(selection: UserSelection) {
-        viewModelScope.launch {
-            _isDeletingBoard.value = selection.station
+        viewModelScope.launch { deleteSelectionInternal(selection) }
+    }
+
+    private suspend fun deleteSelectionInternal(selection: UserSelection) {
+        run {
+            _isDeletingBoard.value = boardKey(selection)
             try {
-                stationLifecycleUseCase.discardStation(selection, clearSelectionInRepo = true)
+                // Everything that survives this delete. Passed down so the
+                // lifecycle use case can tell which stream/topic ids are still
+                // in use by another line and must NOT be unsubscribed — with
+                // several lines at one station, tearing down Station_<id>
+                // unconditionally would silence the siblings we're keeping.
+                //
+                // Read from the repository rather than this VM's `_selections`
+                // mirror: the mirror is refreshed asynchronously by the collector
+                // in init, so back-to-back deletes (deleteStation) would compute
+                // this against a stale list and re-subscribe what they just tore
+                // down. The repository updates synchronously inside the delete.
+                val remainingSelections = selectionRepository.selections.value.filterNot {
+                    it.station == selection.station &&
+                        it.line == selection.line &&
+                        it.direction == selection.direction
+                }
+
+                stationLifecycleUseCase.discardStation(
+                    selection,
+                    clearSelectionInRepo = true,
+                    remaining = remainingSelections,
+                )
 
                 val currentMap = _predictions.value.toMutableMap()
-                currentMap.remove(selection.station)
+                currentMap.remove(boardKey(selection))
                 _predictions.value = currentMap
 
-                val currentLineStatuses = _lineStatuses.value.toMutableMap()
-                currentLineStatuses.remove("${selection.mode}_${selection.line}".lowercase())
-                _lineStatuses.value = currentLineStatuses
+                val currentSdui = _sduiPayloads.value.toMutableMap()
+                currentSdui.remove(boardKey(selection))
+                _sduiPayloads.value = currentSdui
+
+                val currentUpdates = _stationUpdates.value.toMutableMap()
+                currentUpdates.remove(boardKey(selection))
+                _stationUpdates.value = currentUpdates
+
+                // Line status is shared across every board riding that line, so
+                // only forget it once no remaining selection still needs it.
+                val statusKey = "${selection.mode}_${selection.line}".lowercase()
+                val statusStillUsed = remainingSelections.any {
+                    "${it.mode}_${it.line}".lowercase() == statusKey
+                }
+                if (!statusStillUsed) {
+                    val currentLineStatuses = _lineStatuses.value.toMutableMap()
+                    currentLineStatuses.remove(statusKey)
+                    _lineStatuses.value = currentLineStatuses
+                }
 
                 val uid = Platform.storageManager.loadString("firebase_user_uid")
                 if (uid != null) {
                     try {
-                        val remainingSelections = _selections.value.filter { it.station != selection.station }
                         val mapped = remainingSelections.map {
                             com.stationly.core.model.sdui.SubscribedStation(
-                                id = it.station, name = it.stationName,
+                                id = it.station, parentStationId = it.parentStationId, name = it.stationName,
                                 line = it.line, mode = it.mode, direction = it.direction
                             )
                         }
@@ -381,6 +452,29 @@ class SummaryViewModel(
                 performHaptic(HapticType.ERROR)
             } finally {
                 _isDeletingBoard.value = null
+            }
+        }
+    }
+
+    /**
+     * Remove every line tracked at a station — the "Remove All Lines" action on
+     * a multi-line card.
+     *
+     * Deletes sequentially rather than in parallel because each delete reads the
+     * repository's current list to decide which stream/topic ids are still
+     * needed; running them concurrently would let two deletes both see the other
+     * as "still using" a topic and leave it subscribed forever.
+     */
+    fun deleteStation(stationId: String) {
+        viewModelScope.launch {
+            // `stationId` is the CARD's grouping id (the hub), which is what the
+            // card was built from. Matching on `station` would miss every row
+            // whose resolved pole differs from the hub — on bus that is one of
+            // the two directions, so deleting the card would silently orphan a
+            // board that keeps streaming with no card to show it.
+            val doomed = selectionRepository.selections.value.filter { it.groupingId == stationId }
+            for (selection in doomed) {
+                deleteSelectionInternal(selection)
             }
         }
     }

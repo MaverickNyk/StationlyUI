@@ -93,7 +93,8 @@ import com.stationly.app.ui.common.LoadingOverlay
 import com.stationly.app.ui.common.NotificationPermissionEffect
 import com.stationly.app.ui.common.OfflineBanner
 import com.stationly.app.ui.common.ThemeToggleButton
-import com.stationly.app.ui.summary.components.Board
+import com.stationly.app.ui.summary.components.BoardSection
+import com.stationly.app.ui.summary.components.StationBoard
 import com.stationly.app.ui.summary.components.EmptyStationsState
 import com.stationly.app.ui.summary.components.StationExploreSection
 import com.stationly.app.ui.theme.DisplayFamily
@@ -313,24 +314,51 @@ fun SummaryScreen(
                                 }
                             }
 
-                            items(currentSelections, key = { "${it.station}_${it.line}" }) { selection ->
-                                val selectionPredictions = predictions[selection.station] ?: emptyList()
-                                val statusKey = "${selection.mode}_${selection.line}".lowercase()
+                            // One card per STATION, not per selection: a user can
+                            // now track several lines at the same station and
+                            // expects them stacked in one board, not scattered
+                            // across identically-titled cards. `groupBy`
+                            // preserves first-encounter order, so cards stay in
+                            // the order the stations were added and the lines
+                            // within a card stay in the order they were picked.
+                            // (Plain val, not remember — this runs inside
+                            // LazyListScope, which is not a composable context.)
+                            // Group on the HUB, not the fetch key. On bus each direction resolves
+                            // to its own pole naptan, so grouping by `station` would split one
+                            // stop into a card per pole, all with the same name.
+                            val stationGroups = currentSelections.groupBy { it.groupingId }.entries.toList()
 
-                                Box(modifier = Modifier.animateItem()) {
-                                    Board(
+                            items(stationGroups, key = { it.key }) { (stationId, groupSelections) ->
+                                val sections = groupSelections.map { selection ->
+                                    val boardKey =
+                                        "${selection.station}_${selection.line}_${selection.direction}"
+                                    val statusKey = "${selection.mode}_${selection.line}".lowercase()
+                                    BoardSection(
                                         selection = selection,
-                                        predictions = selectionPredictions,
-                                        hasPredictions = selectionPredictions.isNotEmpty(),
+                                        predictions = predictions[boardKey] ?: emptyList(),
                                         lineStatus = lineStatuses[statusKey],
                                         lineStatusFailed = failedLineStatusKeys.contains(statusKey),
-                                        sduiPayload = sduiPayloads[selection.station],
-                                        lastUpdated = stationUpdates[selection.station] ?: 0L,
-                                        onDelete = { if (deletingBoardId == null) viewModel.deleteSelection(selection) },
-                                        nextPrediction = selectionPredictions.firstOrNull(),
+                                        sduiPayload = sduiPayloads[boardKey],
+                                        lastUpdated = stationUpdates[boardKey] ?: 0L,
+                                    )
+                                }
+                                val primary = groupSelections.first()
+
+                                Box(modifier = Modifier.animateItem()) {
+                                    StationBoard(
+                                        stationName = primary.stationName,
+                                        mode = primary.mode,
+                                        sections = sections,
+                                        onDeleteSection = { sel ->
+                                            if (deletingBoardId == null) viewModel.deleteSelection(sel)
+                                        },
+                                        onDeleteStation = {
+                                            if (deletingBoardId == null) viewModel.deleteStation(stationId)
+                                        },
                                         homeConfig = homeConfig,
                                         isOnline = uiState.isOnline,
-                                        isDeleting = deletingBoardId == selection.station,
+                                        isDeleting = deletingBoardId != null &&
+                                            sections.any { it.key == deletingBoardId },
                                     )
                                 }
                             }

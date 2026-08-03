@@ -4,6 +4,7 @@ import com.stationly.core.model.PredictionItem
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.WidgetState
 import com.stationly.core.model.PredictionDisplay
+import com.stationly.core.repository.SqlStorage
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
@@ -31,16 +32,31 @@ class FormatDeparturesUseCase {
         predictions: List<PredictionItem>,
         selection: UserSelection
     ): WidgetState {
-        // Filter predictions by destination
+        // Apply the board's destination/via allow-list, FAILING OPEN.
+        //
+        // `destinationIds` used to be permanently empty, so this filter never
+        // actually ran; it does now that boards can carry one. Falling back to
+        // the unfiltered list when nothing matches matters more here than
+        // anywhere else — the widget has no empty state to explain itself with,
+        // so a filter that matches nothing would leave a silently blank widget.
         val filteredPredictions = filterByDestinations(predictions, selection.destinationIds)
-        
+            .ifEmpty { predictions }
+
         // Format predictions for display
         val formattedPredictions = filteredPredictions.map { pred ->
             formatPrediction(pred)
         }
-        
-        // Sort by ETA (earliest first)
-        val sortedPredictions = formattedPredictions.sortedBy { it.eta }
+
+        // Sort by ACTUAL arrival time, earliest first.
+        //
+        // This previously sorted on the formatted `eta` STRING, which orders
+        // lexicographically: "1 min" < "10 min" < "2 min" < "Due". Combined with
+        // the take(3) below, the widget could show the wrong three trains in the
+        // wrong order. Nulls last so a row whose timestamp failed to parse
+        // cannot jump to the front.
+        val sortedPredictions = formattedPredictions.sortedWith(
+            compareBy({ it.targetEpochMs == null }, { it.targetEpochMs })
+        )
         
         // Get line status if available (from previous fetch)
         val lineStatus = null // This would come from repository
@@ -64,7 +80,13 @@ class FormatDeparturesUseCase {
         allowedDestIds: List<String>
     ): List<PredictionItem> {
         if (allowedDestIds.isEmpty()) return predictions
-        return predictions.filter { it.destId in allowedDestIds }
+        // Same check the board and the re-apply path use, so the widget can
+        // never disagree with the card it mirrors. In particular it fails open
+        // on a blank destId: TfL sends "Check Front of Train" and depot moves
+        // that map to no station, and a plain `in` test would drop them here
+        // while the board still showed them.
+        val allowed = allowedDestIds.toSet()
+        return predictions.filter { SqlStorage.matchesFilter(it.destId, allowed) }
     }
     
     /**
@@ -79,6 +101,10 @@ class FormatDeparturesUseCase {
             platform = prediction.platform,
             eta = etaString,
             isDue = isDue,
+            // Carried through so a widget row is the same shape as a board row.
+            // Dropping it here meant anything downstream of the widget path had
+            // no id to match a filter on.
+            destId = prediction.destId,
             // Capture the absolute arrival timestamp so the UI can self-tick.
             targetEpochMs = com.stationly.core.util.StationlyFormatters.parseTargetEpochMs(prediction.eta),
         )

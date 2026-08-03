@@ -146,7 +146,7 @@ class FcmMessagingService : FirebaseMessagingService() {
             matchingSelections.forEach { selection ->
                 CoroutineScope(Dispatchers.IO).launch {
                     if (extractedPredictions.isNotEmpty()) {
-                        Platform.sqlStorage.savePredictions(selection.station, selection.line, extractedPredictions)
+                        Platform.sqlStorage.savePredictions(selection.station, selection.line, selection.direction, extractedPredictions)
                     }
                     // Single fan-out (SharedPrefs ping + dream broadcast +
                     // widget redraw). See FreshDataNotifier.

@@ -52,6 +52,9 @@ class UserSyncRepository(
                         mode = station.mode,
                         line = station.line,
                         station = station.id,
+                        // Without this a restore groups bus boards per POLE, so
+                        // one stop comes back as several identically-named cards.
+                        parentStationId = station.parentStationId.orEmpty(),
                         stationName = station.name,
                         direction = station.direction,
                         destinations = emptyList(),
@@ -99,25 +102,35 @@ class UserSyncRepository(
 
         // Identity = station id + line (matches the uniqueness UserService
         // uses when adding/removing a station server-side).
-        fun key(id: String, line: String) = "$id|$line"
+        // DIRECTION is part of the key. Without it, both directions of one line
+        // that resolve to the SAME naptan (the normal case on tube) collapse to
+        // one key, and a restore silently drops one of them.
+        fun key(id: String, line: String, direction: String) = "$id|$line|$direction"
 
         val cloud = profile.stations
         val local = sqlStorage.getAllSelections()
-        val cloudKeys = cloud.map { key(it.id, it.line) }.toSet()
-        val localKeys = local.map { key(it.station, it.line) }.toSet()
+        val cloudKeys = cloud.map { key(it.id, it.line, it.direction) }.toSet()
+        val localKeys = local.map { key(it.station, it.line, it.direction) }.toSet()
 
         // Remove local selections no longer present in the cloud.
-        local.filter { key(it.station, it.line) !in cloudKeys }.forEach { sel ->
-            lifecycle.discardStation(sel, clearSelectionInRepo = true)
+        local.filter { key(it.station, it.line, it.direction) !in cloudKeys }.forEach { sel ->
+            // Pass the survivors so shared topics are not torn down: several
+            // boards can sit on one naptan (two routes at one bus pole, several
+            // lines at one station).
+            val remaining = sqlStorage.getAllSelections().filterNot {
+                it.station == sel.station && it.line == sel.line && it.direction == sel.direction
+            }
+            lifecycle.discardStation(sel, clearSelectionInRepo = true, remaining = remaining)
         }
 
         // Add cloud stations missing locally.
-        cloud.filter { key(it.id, it.line) !in localKeys }.forEach { st ->
+        cloud.filter { key(it.id, it.line, it.direction) !in localKeys }.forEach { st ->
             lifecycle.setupStation(
                 UserSelection(
                     mode = st.mode,
                     line = st.line,
                     station = st.id,
+                    parentStationId = st.parentStationId.orEmpty(),
                     stationName = st.name,
                     direction = st.direction,
                     destinations = emptyList(),

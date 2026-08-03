@@ -242,18 +242,47 @@ data class SduiDropdownOption(
     val tintHex: String? = null,
     val iconVersion: String? = null,
     val upcomingStations: List<String>? = null,
+    /**
+     * The same stops as [upcomingStations] — same order, same length — carrying
+     * the naptan id as well as the name.
+     *
+     * Filters match on `id`, never on the name: the route sequence calls a stop
+     * "Hammersmith (Dist&Picc Line)" where a live prediction says "Hammersmith",
+     * so name comparison fails on exactly the short-terminating services a
+     * "via" filter has to catch.
+     *
+     * Nullable because a cached 24h payload (or an older backend) predates the
+     * field; callers fall back to [upcomingStations] for display and simply
+     * cannot offer id-accurate filtering until it arrives.
+     */
+    val upcomingStops: List<SduiRouteStop>? = null,
     val directionName: String? = null,
     val towards: String? = null,
     val destinations: List<SduiDropdownOption>? = null,
+    /** Station this route sequence is relative to; every stop list starts AFTER it. */
+    val originStationId: String? = null,
+)
+
+/** One stop on a route sequence: the naptan id to match on, plus a display name. */
+@Serializable
+data class SduiRouteStop(
+    val id: String,
+    val name: String,
 )
 
 @Serializable
 data class SubscribedStation(
-    val id: String, // stationId (naptanId)
+    val id: String, // the RESOLVED naptanId departures are fetched from
     val name: String,
     val line: String,
     val mode: String,
-    val direction: String
+    val direction: String,
+    /**
+     * The hub this board belongs to, so a restore rebuilds one card per stop
+     * rather than one per pole. Nullable: the backend may not persist it yet, in
+     * which case restore falls back to grouping on [id] — the pre-hub behaviour.
+     */
+    val parentStationId: String? = null,
 )
 
 @Serializable

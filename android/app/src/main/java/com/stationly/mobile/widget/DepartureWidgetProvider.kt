@@ -293,7 +293,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // same source of truth. See PredictionTicker.tickPredictions.
             val nowMs = System.currentTimeMillis()
             val rawPredictions = com.stationly.core.platform.Platform.sqlStorage
-                .getPredictions(selection.station, selection.line)
+                .getPredictions(selection.station, selection.line, selection.direction)
             val tickedPredictions = com.stationly.core.util.StationlyFormatters.sortPredictions(
                 com.stationly.mobile.ui.util.tickPredictions(rawPredictions, nowMs)
             )
@@ -306,7 +306,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // Pull the SQL row timestamp so the chronometer reflects when
             // FCM/REST last gave us this data — not when this redraw fired.
             val lastUpdatedMs = com.stationly.core.platform.Platform.sqlStorage
-                .getLastUpdatedTimestamp(selection.station, selection.line)
+                .getLastUpdatedTimestamp(selection.station, selection.line, selection.direction)
                 ?: System.currentTimeMillis()
             
             var sduiPayload: com.stationly.core.model.sdui.SduiWidgetPayload? = null
@@ -595,7 +595,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 val isLoggedIn = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser != null
                 val hasEverUpdated = if (hasSelection) {
                     val sel = com.stationly.core.platform.Platform.sqlStorage.getAllSelections().first()
-                    com.stationly.core.platform.Platform.sqlStorage.hasPredictionsInDatabase(sel.station, sel.line)
+                    com.stationly.core.platform.Platform.sqlStorage.hasPredictionsInDatabase(sel.station, sel.line, sel.direction)
                 } else false
                 
                 val legacyRows = com.stationly.core.util.GlobalBoardProcessor.prepareLegacyRows(

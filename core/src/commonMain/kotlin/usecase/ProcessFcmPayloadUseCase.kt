@@ -122,11 +122,11 @@ class ProcessFcmPayloadUseCase(
     private suspend fun refreshWidgetFromStorage(primary: UserSelection) {
         val sql = sqlStorage ?: return
         val dbPreds = GlobalBoardProcessor.processPredictions(
-            sql.getPredictions(primary.station, primary.line)
+            sql.getPredictions(primary.station, primary.line, primary.direction)
         )
         if (dbPreds.isEmpty()) return
 
-        val tsMs = sql.getLastUpdatedTimestamp(primary.station, primary.line)
+        val tsMs = sql.getLastUpdatedTimestamp(primary.station, primary.line, primary.direction)
             ?: Clock.System.now().toEpochMilliseconds()
         val widgetStatus = sql.getLineStatus(primary.mode, primary.line)?.let { s ->
             val reason = StationlyFormatters.formatStatusReason(s.reason ?: "").trim()

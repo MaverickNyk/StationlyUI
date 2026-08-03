@@ -116,6 +116,7 @@ class ProfileViewModel(
             stations = local.map { sel ->
                 SubscribedStation(
                     id = sel.station,
+                    parentStationId = sel.parentStationId,
                     name = sel.stationName,
                     line = sel.line,
                     mode = sel.mode,
@@ -198,11 +199,22 @@ class ProfileViewModel(
             _uiState.value = _uiState.value.copy(deletingStationId = station.id)
             val selection = UserSelection(
                 mode = station.mode, line = station.line,
-                station = station.id, stationName = station.name,
+                station = station.id,
+                parentStationId = station.parentStationId.orEmpty(),
+                stationName = station.name,
                 direction = station.direction,
                 destinations = emptyList(), destinationIds = emptyList()
             )
-            stationLifecycleUseCase.discardStation(selection, clearSelectionInRepo = true)
+            // Survivors, so a shared naptan/line topic is not torn down from
+            // under a board the user is keeping.
+            val remaining = Platform.sqlStorage.getAllSelections().filterNot {
+                it.station == selection.station &&
+                    it.line == selection.line &&
+                    it.direction == selection.direction
+            }
+            stationLifecycleUseCase.discardStation(
+                selection, clearSelectionInRepo = true, remaining = remaining
+            )
 
             // Refresh SQLite list
             loadStations()

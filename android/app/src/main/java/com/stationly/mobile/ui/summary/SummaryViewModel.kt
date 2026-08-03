@@ -261,7 +261,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
     private fun loadPredictions(selection: UserSelection) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                val rawPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line)
+                val rawPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line, selection.direction)
                 // Keep the FULL per-platform buffer (up to 8 rows, the storage
                 // cap set by SyncPredictionsUseCase). Earlier this defaulted
                 // to perPlatformCap = 3 — which meant the home Board's
@@ -287,7 +287,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
                 // install, no data yet". 0L is now only returned when
                 // SQL genuinely has no timestamp for this station/line.
                 val predsTimestamp = Platform.sqlStorage
-                    .getLastUpdatedTimestamp(selection.station, selection.line)
+                    .getLastUpdatedTimestamp(selection.station, selection.line, selection.direction)
                     ?: 0L
                 val currentMap = _predictions.value.toMutableMap()
                 currentMap[selection.station] = dbPreds
@@ -392,7 +392,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
      */
     private fun refreshDataIfStale(selection: UserSelection) {
         viewModelScope.launch {
-            val existingPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line)
+            val existingPreds = Platform.sqlStorage.getPredictions(selection.station, selection.line, selection.direction)
             val existingStatus = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
             
             val lastUpdatedByStation = _stationUpdates.value[selection.station] ?: 0L

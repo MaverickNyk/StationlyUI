@@ -57,7 +57,7 @@ class StationLifecycleUseCase(
      */
     suspend fun persistAndFetch(selection: UserSelection) {
         selectionRepository.saveSelection(selection, null)
-        sqlStorage.clearPredictions(selection.station, selection.line)
+        sqlStorage.clearPredictions(selection.station, selection.line, selection.direction)
         try {
             departureRepository.fetchInitialData(selection)
         } catch (e: Exception) {
@@ -73,15 +73,26 @@ class StationLifecycleUseCase(
      * subscribe to FCM topics for live updates and push the freshly-fetched data
      * to the widget. None of this blocks the board from showing.
      */
-    suspend fun completeSetupAsync(selection: UserSelection) {
-        notificationManager.subscribeToTopics(
-            listOf(
-                "Station_${selection.station}",
-                "LineStatus_${selection.mode}_${selection.line}"
+    suspend fun completeSetupAsync(
+        selection: UserSelection,
+        /**
+         * Set false when the caller has already subscribed the DISTINCT topic
+         * set for a batch. Several boards routinely share one topic — two bus
+         * routes on one pole, several lines at one station — so subscribing per
+         * board re-sends the same topic once per board.
+         */
+        subscribeTopics: Boolean = true,
+    ) {
+        if (subscribeTopics) {
+            notificationManager.subscribeToTopics(
+                listOf(
+                    "Station_${selection.station}",
+                    "LineStatus_${selection.mode}_${selection.line}"
+                )
             )
-        )
+        }
         val now = Clock.System.now().toEpochMilliseconds()
-        val preds = sqlStorage.getPredictions(selection.station, selection.line)
+        val preds = sqlStorage.getPredictions(selection.station, selection.line, selection.direction)
         val status = sqlStorage.getLineStatus(selection.mode, selection.line)
         widgetManager.updateWidget(
             WidgetState(
@@ -98,17 +109,40 @@ class StationLifecycleUseCase(
 
     /**
      * Discard a station: Unsubscribe and Wipe Data
+     *
+     * @param remaining the selections that will still exist after this delete.
+     *        A station topic is shared by every line tracked at that station,
+     *        and a line-status topic by every station on that line — so once a
+     *        user can track several lines at one station, tearing both topics
+     *        down unconditionally silences the boards they are *keeping*.
+     *        Deleting the Piccadilly board at King's Cross would unsubscribe
+     *        `Station_940GZZLUKSX` out from under the Victoria board still
+     *        sitting there, which then goes stale with no visible cause.
+     *
+     *        Defaults to empty, which reproduces the original unconditional
+     *        teardown exactly — that is what the single-board Android call
+     *        sites want, so they are unaffected by this parameter existing.
      */
-    suspend fun discardStation(selection: UserSelection, clearSelectionInRepo: Boolean = true) {
-        // 1. Unsubscribe from FCM topics
-        val topics = listOf(
-            "Station_${selection.station}",
-            "LineStatus_${selection.mode}_${selection.line}"
-        )
-        notificationManager.unsubscribeFromTopics(topics)
+    suspend fun discardStation(
+        selection: UserSelection,
+        clearSelectionInRepo: Boolean = true,
+        remaining: List<UserSelection> = emptyList(),
+    ) {
+        // 1. Unsubscribe from FCM topics — but only those no survivor still needs.
+        val topics = buildList {
+            if (remaining.none { it.station == selection.station }) {
+                add("Station_${selection.station}")
+            }
+            if (remaining.none { it.mode == selection.mode && it.line == selection.line }) {
+                add("LineStatus_${selection.mode}_${selection.line}")
+            }
+        }
+        if (topics.isNotEmpty()) notificationManager.unsubscribeFromTopics(topics)
 
-        // 2. Clear local data (Predictions and Status)
-        sqlStorage.clearPredictions(selection.station, selection.line)
+        // 2. Clear local data (Predictions and Status). Only THIS direction —
+        //    the user may still be tracking the opposite direction of the same
+        //    line at this station.
+        sqlStorage.clearPredictions(selection.station, selection.line, selection.direction)
         
         // Trigger UI pings to clear state
         storageManager.saveString("predictions_${selection.station}_${selection.line}", "discarded_${Clock.System.now().toEpochMilliseconds()}")
@@ -119,8 +153,20 @@ class StationLifecycleUseCase(
             selectionRepository.deleteSelection(selection)
         }
 
-        // 4. Reset Widget to a clean state
-        widgetManager.showWaitingState("No Station", "Select a station to begin")
+        // 4. Point the widget at whatever is left.
+        //
+        // This used to unconditionally drop to the waiting state, which was
+        // right when deleting a board meant deleting the only board. With
+        // several boards it would blank a widget that still has a perfectly
+        // good station to show, until some later refresh happened to repopulate
+        // it. Re-render the new primary instead, and only fall back to the
+        // waiting state when nothing at all remains.
+        val newPrimary = remaining.firstOrNull()
+        if (newPrimary == null) {
+            widgetManager.showWaitingState("No Station", "Select a station to begin")
+        } else {
+            completeSetupAsync(newPrimary)
+        }
     }
 
     /**

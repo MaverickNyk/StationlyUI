@@ -158,10 +158,10 @@ class IosWidgetManager : WidgetManager {
         // emptied out the moment those 3 departed. Display caps stay in the
         // views (BoardMetrics.maxRows); this is purely the buffer.
         val preds = GlobalBoardProcessor.processPredictions(
-            sql.getPredictions(primary.station, primary.line),
+            sql.getPredictions(primary.station, primary.line, primary.direction),
             perPlatformCap = 8,
         )
-        val tsMs = sql.getLastUpdatedTimestamp(primary.station, primary.line)
+        val tsMs = sql.getLastUpdatedTimestamp(primary.station, primary.line, primary.direction)
             ?: (NSDate().timeIntervalSince1970 * 1000).toLong()
         val status = sql.getLineStatus(primary.mode, primary.line)?.let { s ->
             val reason = StationlyFormatters.formatStatusReason(s.reason ?: "").trim()
