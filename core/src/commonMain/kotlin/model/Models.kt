@@ -147,6 +147,22 @@ data class UserSelection(
      */
     val groupingId: String
         get() = parentStationId.ifBlank { station }
+
+    /**
+     * Identity of ONE board — the (station, line, direction) triple that every
+     * per-board map, list key and in-flight flag is keyed on.
+     *
+     * Defined here, once, because it is a property of the selection rather than
+     * of any screen. It was previously rebuilt by hand at three call sites (the
+     * home ViewModel's state maps, the card's Compose item key, and the section
+     * model), which agreed only by coincidence: nothing connected them, and the
+     * consequence of drifting is silent — two boards collapse onto one key and
+     * the second one written erases the first's departures.
+     *
+     * Distinct from [groupingId], which keys the CARD: many boards share a card.
+     */
+    val boardKey: String
+        get() = "${station}_${line}_$direction"
 }
 
 /**

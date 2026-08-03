@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,7 +55,6 @@ import com.stationly.app.ui.theme.TflAmber
 import com.stationly.app.ui.util.rememberMinuteTick
 import com.stationly.core.util.StationlyFormatters
 import com.stationly.core.util.TflLineColors
-import kotlinx.datetime.Clock
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.Instant
@@ -120,15 +120,11 @@ fun StationExploreSection(
     var showDialog by remember { mutableStateOf(false) }
     var showStatusDialog by remember { mutableStateOf(false) }
 
-    Column(modifier = Modifier.padding(top = 8.dp)) {
-        Text(
-            text = strings["explore.title"] ?: "Network",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-
+    // NO "Network" heading. On a home screen whose whole point is fitting one
+    // viewport, a label costs a line of height to name two cards that already
+    // say what they are — a warning triangle over "2 Disruptions" needs no
+    // header. The height it frees goes to the board.
+    Column {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -153,10 +149,21 @@ fun StationExploreSection(
             else
                 strings["explore.fares.offpeak.title"] ?: "Off-Peak"
 
+            // Short form, because the subtitle now gets ONE line.
+            //
+            // "Cheaper fares · until tomorrow 06:30" wrapped to two lines and
+            // made the card taller than it needed to be. The "cheaper/pricier"
+            // half is already carried by the title ("Off-Peak") and the arrow
+            // icon, so dropping it loses nothing — the fact worth keeping is the
+            // time it changes. The full explanation is one tap away in the fare
+            // dialog.
+            //
+            // New keys rather than the old `*_prefix` ones: a backend still
+            // serving the long prefix would re-introduce the wrap.
             val farePrefix = if (fareState.isPeak)
-                strings["explore.fares.peak.subtitle_prefix"] ?: "Pricier fares · until "
+                strings["explore.fares.peak.subtitle_short"] ?: "Until "
             else
-                strings["explore.fares.offpeak.subtitle_prefix"] ?: "Cheaper fares · until "
+                strings["explore.fares.offpeak.subtitle_short"] ?: "Until "
 
             ExploreCard(
                 icon = if (fareState.isPeak) Icons.AutoMirrored.Outlined.TrendingUp else Icons.AutoMirrored.Outlined.TrendingDown,
@@ -202,26 +209,38 @@ private fun ExploreCard(
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.06f))
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        // Tightened throughout: this card sits below the board on a screen that
+        // has to fit one viewport, so every dp it gives up is a dp the
+        // departures get. The icon and title carry the meaning; the padding was
+        // just air.
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             Icon(
                 icon,
                 contentDescription = null,
                 tint = accentColor,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(16.dp)
             )
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = title,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.bodyMedium
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(2.dp))
+            Spacer(Modifier.height(1.dp))
             Text(
                 text = subtitle,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelSmall,
-                lineHeight = MaterialTheme.typography.labelSmall.lineHeight
+                lineHeight = MaterialTheme.typography.labelSmall.lineHeight,
+                // ONE line, always. A wrapping subtitle silently changes the
+                // card's height, and both cards share a row height — so one of
+                // them wrapping made the pair taller. Truncated here, in full in
+                // the dialog behind the tap.
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

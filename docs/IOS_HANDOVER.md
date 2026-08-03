@@ -181,7 +181,14 @@ independent — these are the highest-risk-if-lost changes):
   reached the backend. Now driven from `SummaryViewModel` init + every
   foreground, cheap when unchanged (one string compare, no network).
 
-**d) This session's review pass** — see §6.
+**d) Review pass (2026-08-02)** — see §6.
+
+**e) Multi-line board + home-screen fit (2026-08-03)** — see §6b.
+`core/util/{MultiLineBoardProcessor,LineStatusRanker,LineShortNames}.kt`,
+`core/src/commonTest/**`, `Board.kt`, `SummaryScreen.kt`, `SummaryViewModel.kt`,
+`ExploreSection.kt`, `Models.kt`, `StationlyFormatters.kt`,
+`BOARD_AND_DREAM_UI.md`. Includes the SDUI-path removal — read §6b before
+committing, it is the one item that changes product capability.
 
 ---
 
@@ -264,6 +271,88 @@ green (§8 pipeline).
 
 ---
 
+## 6b. Session 2026-08-03: multi-line board rebuild + home-screen fit
+
+The home screen was reworked end to end for the multi-line world. Presentation
+rules live in **core** (testable, shared) and Compose only renders them.
+
+### New core files (all pure functions, all covered by tests)
+| File | Owns |
+|---|---|
+| `core/util/MultiLineBoardProcessor.kt` | Grouping departures into platform/stop blocks, row limits, header text |
+| `core/util/LineStatusRanker.kt` | Which line's status the one strip shows, rotation order, traffic-light tone |
+| `core/util/LineShortNames.kt` | Short line labels (`H&C`, `Picc.`) — **stopgap**, see below |
+
+### What changed on the board
+- **One board is one station.** Rail groups by **platform across every tracked
+  line**; buses group by **pole naptan** (`UserSelection.station`). The old
+  per-line "Circle · Inbound" strip is gone — the platform header carries it
+  ("Northern Platform 8 Southbound", "Bus 39 Stop W").
+- **Two separate row limits**, previously conflated: `MAX_ROWS_PER_PLATFORM = 3`
+  is a per-platform ceiling; `MIN_BOARD_ROWS = 3` is a floor for the **whole**
+  board. Three platforms with two departures each get six rows and no padding.
+- **Unassigned platforms sort last** regardless of time — you cannot go and stand
+  on one.
+- **One status strip**, rotating worst-first (§7 of `BOARD_AND_DREAM_UI.md`).
+- **Per-line hero** switched by the line pills, splitting in two when both
+  directions are tracked. Pills carry traffic-light status dots.
+- **Home fits one viewport**: `LazyColumn` → measured `Column(verticalScroll)`;
+  the board's cap is what is left after chrome and Network are measured.
+
+### Read `docs/BOARD_AND_DREAM_UI.md` §5–§9 before touching any of this.
+It records the reasoning, including several rules that are counter-intuitive
+until you have hit them (why not `LazyColumn`; why `stopLetter` is the wrong bus
+key; why "Inbound" is never shown).
+
+### Decisions that need YOUR sign-off
+
+1. **SDUI no longer drives the home board.** `buildBoardLines`, the `BoardLine`
+   model, `BoardSection.sduiPayload` and the ViewModel's `_sduiPayloads` /
+   `loadSduiTemplateForSelection` are **deleted**. They were unreachable: a
+   per-line SDUI template carries its own headers and rows for one line, which
+   cannot express a board merged across lines by platform. `SduiWidgetPayload`
+   and `GlobalBoardProcessor.bindSduiTemplate` remain in core, untouched, so the
+   capability can be rebuilt against a merged-board template — but as of this
+   commit the home board is **client-composed**. Revert this commit to restore.
+2. **`LineShortNames` is a hardcoded client map.** Line naming is backend-owned
+   everywhere else, so this WILL drift (the whole Overground fleet was renamed in
+   2024). Intended end state: a `shortName` on the line API, with this map as the
+   fallback for older payloads. Proposed names are in the file; `H&C` and `W&C`
+   deliberately match TfL's own signage rather than inventing abbreviations.
+3. **`"Bus"` is the one hardcoded user-facing word** in `MultiLineBoardProcessor`
+   (`BUS_PREFIX`). It belongs in `homeConfig` beside `board.status_label`.
+4. **New homeConfig keys** the backend may want to serve:
+   `board.hero.no_departures`, `board.hero.min_label`,
+   `explore.fares.{peak,offpeak}.subtitle_short`. The old
+   `explore.fares.*.subtitle_prefix` keys are now **unused** — a backend still
+   serving the long form would have re-wrapped the card to two lines, which is
+   why the key changed rather than the default.
+
+### Still open
+- **Backend subscriptions were NOT reviewed.** Raised repeatedly and deferred
+  every time. `StationLifecycleUseCase` still subscribes/unsubscribes per
+  selection with the `remaining` guard; the ask was to confirm line-status
+  subscriptions are one-per-line rather than one-per-board. **This is the top
+  item.**
+- Two unlettered bus poles at one hub both render `Bus 39` — the grouping is
+  correct but the labels are ambiguous. Needs a per-naptan stop name from the
+  backend (TfL has `indicator`/`towards`), or a `towards X` fallback.
+- Promo cards lost `Modifier.animateItem()` in the lazy→eager conversion.
+  Dismissals are instant rather than animated. `animateContentSize` would
+  reintroduce height churn, so it was left out deliberately.
+
+### Tests (new)
+`core/src/commonTest/kotlin/util/` — 46 tests, all passing:
+`MultiLineBoardProcessorTest`, `LineStatusRankerTest`, `LineShortNamesTest`,
+`BoardIdentityAndEtaTest`. Every case is a bug that actually reached the device
+during this session.
+
+**Run them with `./gradlew :core:testDebugUnitTest`** (JVM). `:core:allTests`
+fails on an unrelated pre-existing `wasmJs` test-dependency resolution problem,
+and `:core:iosSimulatorArm64Test` needs a simulator SDK this machine does not
+have. Kotlin/Native also rejects **commas inside backtick test names** — use an
+em dash.
+
 ## 7. Which doc to open
 
 | Doc | Reach for it when |
@@ -333,17 +422,19 @@ its own `widget_refresh_trace`.
 
 ## 9. Next steps, in priority order
 
-1. **Commit the working tree** using the §5 split. It is the single biggest
+1. **Review backend subscriptions for multi-line** (§6b "Still open"). Deferred
+   through the whole 2026-08-03 session and never looked at.
+2. **Commit the working tree** using the §5 split. It is the single biggest
    risk on this branch — two sessions of unversioned work.
-2. **QA the promos and the stream on device**: widget promo appears only with
+3. **QA the promos and the stream on device**: widget promo appears only with
    no widget installed; dream promo retires after one run; notification banner
    tracks the Settings toggle; force-update dialog fires against a raised
    `app.minVersion`.
-3. **Re-check reconnect churn** now that the `openIfNeeded` race is fixed — the
+4. **Re-check reconnect churn** now that the `openIfNeeded` race is fixed — the
    trace should show no `stream:reconnect` bursts in steady state. If it still
    churns, the foreground/background-cycling hypothesis in
    `IOS_LIVE_STREAM.md` §7.2 is back on the table.
-4. **Exercise the stream past one station** — the 25-cap and `unknown_station`
+5. **Exercise the stream past one station** — the 25-cap and `unknown_station`
    paths are unexercised.
-5. **First tests**: `LiveStreamManager` reconnect/backoff and force-resubscribe.
-6. **Verify prod nginx** before pointing production builds at the stream.
+6. **More tests**: `LiveStreamManager` reconnect/backoff and force-resubscribe.
+7. **Verify prod nginx** before pointing production builds at the stream.

@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.UserSelection
+import com.stationly.core.util.StationlyFormatters
 import com.stationly.app.ui.summary.components.lineColorForTheme
 
 /**
@@ -166,12 +167,9 @@ internal fun NextTrainHero(
 
     // `prediction.eta` is already through tickPredictions (minute-aligned
     // re-derive + per-platform bump) upstream in DreamHost — re-running the
-    // rounding here would miss the bump.
-    val countdown = when {
-        prediction.isDue -> 0
-        prediction.eta.trim().equals("Due", ignoreCase = true) -> 0
-        else -> prediction.eta.replace(" min", "").trim().toIntOrNull() ?: 0
-    }
+    // rounding here would miss the bump. That rule is now shared: see
+    // StationlyFormatters.displayedMinutes, which exists to state it once.
+    val countdown = StationlyFormatters.displayedMinutes(prediction)
     val isDue = countdown == 0
 
     // ETA tile colour — semantic in dark theme (line colour as signage cue),

@@ -71,8 +71,24 @@ below) to confirm the fix on device.**
 Device: **Nick's iPhone, iOS 26.3, UDID `00008030-001E0D9C3EFB802E`**; Xcode 26.5;
 signing `Apple Development: nikhilkumar11896@gmail.com`. **Disk is TIGHT (~3–4 GB
 free) — do NOT build for the simulator (it ate >1 GB); test on the device.**
+> **Step 1 is NOT optional and `xcodebuild` will not tell you if you skip it.**
+> `project.yml` links a **prebuilt** `composeApp.xcframework` and there is no
+> Gradle script phase in the Xcode project. So `xcodebuild` never compiles
+> Kotlin — it relinks whatever XCFramework is already on disk and reports
+> `** BUILD SUCCEEDED **`, and you ship stale Kotlin to the device with no
+> warning at all. `./gradlew :composeApp:compileKotlinIosArm64` does NOT fix
+> this either: it compiles, but it does not assemble the XCFramework that
+> Xcode actually links.
+>
+> Verify rather than trust — the framework inside the built .app must be newer
+> than your edits:
+> ```bash
+> ls -la "$DD/Build/Products/Debug Staging-iphoneos/iosApp.app/Frameworks/composeApp.framework/composeApp"
+> ```
+
 ```bash
 # 1. shared framework (~9 min; only when composeApp/core Kotlin changed)
+#    MANDATORY after ANY Kotlin edit — see the warning above.
 ./gradlew :composeApp:assembleComposeAppDebugXCFramework
 # 2. project + SPM
 cd iosApp && ./xcodegen.sh

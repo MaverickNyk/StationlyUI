@@ -11,16 +11,18 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,8 +31,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.border
@@ -74,9 +74,12 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -86,8 +89,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.stationly.app.resources.Res
-import com.stationly.app.resources.stationly_logo
 import com.stationly.app.ui.common.AnnouncementBanner
 import com.stationly.app.ui.common.LoadingOverlay
 import com.stationly.app.ui.common.NotificationPermissionEffect
@@ -103,7 +104,91 @@ import com.stationly.app.platform.HapticType
 import com.stationly.app.platform.performHaptic
 import com.stationly.core.platform.Platform
 import kotlin.math.floor
-import org.jetbrains.compose.resources.painterResource
+
+/** Top/bottom padding inside the home scroll, applied at each end. */
+private val HOME_PADDING_V = 16.dp
+
+/** Vertical gap between the home screen's blocks (chrome, boards, Network). */
+private val HOME_GAP = 20.dp
+
+/**
+ * How much of the next card is left peeking below a full-height one.
+ *
+ * Deliberate, not slack: a card sized to exactly fill the viewport looks like
+ * the whole screen, and nothing then suggests there is anything below it. A
+ * sliver of the next card is the only affordance that says the page scrolls.
+ */
+private val NEXT_CARD_PEEK = 24.dp
+
+/**
+ * Floor for the card, for the case where there is barely any viewport at all
+ * (landscape, or a very small device). Below this the panel stops being a
+ * readable departure board, so it is better to overflow than to shrink further.
+ */
+private val MIN_BOARD_HEIGHT = 280.dp
+
+/**
+ * The tallest a station card may be: exactly the room left after everything else
+ * on the home screen has taken what it needs.
+ *
+ * This is DERIVED, not a fraction of the screen. Earlier versions guessed —
+ * "viewport minus padding", then 82% of the viewport — and both were wrong in
+ * both directions at once: too tall when a promo card was showing, too short when
+ * none were, and never right on a device whose proportions differed from the one
+ * being tested on. The board is the last thing to be given space, so it can just
+ * be told what is genuinely left.
+ *
+ * [chromeHeight] and [exploreHeight] are measured (`onSizeChanged`) rather than
+ * assumed, because both change at runtime: promos are dismissible, and the
+ * Network section grows with the number of live disruptions.
+ *
+ * With more than one board the total cannot fit by construction, so each card is
+ * capped at [MULTI_BOARD_FRACTION] of the viewport and the page scrolls — with a
+ * peek of the next card, which is the affordance that says so.
+ */
+private fun boardMaxHeight(
+    viewportHeight: Dp,
+    boardCount: Int,
+    chromeHeight: Dp,
+    exploreHeight: Dp,
+    bottomInset: Dp,
+): Dp {
+    if (boardCount > 1) {
+        return (viewportHeight * MULTI_BOARD_FRACTION - NEXT_CARD_PEEK)
+            .coerceAtLeast(MIN_BOARD_HEIGHT)
+    }
+    // Blocks in the scroll: [chrome?] + board + Network. Each pair costs one gap.
+    val gapCount = if (chromeHeight > 0.dp) 2 else 1
+    val budget = viewportHeight -
+        (HOME_PADDING_V * 2) - bottomInset -
+        chromeHeight - exploreHeight -
+        (HOME_GAP * gapCount)
+    return budget.coerceAtLeast(MIN_BOARD_HEIGHT)
+}
+
+/**
+ * Share of the viewport one card may take when there are several.
+ *
+ * Not a fit — several full-height boards cannot fit one screen, and pretending
+ * otherwise would shrink each to uselessness. This just keeps any single card
+ * from filling the screen so completely that nothing suggests the page scrolls.
+ */
+private const val MULTI_BOARD_FRACTION = 0.82f
+
+/**
+ * Widest a board is allowed to get, regardless of the window.
+ *
+ * Everything sized from the viewport scales up happily EXCEPT line length. A
+ * departure row is destination-left / ETA-right, so on a full-width iPad the two
+ * end up a hand's width apart with nothing between them, and the eye loses the
+ * pairing — the one thing the row exists to convey.
+ *
+ * Roughly the width of a large phone, which is what the board's type sizes were
+ * drawn against. Wider windows centre the board and leave margin rather than
+ * stretching it. Height still uses the whole window (see [boardMaxHeight]) —
+ * more vertical space means more departures, which IS useful.
+ */
+private val MAX_BOARD_WIDTH = 480.dp
 
 @Composable
 fun SummaryScreen(
@@ -118,7 +203,6 @@ fun SummaryScreen(
     val lineStatuses by viewModel.lineStatuses.collectAsStateWithLifecycle()
     val failedLineStatusKeys by viewModel.failedLineStatusKeys.collectAsStateWithLifecycle()
     val stationUpdates by viewModel.stationUpdates.collectAsStateWithLifecycle()
-    val sduiPayloads by viewModel.sduiPayloads.collectAsStateWithLifecycle()
     val announcement by viewModel.announcement.collectAsStateWithLifecycle()
     val homeConfig by viewModel.homeConfig.collectAsStateWithLifecycle()
     val forceUpdate by viewModel.forceUpdate.collectAsStateWithLifecycle()
@@ -165,11 +249,26 @@ fun SummaryScreen(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            // Main content carries the Scaffold's content padding (top bar +
-            // safe-area insets). The theme toggle below is intentionally placed
-            // OUTSIDE this padded box so it can pin to the TRUE screen bottom
-            // instead of floating above the home-indicator inset.
-            Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            // TOP padding only — the top bar's height, which content genuinely
+            // must start below.
+            //
+            // The BOTTOM inset is deliberately NOT consumed here. Taking it would
+            // end the scrolling list ~34dp above the screen edge, leaving a dead
+            // band along the bottom that no content can ever occupy: the board
+            // gets cut short and the space below it stays permanently empty.
+            //
+            // Instead the list runs edge-to-edge and carries the inset as
+            // `contentPadding` (below), which is the standard scroll-view
+            // treatment: rows scroll UNDER the home indicator as you drag, and
+            // the last one can still come to rest clear of it.
+            //
+            // The theme toggle is outside this box entirely so it can pin to the
+            // true screen bottom.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = padding.calculateTopPadding())
+            ) {
 
             // Modal loader while a board delete is in flight. Lives here at
             // the screen level (not inside the board card) because the card
@@ -182,6 +281,21 @@ fun SummaryScreen(
                 label = "Deleting board…",
                 modifier = Modifier.zIndex(10f),
             )
+
+            // Measured heights of everything on the home screen that ISN'T a
+            // board. The board's cap is whatever is left over, so these have to
+            // be real measurements: promos are dismissible, and the Network
+            // section's height depends on how many disruptions are live. A
+            // hardcoded allowance would be wrong on every device and session.
+            //
+            // Hoisted ABOVE the AnimatedContent below, which is keyed on
+            // `selections` — inside it, adding or removing a board would reset
+            // both to zero and flash a full-height card for a frame before the
+            // next measurement landed.
+            var chromePx by remember { mutableStateOf(0) }
+            var explorePx by remember { mutableStateOf(0) }
+            val bottomInset = WindowInsets.navigationBars.asPaddingValues()
+                .calculateBottomPadding()
 
             AnimatedContent(
                 targetState = selections,
@@ -221,7 +335,24 @@ fun SummaryScreen(
                         }
                     }
 
-                    PullToRefreshBox(
+                    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                      val density = LocalDensity.current
+                      // Board COUNT — the cap needs to know how many cards share
+                      // the leftover space.
+                      val boardCount = currentSelections.distinctBy { it.groupingId }.size
+                      // `maxHeight` is measured INSIDE the Scaffold's content
+                      // padding, so the bottom safe-area inset is already gone
+                      // from it — but the list adds it back as its own bottom
+                      // padding, so it does come out of the budget here.
+                      val boardMaxHeight = boardMaxHeight(
+                          viewportHeight = maxHeight,
+                          boardCount = boardCount,
+                          chromeHeight = with(density) { chromePx.toDp() },
+                          exploreHeight = with(density) { explorePx.toDp() },
+                          bottomInset = bottomInset,
+                      )
+
+                      PullToRefreshBox(
                         isRefreshing = uiState.isRefreshing,
                         onRefresh = { viewModel.refreshAll() },
                         state = pullState,
@@ -245,7 +376,24 @@ fun SummaryScreen(
                             }
                         }
                     ) {
-                        LazyColumn(
+                        // A plain scrolling Column, NOT a LazyColumn.
+                        //
+                        // The board's height has to be derived from how much room
+                        // the rest of the screen needs, and a LazyColumn cannot
+                        // tell it: off-screen items are never composed, so the
+                        // Network section's height is unknown precisely when the
+                        // board is too tall — and sizing the board off that
+                        // unknown would push Network further off screen, which
+                        // keeps it unmeasured. A circular dependency that never
+                        // settles.
+                        //
+                        // Eager composition costs little here (a handful of
+                        // boards, and the per-row draw cost is gone), and it
+                        // keeps `verticalScroll` — so the pull-to-refresh nested
+                        // scroll and the iOS rubber-band both still work. When
+                        // the content fits, scrolling has nowhere to go and all
+                        // that is left is the bounce.
+                        Column(
                             modifier = Modifier
                                 .fillMaxSize()
                                 // iOS rubber-band: the WHOLE screen follows the pull,
@@ -256,63 +404,80 @@ fun SummaryScreen(
                                 .graphicsLayer {
                                     val f = pullState.distanceFraction
                                     translationY = (f / (1f + 0.5f * f)) * 72.dp.toPx()
-                                },
-                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-                            verticalArrangement = Arrangement.spacedBy(20.dp)
+                                }
+                                .verticalScroll(rememberScrollState())
+                                // The bottom safe-area inset lives HERE, not on the
+                                // box above — see the comment there. Inside the
+                                // scroll it costs the list no height: content moves
+                                // through it, and it only guarantees the last item
+                                // can rest clear of the home indicator.
+                                .padding(
+                                    start = 20.dp, end = 20.dp, top = HOME_PADDING_V,
+                                    bottom = HOME_PADDING_V + bottomInset,
+                                ),
+                            verticalArrangement = Arrangement.spacedBy(HOME_GAP)
                         ) {
                             // SummaryHeader (greeting + "Live · N boards") intentionally
                             // removed to match the redesigned Android home — the top-bar
                             // brand lockup already sets context; boards are the focus.
-                            announcement?.let { banner ->
-                                item(key = "announcement_${banner.id}") {
-                                    AnnouncementBanner(
-                                        announcement = banner,
-                                        onDismiss = { viewModel.dismissAnnouncement() }
-                                    )
-                                }
-                            }
-
-                            // SDUI master switches — if the backend sets `show`
-                            // to "false", suppress the banner regardless of
-                            // local detection. Defaults to true for back-compat.
+                            //
+                            // Banners and promos are grouped so their COMBINED height
+                            // can be measured in one place — the board's cap is
+                            // whatever is left after them, and they come and go as
+                            // they are dismissed.
                             val widgetPromoEnabled = (homeConfig["home.promo.widget.show"] ?: "true").equals("true", ignoreCase = true)
                             val dreamPromoEnabled = (homeConfig["home.promo.dream.show"] ?: "true").equals("true", ignoreCase = true)
                             val notifBannerEnabled = (homeConfig["home.notif_denied.show"] ?: "true").equals("true", ignoreCase = true)
 
-                            if (showNotificationDeniedBanner && notifBannerEnabled) {
-                                item(key = "notification_denied") {
-                                    NotificationDeniedBanner(
-                                        strings = homeConfig,
-                                        onDismiss = { viewModel.dismissNotificationDeniedBanner() },
-                                        onEnable = { viewModel.dismissNotificationDeniedBanner() },
-                                        modifier = Modifier.animateItem()
-                                    )
-                                }
-                            }
+                            val hasChrome = announcement != null ||
+                                (showNotificationDeniedBanner && notifBannerEnabled) ||
+                                (showWidgetPromo && widgetPromoEnabled) ||
+                                (showDreamPromo && dreamPromoEnabled)
 
-                            if (showWidgetPromo && widgetPromoEnabled) {
-                                item(key = "widget_promo") {
-                                    WidgetPromoCard(
-                                        strings = homeConfig,
-                                        onDismiss = { viewModel.dismissWidgetPromo() },
-                                        modifier = Modifier.animateItem()
-                                    )
+                            if (hasChrome) {
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(HOME_GAP),
+                                    modifier = Modifier.onSizeChanged { chromePx = it.height },
+                                ) {
+                                    announcement?.let { banner ->
+                                        AnnouncementBanner(
+                                            announcement = banner,
+                                            onDismiss = { viewModel.dismissAnnouncement() }
+                                        )
+                                    }
+                                    if (showNotificationDeniedBanner && notifBannerEnabled) {
+                                        NotificationDeniedBanner(
+                                            strings = homeConfig,
+                                            onDismiss = { viewModel.dismissNotificationDeniedBanner() },
+                                            onEnable = { viewModel.dismissNotificationDeniedBanner() },
+                                        )
+                                    }
+                                    if (showWidgetPromo && widgetPromoEnabled) {
+                                        WidgetPromoCard(
+                                            strings = homeConfig,
+                                            onDismiss = { viewModel.dismissWidgetPromo() },
+                                        )
+                                    }
+                                    if (showDreamPromo && dreamPromoEnabled) {
+                                        DreamPromoCard(
+                                            strings = homeConfig,
+                                            onDismiss = { viewModel.dismissDreamPromo() },
+                                            onSetUp = {
+                                                viewModel.hideDreamPromoForSession()
+                                                onOpenScreensaver()
+                                            },
+                                        )
+                                    }
                                 }
                             }
-
-                            if (showDreamPromo && dreamPromoEnabled) {
-                                item(key = "dream_promo") {
-                                    DreamPromoCard(
-                                        strings = homeConfig,
-                                        onDismiss = { viewModel.dismissDreamPromo() },
-                                        onSetUp = {
-                                            viewModel.hideDreamPromoForSession()
-                                            onOpenScreensaver()
-                                        },
-                                        modifier = Modifier.animateItem()
-                                    )
-                                }
-                            }
+                            // Reclaim the chrome's height for the board once the
+                            // last banner is dismissed. In an effect, not inline:
+                            // the block above is not composed when there is no
+                            // chrome, so nothing would otherwise clear the last
+                            // measurement — and writing state during composition
+                            // (which the inline version did) is how recomposition
+                            // loops start.
+                            LaunchedEffect(hasChrome) { if (!hasChrome) chromePx = 0 }
 
                             // One card per STATION, not per selection: a user can
                             // now track several lines at the same station and
@@ -321,55 +486,52 @@ fun SummaryScreen(
                             // preserves first-encounter order, so cards stay in
                             // the order the stations were added and the lines
                             // within a card stay in the order they were picked.
-                            // (Plain val, not remember — this runs inside
-                            // LazyListScope, which is not a composable context.)
                             // Group on the HUB, not the fetch key. On bus each direction resolves
                             // to its own pole naptan, so grouping by `station` would split one
                             // stop into a card per pole, all with the same name.
                             val stationGroups = currentSelections.groupBy { it.groupingId }.entries.toList()
 
-                            items(stationGroups, key = { it.key }) { (stationId, groupSelections) ->
+                            stationGroups.forEach { (stationId, groupSelections) ->
                                 val sections = groupSelections.map { selection ->
-                                    val boardKey =
-                                        "${selection.station}_${selection.line}_${selection.direction}"
+                                    val boardKey = selection.boardKey
                                     val statusKey = "${selection.mode}_${selection.line}".lowercase()
                                     BoardSection(
                                         selection = selection,
                                         predictions = predictions[boardKey] ?: emptyList(),
                                         lineStatus = lineStatuses[statusKey],
                                         lineStatusFailed = failedLineStatusKeys.contains(statusKey),
-                                        sduiPayload = sduiPayloads[boardKey],
                                         lastUpdated = stationUpdates[boardKey] ?: 0L,
                                     )
                                 }
                                 val primary = groupSelections.first()
 
-                                Box(modifier = Modifier.animateItem()) {
-                                    StationBoard(
-                                        stationName = primary.stationName,
-                                        mode = primary.mode,
-                                        sections = sections,
-                                        onDeleteSection = { sel ->
-                                            if (deletingBoardId == null) viewModel.deleteSelection(sel)
-                                        },
-                                        onDeleteStation = {
-                                            if (deletingBoardId == null) viewModel.deleteStation(stationId)
-                                        },
-                                        homeConfig = homeConfig,
-                                        isOnline = uiState.isOnline,
-                                        isDeleting = deletingBoardId != null &&
-                                            sections.any { it.key == deletingBoardId },
-                                    )
-                                }
+                                StationBoard(
+                                    stationName = primary.stationName,
+                                    mode = primary.mode,
+                                    sections = sections,
+                                    onDeleteSection = { sel ->
+                                        if (deletingBoardId == null) viewModel.deleteSelection(sel)
+                                    },
+                                    onDeleteStation = {
+                                        if (deletingBoardId == null) viewModel.deleteStation(stationId)
+                                    },
+                                    homeConfig = homeConfig,
+                                    isOnline = uiState.isOnline,
+                                    isDeleting = deletingBoardId != null &&
+                                        sections.any { it.key == deletingBoardId },
+                                    maxHeight = boardMaxHeight,
+                                    maxWidth = MAX_BOARD_WIDTH,
+                                )
                             }
 
-                            item {
+                            Box(modifier = Modifier.onSizeChanged { explorePx = it.height }) {
                                 StationExploreSection(
                                     lineStatuses = lineStatuses,
                                     strings = homeConfig
                                 )
                             }
                         }
+                    }
                     }
                 }
             }

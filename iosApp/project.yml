@@ -54,7 +54,22 @@ targets:
           - remote-notification
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
-        UILaunchScreen: {}
+        # Branded launch screen, matching Android's Theme.Stationly.Splash: the
+        # Stationly roundel centred at 140pt on cream (#FAF7F0) / near-black
+        # (#0A0A0A in dark), both served from the asset catalog so the system
+        # picks the right one before a single line of our code has run.
+        #
+        # This was an empty dict, which is a WHITE rectangle — on a dark-mode
+        # phone that is a full-brightness flash on every cold start, and the
+        # only frame of the app that carried no brand at all.
+        #
+        # `UIImageName` renders the image at its NATURAL size and does not
+        # scale it, so LaunchLogo is authored at 140/280/420px rather than being
+        # a large asset trusted to fit.
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+          UIImageName: LaunchLogo
+          UIImageRespectsSafeAreaInsets: false
         CFBundleURLTypes:
           - CFBundleTypeRole: Editor
             CFBundleURLSchemes:
