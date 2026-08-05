@@ -123,7 +123,19 @@ object LineStatusRanker {
         val disrupted = entries.filterNot { isGoodService(it.severity) }
         if (disrupted.isEmpty()) {
             // Everything is fine — say so once, for the board rather than a line.
-            return listOf(Entry(lineLabel = "", severity = entries.first().severity, reason = ""))
+            //
+            // The REASON is carried over, which it used to not be: this branch
+            // hard-coded `reason = ""` and threw away whatever the feed said.
+            // TfL does ship a description alongside Good Service often enough
+            // (engineering notes, "a good service is operating on all routes"),
+            // and dropping it left the strip showing two bare words and a dead
+            // marquee on the most common state the board is ever in.
+            //
+            // Whichever healthy line actually has something to say speaks for
+            // the board. They are all good, so no one line has a better claim,
+            // and picking the first one blindly would usually pick an empty one.
+            val spoken = entries.firstOrNull { it.reason.isNotBlank() } ?: entries.first()
+            return listOf(Entry(lineLabel = "", severity = spoken.severity, reason = spoken.reason))
         }
 
         return disrupted

@@ -14,11 +14,15 @@ import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.EaseOutCubic
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -46,9 +50,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.UnfoldMore
-import androidx.compose.material.icons.rounded.PushPin
+import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -285,8 +289,6 @@ fun StationBoard(
      * the header renders without a tap target.
      */
     onToggleExpanded: (() -> Unit)? = null,
-    /** Marked with a pin in the header — see `StationPrefs.pinned`. */
-    pinned: Boolean = false,
     /** Marked with an unfold glyph — see `StationPrefs.openByDefault`. */
     opensByDefault: Boolean = false,
     /** False hides the next-departure hero for this station — see `StationPrefs.hideHero`. */
@@ -428,16 +430,89 @@ fun StationBoard(
     // The height-driven flicker is addressed where it actually came from — the
     // expanding disruption banner (removed) and the content-sized hero (now
     // pinned at HERO_HEIGHT) — rather than by freezing the whole card.
-    Column(
+    // ── The card is a CONTAINER, and it has to look like one ──
+    //
+    // Everything here used to sit straight on the home canvas with a 20dp gap
+    // between stations and nothing else. That works for one station and fails
+    // for three: a gap is not a boundary, so the eye read the page as one long
+    // ribbon of pills, heroes and panels, and the only thing marking a new
+    // station was its name — 17sp of text competing with a full dot-matrix board
+    // directly above it.
+    //
+    // Three cues, because one is not enough against a board this loud:
+    //   - a raised surface (#161616 against the #0A0A0A canvas) with a hairline
+    //     border, so the card has literal edges;
+    //   - a coloured rail across the top in the station's own accent — its line
+    //     colour, or the mode roundel tint at a multi-line station. This is the
+    //     one that does the work: it is the first thing the eye lands on coming
+    //     down the page, it says "new station" before a word is read, and it
+    //     says WHICH station by colour alone;
+    //   - the dot-matrix panel now sits INSIDE something, so the board reads as
+    //     this station's board rather than as the page's background.
+    //
+    // ── ONE clock for the whole card ──
+    //
+    // Everything that moves when a station opens or closes is driven from this
+    // single [updateTransition]: the body, the collapsed legs, the chevron, the
+    // colour rail. They used to be three independent animations that merely
+    // happened to be given the same duration, which is not the same thing —
+    // separate springs start on the frame each one is first composed, so the
+    // chevron finished a beat before the board and the legs arrived after both,
+    // and the card read as three parts reacting to the tap rather than one card
+    // responding to it.
+    //
+    // A Transition also lets the parts differ ON PURPOSE. They share the clock;
+    // the stagger inside the body (pills, then hero, then panel) is phrased
+    // against it as delays, so the card unfolds top-down like a thing with a
+    // hinge instead of every element fading up at once.
+    val card = updateTransition(targetState = expanded, label = "station_card")
+
+    // Full strength when the card is open, dimmed when it is closed. A collapsed
+    // station is still THIS station and keeps its colour, but a page of closed
+    // cards should not be a page of stripes all shouting equally — the open one
+    // is where you are.
+    //
+    // A `State` read inside `graphicsLayer` rather than an unwrapped value:
+    // deferred to the draw phase, so the animation never recomposes the card.
+    val railAlpha = card.animateFloat(
+        transitionSpec = { tween(if (targetState) EXPAND_MS else COLLAPSE_MS, easing = EaseInOut) },
+        label = "rail",
+    ) { open -> if (open) 1f else 0.62f }
+
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             // Centred once the window is wider than the board is allowed to be,
             // so a tablet gets margin rather than a stretched row.
             .then(if (maxWidth != Dp.Unspecified) Modifier.widthIn(max = maxWidth) else Modifier)
-            .then(if (maxHeight != Dp.Unspecified) Modifier.heightIn(max = maxHeight) else Modifier)
+            .then(if (maxHeight != Dp.Unspecified) Modifier.heightIn(max = maxHeight) else Modifier),
+        shape = RoundedCornerShape(CARD_CORNER),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.20f)),
     ) {
+    Column(modifier = Modifier.fillMaxWidth()) {
 
-        // ── Station header (canvas): roundel + name + marks + settings ──
+        // The station's colour rail. Fades out to the right rather than running
+        // flat edge to edge: solid, it reads as a progress bar.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(CARD_RAIL_HEIGHT)
+                .graphicsLayer { alpha = railAlpha.value }
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(accent, accent.copy(alpha = 0.85f), accent.copy(alpha = 0.10f))
+                    )
+                )
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 10.dp)
+        ) {
+
+        // ── Station header: roundel + name + marks + settings ──
         //
         // The station identity used to live INSIDE the dot-matrix panel, which
         // meant the two things above the panel — the line pills and the hero —
@@ -446,9 +521,16 @@ fun StationBoard(
         // everything it owns, so the card reads top-down: station, then its
         // lines, then its next train, then its board.
         // Collapsed, the header is the only thing left, so it carries the answer
-        // the board would have given: the soonest departure each way. Not
-        // computed at all while expanded — the board itself is saying it.
-        val collapsedLegs = if (expanded) emptyList() else remember(rendered, isBus) {
+        // the board would have given: the soonest departure each way.
+        //
+        // Computed whether or not the card is open, which it did not used to be.
+        // Skipping it while expanded saved nothing measurable — it is a `remember`
+        // keyed on the data, so it runs when departures change, not per frame —
+        // and it cost the collapse animation its content: the legs arrived as an
+        // empty list on the frame the card closed, so there was nothing to
+        // animate in, and on opening they vanished instantly instead of folding
+        // away.
+        val collapsedLegs = remember(rendered, isBus) {
             MultiLineBoardProcessor.collapsedLegs(rendered.toFeeds(), isBus)
         }
 
@@ -456,8 +538,8 @@ fun StationBoard(
             stationName = stationName,
             mode = mode,
             accent = accent,
+            card = card,
             expanded = expanded,
-            pinned = pinned,
             opensByDefault = opensByDefault,
             legs = collapsedLegs,
             legColor = { line -> lineColorForTheme(line, isDark) },
@@ -467,13 +549,47 @@ fun StationBoard(
 
         // Everything below is the OPEN card. Collapsed, the header above is
         // the whole card — see StationHeader.
-        if (expanded) {
+        //
+        // The change used to be instantaneous: `if (expanded)` swapped a full
+        // departure board for two leg rows between one frame and the next, and
+        // every card below it jumped up the page by ~400dp with no motion to
+        // follow. Now the card's own height carries the change, so the page
+        // below it slides rather than teleports.
+        //
+        // Opening is slower than closing and leads with height, holding the
+        // fade back slightly so the board materialises into a space that is
+        // already being made for it. Closing is quicker and fades first — once
+        // the user has decided to put a board away, watching it leave is not
+        // interesting, and a slow collapse is the one that feels sluggish.
+        card.AnimatedVisibility(
+            // `fill = false` preserved from the old weight: a short board still
+            // renders short, and only an over-tall one is capped.
+            modifier = Modifier.weight(1f, fill = false),
+            visible = { it },
+            // The card's HEIGHT is the only thing this transition animates. The
+            // contents fade and slide on their own delays below
+            // (`animateEnterExit`), which is what turns one size change into an
+            // unfolding — a single fade over the whole body reads as a panel
+            // being switched on.
+            enter = expandVertically(tween(EXPAND_MS, easing = EaseOutCubic)),
+            exit = shrinkVertically(tween(COLLAPSE_MS, easing = EaseInCubic)),
+        ) {
+        // Its own column: `AnimatedVisibility`'s content is not a ColumnScope,
+        // and the panel below needs `weight` to take the leftover height.
+        Column(modifier = Modifier.fillMaxWidth()) {
 
             // One pill per tracked line. `BoxWithConstraints` is load-bearing: the
             // pills decide between full and short names by MEASURING against the row
             // they have, not by counting themselves.
             Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 2.dp, bottom = 10.dp),
+                modifier = Modifier.fillMaxWidth()
+                    // FIRST beat of the unfold — see STAGGER_STEP_MS.
+                    .animateEnterExit(
+                        enter = fadeIn(tween(CONTENT_MS, delayMillis = STAGGER_STEP_MS)) +
+                            slideInVertically(tween(CONTENT_MS, delayMillis = STAGGER_STEP_MS)) { -it / 2 },
+                        exit = fadeOut(tween(CONTENT_OUT_MS, delayMillis = STAGGER_STEP_MS * 2)),
+                    )
+                    .padding(start = 4.dp, top = 2.dp, bottom = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 BoxWithConstraints(modifier = Modifier.weight(1f)) {
@@ -571,6 +687,13 @@ fun StationBoard(
                 // split: a crossfade with a slight scale reads as one card parting
                 // into two rather than two cards appearing.
                 AnimatedContent(
+                    // SECOND beat. The hero follows the pills by one step, so the
+                    // eye is led down the card in the order it reads it.
+                    modifier = Modifier.animateEnterExit(
+                        enter = fadeIn(tween(CONTENT_MS, delayMillis = STAGGER_STEP_MS * 2)) +
+                            slideInVertically(tween(CONTENT_MS, delayMillis = STAGGER_STEP_MS * 2)) { -it / 3 },
+                        exit = fadeOut(tween(CONTENT_OUT_MS, delayMillis = STAGGER_STEP_MS)),
+                    ),
                     targetState = heroSections.size.coerceAtMost(2),
                     transitionSpec = {
                         (fadeIn(tween(420, easing = EaseOutCubic)) +
@@ -629,7 +752,20 @@ fun StationBoard(
                 animationSpec = infiniteRepeatable(tween(3200, easing = EaseInOut), RepeatMode.Reverse),
                 label = "glow"
             )
-            Box(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
+            Box(
+                modifier = Modifier.fillMaxWidth()
+                    // THIRD and last beat: the board itself, arriving into a
+                    // card that has already finished making room for it. It
+                    // leaves first on the way out — the big dark rectangle is
+                    // what the collapse is about, so it should be the thing that
+                    // visibly goes.
+                    .animateEnterExit(
+                        enter = fadeIn(tween(CONTENT_MS, delayMillis = STAGGER_STEP_MS * 3)) +
+                            slideInVertically(tween(CONTENT_MS, delayMillis = STAGGER_STEP_MS * 3)) { -it / 6 },
+                        exit = fadeOut(tween(CONTENT_OUT_MS)),
+                    )
+                    .weight(1f, fill = false)
+            ) {
                 Box(
                     modifier = Modifier.matchParentSize()
                         .graphicsLayer { clip = false; scaleX = 1.18f; scaleY = 1.22f; alpha = glowAlpha }
@@ -664,8 +800,44 @@ fun StationBoard(
             }
 
         }
+        }
+        }
+    }
     }
 }
+
+/** Corner radius of the station card container. */
+private val CARD_CORNER = 20.dp
+
+/** The station-colour rail across the top of the card. */
+private val CARD_RAIL_HEIGHT = 3.dp
+
+/**
+ * The card's open/close timing. One set of numbers for every moving part of a
+ * station card — see the `updateTransition` in [StationBoard].
+ *
+ * Asymmetric on purpose. Opening is the interesting direction and gets room to
+ * unfold; closing is a decision the user has already made, and a slow collapse
+ * is the one that feels sluggish.
+ */
+private const val EXPAND_MS = 340
+private const val COLLAPSE_MS = 240
+
+/**
+ * The gap between beats as the card unfolds: pills, then hero, then board.
+ *
+ * The point of the stagger is that the parts of the card are not equal — the
+ * order they arrive in is the order they are read in, so the card looks like it
+ * has a hinge at the top rather than like a group of elements fading up
+ * together. Four steps of this plus [CONTENT_MS] lands inside [EXPAND_MS], which
+ * is the constraint: a beat still animating after the card has stopped growing
+ * is the thing that reads as lag.
+ */
+private const val STAGGER_STEP_MS = 45
+private const val CONTENT_MS = 200
+
+/** Content leaves faster than it arrives, and mostly together. */
+private const val CONTENT_OUT_MS = 130
 
 /**
  * Whether every line's FULL name fits the pill row on one line.
@@ -884,8 +1056,12 @@ private fun StationHeader(
     stationName: String,
     mode: String,
     accent: Color,
+    /**
+     * The card's shared open/close transition, so the chevron and the legs run
+     * on the same clock as the board — see the call site.
+     */
+    card: androidx.compose.animation.core.Transition<Boolean>,
     expanded: Boolean,
-    pinned: Boolean,
     opensByDefault: Boolean,
     /** Empty when expanded, or when nothing is departing. */
     legs: List<MultiLineBoardProcessor.Leg>,
@@ -941,19 +1117,45 @@ private fun StationHeader(
             // varies per card (Victoria blue here, Central red there), which made
             // one shared meaning look like several different marks.
             val markTint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
-            if (pinned) {
-                Icon(
-                    Icons.Rounded.PushPin, "Pinned to top",
-                    tint = markTint, modifier = Modifier.size(14.dp),
-                )
-                Spacer(Modifier.width(5.dp))
-            }
             if (opensByDefault) {
+                // The SAME glyph the station settings screen puts on the "Open
+                // by default" switch. A mark on a card and the switch that sets
+                // it are one fact in two places, and drawing them differently
+                // makes the user work out that they are related.
+                //
+                // Not `UnfoldMore` (which settings used to use) and not a bolt
+                // (which this briefly was): the first is a vertical double arrow
+                // that reads as a duplicate of the chevron below it, and the
+                // second says "fast" rather than "already open". The diagonal
+                // expand glyph means opened-out and cannot be mistaken for the
+                // chevron's job.
                 Icon(
-                    Icons.Rounded.UnfoldMore, "Opens by default",
+                    Icons.Rounded.OpenInFull, "Opens by default",
                     tint = markTint, modifier = Modifier.size(14.dp),
                 )
-                Spacer(Modifier.width(5.dp))
+                Spacer(Modifier.width(6.dp))
+            }
+            // The state indicator. There is still no separate collapse BUTTON —
+            // the whole row is the target — but the card was left with no glyph
+            // saying which state it was in, so a collapsed station read as a
+            // station that had lost its board. It rotates through the change
+            // rather than swapping icon, so the transition below has something
+            // in the header moving with it.
+            if (onToggleExpanded != null) {
+                val chevronTurn = card.animateFloat(
+                    transitionSpec = {
+                        tween(if (targetState) EXPAND_MS else COLLAPSE_MS, easing = EaseInOut)
+                    },
+                    label = "chevron",
+                ) { open -> if (open) 180f else 0f }
+                Icon(
+                    Icons.Rounded.ExpandMore,
+                    if (expanded) "Collapse $stationName" else "Expand $stationName",
+                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+                    modifier = Modifier.size(20.dp)
+                        .graphicsLayer { rotationZ = chevronTurn.value },
+                )
+                Spacer(Modifier.width(4.dp))
             }
             IconButton(onClick = onOpenSettings, modifier = Modifier.size(34.dp)) {
                 Icon(
@@ -966,6 +1168,24 @@ private fun StationHeader(
         }
 
         // ── Collapsed legs: one per direction ──
+        //
+        // Driven by [expanded] rather than by the list being empty, so the legs
+        // have something to animate OUT to. Fed a list that survives the state
+        // change (see the call site) — animating on emptiness would play the
+        // exit over no content at all, i.e. nothing.
+        card.AnimatedVisibility(
+            visible = { !it && legs.isNotEmpty() },
+            // The legs and the board are the two halves of the same swap, so
+            // they run on the one clock and each takes the OTHER's duration:
+            // the legs appear over a collapse (COLLAPSE_MS) and leave over an
+            // expand (EXPAND_MS). Given their own timings they crossed the
+            // board mid-flight and the card briefly showed both.
+            enter = fadeIn(tween(COLLAPSE_MS, delayMillis = STAGGER_STEP_MS)) +
+                expandVertically(tween(COLLAPSE_MS, easing = EaseOutCubic)),
+            exit = fadeOut(tween(CONTENT_OUT_MS)) +
+                shrinkVertically(tween(EXPAND_MS, easing = EaseInCubic)),
+        ) {
+        Column {
         legs.forEach { leg ->
             Row(
                 modifier = Modifier.fillMaxWidth().height(LEG_HEIGHT).padding(start = 6.dp, end = 8.dp),
@@ -994,6 +1214,8 @@ private fun StationHeader(
                     maxLines = 1,
                 )
             }
+        }
+        }
         }
     }
 }
@@ -1316,6 +1538,20 @@ private fun BoardStatusStrip(rendered: List<SectionRender>, homeConfig: Map<Stri
     }
     val entry = entries[index.coerceIn(entries.indices)]
 
+    // A healthy board still has something worth saying. The feed's own Good
+    // Service description is preferred (LineStatusRanker.rotation carries it
+    // through), but TfL frequently ships the severity with no text at all, and
+    // "Good Service" alone on a strip built for a scrolling sentence reads as a
+    // half-loaded row rather than as reassurance. Falling back to the same words
+    // the Network section uses keeps one phrase for one state across the app.
+    val reason = entry.reason.ifBlank {
+        if (LineStatusRanker.isGoodService(entry.severity)) {
+            homeConfig["board.good_service_sub"]
+                ?: homeConfig["explore.good_service_sub"]
+                ?: "All lines running normally"
+        } else ""
+    }
+
     ActiveStrip {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 0.dp), verticalAlignment = Alignment.CenterVertically) {
             // "Northern Part Closure" — the line is named because on a
@@ -1325,10 +1561,10 @@ private fun BoardStatusStrip(rendered: List<SectionRender>, homeConfig: Map<Stri
                 color = BoardAmber, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
-            if (entry.reason.isNotBlank()) {
+            if (reason.isNotBlank()) {
                 Text(" : ", color = BoardAmber, fontSize = 12.sp)
                 Text(
-                    entry.reason, color = BoardAmber, fontSize = 12.sp, maxLines = 1,
+                    reason, color = BoardAmber, fontSize = 12.sp, maxLines = 1,
                     // Truncate while the marquee is off (see STATUS_MARQUEE);
                     // without this a long reason would clip mid-word with no
                     // signal that there is more text.
@@ -1361,9 +1597,32 @@ private fun BoardStatusStrip(rendered: List<SectionRender>, homeConfig: Map<Stri
  */
 @Composable
 private fun BoardScrollbar(scroll: ScrollState, modifier: Modifier = Modifier) {
-    if (scroll.maxValue <= 0) return
+    // A single pixel of overflow is not "there is more below".
+    //
+    // `maxValue > 0` was the test, and it was true on boards that had nothing to
+    // scroll: the rows column carries 2dp inter-row spacing and the panel is
+    // sized in whole dp against a fractional-density viewport, so a board that
+    // visually fits routinely overflows by a pixel or two. The bar was therefore
+    // up almost always, which is exactly the state that makes a scroll hint
+    // meaningless — a permanent decoration cannot answer a question.
+    //
+    // Half a departure row is the threshold: less than that and there is no row
+    // hidden down there to go and find.
+    val minOverflowPx = with(LocalDensity.current) { 13.dp.toPx() }
+    if (scroll.maxValue < minOverflowPx) return
+
+    // Bright under the finger, quiet at rest. The bar still has to be readable
+    // while idle — that is when it does its actual job of saying "there is more"
+    // — so it dims rather than disappears.
+    val active = scroll.isScrollInProgress
+    val alpha by animateFloatAsState(
+        targetValue = if (active) 1f else 0.45f,
+        animationSpec = tween(if (active) 120 else 520, easing = EaseInOut),
+        label = "scrollbar_alpha",
+    )
     Box(
         modifier = modifier
+            .graphicsLayer { this.alpha = alpha }
             // Pushed out over the panel's 8dp padding so it rides the black
             // edge instead of sitting on top of the departure text. A scroll
             // hint must not cost a row its last characters.

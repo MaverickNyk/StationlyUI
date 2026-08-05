@@ -4,8 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.stationly.app.platform.DeviceIdentity
 import com.stationly.app.ui.login.PlatformAuthProvider
-import com.stationly.core.model.UserSelection
-import com.stationly.core.model.sdui.SubscribedStation
 import com.stationly.core.model.sdui.SyncProfileRequest
 import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
@@ -72,7 +70,6 @@ class ProfileViewModel(
 
     init {
         loadProfile()
-        loadStations()
         loadAboutLayout()
         loadHomeConfig()
     }
@@ -110,22 +107,12 @@ class ProfileViewModel(
         }
     }
 
-    private fun loadStations() {
-        val local = Platform.sqlStorage.getAllSelections()
-        _uiState.value = _uiState.value.copy(
-            stations = local.map { sel ->
-                SubscribedStation(
-                    id = sel.station,
-                    parentStationId = sel.parentStationId,
-                    name = sel.stationName,
-                    line = sel.line,
-                    mode = sel.mode,
-                    direction = sel.direction
-                )
-            },
-            isLoading = false
-        )
-    }
+    // No station loading, no station deleting, no station sync here any more.
+    // The profile listed every board a second time purely so it could offer a
+    // delete button, which duplicated both the list and the teardown rules — and
+    // a second implementation of "discard a board" is a second place for the
+    // survivor logic to be got wrong. Stations are owned by the home screen and
+    // its settings; see StationSettingsViewModel.
 
     private fun loadAboutLayout() {
         viewModelScope.launch {
@@ -191,38 +178,6 @@ class ProfileViewModel(
                 },
                 onFailure = { e -> onComplete(Result.failure(e)) }
             )
-        }
-    }
-
-    fun deleteStation(station: SubscribedStation) {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(deletingStationId = station.id)
-            val selection = UserSelection(
-                mode = station.mode, line = station.line,
-                station = station.id,
-                parentStationId = station.parentStationId.orEmpty(),
-                stationName = station.name,
-                direction = station.direction,
-                destinations = emptyList(), destinationIds = emptyList()
-            )
-            // Survivors, so a shared naptan/line topic is not torn down from
-            // under a board the user is keeping.
-            val remaining = Platform.sqlStorage.getAllSelections().filterNot {
-                it.station == selection.station &&
-                    it.line == selection.line &&
-                    it.direction == selection.direction
-            }
-            stationLifecycleUseCase.discardStation(
-                selection, clearSelectionInRepo = true, remaining = remaining
-            )
-
-            // Refresh SQLite list
-            loadStations()
-
-            // Best-effort backend sync
-            syncStationsToBackend()
-
-            _uiState.value = _uiState.value.copy(deletingStationId = null)
         }
     }
 
@@ -315,12 +270,5 @@ class ProfileViewModel(
 
     fun clearError() {
         _uiState.value = _uiState.value.copy(error = null)
-    }
-
-    private suspend fun syncStationsToBackend() {
-        try {
-            val uid = storageManager.loadString("firebase_user_uid") ?: return
-            sduiApi.syncStations(uid, _uiState.value.stations)
-        } catch (_: Exception) {}
     }
 }

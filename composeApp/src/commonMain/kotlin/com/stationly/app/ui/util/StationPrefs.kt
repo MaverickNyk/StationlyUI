@@ -15,41 +15,26 @@ import kotlinx.serialization.json.Json
  *
  * Deliberately NOT on [com.stationly.core.model.UserSelection]: a selection is
  * one (line, direction) board and there are several per station, so storing
- * "this station is pinned" on it would mean the same fact written N times with
- * no rule for which copy wins when they disagree. These are properties of the
- * CARD, which is the station.
+ * "this station opens by default" on it would mean the same fact written N times
+ * with no rule for which copy wins when they disagree. These are properties of
+ * the CARD, which is the station.
  *
  * Local-only, and intentionally not synced to the backend with the selections.
- * Pinning and hiding a hero are statements about one device's home screen, not
- * about what the user tracks — the iPad and the phone can reasonably disagree.
+ * The order of your home screen and whether a hero is showing are statements
+ * about one device, not about what the user tracks — the iPad and the phone can
+ * reasonably disagree.
+ *
+ * There is no `pinned` here any more, and it should not come back. "Pin to top"
+ * was offered as a per-station switch, which meant every station had it, and a
+ * setting every item can turn on cannot express a ranking: pin all four and you
+ * have said nothing. What the user actually wanted from it was ORDER, and order
+ * is a property of the LIST, not of a station — see
+ * [StationPrefsRepository.order], which the home settings screen edits by drag.
  */
 @Serializable
 data class StationPrefs(
     /**
-     * Keep this station at the TOP of the home screen.
-     *
-     * Pinning is ORDERING, which is what "pin" means everywhere else a user has
-     * met it — pinned chats, pinned notes, pinned files, pinned emails. It moves
-     * the thing to the top, keeps it there while unpinned items come and go, and
-     * marks it so you can see why it is first. It is not a second, hidden
-     * setting for something else.
-     *
-     * This deliberately replaced "opens expanded on launch", which borrowed the
-     * word for a meaning nobody would guess: two pinned stations then meant two
-     * boards fighting for one viewport, and unpinning a station did nothing
-     * visible until the next cold start. Expansion still follows from it — the
-     * home screen opens the first station, and a pinned station IS first — but
-     * as a consequence of the order, not as a separate promise.
-     */
-    val pinned: Boolean = false,
-    /**
      * Start expanded every time the app opens, not just the first time.
-     *
-     * Separate from [pinned] because they answer different questions — WHERE a
-     * station sits and WHETHER it is already open — and a user can want either
-     * without the other: the station you check twice a day belongs at the top
-     * whether or not you want its board unfolded, and a station further down
-     * can be worth having open when you get to it.
      *
      * Several stations may set this. The height budget then shares the viewport
      * between them (`boardMaxHeight`), so the honest outcome of opening four is
@@ -86,10 +71,30 @@ data class StationPrefs(
  */
 object StationPrefsRepository {
     private const val KEY = "station_prefs_v1"
+    private const val ORDER_KEY = "station_order_v1"
     private val json = Json { ignoreUnknownKeys = true }
 
     private val _prefs = MutableStateFlow<Map<String, StationPrefs>>(emptyMap())
     val prefs: StateFlow<Map<String, StationPrefs>> = _prefs.asStateFlow()
+
+    /**
+     * The user's own top-to-bottom ordering of their station cards, by grouping
+     * id, as set by dragging in home settings.
+     *
+     * A LIST, stored apart from the per-station map, because that is the shape
+     * of the fact: "Victoria comes before King's Cross" is not something either
+     * station knows on its own. (The pin flag this replaced tried to say it with
+     * a per-station boolean, and could not — see [StationPrefs].)
+     *
+     * Partial by design, and treated as a preference rather than a manifest.
+     * Stations missing from it keep their natural position after the ones that
+     * are in it, so a station added after the last reorder appears at the bottom
+     * instead of vanishing, and ids left behind by a deleted station are simply
+     * ignored on read. That means this never needs pruning to stay correct —
+     * see [orderedIds].
+     */
+    private val _order = MutableStateFlow<List<String>>(emptyList())
+    val order: StateFlow<List<String>> = _order.asStateFlow()
 
     private var loaded = false
 
@@ -109,7 +114,32 @@ object StationPrefsRepository {
             Platform.storageManager.loadString(KEY)
                 ?.let { json.decodeFromString<Map<String, StationPrefs>>(it) }
         }.getOrNull() ?: emptyMap()
+        _order.value = runCatching {
+            Platform.storageManager.loadString(ORDER_KEY)
+                ?.let { json.decodeFromString<List<String>>(it) }
+        }.getOrNull() ?: emptyList()
         loaded = true
+    }
+
+    /**
+     * Apply the user's ordering to the stations that actually exist right now.
+     *
+     * The saved order leads, in its own sequence; anything it does not mention
+     * follows in the caller's order. Both halves matter: without the first the
+     * drag did nothing, and without the second a newly added station would be
+     * invisible until the user next reordered.
+     */
+    fun orderedIds(ids: List<String>): List<String> {
+        val saved = _order.value
+        if (saved.isEmpty()) return ids
+        val known = ids.toSet()
+        val ranked = saved.filter { it in known }
+        return ranked + ids.filterNot { it in ranked }
+    }
+
+    suspend fun setOrder(ids: List<String>) {
+        _order.value = ids
+        runCatching { Platform.storageManager.saveString(ORDER_KEY, json.encodeToString(ids)) }
     }
 
     /** Read one station's preferences, defaults included. */
@@ -123,35 +153,17 @@ object StationPrefsRepository {
 
     /**
      * Forget a station entirely — call when its last board is deleted, or a
-     * re-added station silently comes back pinned.
+     * re-added station silently comes back with the settings of the one the user
+     * removed.
+     *
+     * Only the preference row. Its id may stay in [order], which costs nothing:
+     * [orderedIds] intersects with the stations that exist, so a stale id is
+     * skipped, and if the user re-adds the station it lands back where they had
+     * put it — which is the better outcome, not a leak.
      */
     suspend fun forget(stationId: String) {
         if (stationId !in _prefs.value) return
         persist(_prefs.value - stationId)
-    }
-
-    /**
-     * Bulk edits from the home settings screen.
-     *
-     * These are one-shot ACTIONS, not toggles, and they only touch stations the
-     * map already knows about PLUS whatever ids the caller passes — a station
-     * with default preferences has no row here, which is why
-     * [setOpenByDefaultForAll] takes the list of ids rather than mapping over
-     * its own keys.
-     */
-    suspend fun setOpenByDefaultForAll(open: Boolean, stationIds: List<String> = emptyList()) {
-        val ids = (_prefs.value.keys + stationIds).toSet()
-        persist(ids.associateWith { id -> of(id).copy(openByDefault = open) })
-    }
-
-    /** Un-hide every station's hero. */
-    suspend fun showHeroEverywhere() {
-        persist(_prefs.value.mapValues { (_, p) -> p.copy(hideHero = false) })
-    }
-
-    /** Unpin every station. */
-    suspend fun clearPins() {
-        persist(_prefs.value.mapValues { (_, p) -> p.copy(pinned = false) })
     }
 
     private suspend fun persist(next: Map<String, StationPrefs>) {

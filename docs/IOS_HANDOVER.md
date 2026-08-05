@@ -140,64 +140,42 @@ Do not "fix" them without deciding to change the product on purpose.
 
 ---
 
-## 5. Uncommitted work on this branch
+## 5. Branch history and uncommitted work
 
-Two sessions' worth, plus this session's cleanup. Suggested commit split:
+Everything through §6c is **committed** on `ios-parity`. The list below is the
+shape of that history, kept because the commit messages are terse and these are
+the entries that explain WHY:
 
-**a) Home promos + parity fixes (2026-07-25)**
-`SummaryScreen.kt`, `SummaryViewModel.kt`, `HomePromoPlatform.{kt,ios,android}`,
-`NotificationPermissionEffect.kt`, `VersionCompare.kt`, `HomeStateProbe.swift`,
-`AppNavigation.kt`, `DreamSettings*.kt`, `ProfileScreen.kt`, `LoginScreen.kt`,
-`AppDelegate.swift`, `project.yml`, entitlements, app-group rename.
-
-Closed gaps: the **force-update gate was dead code** (`_forceUpdate` was
-declared but never assigned, so `UpdateNudgeDialog` was unreachable on iOS
-however low the installed version); the missing Profile "Rate Stationly" row;
-notification-prompt timing; ~300 lines of Android home surface iOS never had.
-
-**b) Live departure stream (2026-08-01/02)**
-`LiveStreamManager.kt`, `LiveStream.{ios,android}.kt`,
-`StreamBackedTflApiService.kt`, `TflApiServiceFactory.{ios,android}.kt`,
-`LiveStreamBridge.kt`, `Platform.kt`, `NetworkModule.kt`, `core/build.gradle.kts`,
-`Platform.ios.kt`, `iOSApp.swift`, `IOS_LIVE_STREAM.md`.
-
-**c) Backend-sync and teardown fixes** (bundled with (a) chronologically but
-independent — these are the highest-risk-if-lost changes):
-- `SelectionViewModel` — **the board was never reaching the backend.**
+- **(a) Home promos + parity fixes (2026-07-25)** — closed the dead force-update
+  gate (`_forceUpdate` was declared but never assigned, so `UpdateNudgeDialog` was
+  unreachable on iOS however low the installed version), the missing Profile
+  "Rate Stationly" row, notification-prompt timing, and ~300 lines of Android home
+  surface iOS never had.
+- **(b) Live departure stream (2026-08-01/02)** — see `IOS_LIVE_STREAM.md`.
+- **(c) Backend-sync and teardown fixes** — the highest-risk-if-lost changes.
   `syncStations` now runs *before* cleanup, and `clearBoardsPreservingIdentity()`
-  replaces `cleanupAll()` on the board-swap path. `cleanupAll()` calls
+  replaces `cleanupAll()` on the board-swap path: `cleanupAll()` calls
   `storageManager.clearAll()`, which on iOS is
-  `removePersistentDomainForName(bundleId)` — it wipes the whole standard
-  NSUserDefaults domain including `firebase_user_uid` / `firebase_auth_token`.
-  So one board change left the app with no uid and no bearer token, and every
-  auth-gated call in between failed silently. The helper is exactly
-  `cleanupAll()` minus that one wipe. **Android is unaffected** — its
-  `clearAll()` only clears a SharedPrefs file and its identity lives in
-  `FirebaseAuth.currentUser`.
-- `ProfileViewModel` — backend teardown (`logOut`, FCM token unregister) now
-  runs *before* `signOut()`, because both are auth-gated and read a token that
-  `signOut()` clears.
-- `FcmTokenRegistrar` — keychain-restored sessions and rotated tokens never
-  reached the backend. Now driven from `SummaryViewModel` init + every
-  foreground, cheap when unchanged (one string compare, no network).
+  `removePersistentDomainForName(bundleId)` and wipes the whole standard
+  NSUserDefaults domain including `firebase_user_uid` / `firebase_auth_token`. One
+  board change left the app with no uid and no bearer token and every auth-gated
+  call in between failed silently. **Android is unaffected** — its `clearAll()`
+  only clears a SharedPrefs file, and its identity lives in
+  `FirebaseAuth.currentUser`. Also: `ProfileViewModel` runs backend teardown
+  before `signOut()` (both are auth-gated and read a token `signOut()` clears),
+  and `FcmTokenRegistrar` is driven from `SummaryViewModel` init + every
+  foreground so keychain-restored sessions and rotated tokens reach the backend.
+- **(d) Review pass (2026-08-02)** — §6.
+- **(e) Multi-line board + home-screen fit (2026-08-03)** — §6b, commit `1226f64`
+  and `22b8182`.
+- **(f) Collapsible stations + per-station settings (2026-08-04/05)** — §6c,
+  commit `983b927`.
 
-**d) Review pass (2026-08-02)** — see §6.
-
-**e) Multi-line board + home-screen fit (2026-08-03)** — see §6b.
-`core/util/{MultiLineBoardProcessor,LineStatusRanker,LineShortNames}.kt`,
-`core/src/commonTest/**`, `Board.kt`, `SummaryScreen.kt`, `SummaryViewModel.kt`,
-`ExploreSection.kt`, `Models.kt`, `StationlyFormatters.kt`,
-`BOARD_AND_DREAM_UI.md`. Includes the SDUI-path removal — read §6b before
-committing, it is the one item that changes product capability.
-
-**f) Collapsible stations + per-station settings (2026-08-04/05)** — see §6c.
-`ui/station/**` (new: `StationSettingsScreen`, `StationSettingsViewModel`,
-`HomeSettingsScreen`), `ui/util/StationPrefs.kt` (new),
-`core/util/BoardLabels.kt` (new, tested),
-`core/usecase/SyncSubscribedStationsUseCase.kt` (new),
-`MultiLineBoardProcessor.kt`, `Board.kt`, `SummaryScreen.kt`,
-`SummaryViewModel.kt`, `SelectionScreen.kt`, `SelectionViewModel.kt`,
-`AppNavigation.kt`, `BOARD_AND_DREAM_UI.md` §10–§15.
+**Uncommitted right now: (g) home-screen polish — §6d.** Station cards became real
+containers, expand/collapse became one choreographed transition, pinning was
+replaced by an ordered list, and the profile stopped duplicating the station list.
+One item in it is **known broken and documented as such** — read §6d before
+picking this up.
 
 ---
 
@@ -430,6 +408,148 @@ screen), the home screen's delete `LoadingOverlay`, `BoardDeleteDialog`,
 - Nothing here is covered by UI tests — `:composeApp` has no test source set,
   which is why `BoardLabels` was moved into `:core` to be testable at all.
 
+## 6d. Session 2026-08-05: home-screen polish, station ordering
+
+All iOS-only. `:android:app` depends on `:core` alone and nothing consumes
+`:composeApp`'s android target, so none of the UI work here can reach Android;
+the two `core` changes are shared and are covered by tests.
+
+### What changed
+
+**Station cards are containers.** A raised surface with a hairline border and a
+3dp accent rail across the top, so it is obvious where one station ends and the
+next begins. Full write-up: `BOARD_AND_DREAM_UI.md` §16 — including
+`CARD_CHROME_HEIGHT`, which must stay in the height budget or the
+three-visible-rows floor silently shrinks.
+
+**Expand/collapse is one choreographed transition.** A single `updateTransition`
+drives the body, the legs, the chevron and the rail; the body's contents enter on
+a stagger. Also §16.
+
+**A state chevron in the card header,** rotating with that same transition. The
+"opens by default" mark changed from `UnfoldMore` to `OpenInFull` to stop reading
+as a duplicate of it, and the station settings switch now uses the same glyph.
+
+**Pinning is gone; order is a list.** `StationPrefs.pinned` deleted,
+`StationPrefsRepository.order` (`station_order_v1`) added, home settings grew a
+**Your stations** list. Why a per-station pin could not work: §11 of
+`BOARD_AND_DREAM_UI.md`.
+
+**Home settings reorganised.** Appearance moved to the bottom and became one
+segmented row (three icon+label segments) — a theme is set once and never thought
+about again, while the station list is what people come here for. The entire
+station-wide board section was removed: "open every station by default", "collapse
+every station on launch" and "show the countdown everywhere" were each a second
+way to set something that already has one home on the station's own screen.
+
+**The profile no longer lists stations.** `StationCard`, `EmptyStationsCard`, the
+delete-board dialog, and `ProfileViewModel.{loadStations,deleteStation,
+syncStationsToBackend}` are gone, along with three `ProfileUiState` fields. It was
+a read-only second copy of the home screen's stations whose only action was
+delete — which meant a second implementation of "discard a board", i.e. a second
+place for the survivor logic to be got wrong.
+
+**Good Service shows its description again.** `LineStatusRanker.rotation` was
+hard-coding `reason = ""` in the all-healthy branch and throwing away what the feed
+sent, so the strip's marquee was dead on the state the board is in nearly all the
+time. `BOARD_AND_DREAM_UI.md` §17.
+
+**Haptics stopped stalling the main thread.** `performHaptic` allocated a new
+`UIImpactFeedbackGenerator` and called `prepare()` on every call. `prepare()` wakes
+the Taptic Engine and Apple's guidance is to call it *ahead* of the event, not as
+part of it. Harmless for a button; visible as a hitch anywhere haptics fire in
+quick succession. The generators are cached and re-armed after each use. **This
+one is app-wide, not list-specific.**
+
+**Double-navigation guard.** `AppNavigation.navigateFrom(origin, route)` pushes
+only if the current route is the screen that asked. Two fast taps on a station row
+used to push station settings twice, so backing out landed on it again.
+
+### ⚠️ NOT WORKING: drag-to-reorder the station list
+
+**Status: abandoned for now, shipped as arrows instead.** The **Your stations**
+list reorders with up/down buttons on each row (`StationOrderCard`). They are
+plain `clickable`s with no gesture arbitration anywhere near them, and the rows
+still animate past each other, so the feature works — but the user asked for
+press-and-hold drag-and-drop and that is not what this is.
+
+Do not treat this as untried. Four attempts, each fixing something real and each
+still failing:
+
+1. **Drag handle + `detectDragGestures`, list reordered on every swap.**
+   Felt broken. Two causes found: `pointerInput` was keyed on the list, so the
+   first swap tore the modifier down and cancelled the in-flight gesture; and the
+   drag offset was an `Animatable` written through `launch { snapTo() }`, so the
+   swap test on the next line read the offset from *before* the finger moved. The
+   rows only got out of the way once the coroutines caught up, which in practice
+   was on release.
+2. **Long-press pickup, synchronous offset, animated slots.** Better, still not
+   smooth. Rows were re-placed but the lift animation was read during composition,
+   so every frame of it rebuilt the row's text and roundel.
+3. **List frozen during the drag; positions derived from two indices.** This part
+   was right and is worth keeping if anyone resumes: reordering the list reorders
+   the *composables*, and the drop is jump-free only if every row already sits at
+   the index the committed list is about to give it. (The algorithm: rows between
+   the origin and the target step one place towards the origin; everything outside
+   that span does not move. It was `DragReorder.slotFor`, removed with the rest —
+   `ListReorder.moved` is what survives, and the two must always agree.)
+4. **One detector on the container instead of per row.** The row-level detector
+   could never have worked: a `PointerInputChange`'s position is in the
+   coordinates of the node receiving it, so a row that moves to follow the finger
+   sees a stationary finger, and `drag()` — which waits for a position change —
+   delivers nothing. The symptom was exact: the row lifts (arming works, the
+   shadow appears) and then will not move. Moving the detector to the container,
+   which does not move, should have fixed it. **It did not, and I do not know
+   why.** That is the honest state of it.
+
+**Where to look next, in order:**
+- Confirm whether `onStart` fires at all — put a log in `pickUp`. If the shadow
+  appears but `from` is never set, the hold is arming somewhere else.
+- Check whether the parent `verticalScroll` is consuming the move.
+  `awaitDragOrCancellation` returns null the moment it sees an already-consumed
+  change, which ends the drag silently and looks exactly like this. If so, the
+  fix is to claim the gesture on the `Initial` pass once armed, or to disable the
+  scroller while a row is held.
+- Try `detectDragGesturesAfterLongPress` verbatim on the container first, with no
+  custom hold and no press animation. If the stock detector also fails, the
+  problem is arbitration with an ancestor and not this code.
+- **Test in a release build before concluding anything.** Everything here was
+  measured on a debug Compose/iOS build, which is meaningfully slower; some of the
+  "not smooth" in attempts 1–3 may not exist in release.
+
+### Bugs found and fixed on the way
+
+- `StationPrefsRepository.setOrder` had to be observed, not just read —
+  `SummaryViewModel.stationOrder` exists so a reorder in settings reaches the
+  cards without waiting for something else to recompose them.
+- The scrollbar showed on boards with nothing to scroll (`maxValue > 0` is true
+  for a pixel of rounding overflow). Threshold is half a row now — §17.
+- `Modifier.clickable` fires on release regardless of how long the press was, so
+  a long press on a station row *also* opened its settings. Any future drag work
+  must own the tap too, not sit next to a `clickable`.
+
+### Removed
+
+`StationPrefs.pinned`, `StationPrefsRepository.{clearPins,setOpenByDefaultForAll,
+showHeroEverywhere}`, `StationSettingsViewModel.setPinned`, the profile's whole
+station section (above), `HomeSettingsScreen.ChoiceRow`, and the bulk board
+actions. Unused imports swept from every file touched.
+
+### Tests
+
+`core`: **68 green**, up from 62 — 5 new in `ListReorderTest` and 1 in
+`LineStatusRankerTest` covering the Good Service reason. `:composeApp` still has no test source set,
+which is why anything with a rule in it keeps moving to `core`.
+
+### Gates
+
+`:core:testDebugUnitTest`, `:composeApp:compileKotlinIosArm64`,
+`:composeApp:compileDebugKotlinAndroid`, and a staging build installed on the
+iPhone 11 — all green. **The arrows in the station list have not been verified on
+device**; they were the last change made.
+
+---
+
 ## 7. Which doc to open
 
 | Doc | Reach for it when |
@@ -441,7 +561,7 @@ screen), the home screen's delete `LoadingOverlay`, `BoardDeleteDialog`,
 | `IOS_WIDGET_DESIGN.md` | Widget layout, the archiver pitfall, paging decision. |
 | `IOS_PARITY_PLAN.md` | Original plan + environment/config setup. |
 | `IOS_INFRA_AUDIT.md` | Security / testing / a11y / architecture audit findings. |
-| `BOARD_AND_DREAM_UI.md` | The home screen, the board, collapsing/pinning stations, per-station settings. §10–§15 are the current layout. |
+| `BOARD_AND_DREAM_UI.md` | The home screen, the board, collapsing/ordering stations, per-station settings. §10–§17 are the current layout. |
 | `BOARD_DOTMATRIX_FONT.md` | Board typography — **the board uses no special font**, and DotGothic16 was tried and reverted for parity. |
 
 ---
@@ -500,19 +620,22 @@ its own `widget_refresh_trace`.
 
 ## 9. Next steps, in priority order
 
-1. **Review backend subscriptions for multi-line** (§6b "Still open"). Deferred
-   through the whole 2026-08-03 session and never looked at.
-2. **Commit the working tree** using the §5 split. It is the single biggest
-   risk on this branch — two sessions of unversioned work.
-3. **QA the promos and the stream on device**: widget promo appears only with
+1. **Verify the station-order arrows on device** (§6d). They were the last
+   change of the session and are the only ordering control there is.
+2. **Drag-to-reorder, if it is still wanted** — §6d lists four attempts, the
+   reason each failed, and the four things to try next in order. Budget it
+   properly or leave the arrows; do not start from scratch.
+3. **Review backend subscriptions for multi-line** (§6b "Still open"). Deferred
+   through three sessions now and never looked at.
+4. **QA the promos and the stream on device**: widget promo appears only with
    no widget installed; dream promo retires after one run; notification banner
    tracks the Settings toggle; force-update dialog fires against a raised
    `app.minVersion`.
-4. **Re-check reconnect churn** now that the `openIfNeeded` race is fixed — the
+5. **Re-check reconnect churn** now that the `openIfNeeded` race is fixed — the
    trace should show no `stream:reconnect` bursts in steady state. If it still
    churns, the foreground/background-cycling hypothesis in
    `IOS_LIVE_STREAM.md` §7.2 is back on the table.
-5. **Exercise the stream past one station** — the 25-cap and `unknown_station`
+6. **Exercise the stream past one station** — the 25-cap and `unknown_station`
    paths are unexercised.
-6. **More tests**: `LiveStreamManager` reconnect/backoff and force-resubscribe.
-7. **Verify prod nginx** before pointing production builds at the stream.
+7. **More tests**: `LiveStreamManager` reconnect/backoff and force-resubscribe.
+8. **Verify prod nginx** before pointing production builds at the stream.

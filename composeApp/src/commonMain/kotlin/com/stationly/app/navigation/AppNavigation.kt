@@ -76,6 +76,25 @@ fun AppNavigation(
         mutableStateOf<Triple<String, String, String>?>(null)
     }
 
+    /**
+     * Navigate, but only from the screen that asked.
+     *
+     * Two taps in quick succession on the same row pushed the destination twice,
+     * so backing out of station settings landed on station settings again. It is
+     * not a race in the navigator — both taps are real, and by the time the second
+     * one is handled the first push is under way but the caller is still composed
+     * and still listening.
+     *
+     * Checking the CURRENT route makes the push idempotent for the duration of the
+     * transition: the second tap comes from a screen that is no longer on top, and
+     * is dropped. Preferred over disabling the row on tap, which would need the
+     * screen to know when to re-enable it — and it gets that wrong on the way back.
+     */
+    fun navigateFrom(origin: String, route: String) {
+        if (navController.currentBackStackEntry?.destination?.route != origin) return
+        navController.navigate(route)
+    }
+
     // iOS-style push/pop: new screen slides in from the right, the previous one
     // slides out to the left; reversed on back. Gives the app a native feel
     // without touching screen content (the board, etc. stay intact).
@@ -182,7 +201,7 @@ fun AppNavigation(
                 },
                 onOpenStationSettings = { stationId, mode, stationName ->
                     settingsStation = Triple(stationId, mode, stationName)
-                    navController.navigate("station/settings")
+                    navigateFrom("summary", "station/settings")
                 },
                 onNavigateToProfile = { navController.navigate("profile") },
                 onOpenScreensaver = { navController.navigate("dream/settings") },
@@ -194,6 +213,14 @@ fun AppNavigation(
             HomeSettingsScreen(
                 onBack = { navController.popBackStack() },
                 onOpenScreensaver = { navController.navigate("dream/settings") },
+                // Pushed ON TOP of home settings rather than replacing it: the
+                // station list is where the user was, and back should return
+                // them to it — same rule as the settings → line picker → back
+                // path below.
+                onOpenStationSettings = { stationId, mode, stationName ->
+                    settingsStation = Triple(stationId, mode, stationName)
+                    navigateFrom("home/settings", "station/settings")
+                },
             )
         }
 

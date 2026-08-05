@@ -102,7 +102,7 @@ class SummaryViewModel(
     val showNotificationDeniedBanner: StateFlow<Boolean> = _showNotificationDeniedBanner.asStateFlow()
 
     /**
-     * Per-station card preferences (pin, hide hero).
+     * Per-station card preferences (open by default, hide hero).
      *
      * Passed straight through from [StationPrefsRepository] rather than mirrored
      * into a flow of this VM's own: the station settings screen writes the same
@@ -110,6 +110,16 @@ class SummaryViewModel(
      * moment it did.
      */
     val stationPrefs: StateFlow<Map<String, StationPrefs>> = StationPrefsRepository.prefs
+
+    /**
+     * The user's card ordering, for the same reason and by the same route.
+     *
+     * The home screen does not read this list directly — it asks
+     * [StationPrefsRepository.orderedIds] to apply it — but it has to OBSERVE it,
+     * or a reorder made in home settings would not reach the cards until
+     * something else happened to recompose them.
+     */
+    val stationOrder: StateFlow<List<String>> = StationPrefsRepository.order
 
     init {
         viewModelScope.launch { StationPrefsRepository.ensureLoaded() }

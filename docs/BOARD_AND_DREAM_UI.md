@@ -198,7 +198,7 @@ a board means open.
 **The pin marker uses the app accent, never the card's line colour.** `accent`
 varies per card, so one shared meaning looked like several different marks.
 
-## 11. iOS home: collapsed stations, pinning, and the height budget
+## 11. iOS home: collapsed stations, ordering, and the height budget
 
 With several stations the page was a long scroll of full-height boards. A station
 is now **collapsible**, and collapsed it shows a **leg per direction** — the
@@ -218,20 +218,29 @@ soonest departure each way (`MultiLineBoardProcessor.collapsedLegs`).
 - Capped at **2** (`MAX_COLLAPSED_LEGS`). Three legs is a board again, at which
   point the user should open it.
 
-**Two settings, two questions.** `pinned` answers WHERE a station sits;
-`openByDefault` answers WHETHER it starts open. They were briefly one setting,
-which satisfied neither: "pin" promises ordering everywhere a user has met it
-(chats, notes, files, mail), and a user can legitimately want the station they
-check twice a day at the top without its board unfolded — or a station further
-down already open when they scroll to it.
+**Order is a property of the LIST, not of a station** (2026-08-05).
 
-- **`pinned`** sorts to the top, keeps its relative order (`sortedBy` is stable,
-  so pinning one never reshuffles the rest), carries a pin marker, and — being
-  the top open board — gets the leftover height.
-- **`openByDefault`** expands the card on EVERY launch, not just the first.
-  Several stations may set it. Marked with an unfold glyph, deliberately a
-  different icon from the pin: one shared mark for two independent settings would
-  be a lie half the time.
+There was a per-station `pinned` switch before this, and it could not work. Every
+station's settings screen offered it, so every station could hold it — and a rank
+that everything can claim ranks nothing. Pin all four and you have said exactly
+what you said with none.
+
+Ordering moved to home settings, where the whole list is present at once and the
+user states the sequence directly: `StationPrefsRepository.order`, a list of
+grouping ids under `station_order_v1`. It is **partial by design**. Stations
+missing from it keep their natural position AFTER the ones in it, so a station
+added since the last reorder appears at the bottom rather than vanishing; ids left
+behind by a deleted station are ignored on read, so it never needs pruning to stay
+correct, and re-adding a station puts it back where the user had it
+(`orderedIds`).
+
+**`openByDefault`** survives as a genuine per-station setting: it expands the card
+on EVERY launch, not just the first, and several stations may set it. Its mark on
+the card header is `OpenInFull` — the same glyph as the switch that sets it, so
+the mark and its control are visibly one thing. It was briefly `UnfoldMore`, which
+had to go once the header grew an expand/collapse chevron: a second vertical
+double-arrow beside the chevron reads as a duplicate of that control rather than
+as a setting.
 
 **Which stations are open is a SET, not one id** — the user can open several by
 hand — and it is SESSION state, not a preference. What you had open is not
@@ -245,7 +254,7 @@ Collapsed cards cost a known header + legs each and come out of the budget first
 What is left goes to the TOP open board; every other open board is held to
 `MIN_BOARD_HEIGHT`. Dividing the viewport equally between three open boards gives
 three boards nobody can read, and the user has already said which station matters
-by pinning it. Collapsed
+by putting it first. Collapsed
 cards are budgeted at the MAXIMUM leg count, not the actual one: the real number
 moves with live predictions, and budgeting on it would re-flow every open board
 each time a train departs — the height churn §5/§8/§9 exist to prevent. This
@@ -253,8 +262,9 @@ replaced `MULTI_BOARD_FRACTION` (82% of the viewport per card), which was damage
 control for a layout that could not fit.
 
 **The floor is sized in ROWS, not in card height.** `MIN_BOARD_HEIGHT` is derived
-from what a card spends before its panel gets anything — header, pills, hero,
-status strip, footer — plus `MIN_VISIBLE_ROWS = 3`. The previous 280dp was picked
+from what a card spends before its panel gets anything — the container's own
+chrome (`CARD_CHROME_HEIGHT`, §16), header, pills, hero, status strip, footer —
+plus `MIN_VISIBLE_ROWS = 3`. The previous 280dp was picked
 against the CARD and left the panel one row with several stations open:
 technically one viewport, but a departure board showing one departure is not a
 departure board. Past the floor the PAGE scrolls, which is the honest outcome of
@@ -401,6 +411,72 @@ The inner overscroll bounce, previously disabled to make chaining feel smooth, i
 back on purpose — it is how iOS says "this is the end of this list", which is the
 signal that was missing.
 
+## 16. iOS home: a station card is a CONTAINER, and it moves as one (2026-08-05)
+
+**The problem.** A card was never a container — pills, hero and panel sat straight
+on the home canvas with a 20dp gap between stations and nothing else. A gap is not
+a boundary: with three stations the page read as one long ribbon, and the only
+thing marking a new station was its name, 17sp of text competing with a full
+dot-matrix board directly above it.
+
+**Three cues, because one is not enough against a board this loud:**
+- a raised surface (`colorScheme.surface`, #161616 on the #0A0A0A canvas) with a
+  hairline border, so the card has literal edges;
+- a **3dp colour rail** across the top in the station's accent — its line colour,
+  or the mode roundel tint when several lines are tracked — fading out to the
+  right so it does not read as a progress bar. This is the cue that does the work:
+  it is the first thing the eye meets coming down the page, it says "new station"
+  before a word is read, and it says WHICH station by colour alone;
+- the panel now sits INSIDE something, so the board reads as this station's board
+  rather than as the page background.
+
+The container costs ~20dp before any content. That is `CARD_CHROME_HEIGHT` in
+`SummaryScreen`, and it is in **both** `MIN_BOARD_HEIGHT` and the collapsed-card
+cost — left out, the three-visible-rows floor quietly becomes two and a half.
+
+**Expand/collapse runs on ONE clock.** Every moving part of a card — the body's
+height, the collapsed legs, the chevron, the rail's alpha — is driven from a
+single `updateTransition(expanded)`. They were briefly three independent
+animations that merely shared a duration, which is not the same thing: separate
+springs start on the frame each is first composed, so the chevron finished a beat
+before the board and the legs arrived after both, and the card read as three parts
+reacting to a tap rather than one card responding to it.
+
+Sharing a clock is also what lets the parts differ **on purpose**. Inside the
+body, pills → hero → panel enter on `animateEnterExit` at `STAGGER_STEP_MS`
+intervals, so the card unfolds top-down like something with a hinge instead of
+everything fading up at once. Opening (`EXPAND_MS` 340) leads with height and
+holds the fade back, so the board materialises into space already being made for
+it; closing (`COLLAPSE_MS` 240) is quicker and drops the panel first, because the
+big dark rectangle is what the collapse is *about*. The legs and the body each
+take the OTHER's duration, so they cannot cross mid-flight and briefly both show.
+
+**The collapsed legs are computed even while expanded.** Skipping them saved
+nothing measurable — it is a `remember` keyed on the data, so it runs when
+departures change, not per frame — and it cost the animation its content: the legs
+arrived as an empty list on the frame the card closed, so there was nothing to
+animate.
+
+## 17. Good Service is a status, and it still has something to say (2026-08-05)
+
+`LineStatusRanker.rotation`'s all-lines-healthy branch built its single entry with
+`reason = ""` hard-coded, discarding whatever the feed had sent. The strip
+therefore showed two bare words and a dead marquee on the state the board is in
+nearly all of the time.
+
+The reason is carried through now, and whichever healthy line actually has
+something to say speaks for the board — they are all good, so no one line has a
+better claim, and taking the first blindly usually takes an empty one. TfL does
+not always ship a description, so `BoardStatusStrip` falls back to
+`explore.good_service_sub` ("All lines running normally"), which is the same
+phrase the Network section uses for the same state.
+
+**The scrollbar is a hint, not decoration.** It appeared on boards with nothing to
+scroll: the test was `maxValue > 0`, and a board that visually fits routinely
+overflows by a pixel or two (2dp inter-row spacing against a fractional-density
+viewport). The threshold is half a departure row, so it only shows when a row is
+genuinely hidden, and it rests at 45% alpha and brightens under the finger.
+
 ## Consistency contract (don't break)
 - The board renders on home + widget + dream from the **same** `widget_departure_*.xml`
   + `GlobalBoardProcessor` + `StationlyFormatters`. Presentation rules belong in those
@@ -432,6 +508,14 @@ signal that was missing.
 - **The dot-matrix panel carries station signage only** — platform headers,
   departures, status. App chrome (filter captions, settings affordances) belongs
   on the card around it or on the settings screen (§12).
+- **A setting every item can hold cannot express a rank.** Ordering lives on the
+  list, never as a per-item "pin to top" (§11).
+- **One glyph, one meaning, everywhere it appears.** A mark on a card and the
+  switch that sets it are one fact in two places; drawing them differently makes
+  the user work out that they are related (§11).
+- **A card's parts move on one clock.** Anything that animates on expand or
+  collapse hangs off the card's `updateTransition`, never its own
+  `animateFloatAsState` — same duration is not the same clock (§16).
 
 ## iOS launch screen
 `iosApp/project.yml` → `UILaunchScreen` (`UIColorName: LaunchBackground`,

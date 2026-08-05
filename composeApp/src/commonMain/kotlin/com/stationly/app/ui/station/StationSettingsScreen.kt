@@ -28,9 +28,8 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.UnfoldMore
+import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -120,7 +119,6 @@ fun StationSettingsScreen(
     // teardown is computed from.
     val isDeleting by viewModel.isDeleting.collectAsStateWithLifecycle()
     val prefs = prefsMap[stationId]
-    val pinned = prefs?.pinned == true
     val openByDefault = prefs?.openByDefault == true
     val heroVisible = prefs?.hideHero != true
     val isDark = isDarkTheme()
@@ -193,26 +191,18 @@ fun StationSettingsScreen(
 
             Spacer(Modifier.height(28.dp))
 
-            // ── Position and expansion ──
+            // ── Expansion ──
+            //
+            // No "Pin to top" here any more. Every station's settings screen
+            // offered it, so every station could be pinned, and a rank that
+            // everything can claim ranks nothing. Ordering moved to home
+            // settings, where the stations are shown as one list and dragged
+            // into the sequence the user wants — the only place a ranking can
+            // actually be expressed.
             SectionLabel("On your home screen")
             SettingsCard {
                 ToggleRow(
-                    icon = Icons.Rounded.PushPin,
-                    title = "Pin to top",
-                    subtitle = if (pinned) {
-                        "Sits above your other stations, and gets the most board space."
-                    } else {
-                        "Keeps this station first, above the rest."
-                    },
-                    checked = pinned,
-                    onCheckedChange = {
-                        performHaptic(HapticType.TAP)
-                        viewModel.setPinned(it)
-                    },
-                )
-                HairlineDivider()
-                ToggleRow(
-                    icon = Icons.Rounded.UnfoldMore,
+                    icon = Icons.Rounded.OpenInFull,
                     title = "Open by default",
                     subtitle = if (openByDefault) {
                         "Its board is already open every time you launch the app."

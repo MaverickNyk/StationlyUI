@@ -151,10 +151,6 @@ class StationSettingsViewModel(
         }
     }
 
-    fun setPinned(pinned: Boolean) {
-        viewModelScope.launch { StationPrefsRepository.update(stationId) { it.copy(pinned = pinned) } }
-    }
-
     /** Expand this station's card on every app open — see [StationPrefs.openByDefault]. */
     fun setOpenByDefault(open: Boolean) {
         viewModelScope.launch { StationPrefsRepository.update(stationId) { it.copy(openByDefault = open) } }

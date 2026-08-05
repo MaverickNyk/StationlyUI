@@ -7,37 +7,27 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
-import androidx.compose.material.icons.filled.DirectionsBus
-import androidx.compose.material.icons.filled.Subway
-import androidx.compose.material.icons.filled.Train
-import androidx.compose.material.icons.filled.Tram
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Email
-import androidx.compose.material.icons.outlined.Train as TrainOutlined
 import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.rounded.AlternateEmail
 import androidx.compose.material.icons.rounded.ArrowBackIosNew
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.CalendarMonth
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Star
-import androidx.compose.material.icons.rounded.Train as TrainRounded
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -50,7 +40,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -64,7 +53,6 @@ import com.stationly.app.ui.theme.LocalThemeTokens
 import com.stationly.app.resources.Res
 import com.stationly.app.resources.stationly_logo
 import com.stationly.core.model.sdui.SduiAppComponent
-import com.stationly.core.model.sdui.SubscribedStation
 import org.jetbrains.compose.resources.painterResource
 
 /**
@@ -135,7 +123,6 @@ fun ProfileScreen(
     val homeConfig = uiState.homeConfig
 
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
-    var showDeleteStationDialog by remember { mutableStateOf<SubscribedStation?>(null) }
     var showEditNameDialog by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -179,34 +166,11 @@ fun ProfileScreen(
                     )
                 }
 
-                item {
-                    Spacer(Modifier.height(4.dp))
-                    SectionHeader(homeConfig["profile.stations.title"] ?: "My Stations", Icons.Rounded.TrainRounded)
-                }
-
-                if (uiState.isLoading) {
-                    item {
-                        Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
-                            CircularProgressIndicator(color = Amber, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
-                        }
-                    }
-                } else if (uiState.stations.isEmpty()) {
-                    item {
-                        EmptyStationsCard(
-                            title = homeConfig["profile.stations.empty_title"] ?: "No stations yet",
-                            subtitle = homeConfig["profile.stations.empty_subtitle"] ?: "Set up a board to start tracking departures"
-                        )
-                    }
-                } else {
-                    items(uiState.stations, key = { "${it.id}_${it.line}" }) { station ->
-                        StationCard(
-                            station = station,
-                            isDeleting = uiState.deletingStationId == station.id,
-                            onDelete = { if (uiState.deletingStationId == null) showDeleteStationDialog = station }
-                        )
-                    }
-                }
-
+                // NO "My Stations" list here. It was a second, read-only copy of
+                // the home screen's own stations — the same boards, listed again,
+                // with a delete button as the only thing you could do to them.
+                // Stations are managed where they live: the home card's settings
+                // for one station, and home settings for the order of all of them.
                 // Screensaver entry — iOS home for the dream. On Android the
                 // dream is configured from system Settings → Screen saver;
                 // iOS has no such surface, so the port's settings + start
@@ -352,54 +316,6 @@ fun ProfileScreen(
         )
     }
 
-    // ── Delete Station dialog ──
-    showDeleteStationDialog?.let { station ->
-        val isDeletingThis = uiState.deletingStationId == station.id
-        var wasDeleting by remember { mutableStateOf(false) }
-        LaunchedEffect(isDeletingThis) {
-            if (isDeletingThis) wasDeleting = true
-            else if (wasDeleting) { wasDeleting = false; showDeleteStationDialog = null }
-        }
-        val dsTitle   = homeConfig["profile.delete_station.title"] ?: "Delete This Board?"
-        val dsBody    = (homeConfig["profile.delete_station.body"] ?: "You’re about to remove your {name} board.").replace("{name}", station.name)
-        val dsBullets = (homeConfig["profile.delete_station.bullets"]
-            ?: "Live departure tracking will stop,Departure notifications will be unsubscribed,Widget will be cleared")
-            .split(",").map { it.trim() }.filter { it.isNotEmpty() }
-        val dsFooter  = homeConfig["profile.delete_station.footer"] ?: "You can always set up a new board from the home screen."
-        val dsConfirm = homeConfig["profile.delete_station.confirm"] ?: "Delete Board"
-        val dsCancel  = homeConfig["profile.delete_station.cancel"] ?: "Keep It"
-
-        AlertDialog(
-            onDismissRequest = { if (!isDeletingThis) showDeleteStationDialog = null },
-            containerColor = Surface2,
-            titleContentColor = White90,
-            textContentColor = White55,
-            icon = { Icon(Icons.Rounded.DeleteOutline, null, tint = DangerRed, modifier = Modifier.size(28.dp)) },
-            title = { Text(dsTitle, fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(dsBody, fontWeight = FontWeight.Medium)
-                    dsBullets.forEach { WarningBullet(it) }
-                    Spacer(Modifier.height(2.dp))
-                    Text(dsFooter, color = White25, fontSize = 12.sp)
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = { if (!isDeletingThis) viewModel.deleteStation(station) },
-                    enabled = !isDeletingThis,
-                    colors = ButtonDefaults.textButtonColors(contentColor = DangerRed)
-                ) {
-                    if (isDeletingThis) CircularProgressIndicator(color = DangerRed, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-                    else Text(dsConfirm, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                if (!isDeletingThis) TextButton(onClick = { showDeleteStationDialog = null }, colors = ButtonDefaults.textButtonColors(contentColor = White55)) { Text(dsCancel) }
-            }
-        )
-    }
-
     // ── Delete Account dialog ──
     if (showDeleteAccountDialog) {
         val daTitle   = homeConfig["profile.delete_account.title"] ?: "Delete Your Account?"
@@ -537,52 +453,6 @@ private fun SectionHeader(title: String, icon: ImageVector) {
         Icon(icon, null, tint = Amber, modifier = Modifier.size(17.dp))
         Spacer(Modifier.width(8.dp))
         Text(title.uppercase(), color = White55, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-    }
-}
-
-@Composable
-private fun StationCard(station: SubscribedStation, isDeleting: Boolean, onDelete: () -> Unit) {
-    val modeIcon = when (station.mode.lowercase()) {
-        "tube" -> Icons.Filled.Subway
-        "bus" -> Icons.Filled.DirectionsBus
-        "dlr" -> Icons.Filled.Tram
-        else -> Icons.Filled.Train
-    }
-    Surface(color = Surface1, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, White08)) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(42.dp).background(Amber.copy(0.1f), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                Icon(modeIcon, null, tint = Amber, modifier = Modifier.size(22.dp))
-            }
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(station.name, color = White90, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(3.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    InfoChip(station.line.replaceFirstChar { it.uppercase() })
-                    InfoChip(station.direction.replaceFirstChar { it.uppercase() })
-                }
-            }
-            if (isDeleting) {
-                CircularProgressIndicator(color = DangerRed, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-            } else {
-                IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Rounded.Close, "Remove", tint = White25, modifier = Modifier.size(18.dp))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyStationsCard(title: String, subtitle: String) {
-    Surface(color = Surface1, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, White08)) {
-        Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Outlined.TrainOutlined, null, tint = White25, modifier = Modifier.size(40.dp))
-            Spacer(Modifier.height(12.dp))
-            Text(title, color = White55, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-            Spacer(Modifier.height(4.dp))
-            Text(subtitle, color = White25, fontSize = 13.sp, textAlign = TextAlign.Center)
-        }
     }
 }
 

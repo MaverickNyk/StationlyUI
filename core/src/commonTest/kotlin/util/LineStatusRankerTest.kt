@@ -53,6 +53,22 @@ class LineStatusRankerTest {
     }
 
     @Test
+    fun `an all-good board keeps whatever description the feed gave it`() {
+        // The bug: this branch used to hard-code `reason = ""`, so the strip's
+        // marquee was empty on the state the board is in nearly all the time —
+        // even when TfL had shipped a description to show.
+        val rotation = LineStatusRanker.rotation(listOf(
+            entry("Circle", "Good Service"),
+            entry("Victoria", "Good Service", "A good service is operating on all routes"),
+        ))
+        assertEquals(
+            "A good service is operating on all routes",
+            rotation.single().reason,
+            "the healthy line with something to say speaks for the board",
+        )
+    }
+
+    @Test
     fun `lines sharing one incident are joined rather than repeated`() {
         // The sub-surface lines share track, so one incident routinely lands on
         // several of them with identical wording.

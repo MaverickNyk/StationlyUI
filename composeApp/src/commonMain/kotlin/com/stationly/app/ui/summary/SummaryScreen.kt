@@ -101,6 +101,7 @@ import com.stationly.app.ui.summary.components.StationExploreSection
 import com.stationly.app.ui.theme.DisplayFamily
 import com.stationly.app.ui.theme.TflAmber
 import com.stationly.app.ui.util.StationPrefs
+import com.stationly.app.ui.util.StationPrefsRepository
 import com.stationly.app.platform.HapticType
 import com.stationly.app.platform.performHaptic
 import com.stationly.core.platform.Platform
@@ -124,6 +125,17 @@ private val HOME_GAP = 20.dp
  */
 private val STATION_HEADER_HEIGHT = 44.dp
 private val LEG_HEIGHT = 22.dp
+
+/**
+ * What the card CONTAINER costs before any of its content: the colour rail, the
+ * inner padding above and below, and the hairline border top and bottom.
+ *
+ * Mirrors `CARD_RAIL_HEIGHT` plus the container padding in Board.kt. A station
+ * card became a real bounded surface rather than loose content on the canvas, and
+ * every dp of that surround comes off the panel's share — left out of the budget,
+ * the floor below silently stops being three departures.
+ */
+private val CARD_CHROME_HEIGHT = 20.dp
 
 /** One departure row inside the panel, including the 2dp gap under it. */
 private val BOARD_ROW_HEIGHT = 26.dp
@@ -154,6 +166,7 @@ private const val MIN_VISIBLE_ROWS = 3
  * alternative is several boards none of which can be read.
  */
 private val MIN_BOARD_HEIGHT =
+    CARD_CHROME_HEIGHT +         // rail + container padding + border
     STATION_HEADER_HEIGHT +      // the card's own nameplate
     34.dp +                      // line pills row (2 top + 22 pill + 10 bottom)
     104.dp +                     // hero (HERO_HEIGHT) + its 10dp spacer
@@ -202,7 +215,8 @@ private fun boardMaxHeight(
     // exists to prevent. Over-reserving costs the open board a few dp and is
     // stable; under-reserving pushes it off screen.
     val collapsedCost =
-        (STATION_HEADER_HEIGHT + LEG_HEIGHT * MultiLineBoardProcessor.MAX_COLLAPSED_LEGS + HOME_GAP) *
+        (CARD_CHROME_HEIGHT + STATION_HEADER_HEIGHT +
+            LEG_HEIGHT * MultiLineBoardProcessor.MAX_COLLAPSED_LEGS + HOME_GAP) *
             collapsedCount.coerceAtLeast(0)
     val budget = viewportHeight -
         (HOME_PADDING_V * 2) - bottomInset -
@@ -266,6 +280,7 @@ fun SummaryScreen(
     val showDreamPromo by viewModel.showDreamPromo.collectAsStateWithLifecycle()
     val showNotificationDeniedBanner by viewModel.showNotificationDeniedBanner.collectAsStateWithLifecycle()
     val stationPrefs by viewModel.stationPrefs.collectAsStateWithLifecycle()
+    val stationOrder by viewModel.stationOrder.collectAsStateWithLifecycle()
 
     // First authenticated screen — the one place Android asks too. Re-check the
     // denied banner on the user's answer so a denial surfaces it immediately
@@ -386,17 +401,19 @@ fun SummaryScreen(
 
                     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                       val density = LocalDensity.current
-                      // Station ids in CARD ORDER: pinned first, then the order
-                      // the stations were added.
+                      // Station ids in CARD ORDER: the sequence the user dragged
+                      // them into in home settings, then anything added since.
                       //
-                      // Pinning is ordering (see `StationPrefs.pinned`), so this
-                      // one list is the whole feature — the cards below iterate
-                      // it, and the height budget counts it. `sortedBy` is
-                      // stable, so unpinned stations keep their insertion order
-                      // and pinning one station never reshuffles the rest.
-                      val stationIds = remember(currentSelections, stationPrefs) {
-                          currentSelections.map { it.groupingId }.distinct()
-                              .sortedBy { if (stationPrefs[it]?.pinned == true) 0 else 1 }
+                      // This one list is the whole ordering feature — the cards
+                      // below iterate it, and the height budget counts it. It
+                      // replaced a pinned-first sort, which could not express an
+                      // order at all once every station's settings screen offered
+                      // the pin: four pinned stations are four stations in
+                      // insertion order wearing a badge.
+                      val stationIds = remember(currentSelections, stationOrder) {
+                          StationPrefsRepository.orderedIds(
+                              currentSelections.map { it.groupingId }.distinct()
+                          )
                       }
 
                       // ── Which stations are open ──
@@ -589,8 +606,8 @@ fun SummaryScreen(
                             // to its own pole naptan, so grouping by `station` would split one
                             // stop into a card per pole, all with the same name.
                             // Grouped by station, then walked in `stationIds`
-                            // order so pinned stations come first — the map's own
-                            // order is insertion order and knows nothing of pins.
+                            // order so the user's own sequence wins — the map's
+                            // order is insertion order and knows nothing of it.
                             val byStation = currentSelections.groupBy { it.groupingId }
                             val stationGroups = stationIds.mapNotNull { id ->
                                 byStation[id]?.let { id to it }
@@ -621,7 +638,6 @@ fun SummaryScreen(
                                                 else (expandedIds + stationId).toList()
                                         }
                                     } else null,
-                                    pinned = prefs.pinned,
                                     opensByDefault = prefs.openByDefault,
                                     showHero = !prefs.hideHero,
                                     onOpenSettings = {
