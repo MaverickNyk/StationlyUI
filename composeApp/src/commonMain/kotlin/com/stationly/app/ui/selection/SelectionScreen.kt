@@ -231,8 +231,20 @@ fun SelectionScreen(
     onNavigateToSummary: () -> Unit,
     onNavigateBack: () -> Unit = onNavigateToSummary,
     onRequestLocationPermission: () -> Unit = {},
+    /**
+     * Station to open the flow ON, as (grouping id, mode, name) — the home
+     * screen's "Edit station". Null starts the flow at the mode step as usual.
+     */
+    editStation: Triple<String, String, String>? = null,
     viewModel: SelectionViewModel = viewModel { SelectionViewModel() }
 ) {
+    // Keyed on the station so re-entering for a DIFFERENT one re-runs, and
+    // recomposition alone never does — replaying it would fight the user by
+    // dragging them back to the line step every time they pressed back.
+    LaunchedEffect(editStation) {
+        editStation?.let { (id, mode, name) -> viewModel.openForStation(mode, id, name) }
+    }
+
     val st by viewModel.uiState.collectAsStateWithLifecycle()
     val selMap by viewModel.selections.collectAsStateWithLifecycle()
     val dropdownData by viewModel.dropdownData.collectAsStateWithLifecycle()
@@ -315,7 +327,14 @@ fun SelectionScreen(
 
             // ── top bar ──
             MinimalTopBar(mode?.label, step, "mode" in selMap, primary, existingPicks.isNotEmpty()) {
-                if ("mode" in selMap) viewModel.popLastSelection() else onNavigateBack()
+                // Editing an existing station ENTERED this flow at the line
+                // step — the mode and the station were never picked here, they
+                // came from the card the user tapped. Stepping back through them
+                // walks the user forwards through screens they did not choose
+                // and strands them at the mode list; back has to mean "leave",
+                // which returns to the station settings screen it came from.
+                if (editStation == null && "mode" in selMap) viewModel.popLastSelection()
+                else onNavigateBack()
             }
 
             // ── content ──

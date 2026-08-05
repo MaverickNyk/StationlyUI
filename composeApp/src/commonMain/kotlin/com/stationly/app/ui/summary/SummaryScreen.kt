@@ -38,8 +38,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -60,6 +60,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -90,7 +91,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.stationly.app.ui.common.AnnouncementBanner
-import com.stationly.app.ui.common.LoadingOverlay
 import com.stationly.app.ui.common.NotificationPermissionEffect
 import com.stationly.app.ui.common.OfflineBanner
 import com.stationly.app.ui.common.ThemeToggleButton
@@ -100,9 +100,11 @@ import com.stationly.app.ui.summary.components.EmptyStationsState
 import com.stationly.app.ui.summary.components.StationExploreSection
 import com.stationly.app.ui.theme.DisplayFamily
 import com.stationly.app.ui.theme.TflAmber
+import com.stationly.app.ui.util.StationPrefs
 import com.stationly.app.platform.HapticType
 import com.stationly.app.platform.performHaptic
 import com.stationly.core.platform.Platform
+import com.stationly.core.util.MultiLineBoardProcessor
 import kotlin.math.floor
 
 /** Top/bottom padding inside the home scroll, applied at each end. */
@@ -112,20 +114,54 @@ private val HOME_PADDING_V = 16.dp
 private val HOME_GAP = 20.dp
 
 /**
- * How much of the next card is left peeking below a full-height one.
+ * Heights of a collapsed card's parts, mirroring `HEADER_HEIGHT` and
+ * `LEG_HEIGHT` in Board.kt.
  *
- * Deliberate, not slack: a card sized to exactly fill the viewport looks like
- * the whole screen, and nothing then suggests there is anything below it. A
- * sliver of the next card is the only affordance that says the page scrolls.
+ * Duplicated deliberately rather than exposed: these are the height budget's
+ * ASSUMPTIONS about a collapsed card, and the layout must not silently re-flow
+ * if the header's internals change — a mismatch shows up as the open board being
+ * a few dp off, not as a crash.
  */
-private val NEXT_CARD_PEEK = 24.dp
+private val STATION_HEADER_HEIGHT = 44.dp
+private val LEG_HEIGHT = 22.dp
+
+/** One departure row inside the panel, including the 2dp gap under it. */
+private val BOARD_ROW_HEIGHT = 26.dp
+
+/** What "a usable departure board" means, in rows. Feeds [MIN_BOARD_HEIGHT]. */
+private const val MIN_VISIBLE_ROWS = 3
 
 /**
- * Floor for the card, for the case where there is barely any viewport at all
- * (landscape, or a very small device). Below this the panel stops being a
- * readable departure board, so it is better to overflow than to shrink further.
+ * Floor for a card, sized so its panel can always show [MIN_VISIBLE_ROWS]
+ * departures.
+ *
+ * A CARD is not a board: by the time the panel gets its share, the card has
+ * already spent its height on the station header, the line pills, the hero, the
+ * status strip and the footer. The old 280dp floor was picked against the card
+ * and left the panel with a single row once several stations were open —
+ * technically "fitting one viewport", but a departure board showing one
+ * departure is not a departure board.
+ *
+ * Written as the sum of the parts rather than as one number, so a change to any
+ * of them can be reflected here without re-deriving the total by hand.
+ *
+ * Budgeted WITH the hero even though a station can hide it: the floor has to
+ * cover the worst case, and a hero-hidden card simply spends the same height on
+ * more rows.
+ *
+ * Overflowing this is deliberate. Past it the PAGE scrolls, which is the honest
+ * outcome when the user has opened more boards than a screen holds — the
+ * alternative is several boards none of which can be read.
  */
-private val MIN_BOARD_HEIGHT = 280.dp
+private val MIN_BOARD_HEIGHT =
+    STATION_HEADER_HEIGHT +      // the card's own nameplate
+    34.dp +                      // line pills row (2 top + 22 pill + 10 bottom)
+    104.dp +                     // hero (HERO_HEIGHT) + its 10dp spacer
+    16.dp +                      // panel padding, 8 top and 8 bottom
+    26.dp +                      // one platform header
+    (BOARD_ROW_HEIGHT * MIN_VISIBLE_ROWS) +
+    22.dp +                      // status strip
+    34.dp                        // footer: clock + maker mark
 
 /**
  * The tallest a station card may be: exactly the room left after everything else
@@ -142,38 +178,48 @@ private val MIN_BOARD_HEIGHT = 280.dp
  * assumed, because both change at runtime: promos are dismissible, and the
  * Network section grows with the number of live disruptions.
  *
- * With more than one board the total cannot fit by construction, so each card is
- * capped at [MULTI_BOARD_FRACTION] of the viewport and the page scrolls — with a
- * peek of the next card, which is the affordance that says so.
+ * Collapsed stations cost a known [STATION_HEADER_HEIGHT] (plus legs) each, so
+ * with one board open the whole home screen still fits one viewport however many
+ * stations are tracked. This returns the cap for the TOP open board — every
+ * other open board is held to [MIN_BOARD_HEIGHT] by the caller.
  */
 private fun boardMaxHeight(
     viewportHeight: Dp,
-    boardCount: Int,
+    expandedCount: Int,
+    collapsedCount: Int,
     chromeHeight: Dp,
     exploreHeight: Dp,
     bottomInset: Dp,
 ): Dp {
-    if (boardCount > 1) {
-        return (viewportHeight * MULTI_BOARD_FRACTION - NEXT_CARD_PEEK)
-            .coerceAtLeast(MIN_BOARD_HEIGHT)
-    }
-    // Blocks in the scroll: [chrome?] + board + Network. Each pair costs one gap.
+    // Blocks in the scroll: [chrome?] + boards + Network. Each pair costs one gap.
     val gapCount = if (chromeHeight > 0.dp) 2 else 1
+    // Collapsed stations cost a known amount, so they come out of the budget
+    // before it is shared — this is what replaced the old viewport-fraction cap.
+    //
+    // Budgeted at the MAXIMUM leg count rather than the actual one. The real
+    // number depends on live predictions, so budgeting on it would re-flow every
+    // open board each time a train departs — the height churn this whole layout
+    // exists to prevent. Over-reserving costs the open board a few dp and is
+    // stable; under-reserving pushes it off screen.
+    val collapsedCost =
+        (STATION_HEADER_HEIGHT + LEG_HEIGHT * MultiLineBoardProcessor.MAX_COLLAPSED_LEGS + HOME_GAP) *
+            collapsedCount.coerceAtLeast(0)
     val budget = viewportHeight -
         (HOME_PADDING_V * 2) - bottomInset -
-        chromeHeight - exploreHeight -
+        chromeHeight - exploreHeight - collapsedCost -
         (HOME_GAP * gapCount)
-    return budget.coerceAtLeast(MIN_BOARD_HEIGHT)
+    // Everything else that is open is held to the floor, so this is what the TOP
+    // open board may take.
+    //
+    // Not an equal share. Dividing the viewport between three open boards gives
+    // three boards nobody can read, and the user has already said which station
+    // matters by pinning it to the top. One board gets the room; the others get
+    // three departures each and the page scrolls, which is the honest outcome of
+    // opening more than a screen holds.
+    val others = (expandedCount - 1).coerceAtLeast(0)
+    val forOthers = (MIN_BOARD_HEIGHT + HOME_GAP) * others
+    return (budget - forOthers).coerceAtLeast(MIN_BOARD_HEIGHT)
 }
-
-/**
- * Share of the viewport one card may take when there are several.
- *
- * Not a fit — several full-height boards cannot fit one screen, and pretending
- * otherwise would shrink each to uselessness. This just keeps any single card
- * from filling the screen so completely that nothing suggests the page scrolls.
- */
-private const val MULTI_BOARD_FRACTION = 0.82f
 
 /**
  * Widest a board is allowed to get, regardless of the window.
@@ -193,8 +239,18 @@ private val MAX_BOARD_WIDTH = 480.dp
 @Composable
 fun SummaryScreen(
     onNavigateToSelection: () -> Unit,
+    /**
+     * Open one station's settings screen — (grouping id, mode, name).
+     *
+     * The three values the settings screen cannot derive on its own: the
+     * grouping id keys the preferences and the boards, and the mode and name are
+     * what it puts at the top before its own data loads.
+     */
+    onOpenStationSettings: (String, String, String) -> Unit = { _, _, _ -> },
     onNavigateToProfile: () -> Unit,
     onOpenScreensaver: () -> Unit = {},
+    /** Home-wide settings (theme, boards, screensaver) — the gear in the top bar. */
+    onOpenHomeSettings: () -> Unit = {},
     viewModel: SummaryViewModel = viewModel { SummaryViewModel() }
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -206,10 +262,10 @@ fun SummaryScreen(
     val announcement by viewModel.announcement.collectAsStateWithLifecycle()
     val homeConfig by viewModel.homeConfig.collectAsStateWithLifecycle()
     val forceUpdate by viewModel.forceUpdate.collectAsStateWithLifecycle()
-    val deletingBoardId by viewModel.isDeletingBoard.collectAsStateWithLifecycle()
     val showWidgetPromo by viewModel.showWidgetPromo.collectAsStateWithLifecycle()
     val showDreamPromo by viewModel.showDreamPromo.collectAsStateWithLifecycle()
     val showNotificationDeniedBanner by viewModel.showNotificationDeniedBanner.collectAsStateWithLifecycle()
+    val stationPrefs by viewModel.stationPrefs.collectAsStateWithLifecycle()
 
     // First authenticated screen — the one place Android asks too. Re-check the
     // denied banner on the user's answer so a denial surfaces it immediately
@@ -237,8 +293,8 @@ fun SummaryScreen(
         topBar = {
             SummaryTopBar(
                 onNavigateToProfile = onNavigateToProfile,
-                onNavigateToSelection = onNavigateToSelection,
-                selectionsEmpty = selections.isEmpty(),
+                onAddStation = onNavigateToSelection,
+                onOpenHomeSettings = onOpenHomeSettings,
                 userInitial = uiState.userInitial,
                 photoUrl = uiState.photoUrl,
             )
@@ -270,17 +326,10 @@ fun SummaryScreen(
                     .padding(top = padding.calculateTopPadding())
             ) {
 
-            // Modal loader while a board delete is in flight. Lives here at
-            // the screen level (not inside the board card) because the card
-            // unmounts the instant its selection is removed from the list —
-            // any spinner inside it would vanish before the backend
-            // unsubscribe + sync completes. zIndex keeps it above content
-            // regardless of declaration order within this Box.
-            LoadingOverlay(
-                visible = deletingBoardId != null,
-                label = "Deleting board…",
-                modifier = Modifier.zIndex(10f),
-            )
+            // NO delete overlay here any more. Deleting a board is done from
+            // the station settings screen, which owns the whole interaction —
+            // confirmation, progress and dismissal — and stays on screen for
+            // it. The card here simply disappears when the selection does.
 
             // Measured heights of everything on the home screen that ISN'T a
             // board. The board's cap is whatever is left over, so these have to
@@ -337,16 +386,66 @@ fun SummaryScreen(
 
                     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                       val density = LocalDensity.current
-                      // Board COUNT — the cap needs to know how many cards share
-                      // the leftover space.
-                      val boardCount = currentSelections.distinctBy { it.groupingId }.size
+                      // Station ids in CARD ORDER: pinned first, then the order
+                      // the stations were added.
+                      //
+                      // Pinning is ordering (see `StationPrefs.pinned`), so this
+                      // one list is the whole feature — the cards below iterate
+                      // it, and the height budget counts it. `sortedBy` is
+                      // stable, so unpinned stations keep their insertion order
+                      // and pinning one station never reshuffles the rest.
+                      val stationIds = remember(currentSelections, stationPrefs) {
+                          currentSelections.map { it.groupingId }.distinct()
+                              .sortedBy { if (stationPrefs[it]?.pinned == true) 0 else 1 }
+                      }
+
+                      // ── Which stations are open ──
+                      //
+                      // A SET, because the user can open several by hand and can
+                      // mark several to open themselves (`openByDefault`).
+                      //
+                      // `null` is not the same as an empty set. Empty means the
+                      // user closed everything during THIS session, which must
+                      // survive; null means they have not touched anything yet,
+                      // and resolves to the stations marked open-by-default — or
+                      // the first station when none are, so the page never opens
+                      // on a list of shut drawers.
+                      //
+                      // Session state, deliberately. What you had open is not a
+                      // setting you configured; the setting is `openByDefault`,
+                      // and it is the only thing that survives a cold start.
+                      var expandedIdsState by rememberSaveable {
+                          mutableStateOf<List<String>?>(null)
+                      }
+                      val expandedIds: Set<String> = when {
+                          // One station has nothing to collapse for.
+                          stationIds.size == 1 -> stationIds.toSet()
+                          expandedIdsState == null -> {
+                              val defaults = stationIds.filter { stationPrefs[it]?.openByDefault == true }
+                              if (defaults.isNotEmpty()) defaults.toSet()
+                              else setOfNotNull(stationIds.firstOrNull())
+                          }
+                          // A station can be deleted while it is open, leaving an
+                          // id that matches no card — which would then be counted
+                          // in the height budget.
+                          else -> expandedIdsState!!.filter { it in stationIds }.toSet()
+                      }
+
+                      // The board that gets the room left over. Everything else
+                      // open is held to the floor, because dividing the viewport
+                      // equally between three boards gives three boards nobody
+                      // can read — and the user has already told us which
+                      // station matters by pinning it to the top.
+                      val primaryStationId = stationIds.firstOrNull { it in expandedIds }
+
                       // `maxHeight` is measured INSIDE the Scaffold's content
                       // padding, so the bottom safe-area inset is already gone
                       // from it — but the list adds it back as its own bottom
                       // padding, so it does come out of the budget here.
-                      val boardMaxHeight = boardMaxHeight(
+                      val primaryBoardMaxHeight = boardMaxHeight(
                           viewportHeight = maxHeight,
-                          boardCount = boardCount,
+                          expandedCount = expandedIds.size,
+                          collapsedCount = stationIds.size - expandedIds.size,
                           chromeHeight = with(density) { chromePx.toDp() },
                           exploreHeight = with(density) { explorePx.toDp() },
                           bottomInset = bottomInset,
@@ -489,7 +588,13 @@ fun SummaryScreen(
                             // Group on the HUB, not the fetch key. On bus each direction resolves
                             // to its own pole naptan, so grouping by `station` would split one
                             // stop into a card per pole, all with the same name.
-                            val stationGroups = currentSelections.groupBy { it.groupingId }.entries.toList()
+                            // Grouped by station, then walked in `stationIds`
+                            // order so pinned stations come first — the map's own
+                            // order is insertion order and knows nothing of pins.
+                            val byStation = currentSelections.groupBy { it.groupingId }
+                            val stationGroups = stationIds.mapNotNull { id ->
+                                byStation[id]?.let { id to it }
+                            }
 
                             stationGroups.forEach { (stationId, groupSelections) ->
                                 val sections = groupSelections.map { selection ->
@@ -505,21 +610,34 @@ fun SummaryScreen(
                                 }
                                 val primary = groupSelections.first()
 
+                                val prefs = stationPrefs[stationId] ?: StationPrefs()
+
                                 StationBoard(
+                                    expanded = stationId in expandedIds,
+                                    onToggleExpanded = if (stationGroups.size > 1) {
+                                        {
+                                            expandedIdsState =
+                                                if (stationId in expandedIds) (expandedIds - stationId).toList()
+                                                else (expandedIds + stationId).toList()
+                                        }
+                                    } else null,
+                                    pinned = prefs.pinned,
+                                    opensByDefault = prefs.openByDefault,
+                                    showHero = !prefs.hideHero,
+                                    onOpenSettings = {
+                                        onOpenStationSettings(stationId, primary.mode, primary.stationName)
+                                    },
                                     stationName = primary.stationName,
                                     mode = primary.mode,
                                     sections = sections,
-                                    onDeleteSection = { sel ->
-                                        if (deletingBoardId == null) viewModel.deleteSelection(sel)
-                                    },
-                                    onDeleteStation = {
-                                        if (deletingBoardId == null) viewModel.deleteStation(stationId)
-                                    },
                                     homeConfig = homeConfig,
                                     isOnline = uiState.isOnline,
-                                    isDeleting = deletingBoardId != null &&
-                                        sections.any { it.key == deletingBoardId },
-                                    maxHeight = boardMaxHeight,
+                                    // The top open station gets the leftover
+                                    // room; the rest get the floor, which is
+                                    // three departures (MIN_BOARD_HEIGHT).
+                                    maxHeight = if (stationId == primaryStationId) {
+                                        primaryBoardMaxHeight
+                                    } else MIN_BOARD_HEIGHT,
                                     maxWidth = MAX_BOARD_WIDTH,
                                 )
                             }
@@ -590,13 +708,12 @@ fun SummaryScreen(
 @Composable
 private fun SummaryTopBar(
     onNavigateToProfile: () -> Unit,
-    onNavigateToSelection: () -> Unit,
-    selectionsEmpty: Boolean,
+    onAddStation: () -> Unit,
+    onOpenHomeSettings: () -> Unit,
     userInitial: String = "?",
     photoUrl: String? = null,
 ) {
     val primary = MaterialTheme.colorScheme.primary
-    val onPrimary = MaterialTheme.colorScheme.onPrimary
     val onBackground = MaterialTheme.colorScheme.onBackground
     CenterAlignedTopAppBar(
         title = {
@@ -640,20 +757,42 @@ private fun SummaryTopBar(
             }
         },
         actions = {
-            IconButton(onClick = onNavigateToSelection, modifier = Modifier.padding(end = 8.dp)) {
-                Surface(
-                    shape = CircleShape,
-                    color = primary.copy(alpha = 0.10f),
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            if (selectionsEmpty) Icons.Default.Add else Icons.Default.Edit,
-                            contentDescription = "Action",
-                            tint = primary
-                        )
-                    }
+            // ADD first, then the app's own settings.
+            //
+            // This button used to flip between + and a pencil depending on
+            // whether any stations existed, and the pencil was a lie: it opened
+            // the same "pick a mode, pick a station" flow the plus did, which
+            // ADDS. Editing is per station now, behind that station's own
+            // settings, so the top bar has exactly one job here.
+            //
+            // The gear sits to the RIGHT of it, on the very edge, because it is
+            // the rarer of the two and the primary action should not be the one
+            // pushed inboard. It is a GEAR, deliberately not the sliders glyph a
+            // station card uses (`Tune`): two settings surfaces exist now, and
+            // the same icon on both would say they lead to the same place. A
+            // gear is the heavier, app-wide one.
+            Surface(
+                onClick = onAddStation,
+                shape = CircleShape,
+                color = primary.copy(alpha = 0.10f),
+                modifier = Modifier.size(38.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = "Add station",
+                        tint = primary,
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
+            }
+            IconButton(onClick = onOpenHomeSettings, modifier = Modifier.padding(end = 6.dp)) {
+                Icon(
+                    Icons.Rounded.Settings,
+                    contentDescription = "Home settings",
+                    tint = onBackground.copy(alpha = 0.5f),
+                    modifier = Modifier.size(22.dp),
+                )
             }
         },
         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(

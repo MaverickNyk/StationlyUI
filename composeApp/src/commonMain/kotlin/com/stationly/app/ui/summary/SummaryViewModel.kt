@@ -16,6 +16,8 @@ import com.stationly.core.util.FreshDataNotifier
 import com.stationly.core.util.GlobalBoardProcessor
 import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.delay
+import com.stationly.app.ui.util.StationPrefs
+import com.stationly.app.ui.util.StationPrefsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -90,9 +92,6 @@ class SummaryViewModel(
     private val _forceUpdate = MutableStateFlow(false)
     val forceUpdate: StateFlow<Boolean> = _forceUpdate.asStateFlow()
 
-    private val _isDeletingBoard = MutableStateFlow<String?>(null)
-    val isDeletingBoard: StateFlow<String?> = _isDeletingBoard.asStateFlow()
-
     private val _showWidgetPromo = MutableStateFlow(false)
     val showWidgetPromo: StateFlow<Boolean> = _showWidgetPromo.asStateFlow()
 
@@ -102,8 +101,18 @@ class SummaryViewModel(
     private val _showNotificationDeniedBanner = MutableStateFlow(false)
     val showNotificationDeniedBanner: StateFlow<Boolean> = _showNotificationDeniedBanner.asStateFlow()
 
+    /**
+     * Per-station card preferences (pin, hide hero).
+     *
+     * Passed straight through from [StationPrefsRepository] rather than mirrored
+     * into a flow of this VM's own: the station settings screen writes the same
+     * preferences from a different destination, and a mirror would go stale the
+     * moment it did.
+     */
+    val stationPrefs: StateFlow<Map<String, StationPrefs>> = StationPrefsRepository.prefs
 
     init {
+        viewModelScope.launch { StationPrefsRepository.ensureLoaded() }
         viewModelScope.launch { fetchAnnouncement() }
         viewModelScope.launch { fetchHomeConfig() }
         viewModelScope.launch {
@@ -324,99 +333,6 @@ class SummaryViewModel(
                 )
                 performHaptic(HapticType.ERROR)
                 scheduleAutoRetry()
-            }
-        }
-    }
-
-    fun deleteSelection(selection: UserSelection) {
-        viewModelScope.launch { deleteSelectionInternal(selection) }
-    }
-
-    private suspend fun deleteSelectionInternal(selection: UserSelection) {
-        _isDeletingBoard.value = selection.boardKey
-        try {
-            // Everything that survives this delete. Passed down so the
-            // lifecycle use case can tell which stream/topic ids are still
-            // in use by another line and must NOT be unsubscribed — with
-            // several lines at one station, tearing down Station_<id>
-            // unconditionally would silence the siblings we're keeping.
-            //
-            // Read from the repository rather than this VM's `_selections`
-            // mirror: the mirror is refreshed asynchronously by the collector
-            // in init, so back-to-back deletes (deleteStation) would compute
-            // this against a stale list and re-subscribe what they just tore
-            // down. The repository updates synchronously inside the delete.
-            val remainingSelections = selectionRepository.selections.value.filterNot {
-                it.station == selection.station &&
-                    it.line == selection.line &&
-                    it.direction == selection.direction
-            }
-
-            stationLifecycleUseCase.discardStation(
-                selection,
-                clearSelectionInRepo = true,
-                remaining = remainingSelections,
-            )
-
-            val currentMap = _predictions.value.toMutableMap()
-            currentMap.remove(selection.boardKey)
-            _predictions.value = currentMap
-
-            val currentUpdates = _stationUpdates.value.toMutableMap()
-            currentUpdates.remove(selection.boardKey)
-            _stationUpdates.value = currentUpdates
-
-            // Line status is shared across every board riding that line, so
-            // only forget it once no remaining selection still needs it.
-            val statusKey = "${selection.mode}_${selection.line}".lowercase()
-            val statusStillUsed = remainingSelections.any {
-                "${it.mode}_${it.line}".lowercase() == statusKey
-            }
-            if (!statusStillUsed) {
-                val currentLineStatuses = _lineStatuses.value.toMutableMap()
-                currentLineStatuses.remove(statusKey)
-                _lineStatuses.value = currentLineStatuses
-            }
-
-            val uid = Platform.storageManager.loadString("firebase_user_uid")
-            if (uid != null) {
-                try {
-                    val mapped = remainingSelections.map {
-                        com.stationly.core.model.sdui.SubscribedStation(
-                            id = it.station, parentStationId = it.parentStationId, name = it.stationName,
-                            line = it.line, mode = it.mode, direction = it.direction
-                        )
-                    }
-                    sduiApi.syncStations(uid, mapped)
-                } catch (_: Exception) {}
-            }
-            performHaptic(HapticType.SUCCESS)
-        } catch (_: Exception) {
-            performHaptic(HapticType.ERROR)
-        } finally {
-            _isDeletingBoard.value = null
-        }
-    }
-
-    /**
-     * Remove every line tracked at a station — the "Remove All Lines" action on
-     * a multi-line card.
-     *
-     * Deletes sequentially rather than in parallel because each delete reads the
-     * repository's current list to decide which stream/topic ids are still
-     * needed; running them concurrently would let two deletes both see the other
-     * as "still using" a topic and leave it subscribed forever.
-     */
-    fun deleteStation(stationId: String) {
-        viewModelScope.launch {
-            // `stationId` is the CARD's grouping id (the hub), which is what the
-            // card was built from. Matching on `station` would miss every row
-            // whose resolved pole differs from the hub — on bus that is one of
-            // the two directions, so deleting the card would silently orphan a
-            // board that keeps streaming with no card to show it.
-            val doomed = selectionRepository.selections.value.filter { it.groupingId == stationId }
-            for (selection in doomed) {
-                deleteSelectionInternal(selection)
             }
         }
     }

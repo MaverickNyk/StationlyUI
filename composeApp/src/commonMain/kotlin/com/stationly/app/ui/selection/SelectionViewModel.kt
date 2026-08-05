@@ -24,8 +24,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -251,6 +253,68 @@ class SelectionViewModel(
         }
     }
 
+    /**
+     * Open the flow already on a station, at the LINE step — "Edit station" from
+     * the home screen.
+     *
+     * Drives the same [onDropdownSelected] path a tapping user would, rather
+     * than writing `_selections` directly: that call is what fetches the line
+     * list and what runs [prefillPicksForStation], so a shortcut around it lands
+     * on an empty line step with none of the station's saved boards ticked.
+     *
+     * [stationName] is carried because the later steps read the station's label
+     * out of `dropdownData["station"]` ("Lines from Oxford Circus"), and that
+     * list is the NEARBY-stations result — which need not contain a station the
+     * user saved somewhere else, or anything at all before location resolves. A
+     * synthetic option is seeded so the copy reads correctly either way; a real
+     * fetch overwrites it.
+     *
+     * Waits for the layout because [onDropdownSelected] resolves its cascade
+     * against `layout.components`, and with no layout there is nothing to
+     * cascade into.
+     */
+    /**
+     * The station [openForStation] was entered on, kept so a later refresh of the
+     * station list cannot lose it.
+     *
+     * `fetchNearbyStations` and `searchStations` REPLACE `dropdownData["station"]`
+     * wholesale, and neither is guaranteed to contain a station the user saved
+     * somewhere else. Losing it is not cosmetic: `saveSelection` reads the
+     * station's display name out of that same list and falls back to the naptan,
+     * so adding a line while editing such a station would have persisted a board
+     * titled "940GZZLUKSX".
+     */
+    private var editStationOption: SduiDropdownOption? = null
+
+    /** Re-inserts [editStationOption] into a freshly fetched station list. */
+    private fun withEditStation(options: List<SduiDropdownOption>): List<SduiDropdownOption> {
+        val pinned = editStationOption ?: return options
+        return if (options.any { it.id == pinned.id }) options else listOf(pinned) + options
+    }
+
+    fun openForStation(mode: String, stationId: String, stationName: String) {
+        viewModelScope.launch {
+            // The layout arrives from cache within a frame or two, or from the
+            // network. Bounded so a dead backend leaves the user on the mode
+            // step — the normal flow — rather than on a spinner.
+            val layout = withTimeoutOrNull(5_000) {
+                _uiState.first { it.layout != null }.layout
+            } ?: return@launch
+
+            if (layout.components.none { it is SduiAppComponent.Dropdown && it.id == "station" }) return@launch
+
+            editStationOption = SduiDropdownOption(id = stationId, label = stationName)
+
+            onDropdownSelected("mode", mode)
+
+            val seeded = _dropdownData.value.toMutableMap()
+            seeded["station"] = withEditStation(seeded["station"] ?: emptyList())
+            _dropdownData.value = seeded
+
+            onDropdownSelected("station", stationId)
+        }
+    }
+
     private fun loadCachedLayout() {
         viewModelScope.launch {
             val cached = storageManager.loadString("cached_app_layout") ?: return@launch
@@ -353,7 +417,7 @@ class SelectionViewModel(
                 val nearbyStations = sduiService.getNearbyStations(lat, lon, modeId)
                 if (nearbyStations.isNotEmpty()) {
                     val updatedData = _dropdownData.value.toMutableMap()
-                    updatedData["station"] = nearbyStations
+                    updatedData["station"] = withEditStation(nearbyStations)
                     _dropdownData.value = updatedData
                     _uiState.value = _uiState.value.copy(
                         isLocating = false, isGpsUnavailable = false,
@@ -387,7 +451,7 @@ class SelectionViewModel(
                     "/stations/search?searchKey=${query.trim()}&mode=$mode$locationSuffix"
                 )
                 val updatedData = _dropdownData.value.toMutableMap()
-                updatedData["station"] = results
+                updatedData["station"] = withEditStation(results)
                 _dropdownData.value = updatedData
                 _uiState.value = _uiState.value.copy(
                     isSearchEmpty = results.isEmpty(), isGpsUnavailable = false
@@ -1150,6 +1214,7 @@ class SelectionViewModel(
     fun dismissSuccessDialog() = dismissSuccess()
 
     fun clearSelections() {
+        editStationOption = null
         _selections.value = emptyMap()
         _dropdownData.value = emptyMap()
         clearLinePicks()

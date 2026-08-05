@@ -177,6 +177,230 @@ unchanged.
   changes width mid-flip, and the destination was handed space the ETA then drew
   back over.
 
+## 10. iOS home: the station header lives OUTSIDE the panel (2026-08-04)
+
+§1 removed a duplicated station name at a time when a card was one station's one
+line. With several stations on the page that inverted: the only place the name
+appeared was **inside** the dot-matrix panel, so the two things above the panel —
+the line pills and the hero — were unlabelled, and "3 min" belonged to no visible
+station.
+
+The roundel and station name now sit in a **card header above the pills**
+(`Board.kt` `StationHeader`), and the panel's own strip is gone. Reading order is
+station → lines → next train → board. This is iOS-only; Android still renders the
+name in the panel and is untouched.
+
+**No expand/collapse chevron.** The whole header row is the control. A chevron
+next to a real button (settings) read as a second button, and it competed for the
+width the station name needed. State is legible without it: legs mean collapsed,
+a board means open.
+
+**The pin marker uses the app accent, never the card's line colour.** `accent`
+varies per card, so one shared meaning looked like several different marks.
+
+## 11. iOS home: collapsed stations, pinning, and the height budget
+
+With several stations the page was a long scroll of full-height boards. A station
+is now **collapsible**, and collapsed it shows a **leg per direction** — the
+soonest departure each way (`MultiLineBoardProcessor.collapsedLegs`).
+
+- Legs group on the **same key the board groups on** (rail: platform; bus: pole),
+  so a leg can never name a platform the open board would not show. At an
+  ordinary bus stop both sides of the road fall out as separate legs with no
+  direction special case.
+- Ordered on `StationlyFormatters.arrivalSortKey`, never the `eta` label — the
+  label is rounded and deliberately bumped, so ordering by it puts the wrong
+  train first exactly when two are close.
+- A leg shares ONE row with the station name, the destination and the countdown,
+  so its label is **not** the board's header text (`legWhere`): short line name
+  always, `Platform` → `Plat.`, **no compass** (the destination beside it already
+  says which way), and buses drop the `Bus` prefix.
+- Capped at **2** (`MAX_COLLAPSED_LEGS`). Three legs is a board again, at which
+  point the user should open it.
+
+**Two settings, two questions.** `pinned` answers WHERE a station sits;
+`openByDefault` answers WHETHER it starts open. They were briefly one setting,
+which satisfied neither: "pin" promises ordering everywhere a user has met it
+(chats, notes, files, mail), and a user can legitimately want the station they
+check twice a day at the top without its board unfolded — or a station further
+down already open when they scroll to it.
+
+- **`pinned`** sorts to the top, keeps its relative order (`sortedBy` is stable,
+  so pinning one never reshuffles the rest), carries a pin marker, and — being
+  the top open board — gets the leftover height.
+- **`openByDefault`** expands the card on EVERY launch, not just the first.
+  Several stations may set it. Marked with an unfold glyph, deliberately a
+  different icon from the pin: one shared mark for two independent settings would
+  be a lie half the time.
+
+**Which stations are open is a SET, not one id** — the user can open several by
+hand — and it is SESSION state, not a preference. What you had open is not
+something you configured; the setting is `openByDefault`, and it is the only part
+that survives a cold start. `null` (untouched) resolves to the open-by-default
+stations, or the first station when none are marked; an EMPTY set means the user
+closed everything this session and must survive.
+
+**The height budget is derived, and it is not an equal share** (`boardMaxHeight`).
+Collapsed cards cost a known header + legs each and come out of the budget first.
+What is left goes to the TOP open board; every other open board is held to
+`MIN_BOARD_HEIGHT`. Dividing the viewport equally between three open boards gives
+three boards nobody can read, and the user has already said which station matters
+by pinning it. Collapsed
+cards are budgeted at the MAXIMUM leg count, not the actual one: the real number
+moves with live predictions, and budgeting on it would re-flow every open board
+each time a train departs — the height churn §5/§8/§9 exist to prevent. This
+replaced `MULTI_BOARD_FRACTION` (82% of the viewport per card), which was damage
+control for a layout that could not fit.
+
+**The floor is sized in ROWS, not in card height.** `MIN_BOARD_HEIGHT` is derived
+from what a card spends before its panel gets anything — header, pills, hero,
+status strip, footer — plus `MIN_VISIBLE_ROWS = 3`. The previous 280dp was picked
+against the CARD and left the panel one row with several stations open:
+technically one viewport, but a departure board showing one departure is not a
+departure board. Past the floor the PAGE scrolls, which is the honest outcome of
+opening more boards than a screen holds.
+
+## 12. iOS: per-station settings are a SCREEN
+
+`StationSettingsScreen` (route `station/settings`) owns everything about one
+card: its boards, its layout, its pin, and its deletion. It replaced a popover on
+the card, which could not carry any of the four honestly.
+
+- **The layout choice is drawn, not described.** "Hide next departure" is a
+  sentence the user has to simulate; the picker renders both real layouts with
+  plausible departures on them — the hero with its line dot, destination and
+  countdown, then the black panel with an amber platform header and rows. Grey
+  placeholder bars were the first attempt and could not answer the question being
+  asked ("what does my card look like"): they show a shape where the user needs
+  to see a board. The board-only tile draws the EXTRA rows the hero was costing,
+  because that is the entire trade.
+  The sample data is fixed and fictional on purpose — it has to render the same
+  for a station whose last train has gone, and "No departures" would be
+  describing tonight rather than the layout.
+- **The boards list groups by LINE, with a row per direction.** Flat, it repeated
+  the line name once per direction ("Victoria, Victoria"), which reads as a
+  duplicate and gives the user two identical rows to choose between when deleting
+  one. The direction is the whole difference, so the direction labels the
+  deletable row.
+- **A board is named by a priority order, not a field** (`core/util/BoardLabels`,
+  tested): compass
+  bearing ("Northbound") → the filter the user set ("Via Green Park", "Only
+  Brixton") → where the trains actually go ("Towards Putney Bridge", from the
+  departures already cached in SQLite). "Inbound"/"Outbound" is the LAST resort,
+  not the first — it means "towards the centre of the network", an operational
+  fact about TfL rather than about the user's journey, and it told someone
+  choosing which of two boards to delete almost nothing. Every rung above it is a
+  phrase they would use themselves. The `towards` fallback is read from cache,
+  never fetched: this screen must be readable instantly and offline, and where a
+  board goes is a stable fact, not a live one.
+- **Preferences are per-device and local** (`StationPrefsRepository`, keyed on
+  `UserSelection.groupingId`). Pinning and hiding a hero are statements about one
+  device's home screen, not about what the user tracks, so they are deliberately
+  NOT synced with the selections. One live copy for the whole app, because two
+  screens now edit the same preferences and two independently-loaded copies drift
+  the moment one writes.
+- **Filters are explained here.** The dot-matrix panel no longer carries "VIA
+  GREEN PARK" — it is app chrome on a surface that must read as station signage —
+  so a filtered board explains itself in its settings row instead.
+- **Editing lines enters the picker at the LINE step** and back LEAVES the flow.
+  The mode and station were never chosen in that flow — they came from the card —
+  so stepping back through them walks the user forwards through screens they did
+  not pick and strands them at the mode list.
+- The screen re-reads its boards on `ON_RESUME`: the line picker edits through
+  its own `SelectionRepository` instance, so returning would otherwise show the
+  list as it was before the user's own edit. Same hook, same reason, as the home
+  screen.
+- Deleting the last board deletes the station, so the screen dismisses itself and
+  forgets the preferences — or a re-added station silently comes back pinned.
+- **Deleting is two jobs, and the second is easy to forget.**
+  `StationLifecycleUseCase.discardStation` tears down the LOCAL state (topics,
+  cached rows, the widget) and says nothing to the backend. Without a matching
+  `SyncSubscribedStationsUseCase.sync` the deletion is local only: the backend
+  still lists the board, and a cloud restore or a second device brings it back.
+  That sync now lives in one place instead of being re-implemented at every call
+  site, which is how the settings screen came to be missing it.
+
+## 13. A hidden hero leaves the pills with nothing to switch
+
+The line pills select which line the hero shows. With the hero hidden they still
+belong on the card — they are the board's legend and carry each line's status dot
+— but a tap has nothing to do, and a control that silently does nothing reads as
+broken.
+
+Tapping one now floats a hint over the panel offering to turn the countdown back
+on (`HeroHint`, dismissing itself after `HERO_HINT_MS`). Two rules shape it:
+
+- **It floats; it does not take a row.** Anything occupying layout space would
+  push the board down as it appeared and pull it back as it went — under the
+  user's finger, milliseconds after they tapped (§5, §8, §9).
+- **It is an offer, not an error.** The user turned the countdown off, quite
+  possibly deliberately, so the hint says what they are missing and hands them
+  the switch rather than correcting them.
+
+`AnimatedVisibility` is called from its own composable, not inline: the enclosing
+card is a `Column`, and the `ColumnScope` extension wins over the plain overload
+and lays the hint out IN the column instead of over the panel.
+
+## 14. iOS home: the top bar adds; it never "edits"
+
+The action button flipped between `+` and a pencil depending on whether any
+stations existed, and the pencil was a lie — it opened the same "pick a mode,
+pick a station" flow the plus did, which ADDS. Editing is per station now, behind
+that station's own settings (§12), so the top bar has one job and says it in a
+glyph: **+**. To its RIGHT, on the very edge, a gear opens `HomeSettingsScreen` —
+theme, bulk board actions, screensaver, notifications. Order matters: the gear is
+the rarer of the two, and the primary action should not be the one pushed
+inboard.
+
+The gear is deliberately NOT the sliders glyph (`Tune`) a station card uses.
+There are two settings surfaces now, and the same icon on both would say they
+lead to the same place. The split is the rule: anything true of ONE station lives
+on its card's settings; only cross-station settings live in the gear.
+
+### Kotlin/Native: a ViewModel's `init` runs BEFORE properties declared under it
+
+`StationSettingsViewModel` segfaulted the instant the settings screen opened.
+`viewModelScope` is `Dispatchers.Main.immediate`, so the coroutine its `init`
+launches runs **synchronously** during construction when the screen composes on
+the main thread — at which point any property declared *below* `init` is still
+null. The coroutine wrote to one (`_towards`), and Kotlin/Native has no null
+check to turn that into an exception: `EXC_BAD_ACCESS` at address 0, with the
+faulting frame `MutableStateFlow#<set-value>`.
+
+Declare every property an `init` coroutine touches ABOVE the `init` block. The
+crash report is the fast way to find this class of bug — pull it straight off the
+device rather than guessing:
+
+```
+xcrun devicectl device copy from --device <id> --domain-type systemCrashLogs \
+  --source . --destination <dir>
+```
+
+Each `.ips` is a JSON header line followed by a JSON body; the body's
+`faultingThread` indexes `threads`, and the frames carry demangled Kotlin names.
+
+## 15. One drag belongs to one scroller
+
+The departure rows scroll inside a card inside the home page's scroller. Chaining
+the leftover of an inner drag to the outer one was tried and is wrong: reaching
+the last departure slid the whole home screen away mid-read — the board throwing
+the user off it.
+
+`boardScrollOwnership` decides ownership **once per gesture**: if the rows could
+still move when the drag started, everything it produces (including the fling)
+stays in the rows and they stop, and bounce, at their end; otherwise nothing is
+consumed and the page scrolls as though the card were not scrollable at all.
+Lifting the finger clears the decision, so the next touch is judged fresh — which
+is what makes a second drag scroll the page.
+
+Deciding per gesture rather than per frame is load-bearing. "Consume whenever the
+rows are at their end" deadlocks the page: at the bottom of the rows every
+subsequent drag is also leftover, so the page could never move again.
+
+The inner overscroll bounce, previously disabled to make chaining feel smooth, is
+back on purpose — it is how iOS says "this is the end of this list", which is the
+signal that was missing.
+
 ## Consistency contract (don't break)
 - The board renders on home + widget + dream from the **same** `widget_departure_*.xml`
   + `GlobalBoardProcessor` + `StationlyFormatters`. Presentation rules belong in those
@@ -202,7 +426,12 @@ unchanged.
   is dropped (`MultiLineBoardProcessor.compassOrNull`).
 - Grouping keys: rail groups by **platform**, buses by **pole naptan**
   (`UserSelection.station`) — never by `stopLetter`, which is null at every
-  unlettered stop and collapses both directions into one block.
+  unlettered stop and collapses both directions into one block. Anything that
+  summarises a board (collapsed legs, §11) groups on the SAME key, or it
+  describes a platform the board itself would not show.
+- **The dot-matrix panel carries station signage only** — platform headers,
+  departures, status. App chrome (filter captions, settings affordances) belongs
+  on the card around it or on the settings screen (§12).
 
 ## iOS launch screen
 `iosApp/project.yml` → `UILaunchScreen` (`UIColorName: LaunchBackground`,

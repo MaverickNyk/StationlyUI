@@ -6,6 +6,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -16,6 +19,8 @@ import com.stationly.app.ui.login.LoginScreen
 import com.stationly.app.ui.login.PlatformAuthProvider
 import com.stationly.app.ui.profile.ProfileScreen
 import com.stationly.app.ui.selection.SelectionScreen
+import com.stationly.app.ui.station.HomeSettingsScreen
+import com.stationly.app.ui.station.StationSettingsScreen
 import com.stationly.app.ui.summary.SummaryScreen
 
 @Composable
@@ -44,6 +49,31 @@ fun AppNavigation(
         if (pendingResetCode != null) {
             navController.navigate("auth/reset-confirm/$pendingResetCode")
         }
+    }
+
+    /*
+     * Which station the settings screen and the line picker are FOR, held here
+     * rather than encoded into their routes.
+     *
+     * A station name is user-facing text with spaces and ampersands in it
+     * ("King's Cross St. Pancras", "Elephant & Castle"), so a route argument
+     * would need percent encoding on the way in and out for no gain: every
+     * screen involved lives in this one NavHost, so the value never has to
+     * survive a process boundary. If it is lost to process death the settings
+     * route pops itself and the picker simply opens at the mode step.
+     */
+
+    /** (grouping id, mode, name) of the station whose settings screen is open. */
+    var settingsStation by remember {
+        mutableStateOf<Triple<String, String, String>?>(null)
+    }
+
+    /**
+     * (grouping id, mode, name) of the station the line picker was opened ON, or
+     * null when the picker is adding a new station from scratch.
+     */
+    var pendingEditStation by remember {
+        mutableStateOf<Triple<String, String, String>?>(null)
     }
 
     // iOS-style push/pop: new screen slides in from the right, the previous one
@@ -146,14 +176,52 @@ fun AppNavigation(
 
         composable("summary") {
             SummaryScreen(
-                onNavigateToSelection = { navController.navigate("selection") },
+                onNavigateToSelection = {
+                    pendingEditStation = null
+                    navController.navigate("selection")
+                },
+                onOpenStationSettings = { stationId, mode, stationName ->
+                    settingsStation = Triple(stationId, mode, stationName)
+                    navController.navigate("station/settings")
+                },
                 onNavigateToProfile = { navController.navigate("profile") },
-                onOpenScreensaver = { navController.navigate("dream/settings") }
+                onOpenScreensaver = { navController.navigate("dream/settings") },
+                onOpenHomeSettings = { navController.navigate("home/settings") }
             )
+        }
+
+        composable("home/settings") {
+            HomeSettingsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenScreensaver = { navController.navigate("dream/settings") },
+            )
+        }
+
+        composable("station/settings") {
+            // Nothing to show without a station — only reachable via the home
+            // screen, which always sets it, but a restored back stack could land
+            // here with it cleared.
+            val target = settingsStation
+            if (target == null) {
+                LaunchedEffect(Unit) { navController.popBackStack() }
+            } else {
+                val (stationId, mode, stationName) = target
+                StationSettingsScreen(
+                    stationId = stationId,
+                    stationName = stationName,
+                    mode = mode,
+                    onBack = { navController.popBackStack() },
+                    onEditLines = {
+                        pendingEditStation = target
+                        navController.navigate("selection")
+                    },
+                )
+            }
         }
 
         composable("selection") {
             SelectionScreen(
+                editStation = pendingEditStation,
                 onNavigateToSummary = {
                     navController.navigate("summary") {
                         popUpTo("summary") { inclusive = true }

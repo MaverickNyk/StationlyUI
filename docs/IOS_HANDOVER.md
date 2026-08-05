@@ -1,6 +1,6 @@
 # iOS — consolidated handover
 
-**Branch:** `ios-parity` · **Last updated:** 2026-08-02
+**Branch:** `ios-parity` · **Last updated:** 2026-08-05
 **Status:** builds clean, deployed and running on a physical iPhone 11 against
 **staging**. All four compile gates green (§6).
 
@@ -190,6 +190,15 @@ independent — these are the highest-risk-if-lost changes):
 `BOARD_AND_DREAM_UI.md`. Includes the SDUI-path removal — read §6b before
 committing, it is the one item that changes product capability.
 
+**f) Collapsible stations + per-station settings (2026-08-04/05)** — see §6c.
+`ui/station/**` (new: `StationSettingsScreen`, `StationSettingsViewModel`,
+`HomeSettingsScreen`), `ui/util/StationPrefs.kt` (new),
+`core/util/BoardLabels.kt` (new, tested),
+`core/usecase/SyncSubscribedStationsUseCase.kt` (new),
+`MultiLineBoardProcessor.kt`, `Board.kt`, `SummaryScreen.kt`,
+`SummaryViewModel.kt`, `SelectionScreen.kt`, `SelectionViewModel.kt`,
+`AppNavigation.kt`, `BOARD_AND_DREAM_UI.md` §10–§15.
+
 ---
 
 ## 6. This session: review, fixes, verification
@@ -353,6 +362,74 @@ and `:core:iosSimulatorArm64Test` needs a simulator SDK this machine does not
 have. Kotlin/Native also rejects **commas inside backtick test names** — use an
 em dash.
 
+## 6c. Session 2026-08-04/05: collapsible stations, per-station settings
+
+The home screen went from a scroll of full-height boards to a list of stations
+of which one is open. Everything in this section is **iOS-only** — Android's
+home is untouched, and `:composeApp`'s android target is consumed by nothing
+(§1 topology).
+
+### What changed
+- **The station header moved OUT of the dot-matrix panel** onto the card, above
+  the line pills, so the pills and the hero are finally labelled. No chevron —
+  the whole header row is the control.
+- **Cards collapse** to a header plus one **leg per platform/pole** (the soonest
+  departure each way, `MultiLineBoardProcessor.collapsedLegs`, tested).
+- **Two per-station settings** (`StationPrefs`, local-only, never synced):
+  `pinned` (sorts to the top, industry meaning of "pin") and `openByDefault`
+  (expands on every launch). Both are marked in the header with different icons.
+  `hideHero` hides the countdown for that station.
+- **`StationSettingsScreen`** owns one station: layout picker (two DRAWN
+  previews of the real card), the two position toggles, lines grouped by line
+  with a row per direction, and delete. **`HomeSettingsScreen`** (gear in the
+  top bar) owns the cross-station settings.
+- **The top bar's pencil is gone.** It opened the add flow, which does not edit.
+  Now `+` alone, with the gear to its right.
+- **Nested scroll ownership** (`boardScrollOwnership`): one drag belongs to one
+  scroller, decided once per gesture, so the board no longer slides the page
+  away when you reach the last departure.
+
+Full reasoning: `BOARD_AND_DREAM_UI.md` §10–§15. **Read it before changing any
+of this** — several rules there are counter-intuitive until you have hit them.
+
+### Bugs found in the review pass (all fixed)
+1. **Deleting a board from the settings screen never told the backend.**
+   `discardStation` is LOCAL teardown only; the sync lived inline in the home
+   VM's delete path and did not come along. A cloud restore or a second device
+   would have resurrected the board. Now one shared
+   `SyncSubscribedStationsUseCase`.
+2. **`SelectionViewModel.openForStation` could lose its seeded station.** A
+   nearby/search refresh replaces `dropdownData["station"]` wholesale, and
+   `saveSelection` reads the display name from that list with `?: stationId` —
+   adding a line while editing such a station would have saved a board named
+   `940GZZLUKSX`. Held in `editStationOption` and re-inserted now.
+3. **A Kotlin/Native SIGSEGV on opening the settings screen.** A property
+   declared BELOW `init` was written by the coroutine `init` launches —
+   `viewModelScope` is `Main.immediate`, so that coroutine runs synchronously
+   during construction. See the boxed note in `BOARD_AND_DREAM_UI.md` §14,
+   including how to pull the crash report off the device.
+
+### Removed
+`SummaryViewModel.deleteSelection` / `deleteStation` / `deleteSelectionInternal`
+and `isDeletingBoard` (~96 lines, unreachable once delete moved to the settings
+screen), the home screen's delete `LoadingOverlay`, `BoardDeleteDialog`,
+`BoardDeleteBullet`, the board's filter captions, and `MULTI_BOARD_FRACTION` /
+`NEXT_CARD_PEEK`.
+
+### Tests
+`core:testDebugUnitTest` — **62 green**, of which 16 are new:
+7 in `MultiLineBoardProcessorTest` (collapsed legs) and 9 in the new
+`BoardLabelsTest` (how a board names itself on the settings screen).
+
+### Still open
+- **Backend line-status subscriptions were STILL not reviewed** (§6b's top
+  item, deferred again). One-per-line vs one-per-board.
+- Two unlettered bus poles at one hub still render the same label.
+- `HomeSettingsScreen`'s bulk actions write a preferences row per station; that
+  is fine at today's station counts but is a full-map rewrite each time.
+- Nothing here is covered by UI tests — `:composeApp` has no test source set,
+  which is why `BoardLabels` was moved into `:core` to be testable at all.
+
 ## 7. Which doc to open
 
 | Doc | Reach for it when |
@@ -364,6 +441,7 @@ em dash.
 | `IOS_WIDGET_DESIGN.md` | Widget layout, the archiver pitfall, paging decision. |
 | `IOS_PARITY_PLAN.md` | Original plan + environment/config setup. |
 | `IOS_INFRA_AUDIT.md` | Security / testing / a11y / architecture audit findings. |
+| `BOARD_AND_DREAM_UI.md` | The home screen, the board, collapsing/pinning stations, per-station settings. §10–§15 are the current layout. |
 | `BOARD_DOTMATRIX_FONT.md` | Board typography — **the board uses no special font**, and DotGothic16 was tried and reverted for parity. |
 
 ---

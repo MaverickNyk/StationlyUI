@@ -279,4 +279,107 @@ class MultiLineBoardProcessorTest {
         )
         assertTrue(rows.isEmpty(), "the caller substitutes the board-wide fallback copy")
     }
+    // ── Collapsed legs: the whole board as one line per direction ──
+
+    @Test
+    fun `collapsed legs take the soonest departure per platform`() {
+        val legs = MultiLineBoardProcessor.collapsedLegs(
+            feeds = listOf(
+                feed("victoria", predictions = listOf(
+                    pred("Brixton", 7, platform = "Platform 3"),
+                    pred("Brixton", 2, platform = "Platform 3"),
+                )),
+            ),
+            isBus = false,
+        )
+        assertEquals(1, legs.size)
+        assertEquals("2 min", legs[0].eta)
+        assertEquals("Brixton", legs[0].towards)
+    }
+
+    @Test
+    fun `collapsed legs are ordered soonest first — not by the eta label`() {
+        // "10 min" sorts BEFORE "2 min" as a string. Ordering on the label is
+        // the bug this pins; the sort key is the absolute arrival time.
+        val legs = MultiLineBoardProcessor.collapsedLegs(
+            feeds = listOf(
+                feed("victoria", predictions = listOf(pred("Brixton", 10, platform = "Platform 3"))),
+                feed("northern", predictions = listOf(pred("Morden", 2, platform = "Platform 4"))),
+            ),
+            isBus = false,
+        )
+        assertEquals(listOf("2 min", "10 min"), legs.map { it.eta })
+    }
+
+    @Test
+    fun `collapsed legs are capped at two`() {
+        val legs = MultiLineBoardProcessor.collapsedLegs(
+            feeds = listOf(
+                feed("victoria", predictions = listOf(pred("Brixton", 1, platform = "Platform 1"))),
+                feed("northern", predictions = listOf(pred("Morden", 2, platform = "Platform 2"))),
+                feed("central", predictions = listOf(pred("Epping", 3, platform = "Platform 3"))),
+            ),
+            isBus = false,
+        )
+        assertEquals(MultiLineBoardProcessor.MAX_COLLAPSED_LEGS, legs.size)
+        assertEquals(listOf("1 min", "2 min"), legs.map { it.eta })
+    }
+
+    @Test
+    fun `collapsed legs abbreviate the platform and the line — and drop the direction`() {
+        // A leg shares ONE row with the station name, the destination and the
+        // countdown, so every token has to earn its width. "Platform" is
+        // boilerplate, the full line name is wider than the rest of the row put
+        // together, and the compass is already implied by the destination
+        // sitting immediately after it.
+        val legs = MultiLineBoardProcessor.collapsedLegs(
+            feeds = listOf(
+                feed("hammersmith-city", direction = "Westbound",
+                    predictions = listOf(pred("Ealing Broadway", 4, platform = "Platform 3"))),
+            ),
+            isBus = false,
+        )
+        assertEquals("H&C Plat. 3", legs[0].where)
+    }
+
+    @Test
+    fun `collapsed bus legs drop the Bus prefix`() {
+        // The card's roundel is already a bus roundel, and a route number is the
+        // shortest true label there is.
+        val legs = MultiLineBoardProcessor.collapsedLegs(
+            feeds = listOf(
+                feed("39", stationId = "490008805N",
+                    predictions = listOf(pred("Putney", 3, platform = "", stopLetter = "W"))),
+            ),
+            isBus = true,
+        )
+        assertEquals("39 Stop W", legs[0].where)
+    }
+
+    @Test
+    fun `collapsed legs split a bus stop by pole — not by line`() {
+        // Both directions of route 39 at one hub are separate naptans, and they
+        // are genuinely opposite sides of the road. One leg would answer for
+        // half the users of this card.
+        val legs = MultiLineBoardProcessor.collapsedLegs(
+            feeds = listOf(
+                feed("39", direction = "inbound", stationId = "490008805N",
+                    predictions = listOf(pred("Putney", 3, platform = ""))),
+                feed("39", direction = "outbound", stationId = "490012211N",
+                    predictions = listOf(pred("Clapham", 5, platform = ""))),
+            ),
+            isBus = true,
+        )
+        assertEquals(2, legs.size)
+        assertEquals(listOf("Putney", "Clapham"), legs.map { it.towards })
+    }
+
+    @Test
+    fun `collapsed legs are empty when nothing is departing`() {
+        val legs = MultiLineBoardProcessor.collapsedLegs(
+            feeds = listOf(feed("victoria", predictions = emptyList())),
+            isBus = false,
+        )
+        assertTrue(legs.isEmpty(), "the header shows the station alone")
+    }
 }

@@ -366,4 +366,95 @@ object MultiLineBoardProcessor {
         }
         return rows
     }
+
+    /**
+     * One line of a COLLAPSED station card — the whole board reduced to a
+     * sentence per direction.
+     *
+     * [line] is carried raw so the caller can tint the leg with the line's
+     * colour, which is Compose's job, not this file's.
+     */
+    data class Leg(
+        val line: String,
+        /** "Picc. Plat. 4" / "39 Stop W" — blank when nothing is known. */
+        val where: String,
+        /** Where the train is going, verbatim from the prediction. */
+        val towards: String,
+        val eta: String,
+    )
+
+    /**
+     * What a collapsed station shows instead of its board: the soonest departure
+     * from each PLACE you could stand, soonest first, capped at
+     * [MAX_COLLAPSED_LEGS].
+     *
+     * Grouped on the same key the BOARD groups on — rail by platform, bus by
+     * pole ([groupKeyFor]) — for two reasons. A leg can then never describe a
+     * platform the expanded card would not show; and at a station that is
+     * tracked both ways those groups ARE the two directions, so "can I still go
+     * the way I am going" is answered without a direction special case. One leg
+     * would answer it for half the users of the card.
+     *
+     * Ordered on [StationlyFormatters.arrivalSortKey] and never on the `eta`
+     * label — the label is rounded and deliberately bumped, so ordering by it
+     * would put the wrong train first exactly when two are close.
+     */
+    fun collapsedLegs(feeds: List<Feed>, isBus: Boolean): List<Leg> {
+        val all = feeds.flatMap { feed -> feed.predictions.map { it to feed } }
+        if (all.isEmpty()) return emptyList()
+
+        return all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus) }
+            .values
+            .mapNotNull { group ->
+                group.minByOrNull { (p, _) -> StationlyFormatters.arrivalSortKey(p) }
+            }
+            .sortedBy { (p, _) -> StationlyFormatters.arrivalSortKey(p) }
+            .take(MAX_COLLAPSED_LEGS)
+            .map { (prediction, feed) ->
+                Leg(
+                    line = feed.line,
+                    where = legWhere(prediction, feed, isBus),
+                    towards = prediction.destination.trim(),
+                    eta = prediction.eta.trim(),
+                )
+            }
+    }
+
+    /**
+     * The "where" half of a collapsed leg — "Picc. Plat. 4", "39 Stop W".
+     *
+     * Deliberately NOT [headerFor], which is board vocabulary and is wrong here
+     * in three ways. A board header has a row to itself; a leg shares one line
+     * with the station name, the destination and the countdown, so every token
+     * has to earn its width:
+     *
+     *  - **Short line name always.** [LineShortNames.joinLines] gives a single
+     *    line its FULL name because a header has room for it. A leg does not:
+     *    "Hammersmith & City" is wider than everything else on the row put
+     *    together.
+     *  - **"Platform" abbreviates to "Plat."** The number is the fact; the word
+     *    is boilerplate.
+     *  - **No compass direction.** The destination sits immediately after this
+     *    and already says which way the train goes — "Plat. 4 Westbound ·
+     *    Ealing Broadway" states it twice. This is also why the board's
+     *    "never show Inbound/Outbound" rule needs no restating here: nothing
+     *    directional survives.
+     *
+     * Buses drop the "Bus" prefix too. The card's own roundel is a bus roundel,
+     * and the route number is already the shortest true label there is.
+     */
+    private fun legWhere(prediction: PredictionDisplay, feed: Feed, isBus: Boolean): String {
+        val label = groupLabelFor(prediction, isBus).trim().replace("Platform", "Plat.")
+        val line = if (isBus) feed.line.trim() else LineShortNames.shortName(feed.line)
+        return listOf(line, label).filter { it.isNotBlank() }.joinToString(" ")
+    }
+
+    /**
+     * How many legs a collapsed card shows.
+     *
+     * Two, because two is what "both directions" means and what a header-height
+     * row can hold legibly. A three-platform interchange collapsed to three legs
+     * is a board again — at which point the user should just expand it.
+     */
+    const val MAX_COLLAPSED_LEGS = 2
 }

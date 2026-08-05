@@ -3,6 +3,7 @@ package com.stationly.app.ui.summary.components
 import com.stationly.app.resources.Res
 import com.stationly.app.resources.stationly_logo
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
@@ -45,19 +46,15 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.rounded.DeleteOutline
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.UnfoldMore
+import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -67,8 +64,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -89,7 +91,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.stationly.app.ui.theme.LocalThemeTokens
 import com.stationly.app.ui.theme.TflAmber
 import com.stationly.app.ui.theme.isDarkTheme
 import com.stationly.app.ui.util.BOARD_FALLBACK_ROW_COUNT
@@ -101,7 +102,6 @@ import com.stationly.app.ui.util.resolveBoardFallbackCopy
 import com.stationly.app.ui.util.rememberMinuteTick
 import com.stationly.app.ui.util.tickPredictions
 import com.stationly.core.model.PredictionDisplay
-import com.stationly.core.model.FilterMode
 import com.stationly.core.model.UserSelection
 import com.stationly.core.util.LineShortNames
 import com.stationly.core.util.LineStatusRanker
@@ -203,6 +203,25 @@ data class BoardSection(
 }
 
 /** Per-section values derived once per recomposition and reused by the chrome. */
+/**
+ * The board processor's view of these sections.
+ *
+ * One builder for the expanded board and the collapsed legs, so the two can
+ * never disagree about which naptan a departure was fetched from — the bug this
+ * exists to prevent is a collapsed leg naming a pole the open board does not
+ * show.
+ */
+private fun List<SectionRender>.toFeeds(): List<MultiLineBoardProcessor.Feed> = map { r ->
+    MultiLineBoardProcessor.Feed(
+        // The resolved per-direction naptan (the POLE), not the hub —
+        // `parentStationId` is what groups poles into this card.
+        stationId = r.section.selection.station,
+        line = r.section.selection.line,
+        direction = r.section.selection.direction,
+        predictions = r.ticked,
+    )
+}
+
 private data class SectionRender(
     val section: BoardSection,
     val ticked: List<PredictionDisplay>,
@@ -218,8 +237,8 @@ private data class SectionRender(
  *
  * Replaces the old per-line `Board`. A single-section card renders exactly as it
  * did before (same line pill, same accent, same glow); the extra chrome — the
- * in-panel line headers and the multi-line delete dialog — only appears once
- * there is more than one section, so the common case is visually untouched.
+ * per-platform headers merged across lines — only appears once there is more
+ * than one section, so the common case is visually untouched.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -227,11 +246,8 @@ fun StationBoard(
     stationName: String,
     mode: String,
     sections: List<BoardSection>,
-    onDeleteSection: (UserSelection) -> Unit,
-    onDeleteStation: () -> Unit,
     homeConfig: Map<String, String> = emptyMap(),
     isOnline: Boolean = true,
-    isDeleting: Boolean = false,
     /**
      * Hard ceiling for the whole card, measured from the real viewport by the
      * caller.
@@ -256,6 +272,34 @@ fun StationBoard(
      * does not. [Dp.Unspecified] means unbounded.
      */
     maxWidth: Dp = Dp.Unspecified,
+    /**
+     * Whether this station's board is open.
+     *
+     * Collapsed, the card is its header and nothing else — see [StationHeader].
+     * The header still answers "when is my next train", so a collapsed station
+     * is glanceable rather than hidden.
+     */
+    expanded: Boolean = true,
+    /**
+     * Toggles [expanded]. `null` means this caller does not offer collapsing, so
+     * the header renders without a tap target.
+     */
+    onToggleExpanded: (() -> Unit)? = null,
+    /** Marked with a pin in the header — see `StationPrefs.pinned`. */
+    pinned: Boolean = false,
+    /** Marked with an unfold glyph — see `StationPrefs.openByDefault`. */
+    opensByDefault: Boolean = false,
+    /** False hides the next-departure hero for this station — see `StationPrefs.hideHero`. */
+    showHero: Boolean = true,
+    /**
+     * Opens this station's settings — lines, layout, pin, delete.
+     *
+     * A whole screen rather than a menu on the card. Two of those settings are
+     * choices worth SHOWING (the layout picker draws what it will do) and one is
+     * destructive, and neither survives being squeezed into a popover over a
+     * live departure board.
+     */
+    onOpenSettings: () -> Unit = {},
 ) {
     if (sections.isEmpty()) return
 
@@ -331,7 +375,11 @@ fun StationBoard(
     // Footer freshness is the most recent update across the card's lines.
     val lastUpdated = remember(sections) { sections.maxOf { it.lastUpdated } }
 
-    var showDeleteDialog by remember { mutableStateOf(false) }
+
+    // One board is one station, and a bus stop groups by pole rather than by
+    // platform. Hoisted out of the panel because the collapsed header needs the
+    // same rule — a leg must never describe a platform the board would not show.
+    val isBus = mode.equals("bus", ignoreCase = true)
 
     // Which line's hero is showing. See the hero block below for why null is a
     // meaningful value rather than "nothing selected".
@@ -345,20 +393,22 @@ fun StationBoard(
     val trackedLines = remember(sections) { sections.map { it.selection.line }.distinct() }
     var selectedLine by remember(trackedLines) { mutableStateOf<String?>(null) }
 
+    // When the "turn the countdown on" hint was last asked for, or 0 for never.
+    // A timestamp rather than a boolean so tapping a second pill re-arms the
+    // auto-dismiss instead of being ignored as "already showing".
+    var heroHintShownAt by remember { mutableStateOf(0L) }
+    var heroHintVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(heroHintShownAt) {
+        if (heroHintShownAt == 0L) return@LaunchedEffect
+        heroHintVisible = true
+        delay(HERO_HINT_MS)
+        heroHintVisible = false
+    }
+
     // Reads what the hero DISPLAYS, not the raw timestamp, so the border and the
     // number the user is looking at can never disagree. See displayedMinutes.
     val isUrgent = heroPrediction != null &&
         StationlyFormatters.displayedMinutes(heroPrediction) <= 1
-
-    // The ambient breathing glow is part of the board's identity — do not gate,
-    // pin or otherwise "optimise" it away. It reads as continuously running
-    // because it is. Smoothness is bought elsewhere (see the height bound and
-    // the overscroll note below), never by changing how the board looks.
-    val glowAlpha by rememberInfiniteTransition(label = "board_fx").animateFloat(
-        initialValue = 0.06f, targetValue = 0.18f,
-        animationSpec = infiniteRepeatable(tween(3200, easing = EaseInOut), RepeatMode.Reverse),
-        label = "glow"
-    )
 
     // ── Outer column: chrome on the themed canvas, only the dot-matrix is dark ──
     //
@@ -387,184 +437,233 @@ fun StationBoard(
             .then(if (maxHeight != Dp.Unspecified) Modifier.heightIn(max = maxHeight) else Modifier)
     ) {
 
-        // Header (canvas): one pill per tracked line + delete trash
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 2.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            BoxWithConstraints(modifier = Modifier.weight(1f)) {
-              val pillRowWidth = maxWidth
-              Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-              ) {
-                // Distinct lines only — two directions on one line share a pill,
-                // otherwise "Victoria Line  Victoria Line" reads like a bug.
-                val pills = rendered.distinctBy { it.section.selection.line }
-                val activeLine = selectedLine ?: hero?.first?.section?.selection?.line
-                // MEASURE, don't guess. This was `pills.size > 2`, which shortened
-                // "Circle / District" on a device with room for both and left
-                // three narrow names ("Bank", "DLR") unshortened on one without.
-                // Short forms are a response to running out of width, so width is
-                // what has to decide.
-                val useShortName = !fullPillNamesFit(
-                    pills.map { it.section.selection.line }, pillRowWidth, !isMulti
-                )
-                pills.forEach { r ->
-                    val (severity, _) = splitLineStatus(r.section.lineStatus)
-                    LinePill(
-                        line = r.section.selection.line,
-                        lineColor = r.lineColor,
-                        tone = LineStatusRanker.toneOf(severity),
-                        selected = r.section.selection.line == activeLine,
-                        useShortName = useShortName,
-                        // With several pills the word "Line" on each is noise.
-                        showSuffix = !isMulti,
-                        onClick = { selectedLine = r.section.selection.line },
+        // ── Station header (canvas): roundel + name + marks + settings ──
+        //
+        // The station identity used to live INSIDE the dot-matrix panel, which
+        // meant the two things above the panel — the line pills and the hero —
+        // were unlabelled: with several stations on the page nothing said which
+        // station's "3 min" you were looking at. The name now sits above
+        // everything it owns, so the card reads top-down: station, then its
+        // lines, then its next train, then its board.
+        // Collapsed, the header is the only thing left, so it carries the answer
+        // the board would have given: the soonest departure each way. Not
+        // computed at all while expanded — the board itself is saying it.
+        val collapsedLegs = if (expanded) emptyList() else remember(rendered, isBus) {
+            MultiLineBoardProcessor.collapsedLegs(rendered.toFeeds(), isBus)
+        }
+
+        StationHeader(
+            stationName = stationName,
+            mode = mode,
+            accent = accent,
+            expanded = expanded,
+            pinned = pinned,
+            opensByDefault = opensByDefault,
+            legs = collapsedLegs,
+            legColor = { line -> lineColorForTheme(line, isDark) },
+            onToggleExpanded = onToggleExpanded,
+            onOpenSettings = onOpenSettings,
+        )
+
+        // Everything below is the OPEN card. Collapsed, the header above is
+        // the whole card — see StationHeader.
+        if (expanded) {
+
+            // One pill per tracked line. `BoxWithConstraints` is load-bearing: the
+            // pills decide between full and short names by MEASURING against the row
+            // they have, not by counting themselves.
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 2.dp, bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                  val pillRowWidth = maxWidth
+                  Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    // Distinct lines only — two directions on one line share a pill,
+                    // otherwise "Victoria Line  Victoria Line" reads like a bug.
+                    val pills = rendered.distinctBy { it.section.selection.line }
+                    val activeLine = selectedLine ?: hero?.first?.section?.selection?.line
+                    // MEASURE, don't guess. This was `pills.size > 2`, which shortened
+                    // "Circle / District" on a device with room for both and left
+                    // three narrow names ("Bank", "DLR") unshortened on one without.
+                    // Short forms are a response to running out of width, so width is
+                    // what has to decide.
+                    val useShortName = !fullPillNamesFit(
+                        pills.map { it.section.selection.line }, pillRowWidth, !isMulti
                     )
-                }
-              }
-            }
-            IconButton(onClick = { showDeleteDialog = true }, modifier = Modifier.size(32.dp)) {
-                Icon(
-                    Icons.Outlined.DeleteOutline,
-                    if (isMulti) "Remove lines" else "Delete board",
-                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.25f),
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
-
-        // NO disruption banner here. It used to render one expandable
-        // "Severity : Reason" card per disrupted line, above the hero.
-        //
-        // It was the single worst thing for home-screen stability: it appeared
-        // and vanished as statuses changed, and it EXPANDED on tap, so the card
-        // — and therefore the page — changed height under the user's finger
-        // while they were reading it. A departure board must not move.
-        //
-        // Nothing is lost: the same severity and reason are on the rotating
-        // status strip at the foot of the panel, and in the Network section
-        // further down the home screen.
-
-        // Next departure hero — one per line, switched by the pills above.
-        //
-        // `null` means "no explicit choice yet", which resolves to whichever line
-        // has the soonest departure. That keeps the opening frame the same as it
-        // has always been while letting a tap pin a specific line. Keyed on
-        // `sections` so adding or removing a line drops a stale selection.
-        val activeHeroLine = selectedLine ?: hero?.first?.section?.selection?.line
-        val allHeroSections = rendered.filter { it.section.selection.line == activeHeroLine }
-        // Split into two ONLY when the two directions actually say different
-        // things. Both directions of a suspended line report the same closure
-        // with no departures either side, and showing that twice is two copies
-        // of one fact taking the width of two boards.
-        //
-        // Deliberately NOT "merge whenever the line is disrupted": a part
-        // closure very often leaves one direction running, and that asymmetry is
-        // exactly what the user needs to see. The test is whether the two halves
-        // would be identical — no departures on either side AND the same status.
-        val heroSections = remember(allHeroSections) {
-            val bothEmpty = allHeroSections.all { it.next == null }
-            val sameStatus = allHeroSections.map { it.section.lineStatus }.distinct().size == 1
-            if (allHeroSections.size >= 2 && bothEmpty && sameStatus) {
-                listOf(allHeroSections.first())
-            } else allHeroSections
-        }
-        if (heroSections.isNotEmpty()) {
-            // Keyed on the SPLIT COUNT ALONE, deliberately — not on the line.
-            //
-            // Keying it on the line meant switching lines ran two animations over
-            // the same pixels at once: this crossfade AND the per-character flip
-            // inside it. Two overlapping transitions on the same glyphs is what
-            // read as flickering rather than as motion.
-            //
-            // Now a line change is carried purely by the split-flap — which is
-            // the effect that is actually meant to sell it — and this only runs
-            // when the LAYOUT genuinely changes, one card to two. The height is
-            // identical either way (HERO_HEIGHT), so it only has to carry the
-            // split: a crossfade with a slight scale reads as one card parting
-            // into two rather than two cards appearing.
-            AnimatedContent(
-                targetState = heroSections.size.coerceAtMost(2),
-                transitionSpec = {
-                    (fadeIn(tween(420, easing = EaseOutCubic)) +
-                        scaleIn(initialScale = 0.96f, animationSpec = tween(420, easing = EaseOutCubic)))
-                        .togetherWith(
-                            fadeOut(tween(260, easing = EaseInCubic)) +
-                                scaleOut(targetScale = 0.96f, animationSpec = tween(260, easing = EaseInCubic))
+                    pills.forEach { r ->
+                        val (severity, _) = splitLineStatus(r.section.lineStatus)
+                        LinePill(
+                            line = r.section.selection.line,
+                            lineColor = r.lineColor,
+                            tone = LineStatusRanker.toneOf(severity),
+                            selected = r.section.selection.line == activeLine,
+                            useShortName = useShortName,
+                            // With several pills the word "Line" on each is noise.
+                            showSuffix = !isMulti,
+                            onClick = {
+                                selectedLine = r.section.selection.line
+                                // With the hero hidden the pills have nothing to
+                                // switch, so a tap does nothing and reads as a dead
+                                // control. Say what the pills are FOR instead of
+                                // swallowing the tap (or disabling them — they are
+                                // still the board's legend and still carry each
+                                // line's status dot).
+                                if (!showHero) heroHintShownAt = Clock.System.now().toEpochMilliseconds()
+                            },
                         )
-                },
-                label = "hero_split",
-            ) { count ->
-                if (count >= 2) {
-                    // Both directions of one line are tracked, so there are two
-                    // "next departures" and neither is more correct. Split the
-                    // WIDTH and keep the height: stacking them would move
-                    // everything below, and picking one would silently drop a
-                    // board the user explicitly asked for.
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        heroSections.take(2).forEach { r ->
-                            Box(modifier = Modifier.weight(1f)) {
-                                NextDepartureRow(
-                                    render = r,
-                                    prediction = r.next,
-                                    homeConfig = homeConfig,
-                                    compact = true,
-                                )
+                    }
+                  }
+                }
+            }
+
+            // NO disruption banner here. It used to render one expandable
+            // "Severity : Reason" card per disrupted line, above the hero.
+            //
+            // It was the single worst thing for home-screen stability: it appeared
+            // and vanished as statuses changed, and it EXPANDED on tap, so the card
+            // — and therefore the page — changed height under the user's finger
+            // while they were reading it. A departure board must not move.
+            //
+            // Nothing is lost: the same severity and reason are on the rotating
+            // status strip at the foot of the panel, and in the Network section
+            // further down the home screen.
+
+            // Next departure hero — one per line, switched by the pills above.
+            //
+            // `null` means "no explicit choice yet", which resolves to whichever line
+            // has the soonest departure. That keeps the opening frame the same as it
+            // has always been while letting a tap pin a specific line. Keyed on
+            // `sections` so adding or removing a line drops a stale selection.
+            val activeHeroLine = selectedLine ?: hero?.first?.section?.selection?.line
+            val allHeroSections = rendered.filter { it.section.selection.line == activeHeroLine }
+            // Split into two ONLY when the two directions actually say different
+            // things. Both directions of a suspended line report the same closure
+            // with no departures either side, and showing that twice is two copies
+            // of one fact taking the width of two boards.
+            //
+            // Deliberately NOT "merge whenever the line is disrupted": a part
+            // closure very often leaves one direction running, and that asymmetry is
+            // exactly what the user needs to see. The test is whether the two halves
+            // would be identical — no departures on either side AND the same status.
+            val heroSections = remember(allHeroSections) {
+                val bothEmpty = allHeroSections.all { it.next == null }
+                val sameStatus = allHeroSections.map { it.section.lineStatus }.distinct().size == 1
+                if (allHeroSections.size >= 2 && bothEmpty && sameStatus) {
+                    listOf(allHeroSections.first())
+                } else allHeroSections
+            }
+            if (showHero && heroSections.isNotEmpty()) {
+                // Keyed on the SPLIT COUNT ALONE, deliberately — not on the line.
+                //
+                // Keying it on the line meant switching lines ran two animations over
+                // the same pixels at once: this crossfade AND the per-character flip
+                // inside it. Two overlapping transitions on the same glyphs is what
+                // read as flickering rather than as motion.
+                //
+                // Now a line change is carried purely by the split-flap — which is
+                // the effect that is actually meant to sell it — and this only runs
+                // when the LAYOUT genuinely changes, one card to two. The height is
+                // identical either way (HERO_HEIGHT), so it only has to carry the
+                // split: a crossfade with a slight scale reads as one card parting
+                // into two rather than two cards appearing.
+                AnimatedContent(
+                    targetState = heroSections.size.coerceAtMost(2),
+                    transitionSpec = {
+                        (fadeIn(tween(420, easing = EaseOutCubic)) +
+                            scaleIn(initialScale = 0.96f, animationSpec = tween(420, easing = EaseOutCubic)))
+                            .togetherWith(
+                                fadeOut(tween(260, easing = EaseInCubic)) +
+                                    scaleOut(targetScale = 0.96f, animationSpec = tween(260, easing = EaseInCubic))
+                            )
+                    },
+                    label = "hero_split",
+                ) { count ->
+                    if (count >= 2) {
+                        // Both directions of one line are tracked, so there are two
+                        // "next departures" and neither is more correct. Split the
+                        // WIDTH and keep the height: stacking them would move
+                        // everything below, and picking one would silently drop a
+                        // board the user explicitly asked for.
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            heroSections.take(2).forEach { r ->
+                                Box(modifier = Modifier.weight(1f)) {
+                                    NextDepartureRow(
+                                        render = r,
+                                        prediction = r.next,
+                                        homeConfig = homeConfig,
+                                        compact = true,
+                                    )
+                                }
                             }
                         }
+                    } else {
+                        val r = heroSections.first()
+                        NextDepartureRow(
+                            render = r,
+                            prediction = if (selectedLine == null) heroPrediction else r.next,
+                            homeConfig = homeConfig,
+                        )
                     }
-                } else {
-                    val r = heroSections.first()
-                    NextDepartureRow(
-                        render = r,
-                        prediction = if (selectedLine == null) heroPrediction else r.next,
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+
+            // ── Dot-matrix board (the only dark section) with ambient glow ──
+            // Takes whatever height the chrome above left over, and no more.
+            //
+            // The breathing glow is part of the board's identity — never gate, pin or
+            // otherwise "optimise" it away while the board is VISIBLE. It reads as
+            // continuously running because it is. Declared inside this branch only so
+            // that a COLLAPSED card, which draws no glow at all, does not keep an
+            // infinite transition subscribed to the frame clock: with four stations
+            // collapsed that was four animations driving nothing.
+            val glowAlpha by rememberInfiniteTransition(label = "board_fx").animateFloat(
+                initialValue = 0.06f, targetValue = 0.18f,
+                animationSpec = infiniteRepeatable(tween(3200, easing = EaseInOut), RepeatMode.Reverse),
+                label = "glow"
+            )
+            Box(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
+                Box(
+                    modifier = Modifier.matchParentSize()
+                        .graphicsLayer { clip = false; scaleX = 1.18f; scaleY = 1.22f; alpha = glowAlpha }
+                        .background(Brush.radialGradient(listOf(accent.copy(alpha = 0.55f), Color.Transparent)), RoundedCornerShape(20.dp))
+                )
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = PanelBg,
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(if (isUrgent) 1.5.dp else 1.dp, accent.copy(alpha = 0.22f))
+                ) {
+                    DotMatrixPanel(
+                        mode = mode,
+                        rendered = rendered,
+                        lastUpdated = lastUpdated,
                         homeConfig = homeConfig,
                     )
                 }
-            }
-            Spacer(Modifier.height(10.dp))
-        }
 
-        // ── Dot-matrix board (the only dark section) with ambient glow ──
-        // Takes whatever height the chrome above left over, and no more.
-        Box(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
-            Box(
-                modifier = Modifier.matchParentSize()
-                    .graphicsLayer { clip = false; scaleX = 1.18f; scaleY = 1.22f; alpha = glowAlpha }
-                    .background(Brush.radialGradient(listOf(accent.copy(alpha = 0.55f), Color.Transparent)), RoundedCornerShape(20.dp))
-            )
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = PanelBg,
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(if (isUrgent) 1.5.dp else 1.dp, accent.copy(alpha = 0.22f))
-            ) {
-                DotMatrixPanel(
-                    stationName = stationName,
-                    mode = mode,
-                    rendered = rendered,
-                    lastUpdated = lastUpdated,
-                    homeConfig = homeConfig,
-                )
+                // FLOATS over the panel rather than taking a row above it. Anything
+                // that occupies layout space here would push the board down as it
+                // appears and pull it back as it goes — under the user's finger,
+                // milliseconds after they tapped. The one rule this screen never
+                // breaks is that the board does not move.
+                Box(modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) {
+                    HeroHintOverlay(
+                        visible = heroHintVisible,
+                        accent = accent,
+                        onEnable = onOpenSettings,
+                    )
+                }
             }
-        }
-    }
 
-    if (showDeleteDialog) {
-        BoardDeleteDialog(
-            stationName = stationName,
-            sections = sections,
-            isDeleting = isDeleting,
-            onDismiss = { showDeleteDialog = false },
-            onDeleteSection = { showDeleteDialog = false; onDeleteSection(it) },
-            onDeleteStation = { showDeleteDialog = false; onDeleteStation() },
-        )
+        }
     }
 }
 
@@ -640,110 +739,268 @@ private fun LinePill(
 }
 
 /**
- * Delete confirmation.
+ * Keeps ONE drag inside ONE scroller.
  *
- * Single-line card: the original "Delete This Board?" dialog, unchanged.
- * Multi-line card: the trash can no longer mean one thing, so the dialog lists
- * each tracked line with its own Remove and offers removing the whole station.
+ * The departure rows scroll inside a card that is itself inside the home page's
+ * scroller. By default the leftover of an inner drag chains to the outer one, so
+ * reaching the last departure silently slid the whole home screen away while the
+ * user was still reading — the board throwing them off it.
+ *
+ * The rule is ownership, decided once per gesture and never mid-drag:
+ *
+ *  - The gesture is the ROWS' if, at the moment it started, the rows could still
+ *    move in that direction. Everything it produces stays here, including the
+ *    fling, and the rows simply stop (and bounce) at their end.
+ *  - Otherwise the rows never wanted it, nothing is consumed, and the page
+ *    scrolls exactly as it would if the card were not scrollable at all.
+ *
+ * Deciding per gesture rather than per frame is the whole trick. "Consume
+ * whenever the rows are at their end" would deadlock the page: at the bottom of
+ * the rows every subsequent drag is also leftover, so the page could never move
+ * again. Lifting the finger clears the decision ([onPostFling] runs at the end
+ * of every gesture, fling or not), so the next touch is judged fresh — which is
+ * why a second drag scrolls the page.
  */
 @Composable
-private fun BoardDeleteDialog(
-    stationName: String,
-    sections: List<BoardSection>,
-    isDeleting: Boolean,
-    onDismiss: () -> Unit,
-    onDeleteSection: (UserSelection) -> Unit,
-    onDeleteStation: () -> Unit,
-) {
-    val danger = LocalThemeTokens.current.error
-    val onSurf = MaterialTheme.colorScheme.onSurface
-    val onSurfMute = onSurf.copy(alpha = 0.55f)
-    val onSurfDim = onSurf.copy(alpha = 0.25f)
-    val isMulti = sections.size > 1
-    val isDark = isDarkTheme()
+private fun boardScrollOwnership(scroll: ScrollState): NestedScrollConnection {
+    return remember(scroll) {
+        object : NestedScrollConnection {
+            /** null = not yet decided for this gesture. */
+            private var rowsOwnGesture: Boolean? = null
 
-    AlertDialog(
-        onDismissRequest = { if (!isDeleting) onDismiss() },
-        containerColor = MaterialTheme.colorScheme.surface,
-        titleContentColor = onSurf,
-        textContentColor = onSurfMute,
-        icon = { Icon(Icons.Rounded.DeleteOutline, null, tint = danger, modifier = Modifier.size(28.dp)) },
-        title = { Text(if (isMulti) "Remove a Line?" else "Delete This Board?", fontWeight = FontWeight.Bold) },
-        text = {
-            // Scrollable: Material3 does not scroll the text slot, and a card at
-            // the 8-row cap stacks eight removable lines plus the header and
-            // footnote. Without this the last line clips off the bottom on an
-            // iPhone 11 — and a line you cannot see is a line you cannot remove.
-            Column(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-            ) {
-                if (isMulti) {
-                    Text("Choose a line to stop tracking at $stationName.", fontWeight = FontWeight.Medium)
-                    sections.forEach { section ->
-                        Surface(
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth()
-                                .clickable(enabled = !isDeleting) { onDeleteSection(section.selection) }
-                        ) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    Modifier.size(8.dp).background(
-                                        lineColorForTheme(section.selection.line, isDark), CircleShape
-                                    )
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    section.selection.line.replaceFirstChar { it.uppercase() } +
-                                        " · " + section.selection.direction.replaceFirstChar { it.uppercase() },
-                                    color = onSurf, fontSize = 13.sp, fontWeight = FontWeight.Medium,
-                                    modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis
-                                )
-                                Text("Remove", color = danger, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (rowsOwnGesture == null && source == NestedScrollSource.UserInput) {
+                    // Compose's sign convention: a negative delta scrolls the
+                    // content up, i.e. forward through the list.
+                    rowsOwnGesture = when {
+                        available.y < 0f -> scroll.canScrollForward
+                        available.y > 0f -> scroll.canScrollBackward
+                        else -> null
                     }
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "Removing the last line deletes the whole board.",
-                        color = onSurfDim, fontSize = 12.sp
-                    )
-                } else {
-                    Text("You're about to remove your $stationName board.", fontWeight = FontWeight.Medium)
-                    BoardDeleteBullet("Live departure tracking will stop", danger, onSurfMute)
-                    BoardDeleteBullet("Departure notifications will be unsubscribed", danger, onSurfMute)
-                    BoardDeleteBullet("Widget will be cleared", danger, onSurfMute)
-                    Spacer(Modifier.height(2.dp))
-                    Text("You can always set up a new board from the home screen.", color = onSurfDim, fontSize = 12.sp)
                 }
+                return Offset.Zero
             }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { if (isMulti) onDeleteStation() else onDeleteSection(sections.first().selection) },
-                enabled = !isDeleting,
-                colors = ButtonDefaults.textButtonColors(contentColor = danger)
-            ) {
-                Text(if (isMulti) "Remove All Lines" else "Delete Board", fontWeight = FontWeight.Bold)
+
+            /** The rows' leftover, swallowed rather than passed up to the page. */
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset = if (rowsOwnGesture == true) available else Offset.Zero
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                val owned = rowsOwnGesture == true
+                // End of the gesture — the next touch decides again.
+                rowsOwnGesture = null
+                return if (owned) available else Velocity.Zero
             }
-        },
-        dismissButton = {
-            if (!isDeleting) TextButton(
-                onClick = onDismiss,
-                colors = ButtonDefaults.textButtonColors(contentColor = onSurfMute)
-            ) { Text("Keep It") }
         }
-    )
+    }
+}
+
+/** How long the countdown hint stays up before dismissing itself. */
+private const val HERO_HINT_MS = 3400L
+
+/**
+ * Why the line pills did nothing, and how to make them do something.
+ *
+ * Shown when a pill is tapped on a card whose hero is hidden. Phrased as an
+ * offer rather than an error — the user turned the countdown off, quite possibly
+ * on purpose, so this explains what they are missing and hands them the switch
+ * instead of telling them they did something wrong.
+ */
+@Composable
+private fun HeroHintOverlay(visible: Boolean, accent: Color, onEnable: () -> Unit) {
+    // Its own function purely so `AnimatedVisibility` resolves to the plain
+    // overload. Called inline from the card, the enclosing ColumnScope's
+    // extension wins and lays the hint out IN the column instead of over the
+    // panel — an explicit receiver would be the other fix, and is worse to read.
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { -it / 3 },
+        exit = fadeOut(tween(160)) + slideOutVertically(tween(200)) { -it / 3 },
+    ) {
+        HeroHint(accent = accent, onEnable = onEnable)
+    }
+}
+
+@Composable
+private fun HeroHint(accent: Color, onEnable: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.45f)),
+        shadowElevation = 8.dp,
+        modifier = Modifier.padding(horizontal = 12.dp).clip(RoundedCornerShape(50)).clickable(onClick = onEnable),
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 12.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(6.dp).background(accent, CircleShape))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Turn on the countdown to compare lines",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Turn on",
+                color = accent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** Height of a collapsed card's leg row, mirrored by `COLLAPSED_LEG_HEIGHT` in SummaryScreen. */
+private val LEG_HEIGHT = 22.dp
+
+/** Height of the nameplate row itself, mirrored by `STATION_HEADER_HEIGHT` in SummaryScreen. */
+private val HEADER_HEIGHT = 44.dp
+
+/**
+ * The station's nameplate: roundel, name, settings — and, when the card is
+ * collapsed, a leg per direction underneath.
+ *
+ * This is the card's identity. Everything below it belongs to this station, and
+ * collapsed this IS the card, which is why the legs are here rather than a
+ * chevron over a bare name. A collapsed station the user cannot read anything
+ * from is just a hidden station.
+ *
+ * There is no expand/collapse chevron. The whole row is the control, which is
+ * both a bigger target and the one people reach for anyway; a chevron sitting
+ * next to a real button (settings) mostly reads as a second button, and it
+ * competed with the station name for the width the name needed. What the card is
+ * doing is legible without it: legs mean collapsed, a board means open.
+ */
+@Composable
+private fun StationHeader(
+    stationName: String,
+    mode: String,
+    accent: Color,
+    expanded: Boolean,
+    pinned: Boolean,
+    opensByDefault: Boolean,
+    /** Empty when expanded, or when nothing is departing. */
+    legs: List<MultiLineBoardProcessor.Leg>,
+    legColor: (String) -> Color,
+    onToggleExpanded: (() -> Unit)?,
+    onOpenSettings: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (onToggleExpanded != null) {
+                    Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onToggleExpanded)
+                } else Modifier
+            )
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(HEADER_HEIGHT).padding(start = 4.dp, end = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Real backend roundel from the App-Group ModeIconStore (same cache
+            // the widget reads); drawn-roundel fallback until the first /modes
+            // sync lands.
+            val modeIcon = remember(mode) {
+                com.stationly.app.platform.ModeIconStore.cachedIconBitmap(mode)
+            }
+            if (modeIcon != null) {
+                Image(bitmap = modeIcon, contentDescription = null, modifier = Modifier.size(22.dp))
+            } else {
+                TflRoundel(modeRoundelColor(mode), 22.dp)
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                stationName,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                // `weight(1f)`, filling — this row has ONE flexible child so the
+                // name gets every pixel the icons do not want. It was briefly
+                // `fill = false` next to a spacer that also weighted 1f, which
+                // splits the free space evenly between them: a long station name
+                // ellipsised at half the row with the other half left blank.
+                modifier = Modifier.weight(1f),
+            )
+            // Two marks, two facts: the pin says this station sits at the top,
+            // the unfold glyph says it opens itself. They are separate settings
+            // and a user can have either without the other, so one shared icon
+            // would be a lie half the time.
+            //
+            // Both take the app's accent, NOT the card's line colour. `accent`
+            // varies per card (Victoria blue here, Central red there), which made
+            // one shared meaning look like several different marks.
+            val markTint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+            if (pinned) {
+                Icon(
+                    Icons.Rounded.PushPin, "Pinned to top",
+                    tint = markTint, modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.width(5.dp))
+            }
+            if (opensByDefault) {
+                Icon(
+                    Icons.Rounded.UnfoldMore, "Opens by default",
+                    tint = markTint, modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.width(5.dp))
+            }
+            IconButton(onClick = onOpenSettings, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    Icons.Rounded.Tune,
+                    "$stationName settings",
+                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.45f),
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+        }
+
+        // ── Collapsed legs: one per direction ──
+        legs.forEach { leg ->
+            Row(
+                modifier = Modifier.fillMaxWidth().height(LEG_HEIGHT).padding(start = 6.dp, end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(modifier = Modifier.size(6.dp).background(legColor(leg.line), CircleShape))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    // Where first, then where it goes. Standing at a station the
+                    // platform is the actionable half — it is what you walk to —
+                    // and the destination is how you confirm it is your train.
+                    listOf(leg.where, leg.towards).filter { it.isNotBlank() }.joinToString(" · "),
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.62f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    leg.eta,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
 }
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun DotMatrixPanel(
-    stationName: String,
     mode: String,
     rendered: List<SectionRender>,
     lastUpdated: Long,
@@ -756,19 +1013,7 @@ private fun DotMatrixPanel(
 
     // Platform/stop blocks across EVERY tracked line, in true arrival order.
     val unifiedRows = remember(rendered, isBus) {
-        MultiLineBoardProcessor.buildRows(
-            feeds = rendered.map { r ->
-                MultiLineBoardProcessor.Feed(
-                    // The resolved per-direction naptan (the POLE), not the hub
-                    // — `parentStationId` is what groups poles into this card.
-                    stationId = r.section.selection.station,
-                    line = r.section.selection.line,
-                    direction = r.section.selection.direction,
-                    predictions = r.ticked,
-                )
-            },
-            isBus = isBus,
-        )
+        MultiLineBoardProcessor.buildRows(feeds = rendered.toFeeds(), isBus = isBus)
     }
 
     // Board-wide fallback: only when EVERY tracked line is empty. One line
@@ -783,40 +1028,13 @@ private fun DotMatrixPanel(
 
     Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
 
-        // ── Station strip: centered roundel + station name ──
-        ActiveStrip {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Real backend roundel from the App-Group ModeIconStore (same
-                // cache the widget reads); drawn-roundel fallback until the
-                // first /modes sync lands.
-                val modeIcon = remember(mode) {
-                    com.stationly.app.platform.ModeIconStore.cachedIconBitmap(mode)
-                }
-                if (modeIcon != null) {
-                    Image(
-                        bitmap = modeIcon,
-                        contentDescription = null,
-                        modifier = Modifier.size(22.dp)
-                    )
-                } else {
-                    TflRoundel(modeRoundelColor(mode), 22.dp)
-                }
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    // Match Android widget_departure_board.xml line_name: 16sp bold,
-                    // system font (no letter-spacing).
-                    stationName,
-                    color = BoardAmber, fontSize = 16.sp, fontWeight = FontWeight.Bold,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
+        // NO station strip here. The roundel and station name moved OUT of the
+        // panel and onto the card header (StationHeader), where they can label
+        // the pills and the hero as well as the board. Repeating the name here
+        // would be the same fact twice, 8dp apart, and it cost the panel a row
+        // of departures to say it.
 
-        // Rows scroll independently — station strip (above) and clock footer
+        // Rows scroll independently — the clock footer
         // (below) stay pinned, matching the Android board's ScrollView so a
         // many-platform station (Bank, King's Cross) never clips departures off
         // the bottom of the panel.
@@ -830,33 +1048,36 @@ private fun DotMatrixPanel(
         // short board short instead of padding it out to the cap.
         //
         // The rows are a scroller nested inside the home screen's scroller, and
-        // the thing that makes that combination feel wrong on iOS is the INNER
-        // rubber band: drag past the last departure and the rows bounce inside
-        // the panel, absorbing the gesture, and the page only starts moving
-        // after you let go and drag again. Dropping the inner overscroll hands
-        // the gesture straight to the page at the boundary, so one continuous
-        // drag reads as one continuous scroll. The page keeps its own bounce —
-        // this removes a second, competing one, it does not remove the effect.
+        // the two must not run in ONE gesture.
         //
-        // Built in ColumnScope and passed in, because CompositionLocalProvider
-        // emits no layout node: the Column below is still a direct child of
-        // this one, so `weight` still resolves against it.
-        val rowsModifier = Modifier.weight(1f, fill = false)
+        // Chaining was tried first: at the last departure the leftover drag fell
+        // through to the page, so a single drag scrolled the board and then kept
+        // going into the rest of the home screen. It reads as the board throwing
+        // you off it — you were reading departures, you reach the end, and the
+        // thing you were reading slides away without you asking.
+        //
+        // A gesture now belongs to whichever scroller could use it when it
+        // started ([boardScrollOwnership]): a drag that begins with departures
+        // left to show stops dead at the last one, and the page moves only when
+        // you lift and drag again. The inner bounce is deliberately kept — it is
+        // the iOS way of saying "this is the end of this list", which is exactly
+        // the thing that used to be missing.
+        //
         val rowsScroll = rememberScrollState()
-        CompositionLocalProvider(LocalOverscrollFactory provides null) {
-          Box(modifier = rowsModifier) {
+        val rowsModifier = Modifier
+            .weight(1f, fill = false)
+            .nestedScroll(boardScrollOwnership(rowsScroll))
+        Box(modifier = rowsModifier) {
             Column(
                 modifier = Modifier.verticalScroll(rowsScroll),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                // A filtered board must say so, or it reads as a board quietly
-                // dropping trains for no reason. One notice for the card: the
-                // captions are per-selection but the rows below are no longer
-                // segregated by selection, so there is nothing to hang a
-                // per-section caption on any more.
-                rendered.mapNotNull { it.section.filterCaption() }.distinct()
-                    .forEach { FilterNoticeStrip(it) }
-
+                // Nothing but departures lives in the rows area. Filter
+                // captions ("VIA GREEN PARK", "NO MATCHES · SHOWING ALL") used
+                // to sit here; they are app chrome on a surface that is meant
+                // to read as station signage — station, platform header,
+                // departure, status. The filter is the user's own setting and
+                // is visible where they set it.
                 if (boardFallback != null) {
                     // Whole board is empty (offline / night / disrupted) — the
                     // fallback copy replaces the platform blocks entirely.
@@ -866,7 +1087,6 @@ private fun DotMatrixPanel(
                 }
             }
             BoardScrollbar(scroll = rowsScroll, modifier = Modifier.align(Alignment.CenterEnd))
-          }
         }
 
         // ── ONE status strip for the whole board, below every departure ──
@@ -880,69 +1100,6 @@ private fun DotMatrixPanel(
     }
 }
 
-/**
- * True when the board is filtered but EVERY row on it was excluded, so
- * `getPredictions` has fallen back to the unfiltered list.
- *
- * Derived from the rows themselves rather than a second query: the fallback is
- * exactly the state where nothing shown passes the filter. Without saying so the
- * board looks like it is ignoring the user's setting.
- */
-private fun BoardSection.isShowingUnfilteredFallback(): Boolean =
-    !selection.isUnfiltered && predictions.isNotEmpty() && predictions.none { it.matchesFilter }
-
-/** Shown when a filter is on but nothing currently passes it — see §3.5 fail-open. */
-private const val NO_MATCHES_CAPTION = "NO MATCHES · SHOWING ALL"
-
-/**
- * The one filter caption for a section, or null when it shows everything.
- *
- * Resolves the fail-open case ahead of the filter's own label, because "showing
- * all" is the more urgent thing to say: the board is deliberately ignoring the
- * user's filter right now, and a tag still reading "VIA GREEN PARK" over an
- * unfiltered list would be actively wrong.
- */
-private fun BoardSection.filterCaption(): String? =
-    if (isShowingUnfilteredFallback()) NO_MATCHES_CAPTION else selection.filterTag()
-
-/**
- * Board-signage label for a section's filter, or null when it shows everything.
- *
- * Reads as destination-board copy ("VIA GREEN PARK") rather than app chrome,
- * because it sits inside the dot-matrix panel.
- */
-private fun UserSelection.filterTag(): String? = when {
-    isUnfiltered -> null
-    filterMode == FilterMode.VIA -> when (viaStationNames.size) {
-        0 -> "VIA A STOP"
-        1 -> "VIA ${viaStationNames[0].uppercase()}"
-        // Board signage has no room to list several; the count is honest and the
-        // full list is one tap away in the selection flow.
-        else -> "VIA ${viaStationNames.size} STOPS"
-    }
-    destinations.size == 1 -> "ONLY ${destinations[0].uppercase()}"
-    else -> "${destinations.size} DESTINATIONS"
-}
-
-/**
- * Filter notice for a SINGLE-section card, which has no header strip to hang it
- * on. Without this a filtered board silently omits trains with nothing on screen
- * explaining why.
- */
-@Composable
-private fun FilterNoticeStrip(filterTag: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 1.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            filterTag,
-            color = BoardAmber.copy(alpha = 0.72f),
-            fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp,
-            maxLines = 1, overflow = TextOverflow.Ellipsis
-        )
-    }
-}
 
 /**
  * The board's departure rows: a header per platform (rail) or stop (bus), with
@@ -1741,14 +1898,5 @@ private fun FlapRow(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun BoardDeleteBullet(text: String, dangerRed: Color, mute: Color) {
-    Row(verticalAlignment = Alignment.Top) {
-        Box(Modifier.padding(top = 7.dp).size(5.dp).background(dangerRed.copy(alpha = 0.6f), CircleShape))
-        Spacer(Modifier.width(10.dp))
-        Text(text, color = mute, fontSize = 14.sp)
     }
 }
