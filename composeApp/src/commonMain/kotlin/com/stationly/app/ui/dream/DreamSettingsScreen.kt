@@ -59,6 +59,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.stationly.app.ui.common.MINI_DEPARTURES
+import com.stationly.app.ui.common.MiniBoard
+import com.stationly.app.ui.common.MiniBoardClock
+import com.stationly.app.ui.common.MiniBoardStatus
 import com.stationly.app.ui.summary.components.lineColorForTheme
 import com.stationly.app.ui.theme.TflAmber
 import com.stationly.app.ui.util.HomeConfigCache
@@ -147,10 +151,19 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
                 // ── Big preview of the active layout ────────────────────
+                //
+                // The station name in it is the REAL one — whichever board the
+                // picker at the bottom of this screen has selected, or the
+                // first if it is on Auto. The departures under it are not (see
+                // MINI_DEPARTURES); the name is what the picker changes, so it is
+                // the one thing the preview has to answer honestly.
                 BigLayoutPreview(
                     layout = layout,
                     theme = theme,
                     clockStyle = clockStyle,
+                    stationName = stations.firstOrNull { it.station == stationId }?.stationName
+                        ?: stations.firstOrNull()?.stationName
+                        ?: "Stationly",
                 )
 
                 // ── Start button — iOS-only entry (Android launches dreams
@@ -302,6 +315,7 @@ private fun BigLayoutPreview(
     layout: DreamLayout,
     theme: DreamTheme,
     clockStyle: ClockStyle,
+    stationName: String,
 ) {
     val previewIsDark = when {
         layout == DreamLayout.FULLSCREEN_BOARD -> true
@@ -328,21 +342,27 @@ private fun BigLayoutPreview(
         Box(modifier = Modifier.fillMaxSize()) {
             when (layout) {
                 DreamLayout.CLOCK_AND_BOARD ->
-                    BigClockBoardPreview(previewAccent, onCanvasColor, clockStyle)
+                    BigClockBoardPreview(previewAccent, onCanvasColor, clockStyle, stationName)
                 DreamLayout.FULLSCREEN_BOARD ->
-                    BigFullscreenPreview(previewAccent)
+                    BigFullscreenPreview(stationName)
             }
         }
     }
 }
 
 @Composable
-private fun BigClockBoardPreview(accent: Color, onCanvas: Color, clockStyle: ClockStyle) {
+private fun BigClockBoardPreview(
+    accent: Color,
+    onCanvas: Color,
+    clockStyle: ClockStyle,
+    stationName: String,
+) {
     Row(
-        modifier = Modifier.fillMaxSize().padding(18.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.fillMaxSize().padding(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        // Left 30% — clock cluster, mirrors the chosen ClockStyle.
+        // Left 30% — clock cluster, mirrors the chosen ClockStyle. Same split
+        // the real DreamHost uses.
         Column(
             modifier = Modifier.weight(0.30f).fillMaxHeight(),
             verticalArrangement = Arrangement.Center,
@@ -373,75 +393,57 @@ private fun BigClockBoardPreview(accent: Color, onCanvas: Color, clockStyle: Clo
                 fontSize = 10.sp,
             )
         }
-        // Right 70% — dot-matrix board card
-        Column(
-            modifier = Modifier
-                .weight(0.70f)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFF080808))
-                .border(
-                    1.dp,
-                    accent.copy(alpha = 0.55f),
-                    RoundedCornerShape(8.dp),
-                )
-                .padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            MiniBar(widthFraction = 0.7f, alpha = 0.95f, color = accent, heightDp = 6.dp)
-            Spacer(Modifier.height(2.dp))
-            repeat(4) {
-                MiniBar(widthFraction = 1f, alpha = 0.55f, color = accent, heightDp = 4.dp)
-            }
-        }
+        // Right 70% — the board itself.
+        PreviewBoard(
+            stationName = stationName,
+            rowCount = 3,
+            showClock = false,
+            modifier = Modifier.weight(0.70f).fillMaxHeight(),
+        )
     }
 }
 
 @Composable
-private fun BigFullscreenPreview(accent: Color) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(14.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .border(1.5.dp, accent.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
-            .padding(10.dp),
-    ) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            // Station strip
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(accent.copy(alpha = 0.85f))
-            )
-            Spacer(Modifier.height(2.dp))
-            repeat(5) {
-                MiniBar(widthFraction = 1f, alpha = 0.55f, color = accent, heightDp = 5.dp)
-            }
-            Spacer(Modifier.weight(1f))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                MiniBar(widthFraction = 0.30f, alpha = 0.9f, color = accent, heightDp = 6.dp)
-                Spacer(Modifier.weight(1f))
-                MiniBar(widthFraction = 0.20f, alpha = 0.65f, color = accent, heightDp = 6.dp)
-            }
-        }
-    }
-}
-
-@Composable
-private fun MiniBar(widthFraction: Float, alpha: Float, color: Color, heightDp: Dp) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth(widthFraction)
-            .height(heightDp)
-            .clip(RoundedCornerShape(1.dp))
-            .background(color.copy(alpha = alpha))
+private fun BigFullscreenPreview(stationName: String) {
+    PreviewBoard(
+        stationName = stationName,
+        rowCount = 4,
+        showClock = true,
+        modifier = Modifier.fillMaxSize().padding(12.dp),
     )
+}
+
+/**
+ * A real departure board, in miniature.
+ *
+ * This used to be four grey [Box]es of decreasing width. They said "something
+ * goes here" when the question the screen is asking is "which of these two
+ * layouts do you want" — and you cannot answer that from placeholder bars,
+ * because what actually differs between the layouts is how much BOARD you get
+ * and where the clock sits relative to it.
+ *
+ * The board itself is [MiniBoard], shared with the station card's layout picker:
+ * two previews of the same board that disagreed about what is on it would look
+ * like two different products. What this adds is the part that is specific to
+ * the dream — the status strip, and the clock the fullscreen layout carries
+ * inside the board while the cluster layout has its own on the left.
+ */
+@Composable
+private fun PreviewBoard(
+    stationName: String,
+    rowCount: Int,
+    showClock: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    MiniBoard(
+        modifier = modifier,
+        header = stationName,
+        departures = MINI_DEPARTURES.take(rowCount),
+    ) {
+        Spacer(Modifier.weight(1f))
+        MiniBoardStatus()
+        if (showClock) MiniBoardClock()
+    }
 }
 
 /* ── LAYOUT CHIP ROW ────────────────────────────────────────────────────── */
@@ -619,6 +621,25 @@ private fun ThemeMockup(theme: DreamTheme) {
             }
         }
     }
+}
+
+/**
+ * A lit row, abstracted to a bar.
+ *
+ * Only for the theme and clock-style tiles, which are ~40dp square. Real
+ * departure text is illegible at that size, and the question those tiles ask is
+ * about the canvas AROUND the board, not the board. The big preview above shows
+ * actual departures — see [PreviewBoard].
+ */
+@Composable
+private fun MiniBar(widthFraction: Float, alpha: Float, color: Color, heightDp: Dp) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth(widthFraction)
+            .height(heightDp)
+            .clip(RoundedCornerShape(1.dp))
+            .background(color.copy(alpha = alpha))
+    )
 }
 
 @Composable

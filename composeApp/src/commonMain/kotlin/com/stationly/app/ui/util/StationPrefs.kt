@@ -4,9 +4,30 @@ import com.stationly.core.platform.Platform
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+
+/**
+ * How the home screen arranges the user's stations.
+ *
+ * [LIST] stacks every station down one scrolling page, with all but the top one
+ * collapsed to its next departures. [CAROUSEL] gives each station a page of its
+ * own, swiped left and right, with nothing collapsed.
+ *
+ * They answer different questions. A list is for "what is happening across my
+ * stations" and trades board height for breadth; a carousel is for "what is
+ * happening at THIS station" and spends the whole screen on one board. Neither
+ * is a better default for everyone, which is why it is a setting.
+ *
+ * [StationPrefsRepository.order] drives both: it is the top-to-bottom order of
+ * the list and the left-to-right order of the pages.
+ */
+enum class HomeLayout(val label: String) {
+    LIST("List"),
+    CAROUSEL("Carousel"),
+}
 
 /**
  * Per-station home-screen preferences, keyed by the station's GROUPING id (the
@@ -39,8 +60,17 @@ data class StationPrefs(
      * Several stations may set this. The height budget then shares the viewport
      * between them (`boardMaxHeight`), so the honest outcome of opening four is
      * a page that scrolls, not four unreadable boards.
+     *
+     * Means nothing in [HomeLayout.CAROUSEL], where every station has a page to
+     * itself and there is nothing to collapse.
+     *
+     * The stored key is still `openByDefault`: the property was renamed to match
+     * what the setting now says on screen (Expanded / Collapsed), and renaming
+     * the JSON field with it would have silently reset the preference for
+     * everyone who had already set it.
      */
-    val openByDefault: Boolean = false,
+    @SerialName("openByDefault")
+    val startExpanded: Boolean = false,
     /**
      * Hide the big next-departure hero for this station, leaving the line pills
      * and the dot-matrix board.
@@ -72,6 +102,7 @@ data class StationPrefs(
 object StationPrefsRepository {
     private const val KEY = "station_prefs_v1"
     private const val ORDER_KEY = "station_order_v1"
+    private const val LAYOUT_KEY = "home_layout_v1"
     private val json = Json { ignoreUnknownKeys = true }
 
     private val _prefs = MutableStateFlow<Map<String, StationPrefs>>(emptyMap())
@@ -96,6 +127,16 @@ object StationPrefsRepository {
     private val _order = MutableStateFlow<List<String>>(emptyList())
     val order: StateFlow<List<String>> = _order.asStateFlow()
 
+    /**
+     * List or carousel — see [HomeLayout].
+     *
+     * Stored by NAME rather than by ordinal. An ordinal is a promise that the
+     * enum's declaration order never changes, and this one is a settings picker
+     * that will grow.
+     */
+    private val _layout = MutableStateFlow(HomeLayout.LIST)
+    val layout: StateFlow<HomeLayout> = _layout.asStateFlow()
+
     private var loaded = false
 
     /**
@@ -118,7 +159,16 @@ object StationPrefsRepository {
             Platform.storageManager.loadString(ORDER_KEY)
                 ?.let { json.decodeFromString<List<String>>(it) }
         }.getOrNull() ?: emptyList()
+        _layout.value = runCatching {
+            Platform.storageManager.loadString(LAYOUT_KEY)
+                ?.let { name -> HomeLayout.entries.firstOrNull { it.name == name } }
+        }.getOrNull() ?: HomeLayout.LIST
         loaded = true
+    }
+
+    suspend fun setLayout(layout: HomeLayout) {
+        _layout.value = layout
+        runCatching { Platform.storageManager.saveString(LAYOUT_KEY, layout.name) }
     }
 
     /**

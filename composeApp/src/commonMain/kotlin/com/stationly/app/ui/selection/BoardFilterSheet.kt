@@ -213,7 +213,7 @@ fun BoardFilterSheet(
                     Text(
                         // The distinction that decides which mode someone wants,
                         // stated where the choice is made rather than in a doc.
-                        "Exact match — a $vehicleOne that turns back early won't show.",
+                        "Exact match. A $vehicleOne that turns back early won't show.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 10.sp, lineHeight = 13.sp
                     )
@@ -224,7 +224,7 @@ fun BoardFilterSheet(
                 label = "Going through…",
                 detail = if (viaAvailable)
                     "Pick a $stopNoun on the map. Anything that reaches it counts, even if it turns back there."
-                else "Route stops unavailable — reopen this line to refresh",
+                else "Route stops unavailable. Reopen this line to refresh.",
                 selected = filter.mode == FilterMode.VIA,
                 enabled = viaAvailable,
                 primary = primary,
@@ -290,7 +290,7 @@ private fun FilterPreview(
         !filter.isActive ->
             "Showing every ${vehicles.dropLast(1).lowercase()} going this way" to false
         resolution.isEmpty ->
-            "Nothing matches this — ${vehicles.lowercase()} will all be shown instead" to true
+            "Nothing matches. All ${vehicles.lowercase()} will be shown." to true
         filter.mode == FilterMode.DESTINATIONS ->
             "Showing ${filter.destinationIds.size} of $destTotal destinations" to false
         else ->
@@ -592,7 +592,7 @@ private fun ViaStopPicker(
         Text(
             when {
                 noMatch -> "No $stopNoun on this line matches \"${query.trim()}\""
-                match != null -> "Found ${match.name} — tap it on the map to use it"
+                match != null -> "Found ${match.name}. Tap it on the map to use it."
                 else -> "Tap a $stopNoun on the map, or a terminus to take that whole branch"
             },
             color = if (noMatch) primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(0.8f),

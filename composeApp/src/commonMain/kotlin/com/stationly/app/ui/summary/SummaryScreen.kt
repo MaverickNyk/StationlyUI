@@ -2,6 +2,8 @@
 package com.stationly.app.ui.summary
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.EaseInCubic
+import androidx.compose.animation.core.EaseOutCubic
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -30,7 +32,6 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.border
@@ -84,7 +85,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -93,162 +93,20 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.stationly.app.ui.common.AnnouncementBanner
 import com.stationly.app.ui.common.NotificationPermissionEffect
 import com.stationly.app.ui.common.OfflineBanner
-import com.stationly.app.ui.common.ThemeToggleButton
 import com.stationly.app.ui.summary.components.BoardSection
 import com.stationly.app.ui.summary.components.StationBoard
 import com.stationly.app.ui.summary.components.EmptyStationsState
 import com.stationly.app.ui.summary.components.StationExploreSection
 import com.stationly.app.ui.theme.DisplayFamily
 import com.stationly.app.ui.theme.TflAmber
+import com.stationly.app.ui.util.HomeLayout
 import com.stationly.app.ui.util.StationPrefs
 import com.stationly.app.ui.util.StationPrefsRepository
 import com.stationly.app.platform.HapticType
 import com.stationly.app.platform.performHaptic
+import com.stationly.core.model.UserSelection
 import com.stationly.core.platform.Platform
-import com.stationly.core.util.MultiLineBoardProcessor
 import kotlin.math.floor
-
-/** Top/bottom padding inside the home scroll, applied at each end. */
-private val HOME_PADDING_V = 16.dp
-
-/** Vertical gap between the home screen's blocks (chrome, boards, Network). */
-private val HOME_GAP = 20.dp
-
-/**
- * Heights of a collapsed card's parts, mirroring `HEADER_HEIGHT` and
- * `LEG_HEIGHT` in Board.kt.
- *
- * Duplicated deliberately rather than exposed: these are the height budget's
- * ASSUMPTIONS about a collapsed card, and the layout must not silently re-flow
- * if the header's internals change — a mismatch shows up as the open board being
- * a few dp off, not as a crash.
- */
-private val STATION_HEADER_HEIGHT = 44.dp
-private val LEG_HEIGHT = 22.dp
-
-/**
- * What the card CONTAINER costs before any of its content: the colour rail, the
- * inner padding above and below, and the hairline border top and bottom.
- *
- * Mirrors `CARD_RAIL_HEIGHT` plus the container padding in Board.kt. A station
- * card became a real bounded surface rather than loose content on the canvas, and
- * every dp of that surround comes off the panel's share — left out of the budget,
- * the floor below silently stops being three departures.
- */
-private val CARD_CHROME_HEIGHT = 20.dp
-
-/** One departure row inside the panel, including the 2dp gap under it. */
-private val BOARD_ROW_HEIGHT = 26.dp
-
-/** What "a usable departure board" means, in rows. Feeds [MIN_BOARD_HEIGHT]. */
-private const val MIN_VISIBLE_ROWS = 3
-
-/**
- * Floor for a card, sized so its panel can always show [MIN_VISIBLE_ROWS]
- * departures.
- *
- * A CARD is not a board: by the time the panel gets its share, the card has
- * already spent its height on the station header, the line pills, the hero, the
- * status strip and the footer. The old 280dp floor was picked against the card
- * and left the panel with a single row once several stations were open —
- * technically "fitting one viewport", but a departure board showing one
- * departure is not a departure board.
- *
- * Written as the sum of the parts rather than as one number, so a change to any
- * of them can be reflected here without re-deriving the total by hand.
- *
- * Budgeted WITH the hero even though a station can hide it: the floor has to
- * cover the worst case, and a hero-hidden card simply spends the same height on
- * more rows.
- *
- * Overflowing this is deliberate. Past it the PAGE scrolls, which is the honest
- * outcome when the user has opened more boards than a screen holds — the
- * alternative is several boards none of which can be read.
- */
-private val MIN_BOARD_HEIGHT =
-    CARD_CHROME_HEIGHT +         // rail + container padding + border
-    STATION_HEADER_HEIGHT +      // the card's own nameplate
-    34.dp +                      // line pills row (2 top + 22 pill + 10 bottom)
-    104.dp +                     // hero (HERO_HEIGHT) + its 10dp spacer
-    16.dp +                      // panel padding, 8 top and 8 bottom
-    26.dp +                      // one platform header
-    (BOARD_ROW_HEIGHT * MIN_VISIBLE_ROWS) +
-    22.dp +                      // status strip
-    34.dp                        // footer: clock + maker mark
-
-/**
- * The tallest a station card may be: exactly the room left after everything else
- * on the home screen has taken what it needs.
- *
- * This is DERIVED, not a fraction of the screen. Earlier versions guessed —
- * "viewport minus padding", then 82% of the viewport — and both were wrong in
- * both directions at once: too tall when a promo card was showing, too short when
- * none were, and never right on a device whose proportions differed from the one
- * being tested on. The board is the last thing to be given space, so it can just
- * be told what is genuinely left.
- *
- * [chromeHeight] and [exploreHeight] are measured (`onSizeChanged`) rather than
- * assumed, because both change at runtime: promos are dismissible, and the
- * Network section grows with the number of live disruptions.
- *
- * Collapsed stations cost a known [STATION_HEADER_HEIGHT] (plus legs) each, so
- * with one board open the whole home screen still fits one viewport however many
- * stations are tracked. This returns the cap for the TOP open board — every
- * other open board is held to [MIN_BOARD_HEIGHT] by the caller.
- */
-private fun boardMaxHeight(
-    viewportHeight: Dp,
-    expandedCount: Int,
-    collapsedCount: Int,
-    chromeHeight: Dp,
-    exploreHeight: Dp,
-    bottomInset: Dp,
-): Dp {
-    // Blocks in the scroll: [chrome?] + boards + Network. Each pair costs one gap.
-    val gapCount = if (chromeHeight > 0.dp) 2 else 1
-    // Collapsed stations cost a known amount, so they come out of the budget
-    // before it is shared — this is what replaced the old viewport-fraction cap.
-    //
-    // Budgeted at the MAXIMUM leg count rather than the actual one. The real
-    // number depends on live predictions, so budgeting on it would re-flow every
-    // open board each time a train departs — the height churn this whole layout
-    // exists to prevent. Over-reserving costs the open board a few dp and is
-    // stable; under-reserving pushes it off screen.
-    val collapsedCost =
-        (CARD_CHROME_HEIGHT + STATION_HEADER_HEIGHT +
-            LEG_HEIGHT * MultiLineBoardProcessor.MAX_COLLAPSED_LEGS + HOME_GAP) *
-            collapsedCount.coerceAtLeast(0)
-    val budget = viewportHeight -
-        (HOME_PADDING_V * 2) - bottomInset -
-        chromeHeight - exploreHeight - collapsedCost -
-        (HOME_GAP * gapCount)
-    // Everything else that is open is held to the floor, so this is what the TOP
-    // open board may take.
-    //
-    // Not an equal share. Dividing the viewport between three open boards gives
-    // three boards nobody can read, and the user has already said which station
-    // matters by pinning it to the top. One board gets the room; the others get
-    // three departures each and the page scrolls, which is the honest outcome of
-    // opening more than a screen holds.
-    val others = (expandedCount - 1).coerceAtLeast(0)
-    val forOthers = (MIN_BOARD_HEIGHT + HOME_GAP) * others
-    return (budget - forOthers).coerceAtLeast(MIN_BOARD_HEIGHT)
-}
-
-/**
- * Widest a board is allowed to get, regardless of the window.
- *
- * Everything sized from the viewport scales up happily EXCEPT line length. A
- * departure row is destination-left / ETA-right, so on a full-width iPad the two
- * end up a hand's width apart with nothing between them, and the eye loses the
- * pairing — the one thing the row exists to convey.
- *
- * Roughly the width of a large phone, which is what the board's type sizes were
- * drawn against. Wider windows centre the board and leave margin rather than
- * stretching it. Height still uses the whole window (see [boardMaxHeight]) —
- * more vertical space means more departures, which IS useful.
- */
-private val MAX_BOARD_WIDTH = 480.dp
 
 @Composable
 fun SummaryScreen(
@@ -281,6 +139,7 @@ fun SummaryScreen(
     val showNotificationDeniedBanner by viewModel.showNotificationDeniedBanner.collectAsStateWithLifecycle()
     val stationPrefs by viewModel.stationPrefs.collectAsStateWithLifecycle()
     val stationOrder by viewModel.stationOrder.collectAsStateWithLifecycle()
+    val homeLayout by viewModel.homeLayout.collectAsStateWithLifecycle()
 
     // First authenticated screen — the one place Android asks too. Re-check the
     // denied banner on the user's answer so a denial surfaces it immediately
@@ -363,8 +222,15 @@ fun SummaryScreen(
 
             AnimatedContent(
                 targetState = selections,
+                // Was a 500ms crossfade each way. Half a second is a long time to
+                // watch a board fade after adding a station, and the two halves
+                // overlapped for all of it — the incoming board spent most of its
+                // entrance semi-transparent over the outgoing one. The new board
+                // now arrives faster than the old one leaves, which is the order
+                // that reads as a replacement rather than a dissolve.
                 transitionSpec = {
-                    fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+                    fadeIn(tween(220, delayMillis = 60, easing = EaseOutCubic)) togetherWith
+                        fadeOut(tween(160, easing = EaseInCubic))
                 },
                 label = "selections_content"
             ) { currentSelections ->
@@ -418,8 +284,13 @@ fun SummaryScreen(
 
                       // ── Which stations are open ──
                       //
+                      // Only asked in [HomeLayout.LIST]. A carousel gives every
+                      // station a page of its own, so there is nothing to
+                      // collapse FOR — collapsing one page would just be a page
+                      // with a hole in it.
+                      //
                       // A SET, because the user can open several by hand and can
-                      // mark several to open themselves (`openByDefault`).
+                      // mark several to open themselves (`startExpanded`).
                       //
                       // `null` is not the same as an empty set. Empty means the
                       // user closed everything during THIS session, which must
@@ -429,16 +300,18 @@ fun SummaryScreen(
                       // on a list of shut drawers.
                       //
                       // Session state, deliberately. What you had open is not a
-                      // setting you configured; the setting is `openByDefault`,
+                      // setting you configured; the setting is `startExpanded`,
                       // and it is the only thing that survives a cold start.
                       var expandedIdsState by rememberSaveable {
                           mutableStateOf<List<String>?>(null)
                       }
                       val expandedIds: Set<String> = when {
+                          // Every page is open in a carousel.
+                          homeLayout == HomeLayout.CAROUSEL -> stationIds.toSet()
                           // One station has nothing to collapse for.
                           stationIds.size == 1 -> stationIds.toSet()
                           expandedIdsState == null -> {
-                              val defaults = stationIds.filter { stationPrefs[it]?.openByDefault == true }
+                              val defaults = stationIds.filter { stationPrefs[it]?.startExpanded == true }
                               if (defaults.isNotEmpty()) defaults.toSet()
                               else setOfNotNull(stationIds.firstOrNull())
                           }
@@ -459,13 +332,23 @@ fun SummaryScreen(
                       // padding, so the bottom safe-area inset is already gone
                       // from it — but the list adds it back as its own bottom
                       // padding, so it does come out of the budget here.
+                      //
+                      // A carousel shows exactly one card at a time, so it asks
+                      // the same question with the counts it actually has: one
+                      // open board, nothing collapsed, plus the dots.
+                      //
+                      // One station is not a carousel. There is nothing to swipe
+                      // to, so the page renders as a plain card and must not be
+                      // charged for a row of dots it will not draw.
+                      val isCarousel = homeLayout == HomeLayout.CAROUSEL && stationIds.size > 1
                       val primaryBoardMaxHeight = boardMaxHeight(
                           viewportHeight = maxHeight,
-                          expandedCount = expandedIds.size,
-                          collapsedCount = stationIds.size - expandedIds.size,
+                          expandedCount = if (isCarousel) 1 else expandedIds.size,
+                          collapsedCount = if (isCarousel) 0 else stationIds.size - expandedIds.size,
                           chromeHeight = with(density) { chromePx.toDp() },
                           exploreHeight = with(density) { explorePx.toDp() },
                           bottomInset = bottomInset,
+                          extraChrome = if (isCarousel) PAGER_DOTS_BLOCK else 0.dp,
                       )
 
                       PullToRefreshBox(
@@ -613,49 +496,72 @@ fun SummaryScreen(
                                 byStation[id]?.let { id to it }
                             }
 
-                            stationGroups.forEach { (stationId, groupSelections) ->
-                                val sections = groupSelections.map { selection ->
-                                    val boardKey = selection.boardKey
-                                    val statusKey = "${selection.mode}_${selection.line}".lowercase()
-                                    BoardSection(
-                                        selection = selection,
-                                        predictions = predictions[boardKey] ?: emptyList(),
-                                        lineStatus = lineStatuses[statusKey],
-                                        lineStatusFailed = failedLineStatusKeys.contains(statusKey),
-                                        lastUpdated = stationUpdates[boardKey] ?: 0L,
+                            // One card, wherever it is being placed. Written once
+                            // as a composable lambda because the two layouts differ
+                            // only in how much height a card gets and whether it can
+                            // be collapsed — everything else about a station card is
+                            // the same in a list and in a carousel, and two copies of
+                            // this call is two places for them to drift apart.
+                            val stationCard: @Composable (String, List<UserSelection>, Boolean, Dp) -> Unit =
+                                { stationId, groupSelections, collapsible, cardMaxHeight ->
+                                    val sections = groupSelections.map { selection ->
+                                        val boardKey = selection.boardKey
+                                        val statusKey = "${selection.mode}_${selection.line}".lowercase()
+                                        BoardSection(
+                                            selection = selection,
+                                            predictions = predictions[boardKey] ?: emptyList(),
+                                            lineStatus = lineStatuses[statusKey],
+                                            lineStatusFailed = failedLineStatusKeys.contains(statusKey),
+                                            lastUpdated = stationUpdates[boardKey] ?: 0L,
+                                        )
+                                    }
+                                    val primary = groupSelections.first()
+                                    val prefs = stationPrefs[stationId] ?: StationPrefs()
+
+                                    StationBoard(
+                                        expanded = stationId in expandedIds,
+                                        onToggleExpanded = if (collapsible) {
+                                            {
+                                                expandedIdsState =
+                                                    if (stationId in expandedIds) (expandedIds - stationId).toList()
+                                                    else (expandedIds + stationId).toList()
+                                            }
+                                        } else null,
+                                        startsExpanded = prefs.startExpanded && !isCarousel,
+                                        showHero = !prefs.hideHero,
+                                        onOpenSettings = {
+                                            onOpenStationSettings(stationId, primary.mode, primary.stationName)
+                                        },
+                                        stationName = primary.stationName,
+                                        mode = primary.mode,
+                                        sections = sections,
+                                        homeConfig = homeConfig,
+                                        isOnline = uiState.isOnline,
+                                        maxHeight = cardMaxHeight,
+                                        maxWidth = MAX_BOARD_WIDTH,
                                     )
                                 }
-                                val primary = groupSelections.first()
 
-                                val prefs = stationPrefs[stationId] ?: StationPrefs()
-
-                                StationBoard(
-                                    expanded = stationId in expandedIds,
-                                    onToggleExpanded = if (stationGroups.size > 1) {
-                                        {
-                                            expandedIdsState =
-                                                if (stationId in expandedIds) (expandedIds - stationId).toList()
-                                                else (expandedIds + stationId).toList()
-                                        }
-                                    } else null,
-                                    opensByDefault = prefs.openByDefault,
-                                    showHero = !prefs.hideHero,
-                                    onOpenSettings = {
-                                        onOpenStationSettings(stationId, primary.mode, primary.stationName)
-                                    },
-                                    stationName = primary.stationName,
-                                    mode = primary.mode,
-                                    sections = sections,
-                                    homeConfig = homeConfig,
-                                    isOnline = uiState.isOnline,
-                                    // The top open station gets the leftover
-                                    // room; the rest get the floor, which is
-                                    // three departures (MIN_BOARD_HEIGHT).
-                                    maxHeight = if (stationId == primaryStationId) {
-                                        primaryBoardMaxHeight
-                                    } else MIN_BOARD_HEIGHT,
-                                    maxWidth = MAX_BOARD_WIDTH,
-                                )
+                            if (isCarousel) {
+                                StationCarousel(
+                                    stationGroups = stationGroups,
+                                    pageHeight = primaryBoardMaxHeight,
+                                ) { stationId, groupSelections ->
+                                    stationCard(stationId, groupSelections, false, primaryBoardMaxHeight)
+                                }
+                            } else {
+                                stationGroups.forEach { (stationId, groupSelections) ->
+                                    stationCard(
+                                        stationId,
+                                        groupSelections,
+                                        stationGroups.size > 1 && !isCarousel,
+                                        // The top open station gets the leftover
+                                        // room; the rest get the floor, which is
+                                        // three departures (MIN_BOARD_HEIGHT).
+                                        if (stationId == primaryStationId) primaryBoardMaxHeight
+                                        else MIN_BOARD_HEIGHT,
+                                    )
+                                }
                             }
 
                             Box(modifier = Modifier.onSizeChanged { explorePx = it.height }) {
@@ -702,21 +608,13 @@ fun SummaryScreen(
             )
             } // end padded content box
 
-            // Discreet theme toggle pinned to the TRUE screen bottom-right, just
-            // above the home indicator — the daily-use light/dark/system shortcut
-            // (the full picker lives in Profile → Appearance). Matches Android's
-            // BottomEnd + WindowInsets.navigationBars placement. Sits OUTSIDE the
-            // padded content box, so the bottom safe-area inset is applied exactly
-            // once (here) instead of stacking on the Scaffold's content padding.
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(end = 6.dp, bottom = 2.dp)
-                    .zIndex(2f),
-            ) {
-                ThemeToggleButton(compact = true)
-            }
+            // NO floating theme toggle. It sat at the bottom-right corner of
+            // every home screen, above the home indicator, cycling
+            // light → dark → system on each tap. Appearance now has one home, in
+            // home settings, where all three options are visible at once and the
+            // one that is set can be seen without tapping to find out. A control
+            // permanently overlapping the board is a high price for a setting
+            // changed twice a year.
         }
     }
 }
@@ -923,7 +821,7 @@ private fun WidgetPromoCard(
         title = strings["home.promo.widget.title"] ?: "Add a home screen widget",
         subtitle = strings["home.promo.widget.subtitle.ios"]
             ?: strings["home.promo.widget.subtitle"]
-            ?: "Touch and hold the Home Screen, tap ＋, then search Stationly for live departures at a glance",
+            ?: "Touch and hold the Home Screen, tap ＋, then search Stationly",
         cta = null,
         onCta = {},
         onDismiss = onDismiss,
@@ -952,7 +850,7 @@ private fun NotificationDeniedBanner(
         icon = Icons.Default.Notifications,
         title = strings["home.notif_denied.title"] ?: "Turn on notifications",
         subtitle = strings["home.notif_denied.subtitle"]
-            ?: "Stationly can alert you when your line has delays, closures, or recovers.",
+            ?: "Get told when your line has delays or closures.",
         cta = strings["home.notif_denied.cta"] ?: "Enable",
         onCta = {
             com.stationly.app.platform.openAppNotificationSettings()

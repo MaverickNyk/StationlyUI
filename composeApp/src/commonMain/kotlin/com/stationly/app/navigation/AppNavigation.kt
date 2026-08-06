@@ -1,9 +1,11 @@
 package com.stationly.app.navigation
 
-import androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
@@ -95,18 +97,38 @@ fun AppNavigation(
         navController.navigate(route)
     }
 
-    // iOS-style push/pop: new screen slides in from the right, the previous one
-    // slides out to the left; reversed on back. Gives the app a native feel
-    // without touching screen content (the board, etc. stay intact).
-    val slide = tween<androidx.compose.ui.unit.IntOffset>(300)
-    val fade = tween<Float>(300)
+    /*
+     * iOS push/pop, including the part that makes it read as iOS.
+     *
+     * Both screens used to travel the full width in opposite directions, which is
+     * Android's shared-axis transition wearing a horizontal coat. A UIKit push
+     * moves the two layers by DIFFERENT amounts: the arriving screen comes the
+     * whole way in from the right, and the one being covered slides only about a
+     * third of the way out and dims. That difference is parallax, and it is what
+     * makes the new screen look like it is on top of the old one rather than the
+     * two of them being on a conveyor belt.
+     *
+     * The curve matters as much as the distance. A linear-ish `tween(300)` starts
+     * and stops abruptly; this is UIKit's own push curve — fast off the mark,
+     * long decelerating tail — so the screen arrives and settles instead of
+     * halting.
+     */
+    val push = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
+    val slide = tween<androidx.compose.ui.unit.IntOffset>(360, easing = push)
+    val fade = tween<Float>(360, easing = push)
+    /** How far the covered screen travels. A third, as UIKit does it. */
+    val parallax = 3
     NavHost(
         navController = navController,
         startDestination = startDestination,
-        enterTransition = { slideIntoContainer(SlideDirection.Left, slide) + fadeIn(fade) },
-        exitTransition = { slideOutOfContainer(SlideDirection.Left, slide) + fadeOut(fade) },
-        popEnterTransition = { slideIntoContainer(SlideDirection.Right, slide) + fadeIn(fade) },
-        popExitTransition = { slideOutOfContainer(SlideDirection.Right, slide) + fadeOut(fade) },
+        enterTransition = { slideInHorizontally(slide) { it } },
+        exitTransition = {
+            slideOutHorizontally(slide) { -it / parallax } + fadeOut(fade, targetAlpha = 0.75f)
+        },
+        popEnterTransition = {
+            slideInHorizontally(slide) { -it / parallax } + fadeIn(fade, initialAlpha = 0.75f)
+        },
+        popExitTransition = { slideOutHorizontally(slide) { it } },
     ) {
 
         composable("auth/login") {
@@ -267,7 +289,6 @@ fun AppNavigation(
                         popUpTo(0) { inclusive = true }
                     }
                 },
-                onOpenScreensaver = { navController.navigate("dream/settings") }
             )
         }
 

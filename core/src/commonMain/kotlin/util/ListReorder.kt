@@ -22,4 +22,30 @@ object ListReorder {
     fun <T> List<T>.moved(from: Int, to: Int): List<T> =
         if (from == to || from !in indices || to !in indices) this
         else toMutableList().also { it.add(to, it.removeAt(from)) }
+
+    /**
+     * Where the row at [index] should SIT while a drag is in flight, given the
+     * row picked up at [from] is currently hovering over [to].
+     *
+     * The list itself is not reordered until the finger lifts — reordering it
+     * mid-drag reorders the composables under the gesture. So the rows are moved
+     * by position only, and this says where each one goes: the dragged row takes
+     * the slot it is hovering over, everything between the two shuffles one place
+     * towards the origin, and everything outside that span stays where it is.
+     *
+     * This must always agree with [moved]: on release the caller commits
+     * `moved(from, to)`, and the drop is jump-free only if every row is already
+     * standing at the index that list is about to give it. `slotOf` and `moved`
+     * agreeing is what makes the commit invisible, so they are tested against
+     * each other rather than separately.
+     *
+     * [from] < 0 means no drag, and every row sits at its own index.
+     */
+    fun slotOf(index: Int, from: Int, to: Int): Int = when {
+        from < 0 -> index
+        index == from -> to
+        from < to && index in (from + 1)..to -> index - 1
+        to < from && index in to..(from - 1) -> index + 1
+        else -> index
+    }
 }

@@ -664,7 +664,7 @@ private fun FormScreenContent(
     }
     val subtitle = when (screenType) {
         "login"           -> "Sign in to your Stationly account"
-        "register"        -> "Join Stationly — never miss a train"
+        "register"        -> "Join Stationly. Never miss a train"
         "forgot-password" -> "Enter your email and we'll send a reset link"
         else              -> ""
     }
@@ -786,7 +786,7 @@ private fun LivePill() {
 private fun FeatureBullets() {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
         FeatureRow(Icons.Outlined.Schedule, "Live arrivals", "Tube · Overground · Elizabeth · DLR · Bus")
-        FeatureRow(Icons.Outlined.Widgets, "Home-screen widgets", "Glance and go — no app open needed")
+        FeatureRow(Icons.Outlined.Widgets, "Home-screen widgets", "Glance and go, no app needed")
         FeatureRow(Icons.Outlined.NotificationsActive, "Quiet alerts", "Only when your line actually needs you")
     }
 }

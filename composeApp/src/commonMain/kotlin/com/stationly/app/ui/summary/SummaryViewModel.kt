@@ -16,6 +16,7 @@ import com.stationly.core.util.FreshDataNotifier
 import com.stationly.core.util.GlobalBoardProcessor
 import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.delay
+import com.stationly.app.ui.util.HomeLayout
 import com.stationly.app.ui.util.StationPrefs
 import com.stationly.app.ui.util.StationPrefsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -102,7 +103,7 @@ class SummaryViewModel(
     val showNotificationDeniedBanner: StateFlow<Boolean> = _showNotificationDeniedBanner.asStateFlow()
 
     /**
-     * Per-station card preferences (open by default, hide hero).
+     * Per-station card preferences (start expanded, hide hero).
      *
      * Passed straight through from [StationPrefsRepository] rather than mirrored
      * into a flow of this VM's own: the station settings screen writes the same
@@ -120,6 +121,9 @@ class SummaryViewModel(
      * something else happened to recompose them.
      */
     val stationOrder: StateFlow<List<String>> = StationPrefsRepository.order
+
+    /** Stacked list or one station per swipeable page — see [HomeLayout]. */
+    val homeLayout: StateFlow<HomeLayout> = StationPrefsRepository.layout
 
     init {
         viewModelScope.launch { StationPrefsRepository.ensureLoaded() }

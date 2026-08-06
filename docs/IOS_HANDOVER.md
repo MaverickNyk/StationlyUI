@@ -467,7 +467,14 @@ used to push station settings twice, so backing out landed on it again.
 
 ### ⚠️ NOT WORKING: drag-to-reorder the station list
 
-**Status: abandoned for now, shipped as arrows instead.** The **Your stations**
+> **Superseded on 2026-08-06 — it works now.** See §6e and
+> `BOARD_AND_DREAM_UI.md` §19. The missing piece was the second hypothesis
+> below: the parent `verticalScroll` was consuming the move, and the fix is to
+> claim the gesture on the `Initial` pass. The rest of this section is kept as
+> the record of what was tried, because it is why the working version is built
+> the way it is.
+
+**Status at the time: abandoned, shipped as arrows instead.** The **Your stations**
 list reorders with up/down buttons on each row (`StationOrderCard`). They are
 plain `clickable`s with no gesture arbitration anywhere near them, and the rows
 still animate past each other, so the feature works — but the user asked for
@@ -548,6 +555,123 @@ which is why anything with a rule in it keeps moving to `core`.
 iPhone 11 — all green. **The arrows in the station list have not been verified on
 device**; they were the last change made.
 
+## 6e. Session 2026-08-06: carousel home, drag-to-reorder, copy pass
+
+All iOS-only. `:android:app` depends on `:core` alone and nothing consumes
+`:composeApp`'s android target, so none of the UI work here can reach Android;
+the one `core` change (`ListReorder.slotOf`) is additive and covered by tests.
+
+### New: the home screen has two layouts
+
+`HomeLayout.LIST` (what shipped) or `HomeLayout.CAROUSEL`, one station per
+swipeable page with dots. Chosen in home settings, which now opens with a
+drawn picker for it; stored as `home_layout_v1` in `StationPrefsRepository`.
+`BOARD_AND_DREAM_UI.md` §18 has the reasoning and the three things to know
+before touching it — chiefly that the page height is fixed and comes from the
+same budget a single open card gets in the list.
+
+### New: drag to reorder actually works
+
+The up/down arrows are gone; a row is held and dragged. **The fix the four
+earlier attempts were missing is consuming the gesture on the `Initial` pointer
+pass** — the ancestor `verticalScroll` claims drags on `Main`, and once it
+consumes a move the child's drag ends silently, which is exactly the "lifts but
+will not move" symptom §6d describes. Full write-up: `BOARD_AND_DREAM_UI.md`
+§19. `ListReorder.slotOf` moved into core beside `moved`, with a test that walks
+every from/to pair and asserts the two agree — that agreement is what makes the
+drop jump-free.
+
+**§6d below is now history, not current state.** Keep it: it is why this
+attempt was built the way it was.
+
+### Feedback fixes
+
+| Ask | What changed |
+|---|---|
+| "Open by default" is unclear | Now an **Expanded / Collapsed** picker. `StationPrefs.openByDefault` renamed to `startExpanded`, with `@SerialName("openByDefault")` so nobody's stored preference resets. Hidden entirely in a carousel, where it would do nothing. |
+| The expand glyph looks like fullscreen | It was `OpenInFull`, which *is* the fullscreen glyph everywhere else in iOS. Now `ExpandCircleDown` — the card's own chevron, badged. The settings picker uses the same glyph, rotated 180° for Collapsed, so the pair reads as exact opposites. |
+| Theme button in the bottom-right corner | Removed, along with `ui/common/ThemeToggleButton.kt` (nothing else used it). Appearance lives in home settings, where the segmented row is now one line high instead of two. |
+| Screensaver in Profile | Removed. It is a property of the home screen and home settings already has it; `profile.screensaver.title` / `.subtitle` are no longer read by anything. |
+| The screensaver preview is blank | Rebuilt as a real board: signage card, station strip, departure rows with destinations and ETAs, status strip, and the clock where that layout actually puts it. The station NAME is the real one (that is what the picker below changes); the departures are fixed and fictional, for the same reason the station card's preview is. |
+| Scrollbar only appears while scrolling | It was always drawn when scrollable, but at an effective alpha near 0.2. Now a lit amber rail that reads at rest and only brightens under the finger. Still absent when the board fits. |
+| Strings read as AI-written | Em dashes are gone from every user-visible string in `composeApp` (the two left are a developer `error()` and a comment). Settings copy cut to a line: "Live departures while charging", "Open iOS notification settings", "Lines, directions and filters", "Only this board goes. The rest of $stationName stays." |
+| Two icons on the station card | One. The chevron's ROTATION is the current state; a filled accent disc behind it is the mark that this station opens itself. They were two glyphs about the same axis, which reads as two controls. `BOARD_AND_DREAM_UI.md` §11. |
+| "When the app opens" did not name the setting | Now **Default view**, with the caption saying when it applies. |
+| The carousel overlapped and was not smooth | The page transform included `translationX = offset * width * 0.10`, which pulls each neighbour ~39pt toward the centre over an 18pt gutter — the next card's edge sitting on the current one. The edge `transformOrigin` compounded it. Both gone; scale about the centre pulls pages APART during a swipe. §18. |
+| Carousel chips showed no line names | Chips are now roundel + station name on one line, line names underneath — the same reading order as the card and the list row. Coloured dots alone cannot tell Circle from Hammersmith & City, which at an interchange is the only difference between two chips. |
+
+### Crash found and fixed during the device run
+
+The first install aborted on the first frame, every launch: `SIGABRT`, and the
+only useful frame in the `.ips` was `MetalRedrawer.draw`. The message is on the
+console, not in the crash log — `xcrun devicectl device process launch --console`
+gave `kotlin.RuntimeException: Can't wrap nullptr` and a Kotlin stack pointing at
+`BoardScrollbar`.
+
+Cause: the new gradient thumb divided by a `scroll.maxValue` that layout had just
+set to 0 in the same frame, `coerceIn` passed the resulting NaN straight through
+(every comparison against NaN is false), Skia returned a null shader for the
+gradient, and Kotlin/Native aborted on the null. The solid fill it replaced had
+been swallowing the same NaN silently. Written up in `BOARD_AND_DREAM_UI.md` §17
+as a general rule, because any future draw lambda on this panel can hit it.
+
+### Where the code lives now
+
+The session added a carousel, a working drag, and a motion pass, and each of
+those arrived as more code in files that were already the two longest in the
+app. A consolidation pass at the end split them up and deleted the duplication
+they had grown. **Start here when looking for any of it:**
+
+| File | What it owns |
+|---|---|
+| `ui/common/ReorderBox.kt` | The hold-and-drag gesture, axis-agnostic and generic over the item type. The one place the five attempts' worth of hard-won detail lives. |
+| `ui/common/SegmentedRow.kt` | Mutually-exclusive options with a selection that slides. Theme picker and expanded/collapsed picker. |
+| `ui/common/SettingsUi.kt` | Section label, caption, card, divider, navigating row, picker tile — the furniture all three settings screens are built from. |
+| `ui/common/MiniBoard.kt` | The departure board in miniature, plus the signage palette and the fictional departures every preview shows. |
+| `ui/common/Press.kt` | `pressScale` / `pressHighlight` — iOS touch feedback, replacing Material's ripple. |
+| `ui/station/StationOrder.kt` | What a STATION looks like while being dragged: the list row, the carousel chip, and the two containers. |
+| `ui/summary/StationCarousel.kt` | The pager, its page transform, and the dots. |
+| `ui/summary/HomeBoardBudget.kt` | The height arithmetic: `MIN_BOARD_HEIGHT`, `boardMaxHeight`, and every measurement they depend on. |
+
+What that removed, in case it looks like something is missing:
+
+- **Two copies of the settings furniture.** `HomeSettingsScreen` had
+  `HomeSectionLabel`/`HomeCaption`/`HomeCard`/`HomeDivider`/`ActionRowSimple`;
+  `StationSettingsScreen` had `SectionLabel`/`SectionCaption`/`SettingsCard`/
+  `HairlineDivider`/`ActionRow`. Same six components under two sets of names,
+  already drifting in padding and radius. Now one set in `SettingsUi.kt`. Home's
+  rows gained the trailing chevron the station rows already had, which is
+  correct — every one of them navigates.
+- **Two copies of the mini board**, each with its own private spelling of the
+  signage palette (`PreviewPanelBg`/`PreviewAmber`/`PreviewActiveRow` in one,
+  `PreviewBoardBg`/`PreviewRowBg`/`PreviewAmber` in the other) and its own idea
+  of what was on it. Two previews of the same board that disagree about its
+  contents look like two products.
+- **Two copies of the picker tile** (`LayoutTile`, `LayoutOption`) — animated
+  border, press-scale, artwork, label — now `PickerTile`.
+- **The drag, twice**, once per axis. `ReorderBox` takes `horizontal: Boolean`
+  and everything else is shared. This one matters most: a bug fixed in one copy
+  of a gesture that took five attempts would not have been fixed in the other.
+
+`SummaryScreen` went 1441 → 1099 lines and `HomeSettingsScreen` 1068 → 421,
+without anything being deleted that a user can see.
+
+### Gates
+
+`:core:testDebugUnitTest` **72 green** (was 68), `:composeApp:compileKotlinIosArm64`,
+`:composeApp:compileDebugKotlinAndroid`, `:android:app:compileProdReleaseKotlin`,
+and a staging build installed on the iPhone 11, launched, and confirmed still
+running (no crash report newer than the launch).
+
+### Not verified on device
+
+Everything here is built and installed but **not QA'd by hand**. In priority
+order: the drag (four attempts failed before this one — if a row lifts and will
+not move, the Initial-pass claim is being beaten by something new, and
+`IOS_HANDOVER.md` §6d lists what else to check); the carousel's page height on a
+small screen with a promo showing; and whether the carousel's per-page haptic is
+welcome or annoying in practice.
+
 ---
 
 ## 7. Which doc to open
@@ -620,13 +744,10 @@ its own `widget_refresh_trace`.
 
 ## 9. Next steps, in priority order
 
-1. **Verify the station-order arrows on device** (§6d). They were the last
-   change of the session and are the only ordering control there is.
-2. **Drag-to-reorder, if it is still wanted** — §6d lists four attempts, the
-   reason each failed, and the four things to try next in order. Budget it
-   properly or leave the arrows; do not start from scratch.
-3. **Review backend subscriptions for multi-line** (§6b "Still open"). Deferred
-   through three sessions now and never looked at.
+1. **QA the 2026-08-06 work on device** (§6e "Not verified"): the drag first,
+   then the carousel on a small screen with a promo showing.
+2. **Review backend subscriptions for multi-line** (§6b "Still open"). Deferred
+   through four sessions now and never looked at.
 4. **QA the promos and the stream on device**: widget promo appears only with
    no widget installed; dream promo retires after one run; notification banner
    tracks the Settings toggle; force-update dialog fires against a raised

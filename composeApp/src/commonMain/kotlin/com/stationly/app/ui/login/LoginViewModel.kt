@@ -404,7 +404,7 @@ class LoginViewModel(
             } else {
                 _uiState.value = _uiState.value.copy(
                     isAuthenticating = false,
-                    error = "Still not verified — tap the link in the email and try again."
+                    error = "Still not verified. Tap the link in the email and try again."
                 )
             }
         }

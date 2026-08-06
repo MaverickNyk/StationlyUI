@@ -1,11 +1,8 @@
 package com.stationly.app.ui.station
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,11 +22,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DeleteOutline
-import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -38,8 +33,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -53,7 +46,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,23 +59,26 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.stationly.app.platform.HapticType
 import com.stationly.app.platform.ModeIconStore
 import com.stationly.app.platform.performHaptic
+import com.stationly.app.ui.common.MINI_DEPARTURES
+import com.stationly.app.ui.common.MiniBoard
+import com.stationly.app.ui.common.MiniBoardDeparture
+import com.stationly.app.ui.common.MiniBoardHeader
+import com.stationly.app.ui.common.MiniBoardPalette
+import com.stationly.app.ui.common.PickerTile
+import com.stationly.app.ui.common.SegmentedRow
+import com.stationly.app.ui.common.SettingsActionRow
+import com.stationly.app.ui.common.SettingsCaption
+import com.stationly.app.ui.common.SettingsCard
+import com.stationly.app.ui.common.SettingsDivider
+import com.stationly.app.ui.common.SettingsSectionLabel
 import com.stationly.app.ui.summary.components.lineColorForTheme
 import com.stationly.app.ui.theme.DisplayFamily
 import com.stationly.app.ui.theme.isDarkTheme
+import com.stationly.app.ui.util.HomeLayout
+import com.stationly.app.ui.util.StationPrefsRepository
 import com.stationly.core.model.UserSelection
 import com.stationly.core.util.BoardLabels
 import com.stationly.core.util.LineShortNames
-
-/**
- * The dot-matrix palette, mirrored from `Board.kt` for the layout previews.
- *
- * Fixed regardless of app theme, exactly as the real board is — a preview whose
- * panel went white in light mode would be showing the user a board that does not
- * exist.
- */
-private val PreviewPanelBg = Color(0xFF0C0C0C)
-private val PreviewAmber = Color(0xFFFFC819)
-private val PreviewActiveRow = Color(0xFF161616)
 
 /**
  * Everything about ONE station's card, on its own screen.
@@ -118,8 +113,9 @@ fun StationSettingsScreen(
     // shut until it finishes — a second tap would race the `remaining` list the
     // teardown is computed from.
     val isDeleting by viewModel.isDeleting.collectAsStateWithLifecycle()
+    val homeLayout by StationPrefsRepository.layout.collectAsStateWithLifecycle()
     val prefs = prefsMap[stationId]
-    val openByDefault = prefs?.openByDefault == true
+    val startExpanded = prefs?.startExpanded == true
     val heroVisible = prefs?.hideHero != true
     val isDark = isDarkTheme()
 
@@ -173,7 +169,7 @@ fun StationSettingsScreen(
             Spacer(Modifier.height(28.dp))
 
             // ── Layout ──
-            SectionLabel("Card layout")
+            SettingsSectionLabel("Card layout")
             LayoutPicker(
                 heroVisible = heroVisible,
                 onChoose = {
@@ -183,44 +179,50 @@ fun StationSettingsScreen(
                     }
                 },
             )
-            SectionCaption(
-                "The countdown is the single soonest departure across every line " +
-                    "you track here, in large type. Turning it off gives the board " +
-                    "its space instead — the same departures, more of them on screen."
-            )
+            SettingsCaption("The countdown shows the soonest train. Off, the board gets its space.")
 
             Spacer(Modifier.height(28.dp))
 
             // ── Expansion ──
             //
+            // Two named states rather than a switch. "Open by default" made the
+            // user work out what its off position meant, and the answer
+            // (collapsed to a few legs, not hidden) is not obvious enough to
+            // leave unsaid. Both words are on screen now.
+            //
             // No "Pin to top" here any more. Every station's settings screen
             // offered it, so every station could be pinned, and a rank that
             // everything can claim ranks nothing. Ordering moved to home
             // settings, where the stations are shown as one list and dragged
-            // into the sequence the user wants — the only place a ranking can
-            // actually be expressed.
-            SectionLabel("On your home screen")
-            SettingsCard {
-                ToggleRow(
-                    icon = Icons.Rounded.OpenInFull,
-                    title = "Open by default",
-                    subtitle = if (openByDefault) {
-                        "Its board is already open every time you launch the app."
-                    } else {
-                        "Starts collapsed to its next departures. Tap the header to open it."
-                    },
-                    checked = openByDefault,
-                    onCheckedChange = {
-                        performHaptic(HapticType.TAP)
-                        viewModel.setOpenByDefault(it)
+            // into the sequence the user wants.
+            //
+            // Hidden in a carousel, where each station has a page to itself and
+            // there is nothing to collapse.
+            if (homeLayout != HomeLayout.CAROUSEL) {
+                // "When the app opens" named the MOMENT and left the setting
+                // itself unlabelled, so the two words underneath had to carry
+                // both what they were and when they applied. "Default view" names
+                // the setting; the caption says when.
+                SettingsSectionLabel("Default view")
+                ExpansionPicker(
+                    startExpanded = startExpanded,
+                    onChoose = {
+                        if (it != startExpanded) {
+                            performHaptic(HapticType.TAP)
+                            viewModel.setStartExpanded(it)
+                        }
                     },
                 )
+                SettingsCaption(
+                    if (startExpanded) "Opens with the full board every time."
+                    else "Opens showing the next departures. Tap it for the board."
+                )
+
+                Spacer(Modifier.height(28.dp))
             }
 
-            Spacer(Modifier.height(28.dp))
-
             // ── Boards ──
-            SectionLabel("Lines and directions")
+            SettingsSectionLabel("Lines and directions")
             SettingsCard {
                 // Grouped by LINE, with a row per direction underneath.
                 //
@@ -247,12 +249,12 @@ fun StationSettingsScreen(
                             { boardToDelete = it }
                         } else null,
                     )
-                    HairlineDivider()
+                    SettingsDivider()
                 }
-                ActionRow(
+                SettingsActionRow(
                     icon = Icons.Rounded.Tune,
                     title = "Add or edit lines",
-                    subtitle = "Pick lines, directions and destination filters",
+                    subtitle = "Lines, directions and filters",
                     onClick = onEditLines,
                 )
             }
@@ -260,15 +262,15 @@ fun StationSettingsScreen(
             Spacer(Modifier.height(28.dp))
 
             // ── Danger ──
-            SectionLabel("Remove")
+            SettingsSectionLabel("Remove")
             SettingsCard(borderColor = MaterialTheme.colorScheme.error.copy(alpha = 0.28f)) {
-                ActionRow(
+                SettingsActionRow(
                     icon = Icons.Rounded.DeleteOutline,
                     title = "Delete this station",
                     subtitle = if (boards.size == 1) {
-                        "Removes this board and stops its live updates"
+                        "Removes its board and stops updates"
                     } else {
-                        "Removes all ${boards.size} boards and stops their live updates"
+                        "Removes all ${boards.size} boards and stops updates"
                     },
                     tint = MaterialTheme.colorScheme.error,
                     enabled = !isDeleting,
@@ -282,11 +284,9 @@ fun StationSettingsScreen(
         ConfirmDialog(
             title = "Delete $stationName?",
             body = if (boards.size == 1) {
-                "Its board disappears from your home screen and stops updating. " +
-                    "You can add the station again at any time."
+                "Its board leaves your home screen. You can add it back any time."
             } else {
-                "All ${boards.size} boards here disappear from your home screen and " +
-                    "stop updating. You can add the station again at any time."
+                "All ${boards.size} boards leave your home screen. You can add them back any time."
             },
             confirmLabel = "Delete",
             onConfirm = { confirmDelete = false; viewModel.deleteStation() },
@@ -297,7 +297,7 @@ fun StationSettingsScreen(
     boardToDelete?.let { board ->
         ConfirmDialog(
             title = "Remove ${LineShortNames.displayName(board.line)}?",
-            body = "Only this board is removed. The rest of $stationName stays as it is.",
+            body = "Only this board goes. The rest of $stationName stays.",
             confirmLabel = "Remove",
             onConfirm = { boardToDelete = null; viewModel.deleteBoard(board) },
             onDismiss = { boardToDelete = null },
@@ -387,46 +387,17 @@ private fun LayoutOption(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val accent = MaterialTheme.colorScheme.primary
-    val borderColor by animateColorAsState(
-        if (selected) accent else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.12f),
-        label = "layout_border",
-    )
-    val borderWidth by animateDpAsState(if (selected) 2.dp else 1.dp, label = "layout_border_w")
-
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .border(BorderStroke(borderWidth, borderColor), RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-            .padding(10.dp),
+    PickerTile(
+        label = label,
+        selected = selected,
+        onClick = onClick,
+        modifier = modifier,
+        contentPadding = 10.dp,
+        // The artwork here is a near-black board. A 2dp accent border around it
+        // is easy to miss, so selection gets a second, redundant cue.
+        showTick = true,
     ) {
         BoardPreview(withHero = withHero, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(10.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                label,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = if (selected) 1f else 0.6f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            if (selected) {
-                Box(
-                    modifier = Modifier.size(16.dp).background(accent, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Rounded.Check,
-                        null,
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(11.dp),
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -501,194 +472,56 @@ private fun BoardPreview(withHero: Boolean, modifier: Modifier = Modifier) {
             }
             Spacer(Modifier.height(6.dp))
         }
-        Surface(
+        MiniBoard(
             modifier = Modifier.fillMaxWidth().weight(1f),
-            shape = RoundedCornerShape(7.dp),
-            color = PreviewPanelBg,
+            background = MiniBoardPalette.Panel,
+            borderColor = null,
+            corner = 7.dp,
+            padding = 5.dp,
+            textSize = 7.sp,
+            departures = emptyList(),
         ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                PreviewHeaderRow("PLATFORM 3")
-                PreviewDepartureRow("Brixton", "2 min")
-                PreviewDepartureRow("Walthamstow", "5 min")
-                if (!withHero) {
-                    // The rows the hero was costing. This is the whole point of
-                    // the choice, so the preview has to actually show them.
-                    PreviewHeaderRow("PLATFORM 4")
-                    PreviewDepartureRow("Seven Sisters", "7 min")
-                    PreviewDepartureRow("Brixton", "9 min")
-                }
+            MiniBoardHeader("PLATFORM 3")
+            MINI_DEPARTURES.take(2).forEach { MiniBoardDeparture(it, textSize = 7.sp) }
+            if (!withHero) {
+                // The rows the hero was costing. This is the whole point of the
+                // choice, so the preview has to actually show them.
+                MiniBoardHeader("PLATFORM 4")
+                MINI_DEPARTURES.drop(2).forEach { MiniBoardDeparture(it, textSize = 7.sp) }
             }
         }
     }
 }
 
+/**
+ * How this station's card starts: Expanded or Collapsed.
+ *
+ * Two named states rather than a switch labelled with one of them. A switch
+ * makes the user infer its off state, and here that inference is wrong as often
+ * as not — "not open by default" sounds like the station is hidden, when in fact
+ * it still shows its next departure each way.
+ *
+ * ## It is drawn as the card, not as a control
+ * The glyph is the card header's own chevron, turned the way that card's chevron
+ * actually points in each state: up for expanded, down for collapsed. One icon
+ * rotated rather than two icons chosen — whatever pair could be found, the two
+ * halves never read as exact opposites, and these have to.
+ *
+ * And the selected segment's tinted pill is the same accent, at the same weight,
+ * as the disc that appears behind the chevron on the card. Choosing "Expanded"
+ * here and going back shows the same shape in the same colour doing the same
+ * job, which is what makes the two surfaces one setting rather than two.
+ */
 @Composable
-private fun PreviewHeaderRow(title: String) {
-    Box(
-        modifier = Modifier.fillMaxWidth().background(PreviewActiveRow).padding(vertical = 1.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            title,
-            color = PreviewAmber,
-            fontSize = 7.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-        )
-    }
-}
-
-@Composable
-private fun PreviewDepartureRow(destination: String, eta: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth().background(PreviewActiveRow).padding(horizontal = 3.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            destination,
-            color = PreviewAmber,
-            fontSize = 7.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Spacer(Modifier.width(4.dp))
-        Text(eta, color = PreviewAmber, fontSize = 7.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-    }
-}
-
-@Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text.uppercase(),
-        fontSize = 11.sp,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 1.sp,
-        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.45f),
-        modifier = Modifier.padding(start = 4.dp, bottom = 10.dp),
+private fun ExpansionPicker(startExpanded: Boolean, onChoose: (Boolean) -> Unit) {
+    SegmentedRow(
+        options = listOf(true, false),
+        selected = startExpanded,
+        onSelect = onChoose,
+        label = { if (it) "Expanded" else "Collapsed" },
+        icon = { Icons.Rounded.ExpandMore },
+        iconRotation = { if (it) 180f else 0f },
     )
-}
-
-@Composable
-private fun SectionCaption(text: String) {
-    Text(
-        text,
-        fontSize = 12.sp,
-        lineHeight = 17.sp,
-        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
-        modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
-    )
-}
-
-@Composable
-private fun SettingsCard(
-    borderColor: Color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.10f),
-    content: @Composable () -> Unit,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, borderColor),
-    ) {
-        Column { content() }
-    }
-}
-
-@Composable
-private fun HairlineDivider() {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 52.dp)
-            .height(1.dp)
-            .background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.07f))
-    )
-}
-
-@Composable
-private fun ToggleRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            icon,
-            null,
-            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(16.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(3.dp))
-            Text(
-                subtitle,
-                fontSize = 12.sp,
-                lineHeight = 16.sp,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-            ),
-        )
-    }
-}
-
-@Composable
-private fun ActionRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-    tint: Color = MaterialTheme.colorScheme.onSurface,
-    enabled: Boolean = true,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .alpha(if (enabled) 1f else 0.4f)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, null, tint = tint.copy(alpha = 0.8f), modifier = Modifier.size(20.dp))
-        Spacer(Modifier.width(16.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = tint)
-            Spacer(Modifier.height(3.dp))
-            Text(
-                subtitle,
-                fontSize = 12.sp,
-                lineHeight = 16.sp,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            )
-        }
-        Icon(
-            Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-            null,
-            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
-            modifier = Modifier.size(20.dp),
-        )
-    }
 }
 
 /**

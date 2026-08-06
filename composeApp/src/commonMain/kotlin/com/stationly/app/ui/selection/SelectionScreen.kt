@@ -701,7 +701,7 @@ private fun StationScreen(
     val titleFallback =
         if (!modeLabel.isNullOrBlank()) "Find a $modeLabel $noun" else "Find your $noun"
     val subtitleFallback =
-        if (noNearby) "Location off — search by name."
+        if (noNearby) "Location off. Search by name."
         else "Nearby ${noun}s first, or search for another."
 
     Column(Modifier.fillMaxSize()) {
@@ -778,7 +778,7 @@ private fun StationScreen(
                     Spacer(Modifier.height(12.dp))
                     Text("Search for a station", color = White55, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
-                    Text("Location unavailable — type to find stops", color = White25, fontSize = 12.sp)
+                    Text("Location off. Type to find stops", color = White25, fontSize = 12.sp)
                 }
             }
 
@@ -1133,7 +1133,7 @@ private fun PickSummaryBar(
             if (atCap) {
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    "Board full — untick one to add another",
+                    "Board full. Untick one to add another",
                     color = White55, fontSize = 10.sp
                 )
             }
@@ -1269,7 +1269,7 @@ private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, layou
     val towardsLabel  = layout?.sdText("dir_towards_label") ?: "towards"
     val stationsLabel = layout?.sdText("dir_stations_label") ?: "STATIONS THIS WAY"
     val stationsToTpl = layout?.sdText("dir_stations_to_label") ?: "STATIONS TO {dest}"
-    val splitHint     = layout?.sdText("dir_split_hint") ?: "This direction splits — tap a destination above to see its full line of stops."
+    val splitHint     = layout?.sdText("dir_split_hint") ?: "This direction splits. Tap a destination above for its full line of stops."
     // Bind to the STRUCTURED route fields the backend sends (directionName /
     // towards / destinations / upcomingStations). Fall back to parsing the
     // legacy label / secondaryLabel strings so older payloads still render.

@@ -151,9 +151,9 @@ class StationSettingsViewModel(
         }
     }
 
-    /** Expand this station's card on every app open — see [StationPrefs.openByDefault]. */
-    fun setOpenByDefault(open: Boolean) {
-        viewModelScope.launch { StationPrefsRepository.update(stationId) { it.copy(openByDefault = open) } }
+    /** Expand this station's card on every app open — see [StationPrefs.startExpanded]. */
+    fun setStartExpanded(expanded: Boolean) {
+        viewModelScope.launch { StationPrefsRepository.update(stationId) { it.copy(startExpanded = expanded) } }
     }
 
     fun setHeroVisible(visible: Boolean) {

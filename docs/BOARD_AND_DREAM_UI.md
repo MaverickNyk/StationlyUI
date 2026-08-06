@@ -234,17 +234,30 @@ behind by a deleted station are ignored on read, so it never needs pruning to st
 correct, and re-adding a station puts it back where the user had it
 (`orderedIds`).
 
-**`openByDefault`** survives as a genuine per-station setting: it expands the card
-on EVERY launch, not just the first, and several stations may set it. Its mark on
-the card header is `OpenInFull` — the same glyph as the switch that sets it, so
-the mark and its control are visibly one thing. It was briefly `UnfoldMore`, which
-had to go once the header grew an expand/collapse chevron: a second vertical
-double-arrow beside the chevron reads as a duplicate of that control rather than
-as a setting.
+**`startExpanded`** survives as a genuine per-station setting: it expands the card
+on EVERY launch, not just the first, and several stations may set it. (It was
+`openByDefault` until 2026-08-06 and the stored JSON key still is — see the
+`@SerialName` on it.)
+
+**It has no icon of its own, and must not get one back.** Three glyphs were tried
+as a separate badge next to the chevron — `UnfoldMore` (reads as a second
+chevron), a bolt (says "fast", not "already open"), `OpenInFull` (iOS's
+fullscreen glyph, so on a card it promises a fullscreen board) — and the problem
+was never the glyph. Two marks side by side about the same axis make the user
+work out which one is a control and which one is a setting.
+
+The two facts are not equals. Which way the card is open **right now** is a
+state, and the chevron's rotation has always said it. Whether it opens itself is
+a **mark on** that state, so it is drawn as one: the same chevron, with the
+app accent filled in behind it at 16%. The settings screen's selected "Expanded"
+segment carries the identical fill, so the disc on the card and the highlighted
+option are one fact in two places, in the same colour, doing the same job. The
+disc animates in, because it is set on another screen and would otherwise simply
+be present when the user navigates back rather than something they saw happen.
 
 **Which stations are open is a SET, not one id** — the user can open several by
 hand — and it is SESSION state, not a preference. What you had open is not
-something you configured; the setting is `openByDefault`, and it is the only part
+something you configured; the setting is `startExpanded`, and it is the only part
 that survives a cold start. `null` (untouched) resolves to the open-by-default
 stations, or the first station when none are marked; an EMPTY set means the user
 closed everything this session and must survive.
@@ -475,7 +488,201 @@ phrase the Network section uses for the same state.
 scroll: the test was `maxValue > 0`, and a board that visually fits routinely
 overflows by a pixel or two (2dp inter-row spacing against a fractional-density
 viewport). The threshold is half a departure row, so it only shows when a row is
-genuinely hidden, and it rests at 45% alpha and brightens under the finger.
+genuinely hidden.
+
+**⚠️ A NaN in a Brush aborts the process on Kotlin/Native.** Giving the thumb a
+gradient turned a latent divide-by-zero into a hard crash on the first frame of
+every launch, and the shape of it is worth knowing before drawing anything else
+here:
+
+- `scroll.maxValue` is read at DRAW time, but the decision to draw the bar at all
+  is made at COMPOSITION time. Layout updates `maxValue` in the same frame that
+  draws; the recomposition that would withdraw the bar happens in the next one.
+  A board that has just stopped overflowing therefore gets exactly one draw with
+  `maxValue == 0`, and every ratio in the lambda becomes `0/0`.
+- **`coerceIn` does not launder NaN.** Every comparison against NaN is false, so
+  it falls through both branches and comes out the other side unchanged. The
+  same is true of `coerceAtLeast`.
+- Skia answers a gradient with a non-finite endpoint by returning a **null
+  shader**, and Kotlin/Native answers the null shader by aborting:
+  `kotlin.RuntimeException: Can't wrap nullptr`, `SIGABRT`, no useful frame in
+  the `.ips` beyond `MetalRedrawer.draw`. The message only appears on the
+  console — `xcrun devicectl device process launch --console` prints it, the
+  crash log does not.
+- A solid `color =` fill takes the same NaN and quietly draws nothing, which is
+  why this had never surfaced. **Guard the numbers, not the brush**: bail out of
+  the draw lambda when the viewport or the overflow is zero.
+
+**And it is readable at rest (2026-08-06).** It was drawn at 45% of an
+already-translucent amber while idle, which on a black panel is an effective
+alpha around 0.2 — invisible in daylight. So the answer to "is there more below"
+arrived only after the user had guessed and dragged, and a hint that appears in
+response to the action it exists to prompt is not a hint. The rail is now always
+present, the thumb is lit amber with brighter ends (the panel's own rows fall off
+at their edges the same way), and touching it only nudges the brightness. Still
+absent entirely when the board fits.
+
+## 18. iOS home: list or carousel (2026-08-06)
+
+The home screen has two arrangements, chosen in home settings
+(`StationPrefsRepository.layout`, `home_layout_v1`):
+
+**List** is what shipped before: every station down one scrolling page, all but
+the top collapsed to its legs, height shared by the budget in §11.
+
+**Carousel** gives each station a page of its own, swiped left and right, with a
+`HorizontalPager` and a row of dots. Nothing is collapsed, because a page with
+one station on it has nothing to collapse *for*.
+
+They answer different questions, which is why neither is a default that suits
+everyone. A list is "what is happening across my stations" and pays for breadth
+in board height; a carousel is "what is happening at THIS station" and spends
+the whole screen on one board, at the cost of a swipe to see the next.
+
+### How the carousel moves
+
+Three things, none of them decoration:
+
+- **The pages have depth.** Each page reads its own distance from centre inside
+  `graphicsLayer` and applies scale (0.94 → 1), alpha (0.45 → 1) and a 10%
+  parallax against the finger, hinged about its trailing edge. Numbers this
+  gentle are deliberate — a carousel that scales to 0.8 is a showreel, and this
+  one has a live departure board on it that has to stay readable the whole way
+  across. All of it is draw-phase: a full board is never recomposed or
+  re-laid-out during a swipe.
+- **`beyondViewportPageCount = 1`.** At the default of 0, composing the next
+  board happens on the frame it first pokes into the viewport, which is the
+  first frame of the swipe — every gesture began with a stutter. The list layout
+  composes every board anyway, so this costs nothing it was not already paying.
+- **⚠️ NEVER `translationX` a page, and never pivot one at its edge.** Both were
+  tried on device and both are the same mistake: the pager has already placed
+  the page at its own offset, so anything moving it horizontally moves it
+  relative to that placement — into its neighbour. The parallax was
+  `offset * width * 0.10`, which for the page one to the right pulled it ~39pt
+  LEFT over an 18pt gutter, and the next card's edge sat visibly on top of the
+  current one. An edge `transformOrigin` compounded it by shrinking each
+  neighbour *towards* the middle page. Scale about the CENTRE is the whole
+  answer: a shrinking page pulls away from both neighbours, so the gutter grows
+  during a swipe instead of closing. Parallax, if ever wanted, has to move the
+  page's CONTENT inside a clipped page.
+- **The dots track the finger, not the settled page.** Widths are
+  `6 + 12 × max(0, 1 - distance)`, which sums to exactly one stretched dot
+  across the row however far through a swipe you are — so the indicator moves
+  continuously and the row never changes width. Drawn in one `Canvas` reading
+  the pager inside the draw lambda.
+
+Consequences worth knowing before touching either:
+
+- **`StationPrefsRepository.order` drives both** — top-to-bottom in the list,
+  left-to-right in the carousel. Arranging one arranges the other, and the home
+  settings caption says which is which.
+- **The page height comes from the same budget**, asked with the counts a
+  carousel actually has: one open board, nothing collapsed, plus
+  `PAGER_DOTS_BLOCK` as `extraChrome`. It is FIXED for every page — a page that
+  resized as it scrolled past would be the same instability §5 exists to
+  prevent — so a short station leaves space below itself rather than shrinking.
+- **`StationPrefs.startExpanded` means nothing here** and the station settings
+  screen hides the control while the carousel is on, rather than offering a
+  setting that will not do anything.
+- Pull-to-refresh, the promos and the Network section are unchanged and shared:
+  only the middle of the page differs.
+
+## 19. iOS: drag to reorder, and why this attempt worked (2026-08-06)
+
+The station list in home settings is dragged into order by holding a row. Four
+earlier attempts failed (`IOS_HANDOVER.md` §6d has each one); this is what the
+working version does differently, and all three parts are load-bearing:
+
+1. **The detector is on the container, not the row.** A `PointerInputChange`'s
+   position is in the coordinates of the node receiving it, so a row that moves
+   to follow the finger sees a stationary finger and the drag delivers nothing.
+   The container never moves.
+2. **It claims the gesture on the `Initial` pass.** This is the part every
+   earlier attempt was missing. The ancestor `verticalScroll` detects drags on
+   the `Main` pass, and the moment it consumes a move the child's drag ends
+   silently — which looks exactly like a row that lifts and then refuses to
+   budge. `Initial` runs before `Main` in its entirety, so consuming there means
+   the scroller never sees the event at all. The screen also disables its
+   scroller while a row is held, which is the second lock rather than the fix.
+3. **`pointerInput` is keyed on `Unit`.** Keyed on the list, the first change
+   tore the modifier down and cancelled the in-flight gesture. The live list is
+   read through `rememberUpdatedState`.
+
+Positions, never reordering: the committed list is frozen for the whole drag
+(reordering it reorders the composables under the finger) and each row is placed
+at `ListReorder.slotOf(...) * ROW_HEIGHT`. `slotOf` and `moved` are tested
+against each other in core precisely because the drop is jump-free only if every
+row is already standing where the committed list is about to put it — the
+commit then changes no pixel. The lifted row flies to its slot BEFORE the commit,
+for the same reason.
+
+One detector owns the tap too. A `Modifier.clickable` beside it would fire on
+release however long the press was, so every drop would also open a settings
+screen; a release before the row lifts is the tap, and a hold that never moved is
+treated as one as well.
+
+**The control matches the layout it arranges.** In a carousel the same stations
+are a horizontal strip of page chips dragged left and right, because ordering
+side-by-side pages in a top-to-bottom list makes the user map one picture onto
+the other every time. Both are `ReorderBox`, which is axis-agnostic — the only
+difference is which coordinate counts — so there is one copy of the gesture and
+one place for it to be right. The strip scrolls when the chips no longer fit,
+and that scroller is disabled during a drag: the `Initial`-pass claim already
+handles it, but here the two would be fighting over the same axis rather than
+different ones.
+
+## 20. iOS motion: what "premium" is made of (2026-08-06)
+
+Four changes, each fixing something that read as "an app" rather than as iOS:
+
+- **Navigation is a real push.** Both screens used to travel the full width in
+  opposite directions, which is Android's shared-axis transition wearing a
+  horizontal coat. UIKit moves the two layers by DIFFERENT amounts: the arriving
+  screen comes the whole way in, the covered one slides a third and dims. That
+  difference is parallax, and it is what makes the new screen look like it is on
+  top of the old one instead of the two being on a conveyor belt. The curve is
+  UIKit's own (`CubicBezierEasing(0.32, 0.72, 0, 1)`) — fast off the mark, long
+  decelerating tail.
+- **Segmented controls have one selection that travels** (`ui/common/SegmentedRow`).
+  The fill used to appear under the new segment and vanish from the old; two
+  things happening at once read as a flicker, one thing moving reads as a
+  response. Shared by the theme picker and the expanded/collapsed picker, which
+  had already started drifting apart in padding and radius.
+- **No ripples** (`ui/common/Press`). Material's ripple is the single loudest
+  tell that a Compose app is not native. Card-shaped things shrink under the
+  finger (`pressScale`); full-width rows fill with a faint grey
+  (`pressHighlight`) — a row spanning the screen scaling down pulls its own
+  edges away from the screen edges and reads as the layout breaking.
+- **The home screen's add/remove crossfade was 500ms each way**, overlapping for
+  all of it, so a new board spent most of its entrance semi-transparent over the
+  old one. Now 220ms in behind 160ms out: the replacement arrives faster than
+  the thing it replaces leaves.
+
+## 21. Where the shared iOS UI lives (2026-08-06)
+
+Three settings screens, two previews of the same board and two axes of the same
+drag had each grown their own copy of the same components. They are now one copy
+each, and new work belongs in them rather than beside them:
+
+| File | Owns |
+|---|---|
+| `ui/common/SettingsUi.kt` | `SettingsSectionLabel`, `SettingsCaption`, `SettingsCard`, `SettingsDivider`, `SettingsActionRow`, `PickerTile` |
+| `ui/common/SegmentedRow.kt` | Mutually-exclusive options, selection slides between them |
+| `ui/common/MiniBoard.kt` | The board in miniature + the signage palette + `MINI_DEPARTURES` |
+| `ui/common/ReorderBox.kt` | Hold-and-drag reordering, either axis, any item type |
+| `ui/common/Press.kt` | `pressScale` / `pressHighlight` |
+| `ui/station/StationOrder.kt` | What a station looks like while being dragged |
+| `ui/summary/StationCarousel.kt` | The pager, its page transform, the dots |
+| `ui/summary/HomeBoardBudget.kt` | `MIN_BOARD_HEIGHT`, `boardMaxHeight` and the measurements behind them |
+
+Two rules that fall out of this and are worth keeping:
+
+- **A second caller is the moment to extract, not the moment to copy.** Every
+  pair above diverged before anyone noticed — padding, corner radius, label
+  alpha, which departures a preview shows. None of those differences were
+  decisions.
+- **The gesture especially.** A bug fixed in one copy of a drag that took five
+  attempts to get working would not have been fixed in the other.
 
 ## Consistency contract (don't break)
 - The board renders on home + widget + dream from the **same** `widget_departure_*.xml`
@@ -511,11 +718,26 @@ genuinely hidden, and it rests at 45% alpha and brightens under the finger.
 - **A setting every item can hold cannot express a rank.** Ordering lives on the
   list, never as a per-item "pin to top" (§11).
 - **One glyph, one meaning, everywhere it appears.** A mark on a card and the
-  switch that sets it are one fact in two places; drawing them differently makes
+  control that sets it are one fact in two places; drawing them differently makes
   the user work out that they are related (§11).
+- **A state and a mark on that state are not two icons.** When one fact
+  qualifies another — "open right now" and "opens by itself" — the second is
+  drawn ON the first (fill, tint, weight), never beside it. Two glyphs on one
+  axis are two controls as far as the user is concerned (§11).
 - **A card's parts move on one clock.** Anything that animates on expand or
   collapse hangs off the card's `updateTransition`, never its own
   `animateFloatAsState` — same duration is not the same clock (§16).
+- **A gesture nested inside a scroller must claim its events on the `Initial`
+  pass.** Waiting until `Main` is waiting until the scroller has already
+  consumed them, and the symptom is a control that responds once and then dies
+  (§19).
+- **User-facing copy is short, plain and free of em dashes.** A settings row is
+  a label and at most one line saying what it does; the reasoning behind it goes
+  in a comment, where it is useful, and not on the user's screen.
+- **A preview shows the real thing.** Placeholder bars cannot answer "which of
+  these layouts do I want", because what differs between layouts is what the
+  content does in them (§12, and the screensaver preview in
+  `DreamSettingsScreen.PreviewBoard`).
 
 ## iOS launch screen
 `iosApp/project.yml` → `UILaunchScreen` (`UIColorName: LaunchBackground`,

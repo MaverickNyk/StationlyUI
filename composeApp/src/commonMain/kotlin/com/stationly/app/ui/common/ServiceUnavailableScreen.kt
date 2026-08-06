@@ -174,7 +174,7 @@ fun ServiceUnavailableScreen(
 }
 
 private fun messageForContext(context: String) = when (context) {
-    "selection" -> "Can't reach Stationly servers.\nYour previous setup is saved — you can still view your board."
+    "selection" -> "Can't reach Stationly servers.\nYour setup is saved. You can still view your board."
     "board"     -> "Can't reach Stationly servers.\nLive TfL data continues via direct signals."
     else        -> "Can't reach Stationly servers.\nPlease check your connection and try again."
 }

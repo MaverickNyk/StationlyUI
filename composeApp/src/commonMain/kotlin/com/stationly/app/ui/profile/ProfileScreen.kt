@@ -18,10 +18,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Email
-import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.rounded.AlternateEmail
 import androidx.compose.material.icons.rounded.ArrowBackIosNew
-import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Info
@@ -90,7 +88,7 @@ private val ProfileAboutFallback: List<SduiAppComponent> = listOf(
     SduiAppComponent.Card(
         id = "about_info",
         title = "Stationly",
-        body = "Real-time London transport departures at your fingertips. Track buses, tubes, DLR, and Overground — all from one board.",
+        body = "Live London departures. Buses, tubes, DLR and Overground on one board.",
         style = "brand"
     ),
     SduiAppComponent.Section(
@@ -116,7 +114,6 @@ fun ProfileScreen(
     authProvider: PlatformAuthProvider,
     onNavigateBack: () -> Unit,
     onLoggedOut: () -> Unit,
-    onOpenScreensaver: () -> Unit = {},
     viewModel: ProfileViewModel = viewModel { ProfileViewModel(authProvider) }
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -171,19 +168,13 @@ fun ProfileScreen(
                 // with a delete button as the only thing you could do to them.
                 // Stations are managed where they live: the home card's settings
                 // for one station, and home settings for the order of all of them.
-                // Screensaver entry — iOS home for the dream. On Android the
-                // dream is configured from system Settings → Screen saver;
-                // iOS has no such surface, so the port's settings + start
-                // live behind this row instead.
-                item {
-                    Spacer(Modifier.height(4.dp))
-                    ScreensaverRow(
-                        title = homeConfig["profile.screensaver.title"] ?: "Screensaver",
-                        subtitle = homeConfig["profile.screensaver.subtitle"]
-                            ?: "Clock + live departure board for your desk",
-                        onClick = onOpenScreensaver
-                    )
-                }
+                //
+                // NO screensaver row either. It sat here because the profile was
+                // once the only settings screen the port had; the home screen now
+                // has its own, the screensaver is a property of the home screen,
+                // and two entrances to one destination is one too many. The SDUI
+                // keys `profile.screensaver.title` / `.subtitle` are no longer
+                // read by anything.
 
                 item {
                     Spacer(Modifier.height(4.dp))
@@ -471,35 +462,6 @@ private fun AboutCard(card: SduiAppComponent.Card) {
                     InfoChip("Made in London")
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun ScreensaverRow(title: String, subtitle: String, onClick: () -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = Surface1,
-    ) {
-        Row(
-            modifier = Modifier
-                .clickable(onClick = onClick)
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(Icons.Rounded.Bedtime, contentDescription = null, tint = Amber, modifier = Modifier.size(22.dp))
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, color = White90, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                Text(subtitle, color = White55, fontSize = 12.sp)
-            }
-            Icon(
-                Icons.AutoMirrored.Rounded.ArrowForwardIos,
-                contentDescription = null,
-                tint = White25,
-                modifier = Modifier.size(14.dp)
-            )
         }
     }
 }

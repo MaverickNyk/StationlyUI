@@ -52,7 +52,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -85,6 +84,7 @@ import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
@@ -289,8 +289,8 @@ fun StationBoard(
      * the header renders without a tap target.
      */
     onToggleExpanded: (() -> Unit)? = null,
-    /** Marked with an unfold glyph — see `StationPrefs.openByDefault`. */
-    opensByDefault: Boolean = false,
+    /** Marked in the header — see `StationPrefs.startExpanded`. */
+    startsExpanded: Boolean = false,
     /** False hides the next-departure hero for this station — see `StationPrefs.hideHero`. */
     showHero: Boolean = true,
     /**
@@ -540,7 +540,7 @@ fun StationBoard(
             accent = accent,
             card = card,
             expanded = expanded,
-            opensByDefault = opensByDefault,
+            startsExpanded = startsExpanded,
             legs = collapsedLegs,
             legColor = { line -> lineColorForTheme(line, isDark) },
             onToggleExpanded = onToggleExpanded,
@@ -1062,7 +1062,7 @@ private fun StationHeader(
      */
     card: androidx.compose.animation.core.Transition<Boolean>,
     expanded: Boolean,
-    opensByDefault: Boolean,
+    startsExpanded: Boolean,
     /** Empty when expanded, or when nothing is departing. */
     legs: List<MultiLineBoardProcessor.Leg>,
     legColor: (String) -> Color,
@@ -1108,39 +1108,32 @@ private fun StationHeader(
                 // ellipsised at half the row with the other half left blank.
                 modifier = Modifier.weight(1f),
             )
-            // Two marks, two facts: the pin says this station sits at the top,
-            // the unfold glyph says it opens itself. They are separate settings
-            // and a user can have either without the other, so one shared icon
-            // would be a lie half the time.
+            // ── ONE chevron, carrying two facts ──
             //
-            // Both take the app's accent, NOT the card's line colour. `accent`
-            // varies per card (Victoria blue here, Central red there), which made
-            // one shared meaning look like several different marks.
-            val markTint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
-            if (opensByDefault) {
-                // The SAME glyph the station settings screen puts on the "Open
-                // by default" switch. A mark on a card and the switch that sets
-                // it are one fact in two places, and drawing them differently
-                // makes the user work out that they are related.
-                //
-                // Not `UnfoldMore` (which settings used to use) and not a bolt
-                // (which this briefly was): the first is a vertical double arrow
-                // that reads as a duplicate of the chevron below it, and the
-                // second says "fast" rather than "already open". The diagonal
-                // expand glyph means opened-out and cannot be mistaken for the
-                // chevron's job.
-                Icon(
-                    Icons.Rounded.OpenInFull, "Opens by default",
-                    tint = markTint, modifier = Modifier.size(14.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-            }
-            // The state indicator. There is still no separate collapse BUTTON —
-            // the whole row is the target — but the card was left with no glyph
-            // saying which state it was in, so a collapsed station read as a
-            // station that had lost its board. It rotates through the change
-            // rather than swapping icon, so the transition below has something
-            // in the header moving with it.
+            // There were two glyphs here: a chevron for the card's current state
+            // and a separate badge for "this station opens itself". Side by side
+            // they are two marks about the same axis, and the user has to work
+            // out that the small one is a setting and the big one is a control.
+            // Three different glyphs were tried for the badge and every one of
+            // them read as a second chevron or as something else entirely
+            // (`OpenInFull` is iOS's fullscreen glyph and promised a fullscreen
+            // board).
+            //
+            // The two facts are not equals, and drawing them as equals was the
+            // mistake. Which way the card is open right now is a STATE, and the
+            // chevron's rotation has always said it. Whether it opens itself is
+            // a MARK ON that state, so it is drawn as one: the same chevron,
+            // filled in behind.
+            //
+            // The fill is the app's accent, at the same weight the station
+            // settings screen puts behind the selected "Expanded" segment. That
+            // rhyme is the whole point — the disc on the card and the highlighted
+            // option on the settings screen are one fact in two places, and now
+            // they are literally the same colour doing the same job.
+            //
+            // Accent, NOT the card's line colour: `accent` varies per card
+            // (Victoria blue here, Central red there), which made one shared
+            // meaning look like several different marks.
             if (onToggleExpanded != null) {
                 val chevronTurn = card.animateFloat(
                     transitionSpec = {
@@ -1148,14 +1141,41 @@ private fun StationHeader(
                     },
                     label = "chevron",
                 ) { open -> if (open) 180f else 0f }
-                Icon(
-                    Icons.Rounded.ExpandMore,
-                    if (expanded) "Collapse $stationName" else "Expand $stationName",
-                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
-                    modifier = Modifier.size(20.dp)
-                        .graphicsLayer { rotationZ = chevronTurn.value },
+                // Animated, because this is set on ANOTHER screen: without it the
+                // disc is simply present on the frame the user navigates back,
+                // and the change they just made is something they have to spot
+                // rather than something they saw happen.
+                val marked by animateFloatAsState(
+                    targetValue = if (startsExpanded) 1f else 0f,
+                    animationSpec = tween(260, easing = EaseInOut),
+                    label = "starts_expanded_mark",
                 )
-                Spacer(Modifier.width(4.dp))
+                val primary = MaterialTheme.colorScheme.primary
+                val plain = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .drawBehind {
+                            if (marked > 0.01f) {
+                                drawCircle(color = primary.copy(alpha = 0.16f * marked))
+                            }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Rounded.ExpandMore,
+                        buildString {
+                            append(if (expanded) "Collapse $stationName" else "Expand $stationName")
+                            // The disc is a visual mark and nothing else says it
+                            // out loud, so VoiceOver gets the sentence.
+                            if (startsExpanded) append(". Opens expanded by default")
+                        },
+                        tint = lerp(plain, primary, marked),
+                        modifier = Modifier.size(20.dp)
+                            .graphicsLayer { rotationZ = chevronTurn.value },
+                    )
+                }
+                Spacer(Modifier.width(2.dp))
             }
             IconButton(onClick = onOpenSettings, modifier = Modifier.size(34.dp)) {
                 Icon(
@@ -1509,7 +1529,7 @@ private fun BoardStatusStrip(rendered: List<SectionRender>, homeConfig: Map<Stri
                     r.section.lineStatusFailed ->
                         (homeConfig["board.status_label"] ?: "Status") to
                             (homeConfig["board.status_failed_label"]
-                                ?: "Status unavailable — pull down to retry")
+                                ?: "Status unavailable. Pull down to retry")
                     else -> (homeConfig["board.good_service_label"] ?: "Good Service") to null
                 }
                 LineStatusRanker.Entry(
@@ -1585,10 +1605,18 @@ private fun BoardStatusStrip(rendered: List<SectionRender>, homeConfig: Map<Stri
  * nothing. It exists to answer "is there more below?", which on a signage panel
  * with no other affordance is not obvious.
  *
- * Amber at low alpha rather than a system scrollbar: this sits ON the dot-matrix
- * panel, where a platform grey bar would look like a rendering artefact. It is
- * deliberately thin and dim — it is a hint, not a control, and it must never
- * compete with the departures.
+ * Amber rather than a system scrollbar: this sits ON the dot-matrix panel, where
+ * a platform grey bar would look like a rendering artefact. It is drawn as a lit
+ * rail in the same amber as the departures, so it belongs to the board rather
+ * than floating over it.
+ *
+ * **Visible whenever the board is scrollable, not only while it is moving.** It
+ * was previously drawn at 45% of an already-translucent amber at rest, which on
+ * a black panel is close enough to nothing that the answer to "is there more
+ * below" arrived only after the user had already guessed and dragged. A hint
+ * that appears in response to the action it exists to prompt is not a hint. It
+ * still brightens under the finger, because knowing which of the two states you
+ * are in is worth something.
  *
  * The thumb reads [ScrollState] inside a `drawBehind` lambda, so scrolling
  * invalidates the DRAW phase only. Reading `scroll.value` during composition
@@ -1608,42 +1636,78 @@ private fun BoardScrollbar(scroll: ScrollState, modifier: Modifier = Modifier) {
     //
     // Half a departure row is the threshold: less than that and there is no row
     // hidden down there to go and find.
+    // `Int.MAX_VALUE` is `ScrollState`'s value for "not measured yet", not an
+    // enormous board. Without this the bar is composed on the first frame of
+    // every card and then withdrawn on the next, which is a flicker on boards
+    // that never scroll at all.
     val minOverflowPx = with(LocalDensity.current) { 13.dp.toPx() }
-    if (scroll.maxValue < minOverflowPx) return
+    if (scroll.maxValue == Int.MAX_VALUE || scroll.maxValue < minOverflowPx) return
 
-    // Bright under the finger, quiet at rest. The bar still has to be readable
-    // while idle — that is when it does its actual job of saying "there is more"
-    // — so it dims rather than disappears.
+    // Brighter under the finger, and legible the rest of the time. The gap
+    // between the two states is deliberately small: this is a readout, and a
+    // readout that halves in brightness when you stop touching it is telling you
+    // about your finger rather than about the board.
     val active = scroll.isScrollInProgress
-    val alpha by animateFloatAsState(
-        targetValue = if (active) 1f else 0.45f,
+    val emphasis by animateFloatAsState(
+        targetValue = if (active) 1f else 0f,
         animationSpec = tween(if (active) 120 else 520, easing = EaseInOut),
-        label = "scrollbar_alpha",
+        label = "scrollbar_emphasis",
     )
     Box(
         modifier = modifier
-            .graphicsLayer { this.alpha = alpha }
             // Pushed out over the panel's 8dp padding so it rides the black
             // edge instead of sitting on top of the departure text. A scroll
             // hint must not cost a row its last characters.
             .offset(x = 7.dp)
-            .width(3.dp)
+            .width(4.dp)
             .fillMaxHeight()
+            .padding(vertical = 2.dp)
             .drawBehind {
                 val viewport = size.height
-                val content = viewport + scroll.maxValue
+                val overflow = scroll.maxValue
+                // Both are read at DRAW time, and either can have changed since
+                // the composition that decided to draw the bar at all: layout
+                // updates `maxValue` in the same frame, and the recomposition
+                // that would withdraw the bar happens in the NEXT one. So a
+                // board that has just stopped overflowing gets exactly one draw
+                // with `maxValue == 0` — and every ratio below is then 0/0.
+                //
+                // NaN is not survivable here, and `coerceIn` does not launder it
+                // (every comparison against NaN is false, so it passes straight
+                // through). Skia answers a gradient with a NaN endpoint by
+                // returning a null shader, and Kotlin/Native answers the null
+                // shader by aborting the process: "Can't wrap nullptr", on the
+                // first frame, every launch. It only became fatal when the thumb
+                // gained a gradient — the solid fill it replaced took the same
+                // NaN and quietly drew nothing.
+                if (viewport <= 0f || overflow <= 0) return@drawBehind
+                val content = viewport + overflow
                 // Floor the thumb so a very long board still leaves something
                 // grabbable-looking rather than a single pixel.
-                val thumbHeight = (viewport * viewport / content).coerceAtLeast(24.dp.toPx())
-                val progress = scroll.value.toFloat() / scroll.maxValue
+                val thumbHeight = (viewport * viewport / content)
+                    .coerceIn(26.dp.toPx(), viewport)
+                val progress = (scroll.value.toFloat() / overflow).coerceIn(0f, 1f)
                 val offsetY = (viewport - thumbHeight) * progress
                 val radius = size.width / 2f
+                // The unlit rail. Present at rest so the thumb has something to
+                // travel along and the bar reads as a scale rather than a mark.
                 drawRoundRect(
-                    color = BoardAmber.copy(alpha = 0.10f),
+                    color = BoardAmber.copy(alpha = 0.14f + 0.06f * emphasis),
                     cornerRadius = CornerRadius(radius, radius),
                 )
+                // The thumb, lit. Ends slightly brighter than its middle, the
+                // way the panel's own rows fall off at their edges, so it reads
+                // as part of the same display.
                 drawRoundRect(
-                    color = BoardAmber.copy(alpha = 0.45f),
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            BoardAmber.copy(alpha = 0.95f),
+                            BoardAmber.copy(alpha = 0.72f + 0.28f * emphasis),
+                            BoardAmber.copy(alpha = 0.95f),
+                        ),
+                        startY = offsetY,
+                        endY = offsetY + thumbHeight,
+                    ),
                     topLeft = Offset(0f, offsetY),
                     size = Size(size.width, thumbHeight),
                     cornerRadius = CornerRadius(radius, radius),

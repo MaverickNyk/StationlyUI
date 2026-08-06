@@ -262,10 +262,10 @@ private fun FareInfoDialog(
 
     val body = if (isPeak)
         strings["explore.fares.dialog.body.peak"]
-            ?: "Tap in right now and you'll pay TfL's peak fare. Prices drop at 09:30 (or at 19:00 in the evening) — and weekends are always off-peak.\n\nPeak windows are Mon–Fri, 06:30–09:30 and 16:00–19:00. Same trains either side, just a few quid lighter outside the window."
+            ?: "Tap in now and you pay TfL's peak fare. Prices drop at 09:30, or 19:00 in the evening, and weekends are always off-peak.\n\nPeak windows are Mon–Fri, 06:30–09:30 and 16:00–19:00. Same trains either side, just a few quid lighter outside the window."
     else
         strings["explore.fares.dialog.body.offpeak"]
-            ?: "Right now London's letting you off easy — every Tube tap is at the off-peak rate.\n\nPeak fares only apply Mon–Fri, 06:30–09:30 and 16:00–19:00. Weekends and bank holidays are off-peak all day. Same trains, less money. Stationly approves."
+            ?: "London's letting you off easy. Every Tube tap is at the off-peak rate right now.\n\nPeak fares only apply Mon–Fri, 06:30–09:30 and 16:00–19:00. Weekends and bank holidays are off-peak all day. Same trains, less money. Stationly approves."
 
     val linkLabel = strings["explore.fares.dialog.link"] ?: "See TfL fares"
     val dismissLabel = strings["explore.fares.dialog.dismiss"] ?: "Got it"
