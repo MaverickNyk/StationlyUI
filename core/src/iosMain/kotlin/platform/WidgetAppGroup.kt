@@ -39,6 +39,20 @@ data class WidgetFeed(
     val station: String,
     val line: String,
     val direction: String,
+    /**
+     * [line] in short display form ("Cir.", "H&C"), resolved by KMP.
+     *
+     * The extension's OWN refresh rebuilds rows from the REST payload, and it
+     * walks these feeds to decide which lines to keep — so this is where it
+     * learns what to label them. Without it, line prefixes written by a push
+     * would vanish the moment the user tapped refresh, which is precisely the
+     * "board that changes shape depending on who last wrote it" that kept
+     * prefixes off the widget until now.
+     *
+     * Same rule as [PredictionDisplay.lineShort]: resolved here so there is one
+     * naming map in the project rather than one per process.
+     */
+    val lineShort: String = "",
 )
 
 /**

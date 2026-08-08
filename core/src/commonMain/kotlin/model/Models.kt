@@ -319,6 +319,31 @@ data class PredictionDisplay(
      * dropping the row.
      */
     val targetEpochMs: Long? = null,
+    /**
+     * Which line this departure belongs to, ALREADY in short display form
+     * ("Cir.", "H&C") — see [com.stationly.core.util.LineShortNames.shortName].
+     *
+     * ## Why a resolved label and not the canonical id
+     * The only consumer is the iOS widget's wire format, and the widget
+     * extension is a separate process with no line vocabulary at all. Writing
+     * the id would force a second naming map into Swift, which this project has
+     * already had and deleted once: it disagreed with the app's own settings
+     * screen on the same station, and `LineShortNames` is documented as a
+     * stopgap the backend is expected to take over — at which point one copy
+     * would have been updated and one forgotten. Resolving here keeps exactly
+     * one map.
+     *
+     * ## Why it lives on the prediction at all
+     * A widget board is MERGED across every line the user tracks at a station,
+     * so once the rows are in one list there is nothing else left to say which
+     * line a row came from. The app's own board keeps that association in
+     * `MultiLineBoardProcessor.Feed` and never needs this field.
+     *
+     * Empty on every non-widget path, which is every Android path — the board,
+     * the dream and the app's own rendering all resolve the line from the feed
+     * they queried. Defaulted so no existing construction site changes.
+     */
+    val lineShort: String = "",
 )
 
 /**

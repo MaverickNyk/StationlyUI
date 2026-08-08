@@ -332,8 +332,13 @@ private struct RefreshButton: View {
 
     /// Read live rather than carried on the entry: entries are pre-rendered
     /// for future minutes, so a flag baked into them would be stale.
+    ///
+    /// Keyed on THIS widget's station. One tap refreshes every installed board,
+    /// and they do not all succeed together — a station that timed out must ask
+    /// for its retry on its own widget, not on the one next to it that is
+    /// showing perfectly fresh rows.
     private var lastRefreshFailed: Bool {
-        defaults?.bool(forKey: AppGroupKeys.refreshFailed) ?? false
+        defaults?.bool(forKey: AppGroupKeys.refreshFailed(stationId)) ?? false
     }
 
     // A success tick was tried here and removed: swapping the arrow out on
@@ -503,9 +508,16 @@ struct PlatformPagerHeader: View {
 }
 
 /// Destination (left) + ETA (right). All amber; "Due" in red — matches the board.
+///
+/// [showLine] adds the bracketed line prefix the app's own board uses. It is
+/// decided by the CALLER rather than read off the row, because the rule is a
+/// property of the platform group and not of the departure: see
+/// `groupMixesLines`.
 struct DotMatrixRow: View {
     let dep: DepartureRow
     let m: BoardMetrics
+    var showLine: Bool = false
+
     var body: some View {
         LitCell(radius: m.cellRadius) {
             // Three-step urgency ladder: DueRed = board now, amber = live,
@@ -516,10 +528,25 @@ struct DotMatrixRow: View {
             let tint = dep.hasDeparted ? WidgetTheme.amberDim
                      : dep.isDue      ? DueRed
                      : WidgetTheme.amber
-            HStack(spacing: 8) {
+            let nameTint = dep.hasDeparted ? WidgetTheme.amberDim : WidgetTheme.amber
+            HStack(spacing: 6) {
+                // Bracketed short form — "(Cir.) Edgware Road", exactly as
+                // `MultiLineBoardProcessor` renders it on the home board. The
+                // brackets keep the line subordinate to the destination, which
+                // is what the eye is actually scanning for; bold so one line can
+                // still be picked out of a merged platform at a glance.
+                if showLine, !dep.lineShort.isEmpty {
+                    Text("(\(dep.lineShort))")
+                        .font(.system(size: m.row, weight: .bold))
+                        .foregroundColor(nameTint)
+                        .lineLimit(1)
+                        // Never squeezed: this is the row's most compressible
+                        // text and also the one word that makes it legible.
+                        .fixedSize()
+                }
                 Text(dep.destination)
                     .font(.system(size: m.row))
-                    .foregroundColor(dep.hasDeparted ? WidgetTheme.amberDim : WidgetTheme.amber)
+                    .foregroundColor(nameTint)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -527,6 +554,11 @@ struct DotMatrixRow: View {
                     .font(.system(size: m.row + 0.5, weight: .bold, design: .monospaced))
                     .foregroundColor(tint)
                     .lineLimit(1)
+                    // Roll the digits instead of hard-cutting them. Every
+                    // minute the timeline hands over a new entry with this
+                    // label one lower, and a countdown that ticks reads as a
+                    // live board where a jump cut reads as a redraw.
+                    .contentTransition(.numericText(countsDown: true))
                     // The status label is the widest thing this column holds;
                     // fixedSize stops it wrapping or being squeezed, and the
                     // destination truncates to make room instead.
@@ -534,6 +566,68 @@ struct DotMatrixRow: View {
             }
         }
     }
+}
+
+/// Whether a platform group carries more than one line, which is the ONLY case
+/// a line prefix is drawn in.
+///
+/// Same rule as the app's board, and it exists for the same reason: on a
+/// single-line platform the header has already named the line, so a prefix
+/// would be the identical word on every row — noise that costs the destination
+/// its width.
+///
+/// Buses never take one. The backend appends the route number to the
+/// destination itself ("53 Nags Head"), so a prefix would print it twice.
+private func groupMixesLines(_ rows: [DepartureRow], mode: String) -> Bool {
+    guard mode.trimmingCharacters(in: .whitespaces).lowercased() != "bus" else { return false }
+    var seen = Set<String>()
+    for row in rows where !row.lineShort.isEmpty {
+        seen.insert(row.lineShort)
+        if seen.count > 1 { return true }
+    }
+    return false
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MARK: - Board motion
+// ─────────────────────────────────────────────────────────────────────────────
+
+extension AnyTransition {
+    /// New departures arriving — the board relighting rather than sliding.
+    ///
+    /// An LED panel does not scroll when its data changes; its lamps change
+    /// state. Opacity is the honest expression of that, and the slight scale is
+    /// what stops it reading as a dissolve: rows grow very slightly into place,
+    /// which the eye registers as *arrival* rather than as a crossfade between
+    /// two similar images. Asymmetric because the outgoing rows should simply
+    /// go dark — scaling them out too makes the board appear to breathe.
+    static var relight: AnyTransition {
+        .asymmetric(
+            insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .center)),
+            removal: .opacity
+        )
+    }
+}
+
+/// Which transition the board is moving on, decided by WHAT changed.
+///
+/// A page move and a new payload both re-key the rows, and a stateless view
+/// cannot tell which one it is being redrawn for. Three timestamps settle it:
+/// the arrow press wins only when it is more recent than both the last refresh
+/// and the data itself.
+///
+/// Compared as absolute times rather than against a window, because a page move
+/// does NOT rebuild the timeline — WidgetKit re-renders the entry it already
+/// holds, whose date can be up to a minute old. Anything phrased as "within N
+/// seconds of this entry" would therefore mis-fire on exactly the interaction it
+/// exists to catch.
+private func boardTransition(stationId: String, updatedAt: Date, pageable: Bool) -> AnyTransition {
+    guard pageable else { return .relight }
+    let movedAt = WidgetBoardPage.lastMoveAt(stationId)
+    let refreshedAt = UserDefaults(suiteName: AppGroupID.value)?
+        .double(forKey: AppGroupKeys.lastRefreshOk) ?? 0
+    guard movedAt > max(refreshedAt, updatedAt.timeIntervalSince1970) else { return .relight }
+    return .push(from: WidgetBoardPage.lastMoveWasForward(stationId) ? .trailing : .leading)
 }
 
 /// "Severity : reason" — the line-status strip. Board-amber everywhere (no
@@ -694,8 +788,32 @@ struct BoardWidgetView: View {
                         .frame(minHeight: metrics.clock + 12)
                 }
             }
+            // What makes the refresh READ as a refresh. Without an explicit
+            // animation the row transitions below are applied instantly and the
+            // board simply swaps its contents, which on device is the "flicker"
+            // this replaces: the pixels change and nothing tells the eye that
+            // anything was fetched.
+            //
+            // Keyed on page + payload timestamp, so it fires on an arrow press
+            // and on new departures landing, and NOT on the per-minute entries —
+            // all 61 of those are built from one payload and share the key, so
+            // countdowns tick in place (the digits roll on their own, see
+            // DotMatrixRow's contentTransition).
+            .animation(.smooth(duration: 0.28), value: motionKey)
             .overlay(DotGrid().allowsHitTesting(false))
         }
+    }
+
+    /// The single value every board animation is keyed on — see the modifier
+    /// above for why these two things and nothing else.
+    private var motionKey: String {
+        let groupCount = groupedByPlatform(data.departures).count
+        // Only the paging board has a page; the large one renders every group,
+        // so including it there would be a constant that never changes anyway.
+        let page = metrics.singlePlatform
+            ? WidgetBoardPage.page(data.stationId, groupCount: groupCount)
+            : 0
+        return "\(page)-\(Int(data.lastUpdated.timeIntervalSince1970))"
     }
 
     /// Medium: ONE platform group per render — one section header, up to
@@ -718,19 +836,28 @@ struct BoardWidgetView: View {
             let header = data.platformHeader(platform: group.platform)
 
             // The board moves as ONE thing. Header and rows carry the same
-            // transition and the same page-derived identity, so they enter
-            // together rather than each animating on its own schedule — the
-            // difference between a board sliding across and a stack of strips
-            // arriving one after another.
+            // transition and the same identity inputs, so they enter together
+            // rather than each animating on its own schedule — the difference
+            // between a board sliding across and a stack of strips arriving one
+            // after another.
             //
-            // Identity is `page`, deliberately NOT the row's own id: a
-            // DepartureRow's id is a fresh UUID on every decode, so keying on
-            // it would re-insert every row on every minute tick and animate a
-            // countdown as though the platform had changed.
-            let forward = WidgetBoardPage.lastMoveWasForward(data.stationId)
-            let slide: AnyTransition = groups.count > 1
-                ? .push(from: forward ? .trailing : .leading)
-                : .identity
+            // Identity is `page` plus the data's TIMESTAMP, deliberately NOT the
+            // row's own id: a DepartureRow's id is a fresh UUID on every decode,
+            // so keying on it would re-insert every row on every minute tick and
+            // animate a countdown as though the platform had changed. The
+            // timestamp only moves when genuinely new departures land, so the 61
+            // pre-rendered per-minute entries — all built from one payload —
+            // share it and tick in place.
+            let stamp = Int(data.lastUpdated.timeIntervalSince1970)
+            let slide = boardTransition(
+                stationId: data.stationId,
+                updatedAt: data.lastUpdated,
+                pageable: groups.count > 1
+            )
+            // One prefix decision for the whole group, taken from every row it
+            // holds rather than the handful that fit — otherwise a platform
+            // would gain and lose its prefixes as trains tick off the bottom.
+            let mixesLines = groupMixesLines(group.rows, mode: data.mode)
 
             if !header.isEmpty || groups.count > 1 {
                 PlatformPagerHeader(
@@ -744,9 +871,9 @@ struct BoardWidgetView: View {
                 .frame(minHeight: metrics.platform + 8)
             }
             ForEach(Array(group.rows.prefix(metrics.maxRows).enumerated()), id: \.offset) { index, dep in
-                DotMatrixRow(dep: dep, m: metrics)
+                DotMatrixRow(dep: dep, m: metrics, showLine: mixesLines)
                     .frame(minHeight: metrics.row + 10)
-                    .id("\(page)-\(index)")
+                    .id("\(page)-\(index)-\(stamp)")
                     .transition(slide)
             }
             if group.rows.count < metrics.maxRows {
@@ -759,15 +886,25 @@ struct BoardWidgetView: View {
     @ViewBuilder
     private var allPlatformsSection: some View {
         let groups = groupedByPlatform(Array(data.departures.prefix(metrics.maxRows)))
-        ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+        let stamp = Int(data.lastUpdated.timeIntervalSince1970)
+        ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
             let header = data.platformHeader(platform: group.platform)
             if !header.isEmpty {
                 DotMatrixSectionHeader(title: header, m: metrics)
                     .frame(minHeight: metrics.platform + 8)
             }
-            ForEach(group.rows) { dep in
-                DotMatrixRow(dep: dep, m: metrics)
+            // Decided per group, exactly as on the medium board: this one is
+            // the case the prefix exists for, since large shows several
+            // platforms at once and a mixed one is otherwise unreadable.
+            let mixesLines = groupMixesLines(group.rows, mode: data.mode)
+            ForEach(Array(group.rows.enumerated()), id: \.offset) { row, dep in
+                DotMatrixRow(dep: dep, m: metrics, showLine: mixesLines)
                     .frame(minHeight: metrics.row + 10)
+                    // Same rule as the medium board — keyed on the payload so
+                    // new departures relight and the per-minute entries do not.
+                    // There is no paging here, so `.relight` unconditionally.
+                    .id("\(index)-\(row)-\(stamp)")
+                    .transition(.relight)
             }
         }
     }
@@ -812,7 +949,7 @@ struct SmallWidgetView: View {
                         NoDeparturesRow()
                             .frame(maxHeight: .infinity)
                     } else {
-                        ForEach(data.departures.prefix(3)) { dep in
+                        ForEach(Array(data.departures.prefix(3).enumerated()), id: \.offset) { index, dep in
                             LitCell {
                                 // Same three-step tint as the medium/large row.
                                 HStack(spacing: 4) {
@@ -829,10 +966,18 @@ struct SmallWidgetView: View {
                                                         : dep.isDue      ? DueRed
                                                                          : WidgetTheme.amber)
                                         .lineLimit(1)
+                                        .contentTransition(.numericText(countsDown: true))
                                         .fixedSize()
                                 }
                             }
                             .frame(minHeight: 20)
+                            // No line prefix at this size, deliberately: the
+                            // small family has no platform header, so there is
+                            // no group for "does this platform mix lines" to be
+                            // a question about — and at 11pt the prefix would
+                            // take its width straight out of the destination.
+                            .id("\(index)-\(Int(data.lastUpdated.timeIntervalSince1970))")
+                            .transition(.relight)
                         }
                     }
 
@@ -855,6 +1000,8 @@ struct SmallWidgetView: View {
                     }
                     .frame(minHeight: 20)
                 }
+                // Same driver as the medium/large board — see BoardWidgetView.
+                .animation(.smooth(duration: 0.28), value: data.lastUpdated)
                 .overlay(DotGrid().allowsHitTesting(false))
             }
         }

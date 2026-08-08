@@ -99,10 +99,18 @@ struct DepartureRow: Codable, Identifiable {
     /// the receipt-time string. Nil for defensive-fallback rows; those render
     /// their stored eta unchanged, same as Android.
     let targetEpochMs: Double?
+    /// Which line this train is on, in short display form ("Cir.", "H&C"),
+    /// resolved by KMP — mirrors `PredictionDisplay.lineShort`.
+    ///
+    /// Empty on rows written before this build and on any board whose station
+    /// tracks a single line, which the renderer treats identically: no prefix.
+    /// See `DotMatrixRow` for when it is actually drawn — a prefix on every row
+    /// of a single-line platform would be the same word repeated.
+    let lineShort: String
 
     // Memberwise init (used for previews / placeholders)
     init(destination: String, platform: String, eta: String, isDue: Bool, stopLetter: String?,
-         targetEpochMs: Double? = nil) {
+         targetEpochMs: Double? = nil, lineShort: String = "") {
         self.id            = UUID()
         self.destination   = destination
         self.platform      = platform
@@ -110,12 +118,13 @@ struct DepartureRow: Codable, Identifiable {
         self.isDue         = isDue
         self.stopLetter    = stopLetter
         self.targetEpochMs = targetEpochMs
+        self.lineShort     = lineShort
     }
 
     // Only JSON-encode the fields that actually appear in the KMP output.
     // `id` is synthesised locally and is not part of the wire format.
     private enum CodingKeys: String, CodingKey {
-        case destination, platform, eta, isDue, stopLetter, targetEpochMs
+        case destination, platform, eta, isDue, stopLetter, targetEpochMs, lineShort
     }
 
     init(from decoder: Decoder) throws {
@@ -127,6 +136,9 @@ struct DepartureRow: Codable, Identifiable {
         self.isDue         = try container.decode(Bool.self,   forKey: .isDue)
         self.stopLetter    = try container.decodeIfPresent(String.self, forKey: .stopLetter)
         self.targetEpochMs = try container.decodeIfPresent(Double.self, forKey: .targetEpochMs)
+        // Absent on a board written by an older build, which is a normal state
+        // for the window between installing this one and the next push.
+        self.lineShort     = try container.decodeIfPresent(String.self, forKey: .lineShort) ?? ""
     }
 
     /// Label for a train that has already left but is being held on the board
@@ -145,7 +157,8 @@ struct DepartureRow: Codable, Identifiable {
     /// local-only ForEach identity, not wire data).
     func relabelled(eta: String, isDue: Bool) -> DepartureRow {
         DepartureRow(destination: destination, platform: platform, eta: eta,
-                     isDue: isDue, stopLetter: stopLetter, targetEpochMs: targetEpochMs)
+                     isDue: isDue, stopLetter: stopLetter, targetEpochMs: targetEpochMs,
+                     lineShort: lineShort)
     }
 }
 
@@ -161,6 +174,30 @@ struct BoardFeed: Codable, Hashable {
     let station: String
     let line: String
     let direction: String
+    /// [line] in short display form, resolved by KMP — the extension has no
+    /// line vocabulary of its own and deliberately keeps none. This is what
+    /// lets a refresh re-label the rows it rebuilds, so prefixes written by a
+    /// push survive a refresh tap instead of disappearing.
+    var lineShort: String = ""
+
+    private enum CodingKeys: String, CodingKey {
+        case station, line, direction, lineShort
+    }
+
+    init(station: String, line: String, direction: String, lineShort: String = "") {
+        self.station = station
+        self.line = line
+        self.direction = direction
+        self.lineShort = lineShort
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.station = try c.decode(String.self, forKey: .station)
+        self.line = try c.decode(String.self, forKey: .line)
+        self.direction = try c.decode(String.self, forKey: .direction)
+        self.lineShort = try c.decodeIfPresent(String.self, forKey: .lineShort) ?? ""
+    }
 }
 
 // MARK: - WidgetData

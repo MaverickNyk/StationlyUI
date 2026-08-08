@@ -114,6 +114,15 @@ object AppGroupKeys {
     // reintroduced a prefix scan, and by then it deletes real boards.
     const val WIDGET_PAGE_PREFIX     = "widget_page_"
     const val WIDGET_PAGE_DIR_PREFIX = "widget_page_dir_"
+    const val WIDGET_PAGE_AT_PREFIX  = "widget_page_at_"
+
+    // Whether one station's last in-extension refresh failed, so its widget can
+    // show "tap to retry". Written by the extension for the same reason as the
+    // paging keys, and cleaned up here for the same reason: KMP is the only side
+    // that knows a station has been deleted.
+    //
+    // NOT under [WIDGET_BOARD_PREFIX] — see the note above on why that matters.
+    const val WIDGET_REFRESH_FAILED_PREFIX = "widget_refresh_failed_"
 
     // FCM topic management — written by KMP, processed by Swift FCMBridge
     const val FCM_TOPICS              = "fcm_topics"
@@ -311,7 +320,17 @@ class IosWidgetManager : WidgetManager {
     private fun buildBoard(stationId: String, boards: List<UserSelection>): WidgetBoard {
         val sql = Platform.sqlStorage
         val first = boards.firstOrNull()
-        val merged = boards.flatMap { sql.getPredictions(it.station, it.line, it.direction) }
+        // Each departure is stamped with the line it came from BEFORE the merge,
+        // which is the only moment that association still exists: after the
+        // flatMap the rows are one list and nothing distinguishes a Circle train
+        // from a Hammersmith & City one standing at the same platform. Resolved
+        // to the short label here so the extension needs no line vocabulary —
+        // see PredictionDisplay.lineShort.
+        val merged = boards.flatMap { selection ->
+            val label = LineShortNames.shortName(selection.line)
+            sql.getPredictions(selection.station, selection.line, selection.direction)
+                .map { it.copy(lineShort = label) }
+        }
         val tsMs = boards.mapNotNull {
             sql.getLastUpdatedTimestamp(it.station, it.line, it.direction)
         }.maxOrNull() ?: (NSDate().timeIntervalSince1970 * 1000).toLong()
@@ -344,7 +363,9 @@ class IosWidgetManager : WidgetManager {
             // Everything the extension's own refresh needs to rebuild this
             // exact board from one REST call: which naptan, and which
             // (line, direction) pairs to keep out of the payload.
-            feeds = boards.map { WidgetFeed(it.station, it.line, it.direction) },
+            feeds = boards.map {
+                WidgetFeed(it.station, it.line, it.direction, LineShortNames.shortName(it.line))
+            },
             predictions = GlobalBoardProcessor.processPredictions(merged, perPlatformCap = 8),
         )
     }
@@ -379,9 +400,9 @@ class IosWidgetManager : WidgetManager {
      * rendering its last known departures for ever, with no refresh able to
      * correct them.
      *
-     * The paging keys go too. They are written by the extension rather than by
-     * us, but their LIFETIME is the station's, and the extension has no event
-     * to clean them up on.
+     * The paging and refresh-outcome keys go too. They are written by the
+     * extension rather than by us, but their LIFETIME is the station's, and the
+     * extension has no event to clean them up on.
      */
     private fun forgetStations(d: NSUserDefaults, removed: Set<String>): Boolean {
         if (removed.isEmpty()) return false
@@ -389,6 +410,8 @@ class IosWidgetManager : WidgetManager {
             d.removeObjectForKey(AppGroupKeys.WIDGET_BOARD_PREFIX + id)
             d.removeObjectForKey(AppGroupKeys.WIDGET_PAGE_PREFIX + id)
             d.removeObjectForKey(AppGroupKeys.WIDGET_PAGE_DIR_PREFIX + id)
+            d.removeObjectForKey(AppGroupKeys.WIDGET_PAGE_AT_PREFIX + id)
+            d.removeObjectForKey(AppGroupKeys.WIDGET_REFRESH_FAILED_PREFIX + id)
         }
         return true
     }

@@ -42,6 +42,20 @@ enum WidgetBoardPage {
         defaults?.object(forKey: AppGroupKeys.pageDirection(key(stationId))) as? Bool ?? true
     }
 
+    /// When the last page move happened, so a render can tell WHY it is
+    /// happening.
+    ///
+    /// A view is stateless — it sees the current page and the current data and
+    /// has no memory of the previous render — but the board wants two different
+    /// transitions: a directional push when the user pressed an arrow, and a
+    /// relight when new departures landed. Both re-key the rows, so the cause
+    /// cannot be inferred from the keys themselves. Comparing this against
+    /// `lastRefreshOk` is what separates them, and both are timestamps the code
+    /// was already writing one way or another.
+    static func lastMoveAt(_ stationId: String) -> TimeInterval {
+        defaults?.double(forKey: AppGroupKeys.pageMovedAt(key(stationId))) ?? 0
+    }
+
     static func page(_ stationId: String, groupCount: Int) -> Int {
         clamped(defaults?.integer(forKey: AppGroupKeys.page(key(stationId))) ?? 0, groupCount)
     }
@@ -59,6 +73,9 @@ enum WidgetBoardPage {
         guard next != current else { return current }
         d?.set(next, forKey: AppGroupKeys.page(key(stationId)))
         d?.set(forward, forKey: AppGroupKeys.pageDirection(key(stationId)))
+        // Stamped with the move so the render that follows knows an ARROW
+        // caused it and pushes rather than relighting — see [lastMoveAt].
+        d?.set(Date().timeIntervalSince1970, forKey: AppGroupKeys.pageMovedAt(key(stationId)))
         return next
     }
 
@@ -162,9 +179,15 @@ struct RefreshBoardIntent: AppIntent {
         self.stationId = stationId
     }
 
+    /// The reload is [WidgetRefreshService.refresh]'s to make, not this one's.
+    ///
+    /// This used to reload unconditionally on top of the one the service
+    /// already performs, which meant a DEBOUNCED tap — one that deliberately
+    /// did no work — still asked WidgetKit to regenerate all 61 entries of
+    /// every widget's timeline. The service reloads exactly when something
+    /// changed, and staying silent otherwise is the whole point of a debounce.
     func perform() async throws -> some IntentResult {
         _ = await WidgetRefreshService.refresh(stationId: stationId)
-        WidgetCenter.shared.reloadTimelines(ofKind: StationlyDepartureBoardWidget.kind)
         return .result()
     }
 }
