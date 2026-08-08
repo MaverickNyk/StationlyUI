@@ -56,9 +56,10 @@ if the dependency graph ever changes.
 
 ### Not done / known gaps
 
-1. **Nothing on this branch is committed** beyond the commits already listed in
-   `git log master..HEAD`. The working tree carries two sessions of work
-   (home promos + live stream) — see §5 for the suggested commit split.
+1. **The working tree is clean and everything is pushed** as of 2026-08-08
+   (`138bdb1`). Every session listed in §5 is now a commit on `origin/ios-parity`.
+   What is NOT done is device QA — see §9, which is the whole of the top of the
+   list.
 2. **No automated tests anywhere on the iOS side.** `LiveStreamManager`'s
    reconnect/backoff and force-resubscribe logic are the highest-value targets;
    `WidgetData.ticked` retention and `isVersionBelow` are the easiest.
@@ -142,7 +143,7 @@ Do not "fix" them without deciding to change the product on purpose.
 
 ## 5. Branch history and uncommitted work
 
-Everything through §6c is **committed** on `ios-parity`. The list below is the
+**Everything is committed** on `ios-parity` and pushed. The list below is the
 shape of that history, kept because the commit messages are terse and these are
 the entries that explain WHY:
 
@@ -170,12 +171,16 @@ the entries that explain WHY:
   and `22b8182`.
 - **(f) Collapsible stations + per-station settings (2026-08-04/05)** — §6c,
   commit `983b927`.
-
-**Uncommitted right now: (g) home-screen polish — §6d.** Station cards became real
-containers, expand/collapse became one choreographed transition, pinning was
-replaced by an ordered list, and the profile stopped duplicating the station list.
-One item in it is **known broken and documented as such** — read §6d before
-picking this up.
+- **(g) Home-screen polish + station ordering (2026-08-05)** — §6d, commit
+  `3fb34f6`. Station cards became real containers, expand/collapse became one
+  choreographed transition, pinning was replaced by an ordered list, and the
+  profile stopped duplicating the station list. §6d also records four FAILED
+  attempts at drag-to-reorder; they were superseded by (h) and are kept because
+  they are why the working version is built the way it is.
+- **(h) Carousel home + working drag-to-reorder (2026-08-06)** — §6e, commit
+  `ab2fec7`.
+- **(i) Board settings, multi-station widgets, platform arrows (2026-08-07/08)**
+  — §6f, commit `138bdb1`.
 
 ---
 
@@ -966,24 +971,22 @@ its own `widget_refresh_trace`.
 1. **QA the 2026-08-07/08 work on device** (§6f "Not verified"): the three board
    controls; then two widgets pinned to two different stations, which is the
    whole point of the feature and the one thing a single widget cannot prove.
-2. **Commit this branch.** It now carries five sessions of uncommitted work
-   (§5 has the suggested split, and §6f is a natural commit boundary of its own).
-3. **QA the 2026-08-06 work on device** (§6e "Not verified"): the drag first,
+2. **QA the 2026-08-06 work on device** (§6e "Not verified"): the drag first,
    then the carousel on a small screen with a promo showing.
-4. **Review backend subscriptions for multi-line** (§6b "Still open"). Deferred
+3. **Review backend subscriptions for multi-line** (§6b "Still open"). Deferred
    through five sessions now and never looked at.
-5. **QA the promos and the stream on device**: widget promo appears only with
+4. **QA the promos and the stream on device**: widget promo appears only with
    no widget installed; dream promo retires after one run; notification banner
    tracks the Settings toggle; force-update dialog fires against a raised
    `app.minVersion`.
-6. **Re-check reconnect churn** now that the `openIfNeeded` race is fixed — the
+5. **Re-check reconnect churn** now that the `openIfNeeded` race is fixed — the
    trace should show no `stream:reconnect` bursts in steady state. If it still
    churns, the foreground/background-cycling hypothesis in
    `IOS_LIVE_STREAM.md` §7.2 is back on the table.
-7. **Exercise the stream past one station** — the 25-cap and `unknown_station`
+6. **Exercise the stream past one station** — the 25-cap and `unknown_station`
    paths are unexercised.
-8. **More tests**: `LiveStreamManager` reconnect/backoff and force-resubscribe.
+7. **More tests**: `LiveStreamManager` reconnect/backoff and force-resubscribe.
    The widget's `WidgetData.ticked` and the extension's payload mapper are now
    the largest untested surfaces, and neither has a test target to live in —
    see §6f's note on `:composeApp` having none either.
-9. **Verify prod nginx** before pointing production builds at the stream.
+8. **Verify prod nginx** before pointing production builds at the stream.
