@@ -8,6 +8,7 @@ import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.MultiLineBoardProcessor.Row
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -658,5 +659,106 @@ class MultiLineBoardProcessorTest {
             isBus = false,
         )
         assertTrue(legs.isEmpty(), "the header shows the station alone")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // buildGroups — the shared entry point every board surface goes through.
+    //
+    // These exist because the iOS widget re-derived its own grouping for a
+    // while and got exactly the case below wrong. Anything that renders a
+    // board must come through here, and these are the rules it inherits.
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `groups buses by pole — two unlettered poles at one hub stay apart`() {
+        // The case that motivated this: TfL letters stops only at multi-stop
+        // interchanges, so at an ordinary pair of poles both carry a blank
+        // platform AND a null stopLetter. Anything keyed on the platform string
+        // merges them — and they are on opposite sides of the road.
+        val groups = MultiLineBoardProcessor.buildGroups(
+            feeds = listOf(
+                feed("39", stationId = "490008805N", direction = "inbound",
+                    predictions = listOf(pred("39 Putney Bridge", 3, platform = ""))),
+                feed("39", stationId = "490012211N", direction = "outbound",
+                    predictions = listOf(pred("39 Clapham Junction", 5, platform = ""))),
+            ),
+            isBus = true,
+        )
+        assertEquals(2, groups.size, "one block per pole, not one per platform label")
+        assertEquals(
+            listOf("490008805N", "490012211N"),
+            groups.map { it.key },
+            "the pole naptan is the block's identity",
+        )
+    }
+
+    @Test
+    fun `groups rail by platform across every line calling there`() {
+        val groups = MultiLineBoardProcessor.buildGroups(
+            feeds = listOf(
+                feed("circle", predictions = listOf(pred("Edgware Road", 2, platform = "Platform 1"))),
+                feed("hammersmith-city", predictions = listOf(pred("Barking", 4, platform = "Platform 1"))),
+                feed("circle", predictions = listOf(pred("Aldgate", 6, platform = "Platform 2"))),
+            ),
+            isBus = false,
+        )
+        assertEquals(2, groups.size, "two platforms, three feeds")
+        val platform1 = groups.first { it.key == "Platform 1" }
+        assertTrue(platform1.mixesLines, "two lines share it, so rows name their line")
+        assertEquals(
+            listOf("Circ.", "H&C"),
+            platform1.departures.map { it.lineShort },
+            "resolved here so every surface names a line identically",
+        )
+        assertFalse(
+            groups.first { it.key == "Platform 2" }.mixesLines,
+            "one line — the header already said which, so a prefix would repeat it",
+        )
+    }
+
+    @Test
+    fun `bus groups never carry a line prefix`() {
+        // The backend already appends the route to the destination
+        // ("39 Putney Bridge"), so a prefix would print it twice.
+        val groups = MultiLineBoardProcessor.buildGroups(
+            feeds = listOf(
+                feed("39", stationId = "A", predictions = listOf(pred("39 Putney", 3, platform = "Stop W"))),
+                feed("85", stationId = "A", predictions = listOf(pred("85 Kingston", 5, platform = "Stop W"))),
+            ),
+            isBus = true,
+        )
+        val stop = groups.single()
+        assertFalse(stop.mixesLines, "two routes at one pole, still no prefix")
+        assertTrue(stop.departures.all { it.lineShort.isEmpty() })
+    }
+
+    @Test
+    fun `buildRows and buildGroups agree on order and depth`() {
+        // buildRows is now a flattening of buildGroups, and this is what keeps
+        // it honest: the two must never disagree about which departures the
+        // board shows or what order the blocks are in.
+        val feeds = listOf(
+            feed("victoria", predictions = listOf(
+                pred("Brixton", 1, platform = "Platform 2"),
+                pred("Brixton", 9, platform = "Platform 2"),
+                pred("Brixton", 12, platform = "Platform 2"),
+                pred("Brixton", 15, platform = "Platform 2"),
+            )),
+            feed("victoria", predictions = listOf(pred("Walthamstow", 4, platform = "Platform 1"))),
+        )
+        val prefs = BoardDisplayPrefs(rowsPerPlatform = 2)
+        val groups = MultiLineBoardProcessor.buildGroups(feeds, isBus = false, prefs = prefs)
+        val rows = MultiLineBoardProcessor.buildRows(feeds, isBus = false, prefs = prefs)
+
+        assertEquals(
+            groups.map { it.header },
+            headers(rows),
+            "same blocks, same order",
+        )
+        assertEquals(
+            groups.flatMap { g -> g.departures.map { it.prediction.destination } },
+            realDepartures(rows).map { it.destination },
+            "same departures, same order, same cap",
+        )
     }
 }

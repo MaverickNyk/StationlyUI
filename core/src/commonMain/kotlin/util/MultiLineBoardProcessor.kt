@@ -388,28 +388,18 @@ object MultiLineBoardProcessor {
         isBus: Boolean,
         prefs: BoardDisplayPrefs = BoardDisplayPrefs(),
     ): List<Row> {
-        // Flatten first, keeping each departure's feed so the row can name its
-        // line and the header can collect the group's lines and directions.
-        val all = feeds.flatMap { feed -> feed.predictions.map { it to feed } }
-        if (all.isEmpty()) return emptyList()
-
-        val groups = all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus) }
-            .entries
-            .sortedWith(groupOrder(isBus, prefs))
+        val groups = buildGroups(feeds, isBus, prefs)
+        // NOT padded to the floor: a board with nothing on it at all is the
+        // caller's to describe ("No departures right now"), and three blank rows
+        // would pre-empt that with something that looks like a broken board.
+        // The floor below exists to stop a board with ONE real departure
+        // collapsing, which is a different situation.
+        if (groups.isEmpty()) return emptyList()
 
         val rows = mutableListOf<Row>()
         var departureCount = 0
 
-        groups.forEach { (_, entries) ->
-            val sorted = entries.sortedBy { (p, _) -> StationlyFormatters.arrivalSortKey(p) }
-            val directions = sorted.mapTo(mutableSetOf()) { (_, feed) -> feed.direction }
-            val lines = sorted.map { (_, feed) -> feed.line }.distinct()
-
-            // The platform label is backend-owned ("Platform 8", "Stop C",
-            // "Platform not assigned") — displayed verbatim, never relabelled
-            // client-side. See the consistency contract in BOARD_AND_DREAM_UI.md.
-            val platformLabel = groupLabelFor(sorted.first().first, isBus)
-            val header = headerFor(platformLabel, lines, directions, isBus)
+        groups.forEach { group ->
             // Omit the strip entirely rather than emitting a blank one.
             //
             // A single unlettered bus stop (Smithwood Close and most suburban
@@ -422,50 +412,18 @@ object MultiLineBoardProcessor {
             // An empty strip reads as a rendering bug. The station strip above
             // already names the stop, so with one group the header adds nothing
             // anyway — the rows simply start.
-            if (header.isNotBlank()) rows.add(Row.PlatformHeader(header))
+            if (group.header.isNotBlank()) rows.add(Row.PlatformHeader(group.header))
 
-            // Show the line on a row ONLY when the group actually mixes lines.
-            // On a single-line platform the header already named it, so a prefix
-            // would be the same word on every row — pure noise, and it would
-            // change how the long-standing single-line board looks.
-            val mixesLines = lines.size > 1
-
-            // Buses never take a client-side prefix: the backend appends the
-            // route number to the destination itself ("53 Nags Head"), so adding
-            // one here would double it up.
-            //
-            // ── The cap picks WHICH trains; the sort decides what ORDER they
-            // are shown in, and that order is applied AFTERWARDS ──
-            //
-            // Taking from anything but the time-ordered list is the bug waiting
-            // here: cap 3 applied to a destination-sorted platform keeps the
-            // three alphabetically-first destinations, which at Green Park means
-            // three Cockfosters trains an hour out and no sign of the Uxbridge
-            // one leaving now. The user asked for their trains to be grouped by
-            // where they go, not to be shown a different set of trains.
-            //
-            // Ceiling per platform — NOT the board floor. See MIN_BOARD_ROWS.
-            val shown = sorted.take(prefs.rowCap).let { picked ->
-                if (prefs.sort == BoardSort.DESTINATION) {
-                    picked.sortedWith(
-                        compareBy<Pair<PredictionDisplay, Feed>> { (p, _) ->
-                            p.destination.trim().lowercase()
-                        }.thenBy { (p, _) -> StationlyFormatters.arrivalSortKey(p) }
-                    )
-                } else picked
-            }
-            shown.forEach { (prediction, feed) ->
+            group.departures.forEach { departure ->
                 rows.add(
                     Row.Departure(
                         // Bracketed short form — "(Cir.) Edgware Road". The
                         // brackets keep the line visually subordinate to the
                         // destination, which is what you are actually scanning
                         // for; an unbracketed prefix competes with it.
-                        linePrefix = if (mixesLines && !isBus) {
-                            "(${LineShortNames.shortName(feed.line)})"
-                        } else "",
-                        destination = prediction.destination,
-                        eta = prediction.eta,
+                        linePrefix = if (group.mixesLines) "(${departure.lineShort})" else "",
+                        destination = departure.prediction.destination,
+                        eta = departure.prediction.eta,
                     )
                 )
                 departureCount++
@@ -478,6 +436,139 @@ object MultiLineBoardProcessor {
             rows.add(Row.Departure("", " ", " "))
         }
         return rows
+    }
+
+    /**
+     * One departure, with everything a renderer needs about WHERE it came from.
+     *
+     * [lineShort] is resolved here rather than at the call site so that every
+     * surface showing this board — the home screen, the widget, anything next —
+     * names a line identically. It is empty on bus, where the backend already
+     * appends the route to the destination.
+     */
+    data class GroupedDeparture(
+        val prediction: PredictionDisplay,
+        val line: String,
+        val lineShort: String,
+    )
+
+    /**
+     * One block of the board: a platform (rail) or a pole (bus), its header, and
+     * the departures under it — capped, ordered, in the position the board
+     * gives it.
+     *
+     * [mixesLines] is the group's own answer to "should a row name its line",
+     * computed from every departure the group HAS rather than from the ones that
+     * survived the cap. Deciding it after the cap would let a platform gain and
+     * lose its prefixes as trains tick off the bottom of it.
+     */
+    data class Group(
+        /**
+         * Stable identity for the block: the platform string on rail, the pole
+         * naptan on bus. This is what a consumer that has to re-associate rows
+         * with blocks later (the iOS widget's own REST refresh, which cannot
+         * call this code) matches on.
+         */
+        val key: String,
+        /** "Northern Platform 2", "Bus 39, 34 Stop N" — see [headerFor]. */
+        val header: String,
+        /** The backend's own platform label, verbatim: "Platform 8", "Stop C". */
+        val label: String,
+        val departures: List<GroupedDeparture>,
+        val mixesLines: Boolean,
+    )
+
+    /**
+     * The board as BLOCKS — grouping, ordering, capping and header text, with no
+     * opinion about how any of it is drawn.
+     *
+     * ## Why this is the shared entry point
+     * [buildRows] flattens these into a list of strings for Compose, which suits
+     * a screen that scrolls and suits nothing else. The iOS widget pages between
+     * blocks and re-derives its own ETA labels every minute, so it needs the
+     * blocks themselves and the raw predictions inside them — and when it had to
+     * re-derive the grouping instead, it got it wrong in exactly the way this
+     * file warns about: it grouped buses by `platform`, so two poles at one hub
+     * with no letters between them collapsed into a single block with both
+     * directions interleaved.
+     *
+     * Every rule that makes a board a board — the pole key, unassigned last, the
+     * pin, the cap-then-sort order — now has ONE implementation, and a second
+     * consumer cannot quietly diverge from it.
+     *
+     * @param isBus buses group by stop and never show a direction suffix.
+     * @param prefs this station's arrangement — see [BoardDisplayPrefs] for why
+     *   nothing in it can change the GROUPING, only the order and the depth.
+     */
+    fun buildGroups(
+        feeds: List<Feed>,
+        isBus: Boolean,
+        prefs: BoardDisplayPrefs = BoardDisplayPrefs(),
+    ): List<Group> {
+        // Flatten first, keeping each departure's feed so the row can name its
+        // line and the header can collect the group's lines and directions.
+        val all = feeds.flatMap { feed -> feed.predictions.map { it to feed } }
+        if (all.isEmpty()) return emptyList()
+
+        return all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus) }
+            .entries
+            .sortedWith(groupOrder(isBus, prefs))
+            .map { (key, entries) ->
+                val sorted = entries.sortedBy { (p, _) -> StationlyFormatters.arrivalSortKey(p) }
+                val directions = sorted.mapTo(mutableSetOf()) { (_, feed) -> feed.direction }
+                val lines = sorted.map { (_, feed) -> feed.line }.distinct()
+
+                // The platform label is backend-owned ("Platform 8", "Stop C",
+                // "Platform not assigned") — displayed verbatim, never relabelled
+                // client-side. See the consistency contract in
+                // BOARD_AND_DREAM_UI.md.
+                val label = groupLabelFor(sorted.first().first, isBus)
+
+                // ── The cap picks WHICH trains; the sort decides what ORDER
+                // they are shown in, and that order is applied AFTERWARDS ──
+                //
+                // Taking from anything but the time-ordered list is the bug
+                // waiting here: cap 3 applied to a destination-sorted platform
+                // keeps the three alphabetically-first destinations, which at
+                // Green Park means three Cockfosters trains an hour out and no
+                // sign of the Uxbridge one leaving now. The user asked for their
+                // trains to be grouped by where they go, not to be shown a
+                // different set of trains.
+                //
+                // Ceiling per platform — NOT the board floor. See MIN_BOARD_ROWS.
+                val shown = sorted.take(prefs.rowCap).let { picked ->
+                    if (prefs.sort == BoardSort.DESTINATION) {
+                        picked.sortedWith(
+                            compareBy<Pair<PredictionDisplay, Feed>> { (p, _) ->
+                                p.destination.trim().lowercase()
+                            }.thenBy { (p, _) -> StationlyFormatters.arrivalSortKey(p) }
+                        )
+                    } else picked
+                }
+
+                Group(
+                    key = key,
+                    header = headerFor(label, lines, directions, isBus),
+                    label = label,
+                    departures = shown.map { (prediction, feed) ->
+                        GroupedDeparture(
+                            prediction = prediction,
+                            line = feed.line,
+                            // Buses never take a client-side prefix: the backend
+                            // appends the route number to the destination itself
+                            // ("53 Nags Head"), so adding one here would double
+                            // it up.
+                            lineShort = if (isBus) "" else LineShortNames.shortName(feed.line),
+                        )
+                    },
+                    // Show the line on a row ONLY when the group actually mixes
+                    // lines. On a single-line platform the header already named
+                    // it, so a prefix would be the same word on every row — pure
+                    // noise, and it would change how the long-standing
+                    // single-line board looks.
+                    mixesLines = lines.size > 1 && !isBus,
+                )
+            }
     }
 
     /**
