@@ -200,14 +200,126 @@ struct BoardFeed: Codable, Hashable {
     }
 }
 
+// MARK: - BoardGroup
+
+/// One block of the board — a platform on rail, a pole on bus — mirroring
+/// `WidgetGroup` in `core/iosMain/platform/WidgetAppGroup.kt`.
+///
+/// ## The extension no longer decides what a group is
+/// It used to group the flat departures list by `platform` itself, which is
+/// wrong for buses and cannot be made right on this side of the wire: TfL
+/// letters stops only at multi-stop interchanges, so at an ordinary hub every
+/// pole reports `platform = ""` and they all collapse into one block with both
+/// directions interleaved. The pole a departure was FETCHED from is the bus
+/// group key, and that association exists only in the app, before the merge.
+///
+/// So KMP sends the blocks, and this renders them. That also brings the header
+/// text ("Northern Platform 1 Westbound" rather than a locally-assembled
+/// "Platform 1 (Westbound)") and every ordering rule the extension had no way to
+/// apply — unassigned platforms last, the user's pin, their chosen sort.
+struct BoardGroup: Codable, Identifiable {
+    /// Platform string on rail, pole naptan on bus. Stable identity, and what a
+    /// refresh re-associates its freshly-fetched rows against.
+    let key: String
+    /// KMP's own header text, rendered verbatim.
+    let header: String
+    /// [header] and its shorter forms, widest first — see `headerLadder`.
+    let headerVariants: [String]
+    /// The backend's platform label ("Platform 8", "Stop C", "").
+    let label: String
+    /// Whether rows here should carry their line prefix — decided by KMP from
+    /// every departure the block HAS, not the handful that fit on screen.
+    let mixesLines: Bool
+    let rows: [DepartureRow]
+
+    /// Identity for `ForEach`. The key is unique within a board by construction
+    /// (it is what the block was grouped BY), so it is stable across the
+    /// per-minute entries in a way a row's regenerated UUID is not.
+    var id: String { key }
+
+    /// `rows` is `predictions` on the wire — the Kotlin field name. Renamed here
+    /// because a block's contents read as rows at every use site in the views.
+    private enum CodingKeys: String, CodingKey {
+        case key, header, headerVariants, label, mixesLines
+        case rows = "predictions"
+    }
+
+    init(key: String, header: String, headerVariants: [String] = [],
+         label: String, mixesLines: Bool, rows: [DepartureRow]) {
+        self.key = key
+        self.header = header
+        // The full header is always the widest rung, so a group given no ladder
+        // (an older payload, or a block a refresh invented) still has one — of
+        // exactly one rung, which behaves as the old unconditional render did.
+        self.headerVariants = headerVariants.isEmpty ? [header] : headerVariants
+        self.label = label
+        self.mixesLines = mixesLines
+        self.rows = rows
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let header = try c.decode(String.self, forKey: .header)
+        let variants = try c.decodeIfPresent([String].self, forKey: .headerVariants) ?? []
+        self.key = try c.decode(String.self, forKey: .key)
+        self.header = header
+        self.headerVariants = variants.isEmpty ? [header] : variants
+        self.label = try c.decodeIfPresent(String.self, forKey: .label) ?? ""
+        self.mixesLines = try c.decodeIfPresent(Bool.self, forKey: .mixesLines) ?? false
+        self.rows = try c.decodeIfPresent([DepartureRow].self, forKey: .rows) ?? []
+    }
+
+    func with(rows: [DepartureRow]) -> BoardGroup {
+        BoardGroup(key: key, header: header, headerVariants: headerVariants,
+                   label: label, mixesLines: mixesLines, rows: rows)
+    }
+
+    // MARK: Block rules the extension has to restate
+    //
+    // KMP owns both of these — `MultiLineBoardProcessor.isBus` and
+    // `Group.mixesLines` — and every group that arrives over the wire already
+    // carries the answers. They exist here only for the two paths that must
+    // build a block WITHOUT KMP: the legacy flat keys, and the extension's own
+    // REST refresh. Both had their own copy until they were pulled together
+    // here; two copies of a rule KMP already owns is one more than the one
+    // that should not exist at all.
+
+    /// Whether a station groups by POLE rather than by platform.
+    /// Mirror of `MultiLineBoardProcessor.isBus`.
+    static func isBus(mode: String) -> Bool {
+        mode.trimmingCharacters(in: .whitespaces).lowercased() == "bus"
+    }
+
+    /// Whether a block carries more than one line, which is the ONLY case a row
+    /// draws its line prefix. Mirror of `MultiLineBoardProcessor.Group.mixesLines`.
+    ///
+    /// Buses never take one: the backend appends the route to the destination
+    /// itself ("53 Nags Head"), so a prefix would print it twice.
+    static func mixesLines(_ rows: [DepartureRow], isBus: Bool) -> Bool {
+        guard !isBus else { return false }
+        var seen = Set<String>()
+        for row in rows where !row.lineShort.isEmpty {
+            seen.insert(row.lineShort)
+            if seen.count > 1 { return true }
+        }
+        return false
+    }
+}
+
 // MARK: - WidgetData
 
 struct WidgetData {
     let stationName: String
+    /// CANONICAL line id ("hammersmith-city") — an identity, never shown. The
+    /// legacy refresh path keys the predictions payload on it.
     let lineName: String
+    /// [lineName] as a person reads it, resolved by KMP. Only the fallback
+    /// header uses it; a board with real groups renders KMP's header text.
+    let lineDisplay: String
     let direction: String
     let mode: String
-    let departures: [DepartureRow]
+    /// The board as blocks — the unit the views render and page between.
+    let groups: [BoardGroup]
     let status: String
     let lastUpdated: Date
     let isEmpty: Bool
@@ -225,24 +337,107 @@ struct WidgetData {
     /// where `WidgetRefreshService` falls back to the flat keys.
     var feeds: [BoardFeed] = []
 
+    // A `departures` property that flattened every block used to live here, and
+    // it is deliberately gone: the render path only ever asked it three
+    // questions — is it empty, give me the first few, how many — and answering
+    // any of them by materialising the whole board is work paid on a process
+    // iOS cold-launched to service one tap. The three accessors below answer
+    // them without allocating, and none of them can be written past.
+
+    /// Whether the board has any row at all, without building the list.
+    ///
+    /// Short-circuits on the first non-empty block — one comparison in the
+    /// common case, against a full flatMap before.
+    var hasDepartures: Bool { groups.contains { !$0.rows.isEmpty } }
+
+    /// The first [limit] rows across all blocks, stopping as soon as it has
+    /// them. The small family shows three; it was flattening a board of forty
+    /// to find them.
+    func firstDepartures(_ limit: Int) -> [DepartureRow] {
+        var out: [DepartureRow] = []
+        out.reserveCapacity(limit)
+        for group in groups {
+            for row in group.rows {
+                out.append(row)
+                if out.count == limit { return out }
+            }
+        }
+        return out
+    }
+
+    /// Row count without building the list — for logging, which must never be
+    /// the most expensive thing on a code path.
+    var departureCount: Int { groups.reduce(0) { $0 + $1.rows.count } }
+
     /// True once the App Group has a real `widget_last_updated` timestamp — lets
     /// the footer show a live ticking "ago" only when there's genuine data age
     /// (avoids a decades-long count from the epoch-0 sentinel).
     var hasTimestamp: Bool { lastUpdated.timeIntervalSince1970 > 0 }
 
-    /// "Piccadilly: Platform 1" — the dot-matrix platform header. EXACT
-    /// parity with Android's `StationlyFormatters.platformHeaderText` +
-    /// `formatLinePrefix`, which never append the selection's travel
-    /// direction here — a past iOS-only session added a client-side
-    /// " (Eastbound)"/" (Inbound)" suffix that Android never shows and the
-    /// owner never asked for; removed. If the backend's platform string is
-    /// already fully formed with a direction in parens (e.g. bus stops:
-    /// "Platform 2 (Westbound)") that passes through untouched — it's
-    /// backend-owned SDUI content, not client-invented text.
-    /// Collapses cleanly when a part is missing ("Piccadilly", "Platform 1", "").
-    func platformHeader(platform: String) -> String {
+    /// How old this payload is at a given entry's date. Negative clock skew is
+    /// clamped away — a future timestamp means the clocks disagree, not that the
+    /// data is fresher than fresh.
+    func ageMs(at date: Date) -> Double {
+        guard hasTimestamp else { return .greatestFiniteMagnitude }
+        return max(0, date.timeIntervalSince(lastUpdated) * 1000)
+    }
+
+    // MARK: Fallback grouping (no groups on the wire)
+
+    /// Blocks derived locally from a flat departures list.
+    ///
+    /// The ONLY caller is a board that arrived without groups: the legacy
+    /// single-station keys, and the window between installing a build that sends
+    /// them and the first push that does. It groups by `platform`, which is the
+    /// rule this file exists to stop relying on — correct for rail, and on bus it
+    /// collapses unlettered poles exactly as described in `BoardGroup`.
+    ///
+    /// That is acceptable HERE and nowhere else, because the legacy keys describe
+    /// a single (line, direction) board, which is one pole by definition — there
+    /// is nothing to collapse. Any board that can have two poles has groups.
+    static func fallbackGroups(_ rows: [DepartureRow],
+                               lineDisplay: String,
+                               mode: String) -> [BoardGroup] {
+        var order: [String] = []
+        var map: [String: [DepartureRow]] = [:]
+        for row in rows {
+            let key = (row.platform.isEmpty || row.platform.lowercased() == "unknown")
+                ? "" : row.platform
+            if map[key] == nil { map[key] = []; order.append(key) }
+            map[key]?.append(row)
+        }
+        let isBus = BoardGroup.isBus(mode: mode)
+        return order.map { key in
+            let rows = map[key] ?? []
+            // No ladder: this header was assembled here and the rules for
+            // shortening it live in KMP. One rung renders it as-is.
+            return BoardGroup(
+                key: key,
+                header: fallbackHeader(platform: key, lineDisplay: lineDisplay),
+                label: key,
+                mixesLines: BoardGroup.mixesLines(rows, isBus: isBus),
+                rows: rows
+            )
+        }
+    }
+
+    /// "Piccadilly: Platform 1" — the header for a locally-derived block.
+    ///
+    /// A deliberately poorer string than KMP's, and it should stay that way
+    /// rather than growing toward parity: matching `headerFor` here would mean a
+    /// second implementation of the board's header rules in a language that
+    /// cannot be tested against the first. Boards with real groups never reach
+    /// it.
+    ///
+    /// Android parity note (`StationlyFormatters.platformHeaderText` +
+    /// `formatLinePrefix`): no travel-direction suffix is appended. A past
+    /// iOS-only session added " (Eastbound)"/" (Inbound)" that Android never
+    /// shows; removed. A backend platform string that already carries one
+    /// ("Platform 2 (Westbound)") passes through untouched — that is
+    /// backend-owned content, not client-invented text.
+    private static func fallbackHeader(platform: String, lineDisplay: String) -> String {
         let rawPlat = platform.trimmingCharacters(in: .whitespaces)
-        let line = lineName.isEmpty ? "" : lineName.capitalized
+        let line = lineDisplay.trimmingCharacters(in: .whitespaces)
 
         var plat = ""
         if !rawPlat.isEmpty && rawPlat.lowercased() != "unknown" {
@@ -258,11 +453,48 @@ struct WidgetData {
         }
     }
 
+    /// Convenience init for the paths that only have a flat list — the legacy
+    /// keys, previews, placeholders. Derives blocks via [fallbackGroups].
+    init(stationName: String, lineName: String, lineDisplay: String = "",
+         direction: String, mode: String, departures: [DepartureRow],
+         status: String, lastUpdated: Date, isEmpty: Bool,
+         stationId: String = "", feeds: [BoardFeed] = []) {
+        // The pre-`lineDisplay` fallback: capitalising a canonical id is what
+        // rendered "Hammersmith-City", so it is last resort only — KMP writes
+        // both keys on every board write, making this a window of one push.
+        let display = lineDisplay.isEmpty ? lineName.capitalized : lineDisplay
+        self.init(
+            stationName: stationName, lineName: lineName, lineDisplay: display,
+            direction: direction, mode: mode,
+            groups: Self.fallbackGroups(departures, lineDisplay: display, mode: mode),
+            status: status, lastUpdated: lastUpdated, isEmpty: isEmpty,
+            stationId: stationId, feeds: feeds
+        )
+    }
+
+    init(stationName: String, lineName: String, lineDisplay: String,
+         direction: String, mode: String, groups: [BoardGroup],
+         status: String, lastUpdated: Date, isEmpty: Bool,
+         stationId: String = "", feeds: [BoardFeed] = []) {
+        self.stationName = stationName
+        self.lineName = lineName
+        self.lineDisplay = lineDisplay
+        self.direction = direction
+        self.mode = mode
+        self.groups = groups
+        self.status = status
+        self.lastUpdated = lastUpdated
+        self.isEmpty = isEmpty
+        self.stationId = stationId
+        self.feeds = feeds
+    }
+
     // Used for Xcode Previews and widget placeholder state
     static var placeholder: WidgetData {
         WidgetData(
             stationName: "Arsenal",
-            lineName: "Piccadilly",
+            lineName: "piccadilly",
+            lineDisplay: "Piccadilly",
             direction: "Eastbound",
             mode: "tube",
             departures: [
@@ -305,60 +537,58 @@ struct WidgetData {
 
     static let departedGraceMs: Double = 30_000
 
-    /// Rows re-derived for the given instant. Platform order of first
-    /// appearance is preserved (matches Kotlin groupBy+flatMap semantics).
+    /// How old a payload must be before a departed row is worth holding.
     ///
-    /// `keepAtLeast` is the number of row slots the caller can actually
-    /// display. When there aren't enough live trains to fill them, the most
-    /// recently departed rows are RETAINED and labelled "Departed" instead of
-    /// vanishing — a board that empties itself looks broken and gives the user
-    /// nothing to react to, whereas a stale-but-labelled board reads as "this
-    /// needs a refresh". Pass 0 to keep the old drop-everything behaviour.
+    /// ## Why retention has to be conditional at all
+    /// "Gone" means "this board is stale, refresh me". Backfilling
+    /// unconditionally made it mean "this platform is quiet", which is a
+    /// different and much less useful statement — and it produced the reported
+    /// bug: rows reading "Gone" immediately after a successful refresh. A
+    /// payload can legitimately arrive containing trains that have already left
+    /// (TfL reports them, and SQL holds the previous fetch's rows), so a fresh
+    /// board with a shortfall would resurrect them and label the newest data the
+    /// app has as departed.
+    ///
+    /// Fresh payload, no backfill: the platform showing two trains instead of
+    /// three is the truth, and the board says so by being short rather than by
+    /// lying. Old payload, hold the last known departures: there the label is
+    /// accurate and it is the only signal the user gets that the widget is
+    /// showing history.
+    ///
+    /// 60s because that is already what "fresh" means on this board — it is the
+    /// footer's amber threshold in `LiveAgo.staleColor`. A second definition of
+    /// freshness with a different number is the kind of drift that leaves two
+    /// parts of one widget disagreeing about the same payload.
+    static let retentionMinAgeMs: Double = 60_000
+
+    /// The board re-derived for the given instant: ETAs counted down, departed
+    /// trains shed, the queue shifted.
+    ///
+    /// Block order and identity are untouched — they are KMP's, and a board that
+    /// re-ordered itself between timeline entries would move pages under the
+    /// user's arrows. Blocks left with no rows at all ARE dropped: an empty page
+    /// is nothing to arrow to, and a board whose blocks all empty renders the
+    /// "No departures" row, exactly as before.
+    ///
+    /// `keepAtLeast` is the row slots the caller can display, and it only takes
+    /// effect once the payload is at least [retentionMinAgeMs] old — see there.
+    /// Pass 0 to never retain.
     func ticked(at date: Date, keepAtLeast minRows: Int = 0) -> WidgetData {
-        guard !departures.isEmpty else { return self }
+        guard !groups.isEmpty else { return self }
         let nowMs = date.timeIntervalSince1970 * 1000.0
-        let cutoff = nowMs - Self.departedGraceMs
 
-        // Group FIRST, then decide retention inside each platform. Retention
-        // is a per-platform question: a busy Platform 1 with six upcoming
-        // trains says nothing about whether a quiet Platform 2 should hold its
-        // last departures. Deciding globally let one crowded platform suppress
-        // "Gone" rows on every other one.
-        var order: [String] = []
-        var byPlatform: [String: [DepartureRow]] = [:]
-        for row in departures {
-            if byPlatform[row.platform] == nil {
-                byPlatform[row.platform] = []
-                order.append(row.platform)
-            }
-            byPlatform[row.platform]?.append(row)
-        }
+        // Decided once for the whole board, because it is a property of the
+        // PAYLOAD rather than of any block: every block here was written by the
+        // same fetch and is therefore exactly as old as every other.
+        let retain = minRows > 0 && ageMs(at: date) >= Self.retentionMinAgeMs
 
-        var result: [DepartureRow] = []
-        for platform in order {
-            // Split departed from live. Null-target rows can't be judged, so
-            // they count as live and pass through untouched.
-            var live: [DepartureRow] = []
-            var departed: [DepartureRow] = []
-            for row in byPlatform[platform] ?? [] {
-                guard let target = row.targetEpochMs else { live.append(row); continue }
-                if target >= cutoff { live.append(row) } else { departed.append(row) }
-            }
-
-            // Back-fill ONLY this platform's shortfall. Where its live rows
-            // already fill the slots, departed rows stay dropped — retaining
-            // them would push genuine upcoming trains out of view, since their
-            // earlier targets sort them to the top.
-            let shortfall = max(0, minRows - live.count)
-            let retained: [DepartureRow] = shortfall > 0
-                ? Array(departed
-                    .sorted { ($0.targetEpochMs ?? 0) < ($1.targetEpochMs ?? 0) }
-                    .suffix(shortfall))      // keep the most recent departures
-                : []
-
-            // bumpPlatformGroup applies the monotonic label bump — two trains
-            // on one platform can't share a label ("Due, Due" → "Due, 1 min").
-            result.append(contentsOf: Self.bumpPlatformGroup(retained + live, nowMs: nowMs))
+        // Retention is then a per-BLOCK question: a busy Platform 1 with six
+        // upcoming trains says nothing about whether a quiet Platform 2 should
+        // hold its last departures. Deciding it globally let one crowded
+        // platform suppress "Gone" rows on every other one.
+        let tickedGroups = groups.compactMap { group -> BoardGroup? in
+            let rows = Self.tickGroup(group.rows, nowMs: nowMs, keepAtLeast: retain ? minRows : 0)
+            return rows.isEmpty ? nil : group.with(rows: rows)
         }
 
         // stationId/feeds carried through: every timeline entry is a ticked
@@ -366,14 +596,45 @@ struct WidgetData {
         // idea which station it is — and its paging and refresh buttons acting
         // on whatever the legacy keys happened to hold.
         return WidgetData(
-            stationName: stationName, lineName: lineName, direction: direction,
-            mode: mode, departures: result, status: status,
+            stationName: stationName, lineName: lineName, lineDisplay: lineDisplay,
+            direction: direction, mode: mode, groups: tickedGroups, status: status,
             lastUpdated: lastUpdated, isEmpty: isEmpty,
             stationId: stationId, feeds: feeds
         )
     }
 
-    private static func bumpPlatformGroup(_ group: [DepartureRow], nowMs: Double) -> [DepartureRow] {
+    /// One block's rows at `nowMs`, with its own shortfall backfilled.
+    private static func tickGroup(_ rows: [DepartureRow],
+                                  nowMs: Double,
+                                  keepAtLeast minRows: Int) -> [DepartureRow] {
+        let cutoff = nowMs - departedGraceMs
+
+        // Split departed from live. Null-target rows can't be judged, so they
+        // count as live and pass through untouched.
+        var live: [DepartureRow] = []
+        var departed: [DepartureRow] = []
+        for row in rows {
+            guard let target = row.targetEpochMs else { live.append(row); continue }
+            if target >= cutoff { live.append(row) } else { departed.append(row) }
+        }
+
+        // Back-fill ONLY this block's shortfall. Where its live rows already
+        // fill the slots, departed rows stay dropped — retaining them would
+        // push genuine upcoming trains out of view, since their earlier
+        // targets sort them to the top.
+        let shortfall = max(0, minRows - live.count)
+        let retained: [DepartureRow] = shortfall > 0
+            ? Array(departed
+                .sorted { ($0.targetEpochMs ?? 0) < ($1.targetEpochMs ?? 0) }
+                .suffix(shortfall))      // keep the most recent departures
+            : []
+
+        // bumpGroup applies the monotonic label bump — two trains in one block
+        // can't share a label ("Due, Due" → "Due, 1 min").
+        return bumpGroup(retained + live, nowMs: nowMs)
+    }
+
+    private static func bumpGroup(_ group: [DepartureRow], nowMs: Double) -> [DepartureRow] {
         let cutoff = nowMs - departedGraceMs
         func isDeparted(_ row: DepartureRow) -> Bool {
             guard let t = row.targetEpochMs else { return false }
@@ -431,9 +692,9 @@ class AppGroupStorage {
 
     private let appGroupID = AppGroupID.value
 
-    private var defaults: UserDefaults? {
-        UserDefaults(suiteName: appGroupID)
-    }
+    /// Shared — see `AppGroupDefaults`. Read on every timeline build and every
+    /// render, in a process launched fresh for each.
+    private var defaults: UserDefaults? { AppGroupDefaults.shared }
 
     // MARK: - Multi-station
 
@@ -467,16 +728,34 @@ class AppGroupStorage {
               !board.stationName.isEmpty
         else { return readWidgetData() }
 
+        let lineDisplay = board.lineDisplay?.isEmpty == false
+            ? board.lineDisplay! : board.lineName.capitalized
+        let lastUpdated = board.lastUpdated > 0
+            ? Date(timeIntervalSince1970: TimeInterval(board.lastUpdated))
+            : Date(timeIntervalSince1970: 0)
+
+        // A board written by a build older than `groups` still has to render, so
+        // its flat predictions are grouped locally — see `fallbackGroups` for
+        // why that is safe only as a fallback. The window is one push long.
+        guard !board.groups.isEmpty else {
+            return WidgetData(
+                stationName: board.stationName, lineName: board.lineName,
+                lineDisplay: lineDisplay, direction: board.direction, mode: board.mode,
+                departures: board.predictions, status: board.status ?? "",
+                lastUpdated: lastUpdated, isEmpty: false,
+                stationId: board.id, feeds: board.feeds
+            )
+        }
+
         return WidgetData(
             stationName: board.stationName,
             lineName: board.lineName,
+            lineDisplay: lineDisplay,
             direction: board.direction,
             mode: board.mode,
-            departures: board.predictions,
+            groups: board.groups,
             status: board.status ?? "",
-            lastUpdated: board.lastUpdated > 0
-                ? Date(timeIntervalSince1970: TimeInterval(board.lastUpdated))
-                : Date(timeIntervalSince1970: 0),
+            lastUpdated: lastUpdated,
             isEmpty: false,
             stationId: board.id,
             feeds: board.feeds
@@ -496,12 +775,38 @@ class AppGroupStorage {
         let stationId: String
         let stationName: String
         let lineName: String
+        /// Optional: absent on a board written before the key existed.
+        let lineDisplay: String?
         let direction: String
         let mode: String
         let status: String?
         let lastUpdated: Int
         let feeds: [BoardFeed]
+        /// The board as blocks. Empty on a pre-`groups` payload, which
+        /// `readWidgetData` handles by grouping `predictions` locally.
+        let groups: [BoardGroup]
         let predictions: [DepartureRow]
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.id = try c.decode(String.self, forKey: .id)
+            self.stationId = try c.decode(String.self, forKey: .stationId)
+            self.stationName = try c.decode(String.self, forKey: .stationName)
+            self.lineName = try c.decode(String.self, forKey: .lineName)
+            self.lineDisplay = try c.decodeIfPresent(String.self, forKey: .lineDisplay)
+            self.direction = try c.decode(String.self, forKey: .direction)
+            self.mode = try c.decode(String.self, forKey: .mode)
+            self.status = try c.decodeIfPresent(String.self, forKey: .status)
+            self.lastUpdated = try c.decodeIfPresent(Int.self, forKey: .lastUpdated) ?? 0
+            self.feeds = try c.decodeIfPresent([BoardFeed].self, forKey: .feeds) ?? []
+            self.groups = try c.decodeIfPresent([BoardGroup].self, forKey: .groups) ?? []
+            self.predictions = try c.decodeIfPresent([DepartureRow].self, forKey: .predictions) ?? []
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, stationId, stationName, lineName, lineDisplay, direction, mode
+            case status, lastUpdated, feeds, groups, predictions
+        }
     }
 
     // MARK: - Legacy single-station keys
@@ -514,6 +819,7 @@ class AppGroupStorage {
 
         let stationName = defaults.string(forKey: AppGroupKeys.stationName) ?? ""
         let lineName    = defaults.string(forKey: AppGroupKeys.lineName)    ?? ""
+        let lineDisplay = defaults.string(forKey: AppGroupKeys.lineDisplay) ?? ""
         let direction   = defaults.string(forKey: AppGroupKeys.direction)    ?? ""
         let mode        = defaults.string(forKey: AppGroupKeys.mode)         ?? ""
         let status      = defaults.string(forKey: AppGroupKeys.status)       ?? ""
@@ -534,6 +840,7 @@ class AppGroupStorage {
         return WidgetData(
             stationName: stationName,
             lineName: lineName,
+            lineDisplay: lineDisplay,
             direction: direction,
             mode: mode,
             departures: departures,

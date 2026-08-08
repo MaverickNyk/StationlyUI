@@ -15,6 +15,7 @@ import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.core.util.FreshData
 import com.stationly.core.util.FreshDataNotifier
 import com.stationly.core.util.GlobalBoardProcessor
+import com.stationly.core.util.LineNameStore
 import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.delay
 import com.stationly.app.ui.util.HomeLayout
@@ -145,6 +146,12 @@ class SummaryViewModel(
 
     init {
         viewModelScope.launch { StationPrefsRepository.ensureLoaded() }
+        // Before the first board is drawn, so a row that names its line uses
+        // the backend's short form rather than falling back to the local table
+        // for one render and then changing under the user. Cheap — one small
+        // string read — and an empty result is a legal state, so this cannot
+        // delay or fail the board. See LineNameStore.
+        viewModelScope.launch { LineNameStore.ensureLoaded() }
         viewModelScope.launch { fetchAnnouncement() }
         viewModelScope.launch { fetchHomeConfig() }
         viewModelScope.launch {

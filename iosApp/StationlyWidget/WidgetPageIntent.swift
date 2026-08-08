@@ -27,9 +27,11 @@ import WidgetKit
 /// goes through, so a stale page left behind by a station whose platforms have
 /// changed still lands somewhere valid.
 enum WidgetBoardPage {
-    private static var defaults: UserDefaults? {
-        UserDefaults(suiteName: AppGroupID.value)
-    }
+    /// Shared rather than opened per call: one page render asks [page],
+    /// [lastMoveAt] and [lastMoveWasForward], which used to open the suite three
+    /// times to answer three questions about the same widget. See
+    /// `AppGroupDefaults`.
+    private static var defaults: UserDefaults? { AppGroupDefaults.shared }
 
     /// Which way the last move went, so the render after it can push the board
     /// in the direction the finger asked for. `true` = forwards.
@@ -56,9 +58,17 @@ enum WidgetBoardPage {
         defaults?.double(forKey: AppGroupKeys.pageMovedAt(key(stationId))) ?? 0
     }
 
-    static func page(_ stationId: String, groupCount: Int) -> Int {
-        clamped(defaults?.integer(forKey: AppGroupKeys.page(key(stationId))) ?? 0, groupCount)
+    /// The raw stored index, unclamped — read once when a timeline is built and
+    /// carried on the entry, so no view body has to touch the App Group. The
+    /// clamp is arithmetic and stays at render time, because the valid range is
+    /// a property of the ticked entry rather than of the store. See
+    /// [BoardRenderState].
+    static func storedPage(_ stationId: String) -> Int {
+        defaults?.integer(forKey: AppGroupKeys.page(key(stationId))) ?? 0
     }
+
+    /// Clamp a stored page against a group count — see [clamped].
+    static func clamp(_ page: Int, groupCount: Int) -> Int { clamped(page, groupCount) }
 
     /// Move one platform, staying inside the board. Returns the page landed on.
     ///
@@ -182,10 +192,10 @@ struct RefreshBoardIntent: AppIntent {
     /// The reload is [WidgetRefreshService.refresh]'s to make, not this one's.
     ///
     /// This used to reload unconditionally on top of the one the service
-    /// already performs, which meant a DEBOUNCED tap — one that deliberately
-    /// did no work — still asked WidgetKit to regenerate all 61 entries of
-    /// every widget's timeline. The service reloads exactly when something
-    /// changed, and staying silent otherwise is the whole point of a debounce.
+    /// already performs, which meant a tap absorbed by the in-flight guard —
+    /// one that deliberately did no work — still asked WidgetKit to regenerate
+    /// every entry of every widget's timeline. The service reloads exactly when
+    /// something changed, and staying silent otherwise is the whole point.
     func perform() async throws -> some IntentResult {
         _ = await WidgetRefreshService.refresh(stationId: stationId)
         return .result()

@@ -12,7 +12,8 @@ import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.FormatDeparturesUseCase
 import com.stationly.core.usecase.ProcessPredictionsUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
-import com.stationly.core.util.GlobalBoardProcessor
+import com.stationly.core.util.BoardDisplayPrefs
+import com.stationly.core.util.LineNameStore
 import com.stationly.core.util.LineShortNames
 import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.StationlyFormatters
@@ -23,11 +24,16 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import platform.Foundation.NSBundle
 import platform.Foundation.NSDate
 import platform.Foundation.NSUserDefaults
@@ -59,7 +65,21 @@ private const val APP_GROUP_ID = IosAppGroup.ID
 object AppGroupKeys {
     // Widget data written by KMP, read by WidgetKit extension
     const val WIDGET_STATION_NAME     = "widget_station_name"
+    /**
+     * CANONICAL line id. The extension's legacy refresh keys the predictions
+     * payload on it, so it must stay an identity — [WIDGET_LINE_DISPLAY] is the
+     * one to render.
+     */
     const val WIDGET_LINE_NAME        = "widget_line_name"
+    /**
+     * The same line as a person reads it ("Hammersmith & City").
+     *
+     * Added rather than fixing [WIDGET_LINE_NAME] in place because that key has
+     * two consumers wanting two different things: the refresh needs the id to
+     * look up, the header needs a name to show. Swift bridged the gap with
+     * `.capitalized`, which rendered "Hammersmith-City" on the board.
+     */
+    const val WIDGET_LINE_DISPLAY     = "widget_line_display"
     const val WIDGET_PREDICTIONS      = "widget_predictions"
     const val WIDGET_STATUS           = "widget_status"
     const val WIDGET_DIRECTION        = "widget_direction"
@@ -244,8 +264,18 @@ class IosWidgetManager : WidgetManager {
         // and a bus hub's poles must not become several entries in the picker.
         // `groupBy` preserves first-encounter order, so the picker lists them
         // in the order the user added them.
+        // The headers built below name their lines, and this is what decides
+        // whether they use the backend's short forms or the local fallback
+        // table. Idempotent and one small string read; without it a widget
+        // written before the home screen has ever loaded would bake the
+        // fallback names into the App Group. See LineNameStore.
+        LineNameStore.ensureLoaded()
+
         val byStation = all.groupBy { it.groupingId }
-        val boards = byStation.map { (id, selections) -> buildBoard(id, selections) }
+        val prefs = boardPrefs()
+        val boards = byStation.map { (id, selections) ->
+            buildBoard(id, selections, prefs[id] ?: BoardDisplayPrefs())
+        }
         val directory = byStation.map { (id, selections) ->
             WidgetStationRef(
                 id = id,
@@ -268,6 +298,29 @@ class IosWidgetManager : WidgetManager {
             if (putIfChanged(d, AppGroupKeys.WIDGET_STATIONS, it)) changed = true
         }
         boards.forEach { board ->
+            // ── Never move a board BACKWARDS in time ──
+            //
+            // Two processes write these keys. This one rebuilds from SQLite;
+            // the widget extension's own refresh button fetches REST and writes
+            // the App Group directly, because it cannot open the app's SQLite
+            // (the documented gap in `WidgetRefreshService`). Nothing then
+            // reconciled them, and plain last-writer-wins made the app the
+            // loser's opponent: a stream frame landing seconds after a widget
+            // refresh rewrote that board from SQL rows the refresh had already
+            // superseded, stamped with SQL's older `getLastUpdatedTimestamp`.
+            //
+            // Observed on device: three boards refreshed by the widget at
+            // T, all three showing timestamps ~140s BEFORE T a moment later —
+            // so the user's tap fetched fresh departures, displayed them, and
+            // then had them replaced by staler ones while the "ago" timer
+            // counted backwards.
+            //
+            // With two writers and no shared lock, the only sound merge rule is
+            // that the FRESHER OBSERVATION WINS. This is that rule, and it is
+            // safe in both directions: the app's own timestamp advances on
+            // every sync, so a genuinely newer app payload still overwrites
+            // normally — it is only the stale-over-fresh case that is refused.
+            if (shouldYieldToStored(d, board)) return@forEach
             encode(WidgetBoard.serializer(), board)?.let {
                 if (putIfChanged(d, AppGroupKeys.WIDGET_BOARD_PREFIX + board.id, it)) changed = true
             }
@@ -289,57 +342,69 @@ class IosWidgetManager : WidgetManager {
 
     /**
      * One station's whole board — every line and direction the user tracks
-     * there, merged the way the app's card merges them.
+     * there, grouped by exactly the code the app's own board is grouped by.
      *
      * ## Merged, because a station is what the widget is configured with
      * The widget used to render one (line, direction) selection because that is
      * what a board WAS. A user who tracks the Circle and the District at
      * Edgware Road and pins that station to their home screen is asking for
-     * Edgware Road, not for whichever of the two happens to sort first. The
-     * merge is a plain concatenation followed by
-     * [GlobalBoardProcessor.processPredictions], which groups by platform and
-     * orders the groups by their soonest train — the same rule the widget's own
-     * REST refresh applies, so a refresh tap cannot rearrange the board.
+     * Edgware Road, not for whichever of the two happens to sort first.
      *
-     * The per-platform line prefixes the app's board adds at a mixed platform
-     * ("(Cir.) Edgware Road") are deliberately NOT applied. The widget's own
-     * refresh path re-derives rows from the REST payload and has no idea which
-     * line each came from, so prefixes would appear from a push and vanish on a
-     * refresh tap — a board that changes shape depending on who last wrote it.
+     * ## The grouping is [MultiLineBoardProcessor.buildGroups], not a flat list
+     * This used to concatenate the predictions and hand the flat result to
+     * [GlobalBoardProcessor.processPredictions], leaving the extension to group
+     * it again on the far side of the wire. Two consequences, both live bugs:
      *
-     * `lineName` is the line only when the station tracks exactly one, because
-     * it is what the platform header prefixes ("Piccadilly: Platform 1"). With
-     * two lines on one platform that prefix would name one of them and be wrong
-     * about the other, so the header falls back to "Platform 1".
+     *  - **A flat list cannot express a bus board.** The pole a departure was
+     *    fetched from is the bus group key, and it exists only BEFORE the merge;
+     *    once concatenated, two poles reporting `platform = ""` are one
+     *    indistinguishable block with both directions interleaved. Smithwood
+     *    Close is two naptans and must be two pages.
+     *  - **The headers were re-invented in Swift** from `lineName.capitalized`
+     *    plus the raw platform, which is why the widget said "Platform 1
+     *    (Westbound)" where the home board says "Northern Platform 1 Westbound".
      *
-     * Cap 8, not the default 3: the extension needs RESERVES, not just the
-     * visible window. The large family renders 6 rows, and the departed-row
-     * retention (WidgetData.ticked) can only hold a board together if
-     * already-departed trains are still in the payload to fall back on. Display
-     * caps stay in the views (BoardMetrics.maxRows); this is purely the buffer.
+     * [MultiLineBoardProcessor.headerFor] already produces the right string, so
+     * the fix is to SEND it rather than to write a second implementation of it.
+     * Every ordering rule (unassigned last, the pin, the sort) travels with it
+     * for free — the extension could not have applied any of them.
+     *
+     * ## Reserves, not display depth
+     * `rowCap` is [WIDGET_ROW_RESERVE] rather than the user's `rowsPerPlatform`:
+     * the extension re-derives its ETA labels every minute from a timeline built
+     * once, so it needs trains BEHIND the visible ones to shift into view, plus
+     * departed ones to hold when a platform empties. Display caps stay in the
+     * views (BoardMetrics.maxRows). Everything else in [prefs] — the sort, the
+     * pin — does apply, so a station arranged on the home screen is arranged the
+     * same way on the widget.
+     *
+     * `lineName` is the canonical line only when the station tracks exactly one;
+     * with two lines the fallback header has no single line to name.
      */
-    private fun buildBoard(stationId: String, boards: List<UserSelection>): WidgetBoard {
+    private fun buildBoard(
+        stationId: String,
+        boards: List<UserSelection>,
+        prefs: BoardDisplayPrefs,
+    ): WidgetBoard {
         val sql = Platform.sqlStorage
         val first = boards.firstOrNull()
-        // Each departure is stamped with the line it came from BEFORE the merge,
-        // which is the only moment that association still exists: after the
-        // flatMap the rows are one list and nothing distinguishes a Circle train
-        // from a Hammersmith & City one standing at the same platform. Resolved
-        // to the short label here so the extension needs no line vocabulary —
-        // see PredictionDisplay.lineShort.
-        //
-        // Blank on bus, matching MultiLineBoardProcessor.buildGroups exactly:
-        // the backend already appends the route to the destination ("39 Nags
-        // Head"), so a prefix would print it twice. Stamping it anyway and
-        // relying on the RENDERER to suppress it — which is what this did
-        // first — is two rules for one decision, and the second copy is the one
-        // that gets forgotten.
+        // One Feed per tracked (line, direction), carrying the naptan it was
+        // FETCHED from — that is the bus group key, and this is the last moment
+        // it exists. See MultiLineBoardProcessor.Feed.stationId.
         val isBus = MultiLineBoardProcessor.isBus(first?.mode)
-        val merged = boards.flatMap { selection ->
-            val label = if (isBus) "" else LineShortNames.shortName(selection.line)
-            sql.getPredictions(selection.station, selection.line, selection.direction)
-                .map { it.copy(lineShort = label) }
+        val feeds = boards.map { selection ->
+            MultiLineBoardProcessor.Feed(
+                stationId = selection.station,
+                line = selection.line,
+                direction = selection.direction,
+                predictions = sql.getPredictions(
+                    selection.station, selection.line, selection.direction
+                ),
+            )
         }
+        val groups = MultiLineBoardProcessor.buildGroups(
+            feeds, isBus, prefs, rowCap = WIDGET_ROW_RESERVE
+        )
         val tsMs = boards.mapNotNull {
             sql.getLastUpdatedTimestamp(it.station, it.line, it.direction)
         }.maxOrNull() ?: (NSDate().timeIntervalSince1970 * 1000).toLong()
@@ -357,6 +422,23 @@ class IosWidgetManager : WidgetManager {
         }
         val lines = boards.map { it.line }.distinct()
 
+        val wireGroups = groups.map { group ->
+            WidgetGroup(
+                key = group.key,
+                header = group.header,
+                headerVariants = group.headerVariants,
+                label = group.label,
+                mixesLines = group.mixesLines,
+                // The line label is stamped onto the row here because after this
+                // it is unrecoverable: on the wire a block is a list of
+                // departures and nothing distinguishes a Circle train from an
+                // H&C one standing at the same platform. buildGroups has already
+                // blanked it on bus, where the backend appends the route to the
+                // destination itself.
+                predictions = group.departures.map { it.prediction.copy(lineShort = it.lineShort) },
+            )
+        }
+
         return WidgetBoard(
             id = stationId,
             // The naptan the extension refreshes AGAINST, which is a fetch key
@@ -365,6 +447,7 @@ class IosWidgetManager : WidgetManager {
             stationId = first?.station.orEmpty(),
             stationName = first?.stationName.orEmpty(),
             lineName = lines.singleOrNull().orEmpty(),
+            lineDisplay = lines.singleOrNull()?.let { LineShortNames.displayName(it) }.orEmpty(),
             direction = if (boards.size == 1) first?.direction.orEmpty() else "",
             mode = first?.mode.orEmpty(),
             status = status,
@@ -375,9 +458,69 @@ class IosWidgetManager : WidgetManager {
             feeds = boards.map {
                 WidgetFeed(it.station, it.line, it.direction, LineShortNames.shortName(it.line))
             },
-            predictions = GlobalBoardProcessor.processPredictions(merged, perPlatformCap = 8),
+            groups = wireGroups,
+            // Flattened FROM the groups rather than built alongside them, so the
+            // legacy flat keys and an older extension build can never show a
+            // different board from the one the groups describe.
+            predictions = wireGroups.flatMap { it.predictions },
         )
     }
+
+    /**
+     * Every station's board arrangement, by grouping id.
+     *
+     * ## Why the widget can read these at last
+     * The extension cannot: `StationPrefsRepository` writes to the app's own
+     * NSUserDefaults suite and the widget lives in the App Group, so "the widget
+     * cannot see BoardDisplayPrefs" has been an open item since the settings
+     * screen landed. It was only ever true of the EXTENSION. This runs in the
+     * app, on the same defaults the settings screen writes — so now that the
+     * board is grouped here, the preferences apply here too, and nothing has to
+     * cross the process boundary except the finished blocks.
+     *
+     * Decoded through a core-local shape rather than `StationPrefs` itself,
+     * which lives in `composeApp` and is therefore not visible from `core`. Only
+     * the `board` field is read; `ignoreUnknownKeys` skips the rest of the
+     * record, so the app layer can add per-station preferences without this
+     * needing to know.
+     *
+     * A read failure is an empty map, i.e. defaults everywhere — a widget
+     * arranged as the board was before it had settings, which is exactly the
+     * right fallback and never an empty board.
+     */
+    private suspend fun boardPrefs(): Map<String, BoardDisplayPrefs> = runCatching {
+        Platform.storageManager.loadString(STATION_PREFS_KEY)
+            ?.let { json.decodeFromString(MapSerializer(String.serializer(), StoredStationPrefs.serializer()), it) }
+            ?.mapValues { (_, prefs) -> prefs.board }
+    }.getOrNull().orEmpty()
+
+    /**
+     * The `StationPrefsRepository` storage key, duplicated here because the
+     * repository is in `composeApp` and core cannot see it.
+     *
+     * The one direction this can break is silent: rename it there and this reads
+     * nothing, and the widget quietly reverts to default arrangement with no
+     * error anywhere. `StationPrefsRepository.KEY` carries a note pointing back.
+     */
+    private val STATION_PREFS_KEY = "station_prefs_v1"
+
+    /** Just the `board` field of `composeApp`'s `StationPrefs` — see [boardPrefs]. */
+    @Serializable
+    private data class StoredStationPrefs(val board: BoardDisplayPrefs = BoardDisplayPrefs())
+
+    /**
+     * Departures kept per block in the App Group — reserves, not display depth.
+     *
+     * The extension builds one timeline and re-derives every ETA label from it
+     * per minute for the next hour, so a payload capped at what fits on screen
+     * has nothing to shift up as trains depart: the board would empty itself and
+     * stay empty until the next push. Eight covers the large family's six rows
+     * plus the departed-row retention `WidgetData.ticked` falls back on.
+     *
+     * Deliberately not [BoardDisplayPrefs.rowCap]: that is what the user asked
+     * to SEE, and the views apply it. This is the buffer behind it.
+     */
+    private val WIDGET_ROW_RESERVE = 8
 
     /**
      * The station ids currently holding `widget_board_*` keys, read back out of
@@ -389,6 +532,62 @@ class IosWidgetManager : WidgetManager {
      * on every push. It is also more precise, because the directory is exactly
      * what we wrote last time.
      */
+    /**
+     * Whether the stored board is fresher than the one we are about to write,
+     * and recently enough for that to still be true.
+     *
+     * ## Why the guard is BOUNDED
+     * The race it exists for is a seconds-scale one: a stream frame landing just
+     * after the widget's own REST refresh, rewriting that board from SQL rows
+     * the refresh had already superseded. Refusing the write is right there.
+     *
+     * Refusing it FOREVER is not, and an unbounded rule quietly does that,
+     * because the timestamp is a property of the DEPARTURES while this write
+     * also carries everything else about the board: the station's name, its
+     * mode, its feeds, and the arrangement the user just chose on the settings
+     * screen. A quiet station's SQL timestamp can sit still for minutes, and in
+     * that window an unbounded guard would swallow a re-sort, a re-pin and a
+     * rename alike — the user changes their board and the widget refuses,
+     * with nothing on screen to explain why.
+     *
+     * [STALE_WRITE_GRACE_SECONDS] bounds it. Inside the window the extension's
+     * fresher rows are protected, which is the whole race; outside it the app
+     * wins, so no change can be held off for longer than that no matter how
+     * quiet the station is.
+     */
+    private fun shouldYieldToStored(d: NSUserDefaults, board: WidgetBoard): Boolean {
+        val stored = storedBoardLastUpdated(d, board.id)
+        if (board.lastUpdated >= stored) return false
+        val nowSeconds = (NSDate().timeIntervalSince1970).toLong()
+        return nowSeconds - stored < STALE_WRITE_GRACE_SECONDS
+    }
+
+    /**
+     * How long a board written by the widget extension is protected from being
+     * rewritten with older SQL. Comfortably longer than the race it guards (a
+     * stream frame arriving seconds later) and short enough that no user-visible
+     * change waits on it. See [shouldYieldToStored].
+     */
+    private val STALE_WRITE_GRACE_SECONDS = 90L
+
+    /**
+     * The `lastUpdated` already stored for one station's board, or 0.
+     *
+     * Parsed out of the JSON rather than decoding the whole [WidgetBoard]: this
+     * runs per station on every push, and every field except this one would be
+     * decoded only to be thrown away.
+     *
+     * A board that fails to parse reads as 0, which lets the write through —
+     * the right way to fail, since an unreadable board is exactly the one most
+     * in need of replacing.
+     */
+    private fun storedBoardLastUpdated(d: NSUserDefaults, id: String): Long =
+        d.stringForKey(AppGroupKeys.WIDGET_BOARD_PREFIX + id)?.let { raw ->
+            runCatching {
+                json.parseToJsonElement(raw).jsonObject["lastUpdated"]?.jsonPrimitive?.long
+            }.getOrNull()
+        } ?: 0L
+
     private fun storedStationIds(d: NSUserDefaults): Set<String> =
         d.stringForKey(AppGroupKeys.WIDGET_STATIONS)
             ?.let {
@@ -430,6 +629,17 @@ class IosWidgetManager : WidgetManager {
      * unconfigured widget reads. Returns whether anything actually changed.
      */
     private fun writeLegacy(d: NSUserDefaults, board: WidgetBoard): Boolean {
+        // Same two-writer rule as the per-station boards above, bounded the same
+        // way and for the same reason: the extension's legacy refresh writes
+        // these flat keys directly, and rewriting them from older SQL would walk
+        // an unconfigured widget's "ago" timer backwards — but these keys also
+        // carry the PRIMARY station's identity, so an unbounded guard would pin
+        // a stale station name on the widget after a reorder.
+        val storedTs = d.doubleForKey(AppGroupKeys.WIDGET_LAST_UPDATED).toLong()
+        val nowSeconds = (NSDate().timeIntervalSince1970).toLong()
+        if (board.lastUpdated < storedTs && nowSeconds - storedTs < STALE_WRITE_GRACE_SECONDS) {
+            return false
+        }
         val predictionsJson = encode(
             ListSerializer(PredictionDisplay.serializer()), board.predictions
         ) ?: return false
@@ -438,6 +648,7 @@ class IosWidgetManager : WidgetManager {
         if (putIfChanged(d, AppGroupKeys.WIDGET_STATION_ID, board.stationId)) changed = true
         if (putIfChanged(d, AppGroupKeys.WIDGET_STATION_NAME, board.stationName)) changed = true
         if (putIfChanged(d, AppGroupKeys.WIDGET_LINE_NAME, board.lineName)) changed = true
+        if (putIfChanged(d, AppGroupKeys.WIDGET_LINE_DISPLAY, board.lineDisplay)) changed = true
         if (putIfChanged(d, AppGroupKeys.WIDGET_PREDICTIONS, predictionsJson)) changed = true
         if (putIfChanged(d, AppGroupKeys.WIDGET_STATUS, board.status.orEmpty())) changed = true
         if (putIfChanged(d, AppGroupKeys.WIDGET_DIRECTION, board.direction)) changed = true

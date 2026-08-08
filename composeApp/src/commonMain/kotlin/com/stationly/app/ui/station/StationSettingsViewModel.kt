@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.stationly.app.ui.util.StationPrefs
 import com.stationly.app.ui.util.StationPrefsRepository
 import com.stationly.core.model.UserSelection
+import com.stationly.core.model.WidgetState
 import com.stationly.app.platform.HapticType
 import com.stationly.app.platform.performHaptic
 import com.stationly.core.platform.Platform
@@ -223,9 +224,34 @@ class StationSettingsViewModel(
     /** `null` puts the board back to its natural order. One pin at a time. */
     fun setPin(pin: BoardPin?) = updateBoard { it.copy(pin = pin) }
 
+    /**
+     * Persist an arrangement change, then push it to the WIDGET.
+     *
+     * The push is not optional any more. These preferences used to reach the
+     * home screen only, so writing them was the whole job; the widget's board is
+     * now built by `IosWidgetManager` from the same `BoardDisplayPrefs`, and
+     * nothing else in the app has an event meaning "the arrangement changed".
+     * Without this, a user reordering their board watched the app obey and the
+     * widget ignore them until some unrelated refresh happened to rebuild it.
+     *
+     * The state passed is deliberately EMPTY. Both implementations ignore the
+     * argument and re-read their own source — iOS rebuilds every board from SQL
+     * plus these preferences, Android broadcasts and lets its provider re-read —
+     * so filling it in would be inventing a payload that nothing consumes. See
+     * `IosWidgetManager.updateWidget`, which documents why reading the caller's
+     * state there was a bug.
+     */
     private fun updateBoard(transform: (BoardDisplayPrefs) -> BoardDisplayPrefs) {
         viewModelScope.launch {
             StationPrefsRepository.update(stationId) { it.copy(board = transform(it.board)) }
+            runCatching {
+                Platform.widgetManager.updateWidget(
+                    WidgetState(
+                        stationName = "", lineName = "", predictions = emptyList(),
+                        status = null, lastUpdated = 0L,
+                    )
+                )
+            }
         }
     }
 

@@ -273,6 +273,48 @@ class MultiLineBoardProcessorTest {
         assertEquals(listOf("Stop W"), MultiLineBoardProcessor.headerVariants("Stop W"))
     }
 
+    @Test
+    fun `header variants shorten a long line name before dropping the direction`() {
+        // The rung that makes a widget header fit. Shortening a line name costs
+        // nothing a passenger cannot read back — "H&C" is what the roundel and
+        // the station signage already say — so it must come BEFORE the one rung
+        // that actually loses a fact.
+        val variants = MultiLineBoardProcessor.headerVariants("Hammersmith City Platform 1 Eastbound")
+        assertEquals("Hammersmith City Platform 1 Eastbound", variants[0])
+        assertEquals("Hammersmith City Plat. 1 Eastbound", variants[1])
+        assertEquals("H&C Plat. 1 Eastbound", variants[2])
+        assertEquals("H&C Plat. 1", variants[3])
+    }
+
+    @Test
+    fun `header variants drop a direction the backend put in parentheses`() {
+        // Real device data: the backend's own platform label frequently arrives
+        // as "Platform 2 (Westbound)", so the direction is INSIDE the label
+        // rather than appended by headerFor. Stripping only the appended form
+        // left the widest headers untouched at exactly the rung meant to rescue
+        // them.
+        val variants = MultiLineBoardProcessor.headerVariants("Piccadilly Platform 2 (Westbound)")
+        assertEquals("Piccadilly Platform 2 (Westbound)", variants[0])
+        assertEquals("Picc. Plat. 2 (Westbound)", variants[2])
+        assertEquals("Picc. Plat. 2", variants.last())
+    }
+
+    @Test
+    fun `every group carries its own shrink ladder`() {
+        // The widget cannot call headerVariants — it is a separate process — so
+        // the ladder has to travel with the block or the extension is back to
+        // scaling the type down.
+        val groups = MultiLineBoardProcessor.buildGroups(
+            feeds = listOf(feed("northern", predictions = listOf(
+                pred("Morden", 2, platform = "Platform 1 (Westbound)")
+            ))),
+            isBus = false,
+        )
+        val group = groups.single()
+        assertEquals(group.header, group.headerVariants.first(), "widest rung is the header itself")
+        assertEquals("Nor. Plat. 1", group.headerVariants.last())
+    }
+
     // ── Empty ──
 
     @Test
@@ -759,6 +801,85 @@ class MultiLineBoardProcessorTest {
             groups.flatMap { g -> g.departures.map { it.prediction.destination } },
             realDepartures(rows).map { it.destination },
             "same departures, same order, same cap",
+        )
+    }
+
+    // ── The rowCap override: reserves for a consumer that re-derives labels ──
+
+    @Test
+    fun `rowCap override sets the depth, not the user's rowsPerPlatform`() {
+        // The iOS widget asks for RESERVES: it re-derives every ETA label per
+        // minute for an hour from one payload, so trains behind the visible
+        // ones are what it shifts into view as the front of the queue departs.
+        // Capping its payload at the display depth leaves it nothing to shift,
+        // and the board empties itself until the next push.
+        //
+        // This shipped ignoring the parameter entirely — it took `prefs.rowCap`
+        // in the body — so the widget silently got 3 rows however many it asked
+        // for. It is the kind of bug an override argument invites, because the
+        // call site reads correctly and only the body is wrong.
+        val ten = (1..10).map { pred("Morden", it) }
+        val groups = MultiLineBoardProcessor.buildGroups(
+            feeds = listOf(feed("northern", predictions = ten)),
+            isBus = false,
+            prefs = BoardDisplayPrefs(rowsPerPlatform = 3),
+            rowCap = 8,
+        )
+        assertEquals(8, groups.single().departures.size)
+    }
+
+    @Test
+    fun `rowCap override leaves the sort and the pin to the user`() {
+        // The override is a DEPTH, and must not turn into "ignore prefs". A
+        // widget still shows the station arranged the way its owner arranged it
+        // on the home screen — only deeper.
+        val feeds = listOf(
+            feed("victoria", predictions = listOf(pred("Brixton", 1, platform = "Platform 9"))),
+            feed("victoria", predictions = listOf(pred("Walthamstow", 5, platform = "Platform 2"))),
+        )
+        val pinned = MultiLineBoardProcessor.buildGroups(
+            feeds = feeds,
+            isBus = false,
+            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.PLATFORM, "Platform 2")),
+            rowCap = 8,
+        )
+        assertEquals(
+            listOf("Platform 2", "Platform 9"),
+            pinned.map { it.key },
+            "the pinned block leads, even though Platform 9's train is sooner",
+        )
+    }
+
+    @Test
+    fun `two bus poles at one hub stay two blocks in the widget's payload`() {
+        // The reported widget bug, at the depth the widget actually asks for.
+        // Smithwood Close tracked both ways is two naptans and every prediction
+        // carries platform="" — grouping by platform collapses them into one
+        // block with both directions interleaved, which is what the widget did
+        // while it re-derived its own grouping.
+        val groups = MultiLineBoardProcessor.buildGroups(
+            feeds = listOf(
+                feed("39", stationId = "490008805N", direction = "inbound", predictions = listOf(
+                    pred("39 Putney Bridge", 2, platform = ""),
+                    pred("39 Putney Bridge", 9, platform = ""),
+                )),
+                feed("39", stationId = "490012211N", direction = "outbound", predictions = listOf(
+                    pred("39 Clapham Junction", 4, platform = ""),
+                )),
+            ),
+            isBus = true,
+            rowCap = 8,
+        )
+        assertEquals(
+            listOf("490008805N", "490012211N"),
+            groups.map { it.key }.sorted(),
+            "one block per pole — these are opposite sides of the road",
+        )
+        // Each pole keeps only its own trains: a passenger standing at one of
+        // them cannot catch anything from the other.
+        assertEquals(
+            listOf("39 Putney Bridge", "39 Putney Bridge"),
+            groups.first { it.key == "490008805N" }.departures.map { it.prediction.destination },
         )
     }
 }

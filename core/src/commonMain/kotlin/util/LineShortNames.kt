@@ -68,14 +68,27 @@ object LineShortNames {
     /**
      * Short label for a line id.
      *
-     * Bus routes fall through unchanged: "53" is already as short as it gets,
-     * and there are hundreds of them, so a map would never be complete. Any
-     * unknown id is title-cased and returned rather than blanked — an unfamiliar
-     * line name is far better than an empty prefix on a departure row.
+     * ## The precedence, and why it is this way round
+     *  1. **[LineNameStore]** — what the BACKEND said, if it has ever said
+     *     anything about this line. Serving the names is what turns a rename
+     *     into a deploy instead of a release on two app stores, so a served
+     *     answer always wins over a compiled-in one.
+     *  2. **[SHORT_NAMES]** — the local map, now a FALLBACK rather than the
+     *     source. It still answers for every launch before the first line fetch,
+     *     for a reinstall, and for a backend that has not shipped the field.
+     *  3. **Title-case the id.** Bus routes land here and always will: "53" is
+     *     already as short as a label gets and there are hundreds of them, so
+     *     neither map will ever be complete. An unfamiliar line name is far
+     *     better than an empty prefix on a departure row.
+     *
+     * Nothing here can fail: each step degrades into the next, and the last one
+     * always produces a string. That is what makes adding the backend as step 1
+     * incapable of regressing a board that was rendering fine without it.
      */
     fun shortName(line: String?): String {
         val key = line?.trim()?.lowercase().orEmpty()
         if (key.isEmpty()) return ""
+        LineNameStore.shortNameOrNull(key)?.let { return it }
         SHORT_NAMES[key]?.let { return it }
         return key.replaceFirstChar { it.uppercase() }
     }
@@ -87,6 +100,55 @@ object LineShortNames {
         return key.split('-').joinToString(" ") { part ->
             part.replaceFirstChar { it.uppercase() }
         }
+    }
+
+    /**
+     * Rewrite any FULL line name in a finished string to its short form —
+     * "Hammersmith City Platform 1" → "H&C Platform 1".
+     *
+     * ## Why this works on the assembled string
+     * It is a rung of [MultiLineBoardProcessor.headerVariants], and that ladder
+     * is handed a header that has already been built. Taking the line list
+     * instead would mean every caller that wants to shrink a header also has to
+     * carry the lines that went into it — which the collapsed card, the compact
+     * board and the widget's own renderer do not have and should not need.
+     *
+     * The mapping is exact and closed: the only full names that can appear here
+     * are the ones [displayName] produces from [SHORT_NAMES]' own keys, so this
+     * cannot match a station or destination by accident ("Northern" the line
+     * versus "Northern" in a place name is not a case that arises — headers
+     * carry line names, platform labels and compass directions and nothing
+     * else).
+     *
+     * Longest first, so a name that contains another is not half-replaced.
+     */
+    fun abbreviate(text: String): String {
+        if (text.isBlank()) return text
+        return KNOWN_LINE_IDS.fold(text) { acc, id ->
+            val full = displayName(id)
+            // Resolved through [shortName] per call, NOT precomputed: the store
+            // is populated asynchronously, so a map memoised at first use would
+            // pin this to the local table for the life of the process and the
+            // backend's names would only ever apply after a restart.
+            val short = shortName(id)
+            if (short.length < full.length) acc.replace(full, short) else acc
+        }
+    }
+
+    /**
+     * Every line id with a known short form, longest DISPLAY name first.
+     *
+     * The order is the point: a name that contains another must be replaced
+     * first, or the shorter one half-rewrites it. The list itself is static —
+     * which lines exist does not change at runtime, only what they are CALLED —
+     * so this is the part that is safe to memoise.
+     *
+     * Derived from [SHORT_NAMES] rather than written out again: a second literal
+     * list would be one more place to forget when a line is renamed, which is
+     * the failure this whole file is documented as a stopgap against.
+     */
+    private val KNOWN_LINE_IDS: List<String> by lazy {
+        SHORT_NAMES.keys.sortedByDescending { displayName(it).length }
     }
 
     /**

@@ -47,9 +47,9 @@ if the dependency graph ever changes.
 | Area | State |
 |---|---|
 | **Auth** | Email/password, Google, **Sign in with Apple** (live since the paid team landed), email verification, reset deep links. Keychain-restored sessions self-heal their identity keys. |
-| **Home / board** | Full Android parity: dot-matrix board, per-minute tick, pull-to-refresh, promos, offline banner, SDUI strings with hardcoded fallbacks. Plus iOS-only per-station **board arrangement** (order, depth, pin) — §6f(1). |
+| **Home / board** | Full Android parity: dot-matrix board, per-minute tick, pull-to-refresh, promos, offline banner, SDUI strings with hardcoded fallbacks. Plus iOS-only per-station **board arrangement** (order, depth, pin) — §6f(1), which the widget now honours too. |
 | **Live departures** | **WebSocket stream**, iOS-only. Replaces REST polling for predictions + line status. See §3. |
-| **Widget** | Full-bleed board, **one station per widget** (configured like the Weather widget), platform paging by arrows, interactive refresh, live clock, per-minute tick, departed-row retention. §6f(2). |
+| **Widget** | Full-bleed board, **one station per widget** (configured like the Weather widget), platform paging by arrows, interactive refresh, live clock, per-minute tick, departed-row retention. Renders KMP's own blocks and headers, so it groups and labels exactly like the home board — §6h(1). |
 | **Dream / screensaver** | Full port as an in-app route (iOS has no system screensaver slot). SDUI-driven. |
 | **Push** | APNs + FCM live on the paid team. `aps-environment` tracks the build config. |
 | **Signing** | Stationly Limited org team **`7T7D5LLYSL`**. App Group **`group.com.stationly.shared`**. |
@@ -181,6 +181,10 @@ the entries that explain WHY:
   `ab2fec7`.
 - **(i) Board settings, multi-station widgets, platform arrows (2026-08-07/08)**
   — §6f, commit `138bdb1`.
+- **(j) Refresh speed, one grouping rule, FCM rename (2026-08-08)** — §6g,
+  commit `a15c57e`.
+- **(k) Widget board parity, backend line short names, tap latency
+  (2026-08-08)** — §6h, uncommitted at time of writing.
 
 ---
 
@@ -1067,7 +1071,7 @@ lines, the bus no-prefix rule, and an agreement test that `buildRows` and
 the `StationlyWidget` target, and a staging build installed and running on the
 iPhone 11 with the App Group verified by hand.
 
-### ⚠️ NOT FINISHED — pick these up first
+### ⚠️ NOT FINISHED — ✅ ALL CLOSED IN §6h (kept for the reasoning)
 
 **Widget board parity with the home board (the big one).** `buildGroups` is in
 and tested, but `IosWidgetManager.buildBoard` still writes a flat list through
@@ -1118,6 +1122,233 @@ rather than inventing any — so header text keeps one implementation.
   neither `:composeApp` nor the widget target has a test source set.
 - **Backend line-status subscriptions for multi-line** — one-per-line vs
   one-per-board. Deferred through six sessions now and still never looked at.
+
+---
+
+## 6h. Session 2026-08-08 (second): widget board parity, backend short names, tap latency
+
+§6g's three "NOT FINISHED" widget issues are closed, the `LineShortNames`
+stopgap now has a backend behind it, and the widget's tap path was profiled on
+device rather than guessed at — which corrected two wrong theories, one of them
+load-bearing.
+
+### (1) The widget renders KMP's blocks instead of re-deriving them
+
+`IosWidgetManager.buildBoard` emits `MultiLineBoardProcessor.buildGroups`, and
+the wire format carries an ordered `WidgetGroup` list. That single change closes
+all three reported issues, because all three were the same missing wire-up:
+
+1. **Bus poles no longer collapse.** The pole a departure was fetched from is
+   the bus group key and it exists only BEFORE the merge; a flat list cannot
+   express it. Smithwood Close tracked both ways is now two pages the arrows step
+   between — verified in device data (2 groups, one per naptan).
+2. **Headers carry the line name.** `headerFor` already produced
+   "H&C & Met. Platform 1 (Westbound)"; the widget simply never received it and
+   rebuilt its own from `lineName.capitalized`, which is what rendered
+   "Hammersmith-City".
+3. **"Gone" means stale again.** `ticked(keepAtLeast:)` backfilled departed rows
+   unconditionally, so a payload that legitimately contains already-departed
+   trains resurrected them on the freshest data the app had. Retention now
+   requires the payload to be at least `retentionMinAgeMs` (60s — the same
+   threshold `LiveAgo` already calls fresh) old at that entry's date.
+
+The extension's own REST refresh re-associates rows by group key and REUSES
+KMP's headers and block order rather than inventing any; a key it has never seen
+falls back to the backend's raw platform label, which is verbatim backend text
+rather than a second header implementation.
+
+**Two bugs found on the way:**
+
+- **`buildGroups` ignored its own `rowCap` override** — the body used
+  `prefs.rowCap`, so the widget silently got 3 rows however many it asked for.
+  The kind of bug an override argument invites: the call site reads correctly and
+  only the body is wrong.
+- **The shrink ladder never shortened LINE names**, and its "drop the direction"
+  rung only matched an appended `Westbound`, never the backend's `(Westbound)` —
+  which is the form real data actually uses. So the widest headers were untouched
+  at exactly the rung meant to rescue them.
+
+`headerVariants` now runs full → `Plat.` → short line names → drop direction
+(lossless rungs before the one lossy one), travels on `Group.headerVariants`, and
+the widget picks with `ViewThatFits`. Written out as four explicit slots rather
+than a `ForEach`, because whether `ViewThatFits` flattens a `ForEach` into
+candidates or into one stacked child is a detail that would render every rung at
+once if it went the wrong way.
+
+**The widget can also see `BoardDisplayPrefs` now** (sort, pin). That was only
+ever true of the EXTENSION — `StationPrefsRepository` writes the app's own
+defaults suite. The board is built in the app, so the preferences apply there and
+only finished blocks cross the process boundary. `rowsPerPlatform` stays a
+display cap; the widget takes `WIDGET_ROW_RESERVE = 8` because it re-derives ETA
+labels per minute and needs trains behind the visible ones.
+
+### (2) Backend `shortName`, and the client's precedence chain
+
+`TFL_LINE_SHORT_NAMES` + `shortNameFor()` in `stationly-backend`
+`src/utils/tflUtils.ts`, served on `/lines/mode/:mode`. Verified against staging:
+tube 11/11, overground 6/6, **bus 678 routes with the field absent** — omitted
+rather than nulled, so absence keeps meaning "you decide" instead of becoming an
+empty label.
+
+`getLinesByMode` had FOUR return paths each rebuilding its own object literal
+with its own colour lookup, so adding a field meant remembering all four. One
+`decorateLine` now serves all of them — which surfaced a pre-existing bug: the
+**Firestore fallback path returned raw documents with no `label` and no `color`
+at all.**
+
+Client side, all in `core/commonMain` so **Android inherits it**:
+`LineNameStore` persists `lineId → shortName`, and `LineShortNames.shortName()`
+goes **backend → local table → title-cased id**. Each step degrades into the
+next and the last always returns a string, which is what makes adding the backend
+as step 1 incapable of regressing a board that renders fine today.
+
+Three details that are load-bearing:
+
+- **Reads stay synchronous** — rendering a row cannot suspend.
+- **`remember` merges, never replaces** — the lines endpoint answers for one
+  mode, so browsing bus routes must not lose a tube line's name.
+- **`abbreviate` resolves per call, not via `by lazy`.** Memoising it would pin
+  the process to the local table and the backend's names would only apply after a
+  restart. What IS memoised is the id list, since which lines exist does not
+  change at runtime — only what they are called.
+
+Populated from the line dropdown (fresh fetch AND the cached payload, so an
+offline launch still learns), hydrated at home-screen init and in the widget's
+board build.
+
+### (3) Tap latency: what the device said, and what it corrected
+
+The extension has no profiler, so `widget_refresh_trace` now records
+`timing targets=…ms fetch=…ms write=…ms` and
+`timeline tap|quiet read=…ms tick=…ms entries=N`. Two theories died on contact:
+
+- **"The 61-entry rebuild is expensive."** It is **1ms**. Our data work was never
+  the cost.
+- **"WidgetKit re-renders the entry it already holds on a page move."** It does
+  not — an interactive intent invalidates the timeline, and the trace shows a
+  full `getTimeline` per arrow press (15 rebuilds in 113s of tapping, ×3 for
+  three installed widgets).
+
+So the real cost is WidgetKit rendering and ARCHIVING every entry before the tap
+paints. That made entry count a latency lever, and timeline LENGTH a refresh-
+budget lever, pulling in opposite directions — a short per-minute timeline paints
+fast and then expires every few minutes, which on three widgets is enough
+`.atEnd` reloads to get the whole kind throttled. **A throttled widget looks
+exactly like one that will not update until you touch it**, so the first attempt
+at this traded a visible bug for a worse invisible one.
+
+Resolved by tapering rather than shortening: per-minute entries for the first
+`denseMinutes` (8 after a tap), then `sparseStepMinutes` steps out to the same
+horizon as before. Same expiry, same budget, a fraction of the archive cost.
+
+**Also removed from the render path:** six `UserDefaults` reads that lived inside
+view bodies (page index, last-move time and direction, refresh-failed), evaluated
+per entry per widget — ~250 App Group reads per tap inside the archiving pass, to
+answer four questions whose answers were identical across the batch. They are
+resolved once per timeline into `BoardRenderState` and carried on the entry.
+Beyond cost, this is the correctness point: a `TimelineEntry` is meant to be a
+complete snapshot, and going back to disk mid-render made an entry's appearance
+depend on when it happened to be rasterised.
+
+Other wins: the flat `predictions` array is `@Transient` (every departure was on
+the wire twice, parsed twice per render); `WidgetData.departures` was a computed
+`flatMap` the render path called just to test emptiness, replaced by
+`hasDepartures` / `firstDepartures` / `departureCount`; `UserDefaults(suiteName:)`
+was a computed property in five places, now opened once per process via
+`AppGroupDefaults`.
+
+### (4) The clobber: two writers, no merge rule
+
+**The one genuinely serious bug this session.** The user reported the "ago" timer
+showing an old value, and coming back when they paged left/right.
+
+Two processes write the App Group: the app rebuilds every board from SQLite on
+every stream frame, and the extension's refresh writes it directly because it
+**cannot open the app's SQLite** (a documented, accepted gap). Nothing reconciled
+them. Plain last-writer-wins made the app the loser's opponent — a stream frame
+landing seconds after a widget refresh rewrote that board from SQL rows the
+refresh had already superseded, stamped with SQL's older timestamp.
+
+Measured: three boards traced as written at T, all showing timestamps **130–159s
+before T** moments later.
+
+Paging "bringing it back" is the same bug: an arrow forces `getTimeline`, which
+re-reads the App Group. The stale value was already there; the arrow is only what
+makes the widget go and look. Nothing about the refresh is per-platform.
+
+Fix: **the fresher observation wins.** The app refuses to write a board whose
+`lastUpdated` is older than what is stored, per-station and legacy keys both.
+Safe both ways — the app's timestamp advances on every sync, so genuinely newer
+app data still overwrites.
+
+**A related instrumentation failure worth remembering:** `writeBack` returned
+silently on any parse failure while the trace printed `wrote …` unconditionally,
+so the trace claimed success for boards that may never have been written. It
+reports the real outcome now and logs the timestamp it stamped.
+
+**The guard is BOUNDED, and that bound is the interesting part.** The first
+version refused a staler write outright, which is right for the race and wrong
+for everything else the same write carries: the timestamp describes the
+DEPARTURES, but the payload also carries the station's name, its mode, its feeds
+and the arrangement the user just picked. A quiet station's SQL timestamp can sit
+still for minutes, so an unbounded rule would have swallowed a re-sort, a re-pin
+and a rename alike — user changes their board, widget refuses, nothing on screen
+explains why. `STALE_WRITE_GRACE_SECONDS = 90` protects the seconds-scale race
+and lets the app win after that.
+
+Which exposed the other half: **`StationSettingsViewModel.updateBoard` never told
+the widget anything.** That was correct while the widget could not see
+`BoardDisplayPrefs` — and became a bug the moment §6h(1) made it read them, since
+nothing else in the app has an event meaning "the arrangement changed". It pushes
+`updateWidget` now. Worth remembering as a shape: giving a consumer access to
+some state silently creates an obligation to notify it, and the compiler says
+nothing.
+
+### (5) Interaction polish
+
+- **Refresh button was ~13pt** — the hit area was the glyph, not the slot, so
+  most taps fell through to the widget's own tap target, **which opens the app**.
+  Now ~30pt with the whole slot as the button; arrows likewise ~23pt → ~37pt.
+- **`invalidatableContent()` was tried and REMOVED.** On a `Group` the modifier
+  lands on every child individually, so each row shimmered on its own schedule
+  and the board read as flashing repeatedly; inside a `Button`'s label it broke
+  the button entirely. Both failures are recorded in the code so it is not
+  reintroduced as a good idea.
+- **The 15s debounce is gone.** The thing worth preventing was never "two
+  refreshes close together", it was "two refreshes at once" — the guard is on
+  concurrency now, with a 12s ceiling only so a refresh killed mid-flight cannot
+  leave the button inert.
+- **Direction encodes cause**: horizontal push = you moved; vertical flip =
+  the world moved (`refreshFlip`, scoped to payloads younger than 6s so an
+  ambient tick does not flip the board while you read it).
+- **`placeholder(in:)` is a skeleton**, replacing four invented departures at a
+  real station.
+
+### Gates
+
+`:core:testDebugUnitTest` **104 green** (was 92 — 17 new across
+`MultiLineBoardProcessorTest` and `LineShortNamesTest`, covering the rowCap
+override, the two-poles case at widget depth, every ladder rung, and the
+backend-first precedence chain), `:core:compileKotlinIosArm64`,
+`:composeApp:compileKotlinIosArm64`, `:composeApp:compileDebugKotlinAndroid`,
+`:android:app:compileProdReleaseKotlin`, backend `tsc --noEmit`, the
+`StationlyWidget` target, installed and running on the iPhone 11 with the App
+Group verified by hand at each step.
+
+### Still open
+
+- **Both Smithwood pages read `Bus 39`.** `headerFor` drops direction for buses
+  ("a pole only runs one way, so it is implied") — true on the home screen where
+  both blocks are visible at once, weaker on a widget showing one page at a time.
+  The destinations differ; the header says nothing. Needs a product call.
+- **Non-tapped widgets repaint late.** `reloadTimelines` is a request, not a
+  redraw; only the tapped widget re-renders immediately. No API forces another
+  widget to repaint. Platform limitation — but watch it now the taper has removed
+  the throttling risk, because throttling and this look identical.
+- **`WidgetData.ticked` and the extension's mapper are still untested** — neither
+  target has a test source set. Unchanged from §6g.
+- **Debug-build caveat**: SwiftUI archive cost in Debug is a multiple of Release,
+  so every latency number above is a ceiling.
 
 ---
 
@@ -1191,29 +1422,34 @@ its own `widget_refresh_trace`.
 
 ## 9. Next steps, in priority order
 
-0. **Finish the widget board parity work** — §6g "NOT FINISHED". Three reported
-   issues are still live and all three are the same missing wire-up: bus poles
-   collapsing into one page, no line name in the platform header, and "Gone"
-   rows straight after a refresh.
-1. **QA the 2026-08-07/08 work on device** (§6f "Not verified"): the three board
+0. **Android smoke test — still not done, and now overdue.** `fetchInitialData`
+   delegates to `refreshBoards` (§6g) and `LineNameStore` + the backend
+   `shortName` chain landed in `core/commonMain` (§6h), so Android has taken
+   shared-code changes across two sessions without once being run. It compiles
+   and `:android:app:compileProdReleaseKotlin` is green; the add-a-station path
+   and a board's line labels have not been exercised on a device.
+1. **Product call on bus pager headers** (§6h "Still open"): both Smithwood
+   Close pages read `Bus 39` with nothing to tell the directions apart. Cheap to
+   fix once someone decides what the header should say.
+2. **QA the 2026-08-07/08 work on device** (§6f "Not verified"): the three board
    controls; then two widgets pinned to two different stations, which is the
    whole point of the feature and the one thing a single widget cannot prove.
-2. **QA the 2026-08-06 work on device** (§6e "Not verified"): the drag first,
+3. **QA the 2026-08-06 work on device** (§6e "Not verified"): the drag first,
    then the carousel on a small screen with a promo showing.
-3. **Review backend subscriptions for multi-line** (§6b "Still open"). Deferred
+4. **Review backend subscriptions for multi-line** (§6b "Still open"). Deferred
    through five sessions now and never looked at.
-4. **QA the promos and the stream on device**: widget promo appears only with
+5. **QA the promos and the stream on device**: widget promo appears only with
    no widget installed; dream promo retires after one run; notification banner
    tracks the Settings toggle; force-update dialog fires against a raised
    `app.minVersion`.
-5. **Re-check reconnect churn** now that the `openIfNeeded` race is fixed — the
+6. **Re-check reconnect churn** now that the `openIfNeeded` race is fixed — the
    trace should show no `stream:reconnect` bursts in steady state. If it still
    churns, the foreground/background-cycling hypothesis in
    `IOS_LIVE_STREAM.md` §7.2 is back on the table.
-6. **Exercise the stream past one station** — the 25-cap and `unknown_station`
+7. **Exercise the stream past one station** — the 25-cap and `unknown_station`
    paths are unexercised.
-7. **More tests**: `LiveStreamManager` reconnect/backoff and force-resubscribe.
+8. **More tests**: `LiveStreamManager` reconnect/backoff and force-resubscribe.
    The widget's `WidgetData.ticked` and the extension's payload mapper are now
    the largest untested surfaces, and neither has a test target to live in —
    see §6f's note on `:composeApp` having none either.
-8. **Verify prod nginx** before pointing production builds at the stream.
+9. **Verify prod nginx** before pointing production builds at the stream.

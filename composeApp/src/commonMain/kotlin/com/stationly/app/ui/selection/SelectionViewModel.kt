@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.stationly.core.model.FilterMode
 import com.stationly.core.model.UserSelection
 import com.stationly.core.util.BoardFilterResolver
+import com.stationly.core.util.LineNameStore
 import com.stationly.core.util.RouteTree
 import com.stationly.core.model.sdui.SduiRouteStop
 import com.stationly.core.model.sdui.SduiAppComponent
@@ -1242,6 +1243,31 @@ class SelectionViewModel(
         fetchDropdownData(component, _selections.value)
     }
 
+    /**
+     * Keep the backend's short line names from a line-dropdown payload.
+     *
+     * This screen is the ONLY place they arrive: the lines endpoint is what
+     * carries `shortName`, and the board that needs it fetches departures and
+     * nothing else. Learning them here is also the right moment — the user is
+     * choosing the very lines whose labels this will shorten.
+     *
+     * Guarded on the dropdown id so a station or direction payload cannot write
+     * naptans and compass points into a map of line names.
+     *
+     * Deliberately NOT awaited into the render path and deliberately not able to
+     * fail it: [LineNameStore.remember] swallows its own write errors, and a
+     * store that stays empty simply leaves [LineShortNames] on its local table.
+     */
+    private suspend fun rememberLineShortNames(
+        dropdownId: String,
+        options: List<SduiDropdownOption>,
+    ) {
+        if (dropdownId != "line") return
+        LineNameStore.remember(
+            options.mapNotNull { opt -> opt.shortName?.let { opt.id to it } }.toMap()
+        )
+    }
+
     private fun fetchDropdownData(
         dropdown: SduiAppComponent.Dropdown,
         selectionsMap: Map<String, String>? = null
@@ -1270,12 +1296,20 @@ class SelectionViewModel(
                         val cur = _dropdownData.value.toMutableMap()
                         cur[dropdown.id] = cached
                         _dropdownData.value = cur
+                        // Also from the CACHE, not just the live fetch below.
+                        // The fetch is what normally teaches the store, but it
+                        // is the one part of this that can fail — and an offline
+                        // launch is exactly when falling back to compiled-in
+                        // names is most visible. The cached payload already
+                        // holds the answer; reading it costs nothing.
+                        rememberLineShortNames(dropdown.id, cached)
                     } catch (_: Exception) {}
                 }
 
                 val options = sduiService.getDropdownData(finalUrl)
                 storageManager.saveString(cacheKey, jsonFormat.encodeToString(options))
                 storageManager.saveString(tsKey, now.toString())
+                rememberLineShortNames(dropdown.id, options)
 
                 val cur = _dropdownData.value.toMutableMap()
                 cur[dropdown.id] = options

@@ -18,12 +18,110 @@ struct DepartureBoardEntryView: View {
     // all cost, no signal. Refresh feedback is therefore the result itself:
     // the rows change and the "ago" timer snaps back to zero.
     var body: some View {
-        switch family {
-        case .systemSmall:  SmallWidgetView(data: entry.widgetData, clock: entry.date)
-        case .systemMedium: BoardWidgetView(data: entry.widgetData, clock: entry.date, metrics: .medium)
-        case .systemLarge:  BoardWidgetView(data: entry.widgetData, clock: entry.date, metrics: .large)
-        @unknown default:   BoardWidgetView(data: entry.widgetData, clock: entry.date, metrics: .medium)
+        if entry.isSkeleton {
+            SkeletonBoardView(metrics: family == .systemLarge ? .large : .medium,
+                              compact: family == .systemSmall)
+        } else {
+            switch family {
+            case .systemSmall:
+                SmallWidgetView(data: entry.widgetData, clock: entry.date)
+            case .systemMedium:
+                BoardWidgetView(data: entry.widgetData, clock: entry.date,
+                                metrics: .medium, render: entry.render)
+            case .systemLarge:
+                BoardWidgetView(data: entry.widgetData, clock: entry.date,
+                                metrics: .large, render: entry.render)
+            @unknown default:
+                BoardWidgetView(data: entry.widgetData, clock: entry.date,
+                                metrics: .medium, render: entry.render)
+            }
         }
+    }
+}
+
+/// The board before it has anything to say: the real cell layout with a dim bar
+/// where each piece of text will land.
+///
+/// ## Where this actually appears
+/// `placeholder(in:)` only — a widget just added, or the home screen rebuilding
+/// snapshots before any entry exists. It is NOT a refresh state and cannot
+/// become one: WidgetKit rasterises nothing between a button tap and the
+/// intent returning, so a skeleton drawn for that would land after the finished
+/// board had already replaced it. See the note in `BoardWidgetView`.
+///
+/// ## Bars, not fake departures
+/// The placeholder used to be four invented departures at a real station, which
+/// is a small lie told at the one moment the user is deciding whether the widget
+/// works. Bars say "this is the shape of what is coming" and cannot be misread
+/// as a train that is not running.
+///
+/// Amber at low opacity rather than the grey of a typical app skeleton: this
+/// panel is black with amber text, and grey bars would read as a foreign
+/// component pasted over it rather than as the board's own lamps warming up.
+struct SkeletonBoardView: View {
+    let metrics: BoardMetrics
+    var compact: Bool = false
+
+    /// Bar heights track the type they stand in for, so the skeleton has the
+    /// board's rhythm — a loud station line, a quieter header, even rows —
+    /// rather than a stack of identical stripes.
+    private func bar(_ height: CGFloat, width: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: height / 2, style: .continuous)
+            .fill(WidgetTheme.amber.opacity(0.14))
+            .frame(width: width, height: height)
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            VStack(spacing: 2) {
+                LitCell(vPad: 4, hPad: 14, radius: metrics.cellRadius) {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(WidgetTheme.amber.opacity(0.14))
+                            .frame(width: metrics.icon, height: metrics.icon)
+                        bar(metrics.station * 0.8, width: w * 0.42)
+                    }
+                }
+                .frame(minHeight: metrics.station + 14)
+
+                if !compact {
+                    LitCell(vPad: 2, radius: metrics.cellRadius) {
+                        bar(metrics.platform * 0.8, width: w * 0.5)
+                    }
+                    .frame(minHeight: metrics.platform + 8)
+                }
+
+                // Destination bar left, ETA bar right — the row's real anatomy,
+                // and the reason the skeleton reads as a departure board rather
+                // than as generic loading furniture.
+                ForEach(0..<max(1, metrics.maxRows - (compact ? 1 : 2)), id: \.self) { i in
+                    LitCell(radius: metrics.cellRadius) {
+                        HStack(spacing: 6) {
+                            bar(metrics.row * 0.78, width: w * (i.isMultiple(of: 2) ? 0.46 : 0.38))
+                            Spacer(minLength: 0)
+                            bar(metrics.row * 0.78, width: w * 0.14)
+                        }
+                    }
+                    .frame(minHeight: metrics.row + 10)
+                }
+
+                if geo.size.height >= 150 {
+                    LitCell(vPad: 4, hPad: 20, radius: metrics.cellRadius) {
+                        HStack(spacing: 6) {
+                            bar(metrics.logo * 0.7, width: w * 0.12)
+                            Spacer(minLength: 0)
+                            bar(metrics.clock * 0.7, width: w * 0.18)
+                            Spacer(minLength: 0)
+                            bar(metrics.ago * 0.9, width: w * 0.14)
+                        }
+                    }
+                    .frame(minHeight: metrics.clock + 12)
+                }
+            }
+            .overlay(DotGrid().allowsHitTesting(false))
+        }
+        .containerBackground(WidgetTheme.background, for: .widget)
     }
 }
 
@@ -233,18 +331,6 @@ private struct LiveAgo: View {
     }
 }
 
-/// Group a flat departures list by platform, preserving first-seen order.
-private func groupedByPlatform(_ deps: [DepartureRow]) -> [(platform: String, rows: [DepartureRow])] {
-    var order: [String] = []
-    var map: [String: [DepartureRow]] = [:]
-    for d in deps {
-        let key = (d.platform.isEmpty || d.platform.lowercased() == "unknown") ? "" : d.platform
-        if map[key] == nil { map[key] = []; order.append(key) }
-        map[key]?.append(d)
-    }
-    return order.map { (platform: $0, rows: map[$0] ?? []) }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // MARK: - Board cells
 // ─────────────────────────────────────────────────────────────────────────────
@@ -254,13 +340,25 @@ private func groupedByPlatform(_ deps: [DepartureRow]) -> [(platform: String, ro
 struct DotMatrixHeader: View {
     let data: WidgetData
     let m: BoardMetrics
+    /// Forwarded to the refresh control so its retry glyph comes from the entry
+    /// rather than from an App Group read inside `body`.
+    var refreshFailed: Bool = false
     /// Entry time, forwarded to the refresh control so its "just updated"
     /// tick expires with the timeline entry rather than on a wall clock.
     var clock: Date = .distantPast
 
     /// Width reserved on BOTH sides: the button lives in the trailing one and
     /// an empty spacer balances the leading one, so the name stays centred.
-    private var refreshSlot: CGFloat { m.icon * 0.72 + 6 }
+    ///
+    /// Sized as a TAP TARGET, not as the glyph. It was `icon * 0.72 + 6`
+    /// (~19pt), and the button's hit area inside it was the glyph's own frame —
+    /// ~13pt square. On device that is a target users miss most of the time,
+    /// and every miss lands on the widget's own tap target, which opens the
+    /// app: the worst possible outcome for a missed REFRESH. ~30pt square is
+    /// still under Apple's 44pt ideal, but it is what this header row can give
+    /// without costing the station name its legibility — the name yields ~22pt
+    /// and it already scales and truncates.
+    private var refreshSlot: CGFloat { m.icon + 12 }
 
     var body: some View {
         // Top cell lives in the widget's rounded-corner zone — deeper content
@@ -292,7 +390,9 @@ struct DotMatrixHeader: View {
                 // unconditionally regardless, so centring can't shift.
                 Group {
                     if #available(iOS 17.0, *) {
-                        RefreshButton(size: m.icon * 0.72, clock: clock, stationId: data.stationId)
+                        RefreshButton(size: m.icon * 0.72, clock: clock,
+                                      stationId: data.stationId,
+                                      lastRefreshFailed: refreshFailed)
                     }
                 }
                 .frame(width: refreshSlot)
@@ -326,20 +426,17 @@ private struct RefreshButton: View {
     /// board the legacy keys happen to hold".
     let stationId: String
 
-    private var defaults: UserDefaults? {
-        UserDefaults(suiteName: AppGroupID.value)
-    }
-
-    /// Read live rather than carried on the entry: entries are pre-rendered
-    /// for future minutes, so a flag baked into them would be stale.
+    /// Carried from the entry, not read here.
     ///
-    /// Keyed on THIS widget's station. One tap refreshes every installed board,
-    /// and they do not all succeed together — a station that timed out must ask
-    /// for its retry on its own widget, not on the one next to it that is
-    /// showing perfectly fresh rows.
-    private var lastRefreshFailed: Bool {
-        defaults?.bool(forKey: AppGroupKeys.refreshFailed(stationId)) ?? false
-    }
+    /// Keyed on THIS widget's station when the timeline was built: one tap
+    /// refreshes every installed board and they do not all succeed together, so
+    /// a station that timed out must ask for its retry on its own widget rather
+    /// than on the one next to it showing perfectly fresh rows.
+    ///
+    /// A timeline is rebuilt whenever this flag changes — the refresh that sets
+    /// it ends by reloading — so baking it into the entry cannot go stale in a
+    /// way a live read would have caught.
+    let lastRefreshFailed: Bool
 
     // A success tick was tried here and removed: swapping the arrow out on
     // the HAPPY path destroys the affordance — a checkmark where a control
@@ -358,9 +455,17 @@ private struct RefreshButton: View {
 
     var body: some View {
         Button(intent: RefreshBoardIntent(stationId: stationId)) {
+            // The FRAME comes before the contentShape, and that ordering is the
+            // fix for "hard to click": with the shape on the bare Image, the
+            // hit area was the glyph's ~13pt square inside a ~30pt slot, and
+            // most taps fell through to the widget's own target and opened the
+            // app. Expanding to fill the reserved slot first makes the whole
+            // slot the button — the same trick the pager arrows use, for the
+            // same reason.
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .bold))
                 .foregroundColor(lastRefreshFailed ? WidgetTheme.amberDim : WidgetTheme.amber)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -370,16 +475,79 @@ private struct RefreshButton: View {
 
 /// "Piccadilly: Platform 1 (Eastbound)" — centered amber section header.
 struct DotMatrixSectionHeader: View {
-    let title: String
+    /// KMP's header ladder, widest first — see `HeaderLadder`.
+    let variants: [String]
     let m: BoardMetrics
     var body: some View {
         LitCell(vPad: 2, radius: m.cellRadius) {
-            Text(title)
-                .font(.system(size: m.platform, weight: .bold))
-                .foregroundColor(WidgetTheme.amber)
+            HeaderLadder(variants: variants, size: m.platform)
+        }
+    }
+}
+
+/// A platform header that shrinks by REWORDING rather than by shrinking its
+/// type — the widget's half of `MultiLineBoardProcessor.headerVariants`.
+///
+/// ## Why the widget needs this at all
+/// A header carries several facts — lines, platform number, direction — and the
+/// pager spends its width on two arrow slots and a "3/6" marker before the title
+/// gets any. The two things SwiftUI does by default are both wrong here:
+/// `minimumScaleFactor` makes the board's loudest row its smallest, and
+/// truncation eats the right-hand end, which is where the platform number and
+/// the direction live — the header would lose exactly what it exists to say.
+///
+/// So KMP sends "Northern Platform 1 (Westbound)" together with its shorter
+/// forms, down to "Nor. Plat. 1", and this takes the first that fits. Every
+/// rung's WORDING is decided in core, next to the home board that uses the same
+/// ladder; the only judgement made here is measurement, which is the one thing
+/// core cannot do.
+///
+/// `ViewThatFits` is the measurement: it proposes the available width to each
+/// child in order and renders the first that does not overflow. Scaling stays on
+/// as the floor beneath the last rung, for a canvas so narrow that even the
+/// shortest form overflows.
+private struct HeaderLadder: View {
+    let variants: [String]
+    let size: CGFloat
+
+    var body: some View {
+        // Written out rather than looped. `ViewThatFits` picks among its child
+        // views, and whether a `ForEach` inside it resolves to N candidate
+        // children or to ONE child containing N stacked Texts is a detail of
+        // variadic-view flattening — if it went the second way the header would
+        // render every rung at once, and a widget shows that to the user before
+        // anyone finds out. Four explicit slots match the four rungs
+        // `MultiLineBoardProcessor.headerVariants` produces.
+        ViewThatFits(in: .horizontal) {
+            fixedRung(0)
+            fixedRung(1)
+            fixedRung(2)
+            fixedRung(3)
+            // Last resort, deliberately outside the ladder: the shortest rung
+            // allowed to scale and then ellipsise. Without a final child that
+            // can compress, ViewThatFits would settle on the last fixed rung and
+            // let it overflow the cell.
+            rung(variants.last ?? "")
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
         }
+    }
+
+    /// Rung `index`, or the shortest one available if the ladder is shorter than
+    /// that — a group with a single rung (a locally-derived header, or a block a
+    /// refresh invented) then offers that one string in every slot, and the
+    /// scaling fallback below still catches it. Should core ever add a fifth
+    /// rung, the extra is simply never tried: less shrinking, never wrong text.
+    private func fixedRung(_ index: Int) -> some View {
+        rung(variants.indices.contains(index) ? variants[index] : (variants.last ?? ""))
+            .lineLimit(1)
+            .fixedSize()
+    }
+
+    private func rung(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: size, weight: .bold))
+            .foregroundColor(WidgetTheme.amber)
     }
 }
 
@@ -417,7 +585,10 @@ struct DotMatrixSectionHeader: View {
 /// sits outside the layout and a long platform name expands straight underneath
 /// it.
 struct PlatformPagerHeader: View {
-    let title: String
+    /// KMP's header ladder, widest first. This header is the tightest text on
+    /// the widget — see `HeaderLadder` for why scaling and truncation are both
+    /// the wrong answer to that.
+    let variants: [String]
     let page: Int
     let groupCount: Int
     let stationId: String
@@ -426,7 +597,17 @@ struct PlatformPagerHeader: View {
     /// its rows instead of cross-fading while they slide.
     let slide: AnyTransition
 
-    private var arrowSlot: CGFloat { m.platform + 10 }
+    /// Sized as a TAP TARGET, not around the chevron.
+    ///
+    /// Was `platform + 10` (~23pt). The glyph already expands to fill whatever
+    /// this is, so the slot IS the hit area — it was simply too small, the same
+    /// problem the refresh button had. `platform + 24` puts it at ~37pt, close
+    /// to Apple's 44pt guidance and comfortably thumb-sized.
+    ///
+    /// The width comes out of the title, which can afford it: `HeaderLadder`
+    /// reworders rather than truncating, so a squeezed header steps down to
+    /// "Nor. Plat. 1" instead of losing the platform number off the end.
+    private var arrowSlot: CGFloat { m.platform + 24 }
     private var canGoBack: Bool { page > 0 }
     private var canGoForward: Bool { page < groupCount - 1 }
 
@@ -445,11 +626,7 @@ struct PlatformPagerHeader: View {
                 // the marker is part of what changes, so it must not sit still
                 // while the platform name slides out from under it.
                 HStack(spacing: 6) {
-                    Text(title)
-                        .font(.system(size: m.platform, weight: .bold))
-                        .foregroundColor(WidgetTheme.amber)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                    HeaderLadder(variants: variants, size: m.platform)
                     if groupCount > 1 {
                         // Position, not an affordance. The arrows now say what
                         // can be tapped, so this is left to say only where you
@@ -568,26 +745,6 @@ struct DotMatrixRow: View {
     }
 }
 
-/// Whether a platform group carries more than one line, which is the ONLY case
-/// a line prefix is drawn in.
-///
-/// Same rule as the app's board, and it exists for the same reason: on a
-/// single-line platform the header has already named the line, so a prefix
-/// would be the identical word on every row — noise that costs the destination
-/// its width.
-///
-/// Buses never take one. The backend appends the route number to the
-/// destination itself ("53 Nags Head"), so a prefix would print it twice.
-private func groupMixesLines(_ rows: [DepartureRow], mode: String) -> Bool {
-    guard mode.trimmingCharacters(in: .whitespaces).lowercased() != "bus" else { return false }
-    var seen = Set<String>()
-    for row in rows where !row.lineShort.isEmpty {
-        seen.insert(row.lineShort)
-        if seen.count > 1 { return true }
-    }
-    return false
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // MARK: - Board motion
 // ─────────────────────────────────────────────────────────────────────────────
@@ -607,6 +764,37 @@ extension AnyTransition {
             removal: .opacity
         )
     }
+
+    /// New departures landing — rows dropping in from above, split-flap style.
+    ///
+    /// ## Direction encodes CAUSE, and that is the whole point
+    /// The board had one horizontal push for paging and this quiet opacity
+    /// relight for new data, and on device the two were not distinguishable:
+    /// both read as "the board changed", so a refresh looked like a page move
+    /// that had gone somewhere unexpected.
+    ///
+    /// The rule now is a physical one a user learns without being told:
+    ///  - **Horizontal = you moved.** You pressed an arrow; the board slides the
+    ///    way you pointed.
+    ///  - **Vertical = the world moved.** New times arrived; rows fall into
+    ///    place and the old ones drop away beneath them.
+    ///
+    /// ## It does not contradict the "an LED panel does not scroll" rule
+    /// [relight] argues that a dot-matrix panel changes its lamps rather than
+    /// scrolling, and that still holds for an ambient tick. But this is the one
+    /// moment the board is not a lamp array — it is a DEPARTURE board being
+    /// re-set, and every real one on a concourse does that by flipping its rows
+    /// over. The vertical motion is the mechanical memory of a Solari split-flap,
+    /// which is the object this widget is pretending to be.
+    ///
+    /// Kept short and paired with opacity so it reads as a flip rather than as
+    /// a list scrolling past.
+    static var refreshFlip: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: .top).combined(with: .opacity),
+            removal: .move(edge: .bottom).combined(with: .opacity)
+        )
+    }
 }
 
 /// Which transition the board is moving on, decided by WHAT changed.
@@ -621,13 +809,32 @@ extension AnyTransition {
 /// holds, whose date can be up to a minute old. Anything phrased as "within N
 /// seconds of this entry" would therefore mis-fire on exactly the interaction it
 /// exists to catch.
-private func boardTransition(stationId: String, updatedAt: Date, pageable: Bool) -> AnyTransition {
-    guard pageable else { return .relight }
-    let movedAt = WidgetBoardPage.lastMoveAt(stationId)
-    let refreshedAt = UserDefaults(suiteName: AppGroupID.value)?
-        .double(forKey: AppGroupKeys.lastRefreshOk) ?? 0
-    guard movedAt > max(refreshedAt, updatedAt.timeIntervalSince1970) else { return .relight }
-    return .push(from: WidgetBoardPage.lastMoveWasForward(stationId) ? .trailing : .leading)
+private func boardTransition(_ render: BoardRenderState, updatedAt: Date, pageable: Bool) -> AnyTransition {
+    if pageable, render.isPageMove {
+        return .push(from: render.moveForward ? .trailing : .leading)
+    }
+    // A payload that landed in the last few seconds is a REFRESH the user is
+    // watching — it gets the flip. An older timestamp means this render is an
+    // ambient one (a per-minute tick, a snapshot rebuild) where rows should not
+    // appear to fall: nothing arrived, the clock simply moved.
+    let age = Date().timeIntervalSince(updatedAt)
+    return age >= 0 && age < 6 ? .refreshFlip : .relight
+}
+
+/// How long the board takes to move, which is NOT one number.
+///
+/// A page move is direct manipulation: the user pressed an arrow and is waiting
+/// on it, so every millisecond of animation is added to a latency they are
+/// already feeling. WidgetKit's own wake-and-render sits in front of this and is
+/// not ours to shorten — which makes the part that IS ours worth spending
+/// carefully. Short and snappy, so the board arrives rather than glides.
+///
+/// New departures landing is ambient: nobody is waiting on it, it happens while
+/// the user is reading, and an abrupt swap there reads as a glitch. That one
+/// keeps the slower smooth curve.
+private func boardAnimation(_ render: BoardRenderState, pageable: Bool) -> Animation {
+    guard pageable, render.isPageMove else { return .smooth(duration: 0.28) }
+    return .snappy(duration: 0.16)
 }
 
 /// "Severity : reason" — the line-status strip. Board-amber everywhere (no
@@ -744,6 +951,9 @@ struct BoardWidgetView: View {
     let data: WidgetData
     let clock: Date
     let metrics: BoardMetrics
+    /// Why this render is happening, resolved when the timeline was built —
+    /// never looked up here. See `BoardRenderState`.
+    var render: BoardRenderState = BoardRenderState()
 
     var body: some View {
         Group {
@@ -759,10 +969,34 @@ struct BoardWidgetView: View {
     private var board: some View {
         GeometryReader { geo in
             VStack(spacing: 2) {
-                DotMatrixHeader(data: data, m: metrics, clock: clock)
+                DotMatrixHeader(data: data, m: metrics, refreshFailed: render.refreshFailed,
+                                clock: clock)
                     .frame(minHeight: metrics.station + 14)
 
-                if data.departures.isEmpty {
+                // ── `invalidatableContent` was tried here and REMOVED ──
+                //
+                // The idea was sound and the execution was not reachable. It
+                // marks content as pending so the system shimmers it while a
+                // button's intent runs — the sanctioned way to acknowledge a tap
+                // that a hand-drawn spinner cannot achieve. On device it cost
+                // more than it bought, in two ways worth recording so it is not
+                // reintroduced:
+                //
+                //  1. **Applied to a `Group`, the modifier lands on EVERY child
+                //     individually.** Each row, header and strip then shimmers on
+                //     its own schedule, which reads as the board flashing
+                //     repeatedly rather than as one panel loading.
+                //  2. **Inside a `Button`'s label it broke the button.** Taps
+                //     stopped reaching `RefreshBoardIntent` and fell through to
+                //     the widget's own tap target, so the refresh control opened
+                //     the app instead — the one thing it must never do.
+                //
+                // The honest position stands: a widget cannot show its own
+                // in-flight state, because WidgetKit does not rasterise anything
+                // between the tap and `perform()` returning. Making that window
+                // SHORT is the only lever there is, which is why the board's
+                // animation below is tuned rather than decorated.
+                if !data.hasDepartures {
                     NoDeparturesRow()
                         .frame(maxHeight: .infinity)
                     // On medium the status strip is the empty board's one shot
@@ -799,7 +1033,10 @@ struct BoardWidgetView: View {
             // all 61 of those are built from one payload and share the key, so
             // countdowns tick in place (the digits roll on their own, see
             // DotMatrixRow's contentTransition).
-            .animation(.smooth(duration: 0.28), value: motionKey)
+            .animation(
+                boardAnimation(render, pageable: metrics.singlePlatform && data.groups.count > 1),
+                value: motionKey
+            )
             .overlay(DotGrid().allowsHitTesting(false))
         }
     }
@@ -807,11 +1044,10 @@ struct BoardWidgetView: View {
     /// The single value every board animation is keyed on — see the modifier
     /// above for why these two things and nothing else.
     private var motionKey: String {
-        let groupCount = groupedByPlatform(data.departures).count
         // Only the paging board has a page; the large one renders every group,
         // so including it there would be a constant that never changes anyway.
         let page = metrics.singlePlatform
-            ? WidgetBoardPage.page(data.stationId, groupCount: groupCount)
+            ? WidgetBoardPage.clamp(render.page, groupCount: data.groups.count)
             : 0
         return "\(page)-\(Int(data.lastUpdated.timeIntervalSince1970))"
     }
@@ -829,11 +1065,15 @@ struct BoardWidgetView: View {
     /// arrows, no indicator, nothing to say.
     @ViewBuilder
     private var primaryPlatformSection: some View {
-        let groups = groupedByPlatform(data.departures)
+        let groups = data.groups
         if !groups.isEmpty {
-            let page = WidgetBoardPage.page(data.stationId, groupCount: groups.count)
+            let page = WidgetBoardPage.clamp(render.page, groupCount: groups.count)
             let group = groups[page]
-            let header = data.platformHeader(platform: group.platform)
+            // KMP's own header text — "Northern Platform 1 Westbound", "Bus 39,
+            // 34 Stop N". Never assembled here: `MultiLineBoardProcessor.headerFor`
+            // is the one implementation, and this widget showing a different
+            // string from the home board is what that rule exists to prevent.
+            let header = group.header
 
             // The board moves as ONE thing. Header and rows carry the same
             // transition and the same identity inputs, so they enter together
@@ -849,19 +1089,17 @@ struct BoardWidgetView: View {
             // pre-rendered per-minute entries — all built from one payload —
             // share it and tick in place.
             let stamp = Int(data.lastUpdated.timeIntervalSince1970)
-            let slide = boardTransition(
-                stationId: data.stationId,
-                updatedAt: data.lastUpdated,
-                pageable: groups.count > 1
-            )
-            // One prefix decision for the whole group, taken from every row it
-            // holds rather than the handful that fit — otherwise a platform
-            // would gain and lose its prefixes as trains tick off the bottom.
-            let mixesLines = groupMixesLines(group.rows, mode: data.mode)
+            let slide = boardTransition(render, updatedAt: data.lastUpdated,
+                                        pageable: groups.count > 1)
+            // One prefix decision for the whole group, taken by KMP from every
+            // row the block HAS rather than the handful that fit — otherwise a
+            // platform would gain and lose its prefixes as trains tick off the
+            // bottom of it.
+            let mixesLines = group.mixesLines
 
             if !header.isEmpty || groups.count > 1 {
                 PlatformPagerHeader(
-                    title: header,
+                    variants: group.headerVariants,
                     page: page,
                     groupCount: groups.count,
                     stationId: data.stationId,
@@ -885,28 +1123,56 @@ struct BoardWidgetView: View {
     /// Large: every platform group, Android-style.
     @ViewBuilder
     private var allPlatformsSection: some View {
-        let groups = groupedByPlatform(Array(data.departures.prefix(metrics.maxRows)))
+        let groups = budgetedGroups
         let stamp = Int(data.lastUpdated.timeIntervalSince1970)
         ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
-            let header = data.platformHeader(platform: group.platform)
+            // KMP's header, same as the medium board — see there.
+            let header = group.header
             if !header.isEmpty {
-                DotMatrixSectionHeader(title: header, m: metrics)
+                DotMatrixSectionHeader(variants: group.headerVariants, m: metrics)
                     .frame(minHeight: metrics.platform + 8)
             }
-            // Decided per group, exactly as on the medium board: this one is
-            // the case the prefix exists for, since large shows several
-            // platforms at once and a mixed one is otherwise unreadable.
-            let mixesLines = groupMixesLines(group.rows, mode: data.mode)
+            // Decided per group by KMP: this is the case the prefix exists for,
+            // since large shows several platforms at once and a mixed one is
+            // otherwise unreadable.
+            let mixesLines = group.mixesLines
             ForEach(Array(group.rows.enumerated()), id: \.offset) { row, dep in
                 DotMatrixRow(dep: dep, m: metrics, showLine: mixesLines)
                     .frame(minHeight: metrics.row + 10)
                     // Same rule as the medium board — keyed on the payload so
-                    // new departures relight and the per-minute entries do not.
-                    // There is no paging here, so `.relight` unconditionally.
+                    // new departures animate and the per-minute entries do not.
+                    // There is no paging here, so this is only ever the
+                    // data-landed case: a flip when it just landed, a quiet
+                    // relight on an ambient redraw.
                     .id("\(index)-\(row)-\(stamp)")
-                    .transition(.relight)
+                    .transition(boardTransition(render, updatedAt: data.lastUpdated,
+                                                pageable: false))
             }
         }
+    }
+
+    /// The blocks the large board can fit, trimmed to a WHOLE-BOARD row budget.
+    ///
+    /// `metrics.maxRows` is the number of departure cells the canvas has, shared
+    /// across every block — not a per-block cap, which is KMP's `rowCap` and has
+    /// already been applied. Spending it block by block is what keeps the board
+    /// filling top-down: platform one takes what it needs and the next one gets
+    /// the remainder, rather than every platform being trimmed to the same depth
+    /// and the bottom of the panel left empty.
+    ///
+    /// A block that would get zero rows is dropped rather than rendered as a
+    /// lone header with nothing under it.
+    private var budgetedGroups: [BoardGroup] {
+        var remaining = metrics.maxRows
+        var out: [BoardGroup] = []
+        for group in data.groups {
+            guard remaining > 0 else { break }
+            let rows = Array(group.rows.prefix(remaining))
+            guard !rows.isEmpty else { continue }
+            remaining -= rows.count
+            out.append(group.with(rows: rows))
+        }
+        return out
     }
 
     private var statusStrip: some View {
@@ -945,11 +1211,11 @@ struct SmallWidgetView: View {
                     .frame(minHeight: 24)
                     .widgetAccentable()
 
-                    if data.departures.isEmpty {
+                    if !data.hasDepartures {
                         NoDeparturesRow()
                             .frame(maxHeight: .infinity)
                     } else {
-                        ForEach(Array(data.departures.prefix(3).enumerated()), id: \.offset) { index, dep in
+                        ForEach(Array(data.firstDepartures(3).enumerated()), id: \.offset) { index, dep in
                             LitCell {
                                 // Same three-step tint as the medium/large row.
                                 HStack(spacing: 4) {

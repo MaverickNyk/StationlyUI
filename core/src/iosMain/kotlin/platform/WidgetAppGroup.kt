@@ -2,6 +2,7 @@ package com.stationly.core.platform
 
 import com.stationly.core.model.PredictionDisplay
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 /**
  * The wire format between KMP and the WidgetKit extension for MULTI-STATION
@@ -56,6 +57,57 @@ data class WidgetFeed(
 )
 
 /**
+ * One block of the board — a platform on rail, a pole on bus — exactly as
+ * [MultiLineBoardProcessor.Group] built it.
+ *
+ * ## Why the grouping is carried rather than re-derived
+ * The extension used to group the flat [WidgetBoard.predictions] list by
+ * `platform` itself, and that is wrong for buses in a way no amount of care in
+ * Swift can fix: TfL letters stops only at multi-stop interchanges, so at an
+ * ordinary hub every pole reports `platform = ""` and they all collapse into ONE
+ * block with both directions interleaved. Smithwood Close tracked both ways is
+ * two naptans, 7 predictions, every one with a blank platform.
+ *
+ * The pole identity only exists BEFORE the merge, so only KMP can group on it —
+ * which is [MultiLineBoardProcessor.groupKeyFor]'s whole subject. Sending the
+ * blocks means the widget renders the same board the home screen does, from the
+ * same code, including the ordering rules (unassigned last, the pin, the sort)
+ * that the extension has no way to know about.
+ */
+@Serializable
+data class WidgetGroup(
+    /**
+     * Stable identity: the platform string on rail, the pole naptan on bus.
+     *
+     * This is what the extension's OWN refresh re-associates its freshly-fetched
+     * rows against — it cannot call [MultiLineBoardProcessor], so matching on
+     * this key is how a refreshed board keeps the blocks (and the [header]s) KMP
+     * decided on. See `WidgetRefreshService.regroup`.
+     */
+    val key: String,
+    /** "Northern Platform 1 Westbound", "Bus 39, 34 Stop N" — KMP's own text. */
+    val header: String,
+    /**
+     * [header] and its shorter forms, widest first — the extension measures and
+     * takes the first that fits.
+     *
+     * A pager header is the tightest text on the widget: two arrow slots and a
+     * "3/6" page marker are taken out of its width before the title gets any.
+     * Without the ladder the only fallbacks are scaling the type down (which
+     * makes the board's loudest row its smallest) or ellipsising, which eats the
+     * platform number off the right-hand end — the one thing the header exists
+     * to say. Sent rather than derived for the same reason as [header]: the
+     * rules are `MultiLineBoardProcessor.headerVariants` and there is one copy.
+     */
+    val headerVariants: List<String> = emptyList(),
+    /** The backend's platform label verbatim: "Platform 8", "Stop C", "". */
+    val label: String,
+    /** Whether rows in this block should carry their line prefix. */
+    val mixesLines: Boolean = false,
+    val predictions: List<PredictionDisplay> = emptyList(),
+)
+
+/**
  * One station's whole board: every line and direction the user tracks there,
  * merged into one platform-grouped list of departures.
  *
@@ -72,13 +124,50 @@ data class WidgetBoard(
     /** Naptan for the extension's REST refresh. See [WidgetFeed.station]. */
     val stationId: String,
     val stationName: String,
-    /** Blank when the station tracks several lines — see `IosWidgetManager.buildBoard`. */
+    /**
+     * CANONICAL line id ("hammersmith-city"), blank when the station tracks
+     * several — see `IosWidgetManager.buildBoard`.
+     *
+     * An identity, never display text: the extension's legacy refresh path uses
+     * it as the lookup key into the predictions payload. [lineDisplay] is the
+     * one to render.
+     */
     val lineName: String,
+    /**
+     * [lineName] as a person reads it ("Hammersmith & City").
+     *
+     * A second field rather than a nicer [lineName] because the two have
+     * genuinely different jobs and one string cannot do both — the refresh needs
+     * the canonical id to key on, and the fallback header needs a name. Swift
+     * used to bridge the gap with `lineName.capitalized`, which is how an H&C
+     * station rendered "Hammersmith-City".
+     */
+    val lineDisplay: String = "",
     val direction: String,
     val mode: String,
     val status: String? = null,
     /** Epoch SECONDS, matching the legacy `widget_last_updated` key. */
     val lastUpdated: Long = 0L,
     val feeds: List<WidgetFeed> = emptyList(),
+    /**
+     * The board as blocks — what the extension actually renders and pages
+     * between. See [WidgetGroup].
+     */
+    val groups: List<WidgetGroup> = emptyList(),
+    /**
+     * [groups] flattened, in the same order — IN MEMORY ONLY.
+     *
+     * `@Transient` because it is derived: writing it as well as [groups] put
+     * every departure on the wire TWICE, and the extension then parsed both
+     * copies on every timeline build and every render — in a process iOS
+     * cold-launches for a single tap. A board of five platforms went from ~6KB
+     * to ~12KB for no reader.
+     *
+     * The property stays because `writeLegacy` needs a flat list for the
+     * pre-multi-station keys, and it takes this object in memory rather than
+     * reading the JSON back. So the flattening is still computed once and used
+     * once; it just no longer travels.
+     */
+    @Transient
     val predictions: List<PredictionDisplay> = emptyList(),
 )

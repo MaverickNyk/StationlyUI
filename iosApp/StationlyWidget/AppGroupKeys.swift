@@ -25,7 +25,13 @@ enum AppGroupKeys {
     // still what an unconfigured widget renders — see `AppGroupStorage`.
 
     static let stationName   = "widget_station_name"
+    /// CANONICAL line id — an identity. `WidgetRefreshService.legacyFeed` keys
+    /// the predictions payload on it, so it must not become display text.
     static let lineName      = "widget_line_name"
+    /// The same line as a person reads it ("Hammersmith & City"), resolved by
+    /// KMP. Separate from `lineName` because that one is looked up, not shown;
+    /// bridging the two with `.capitalized` is what rendered "Hammersmith-City".
+    static let lineDisplay   = "widget_line_display"
     static let predictions   = "widget_predictions"
     static let status        = "widget_status"
     static let direction     = "widget_direction"
@@ -67,12 +73,26 @@ enum AppGroupKeys {
     /// arriving and pick the matching transition — see `WidgetBoardPage`.
     static func pageMovedAt(_ stationId: String) -> String { "widget_page_at_\(stationId)" }
 
-    /// Refresh debounce and outcome — see `WidgetRefreshService`.
+    // Refresh timing and outcome — see `WidgetRefreshService`.
+    //
+    // The in-flight guard is global (one tap already refreshes every installed
+    // board, so a second button has nothing left to fetch while the first runs);
+    // the OUTCOME is per station, because a single flag would put a failure
+    // warning on the widgets that refreshed perfectly well.
+
+    /// When the currently-running refresh started, or 0 when none is.
     ///
-    /// The debounce is global (one finger, one TfL); the OUTCOME is per station,
-    /// because one tap now refreshes every installed board and a single flag
-    /// would put a failure warning on the widgets that refreshed perfectly well.
-    static let lastManualRefresh = "widget_last_manual_refresh"
+    /// Replaced `widget_last_manual_refresh`, which held a 15-second lockout
+    /// after every refresh — see `WidgetRefreshService.inFlightCeiling` for why
+    /// the guard belongs on concurrency rather than on elapsed time. Deliberately
+    /// a NEW key: the old one holds a "last completed at" timestamp, and reusing
+    /// it would make a build installed over this one read that as a refresh
+    /// running since then.
+    static let refreshInFlightSince = "widget_refresh_inflight_since"
+
+    /// When the last refresh SUCCEEDED. Drives the on-device trace and the
+    /// "was this render caused by an arrow or by new data" comparison in
+    /// `BoardRenderState`; deliberately drives no UI of its own.
     static let lastRefreshOk     = "widget_last_refresh_ok"
 
     /// Whether one station's last refresh failed, so its header can offer a

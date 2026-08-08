@@ -283,23 +283,39 @@ object MultiLineBoardProcessor {
      * The caller measures and takes the first that fits, so this is a fallback
      * LADDER, not a formatting choice: a board almost always has room for
      * "Platform 7" and should show it. Shrinking unconditionally would cost every
-     * board legibility to solve a problem only busy interchanges have.
+     * board legibility to solve a problem only busy interchanges have — and it
+     * would make the widget and the home board disagree about the same header,
+     * when the whole point is that they do not.
      *
-     * The rungs shorten the least meaningful token first. "Platform" is pure
-     * boilerplate — the number is the fact — so it goes before the direction,
-     * which is real information.
+     * ## The order is the design: lossless rungs before lossy ones
+     *  1. **Full.** What a board with room shows, and most boards have room.
+     *  2. **"Platform" → "Plat."** Pure boilerplate; the NUMBER is the fact.
+     *  3. **Full line names → short forms.** "Hammersmith City" → "H&C" costs
+     *     nothing a passenger cannot read back — it is what the roundel, the map
+     *     key and the station signage already say. This rung is why a widget
+     *     header fits at all: a pager header spends its width on two arrows and
+     *     a page marker before the text gets any.
+     *  4. **Drop the compass direction.** The ONLY rung that loses information,
+     *     so it is last. Better a readable "Dist & Circ. Plat. 2" than an
+     *     ellipsised header missing the platform number.
      */
     fun headerVariants(title: String): List<String> {
         val full = title.trim()
         if (full.isEmpty()) return listOf("")
         val abbreviated = full.replace("Platform", "Plat.", ignoreCase = false)
-        // Last resort: drop the compass suffix too. Better a readable
-        // "Dist & Circ. Plat. 2" than an ellipsised header that loses the
-        // platform number — the one thing the row exists to tell you.
-        val noDirection = COMPASS_DIRECTIONS.fold(abbreviated) { acc, d ->
-            acc.replace(" ${d.replaceFirstChar { it.uppercase() }}", "")
-        }
-        return listOf(full, abbreviated, noDirection).distinct()
+        val shortLines = LineShortNames.abbreviate(abbreviated)
+        // BOTH forms of the direction, because they arrive by different routes.
+        // [headerFor] appends a bare "Westbound"; the backend's own platform
+        // label frequently arrives already carrying "(Westbound)", and on the
+        // lines this ladder exists for it is usually the parenthesised one —
+        // "Piccadilly Platform 2 (Westbound)" is real device data. Stripping
+        // only the appended form left the widest headers untouched at exactly
+        // the rung meant to rescue them.
+        val noDirection = COMPASS_DIRECTIONS.fold(shortLines) { acc, d ->
+            val Cased = d.replaceFirstChar { it.uppercase() }
+            acc.replace(" ($Cased)", "").replace(" $Cased", "")
+        }.trim()
+        return listOf(full, abbreviated, shortLines, noDirection).distinct()
     }
 
     /**
@@ -472,6 +488,16 @@ object MultiLineBoardProcessor {
         val key: String,
         /** "Northern Platform 2", "Bus 39, 34 Stop N" — see [headerFor]. */
         val header: String,
+        /**
+         * [header] and its progressively shorter forms, widest first — see
+         * [headerVariants]. The renderer measures and takes the first that fits.
+         *
+         * Carried on the group so a renderer that cannot call this file (the iOS
+         * widget, across a process boundary) shrinks a header by the same rules
+         * the home board does, instead of scaling the type down or ellipsising
+         * the platform number off the end.
+         */
+        val headerVariants: List<String>,
         /** The backend's own platform label, verbatim: "Platform 8", "Stop C". */
         val label: String,
         val departures: List<GroupedDeparture>,
@@ -547,7 +573,9 @@ object MultiLineBoardProcessor {
                 // different set of trains.
                 //
                 // Ceiling per platform — NOT the board floor. See MIN_BOARD_ROWS.
-                val shown = sorted.take(prefs.rowCap).let { picked ->
+                // [rowCap], never `prefs.rowCap`: the widget passes its RESERVE
+                // depth here and still wants the user's sort and pin from prefs.
+                val shown = sorted.take(rowCap).let { picked ->
                     if (prefs.sort == BoardSort.DESTINATION) {
                         picked.sortedWith(
                             compareBy<Pair<PredictionDisplay, Feed>> { (p, _) ->
@@ -557,9 +585,11 @@ object MultiLineBoardProcessor {
                     } else picked
                 }
 
+                val header = headerFor(label, lines, directions, isBus)
                 Group(
                     key = key,
-                    header = headerFor(label, lines, directions, isBus),
+                    header = header,
+                    headerVariants = headerVariants(header),
                     label = label,
                     departures = shown.map { (prediction, feed) ->
                         GroupedDeparture(

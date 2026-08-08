@@ -241,6 +241,18 @@ data class SduiDropdownOption(
     // to invalidate stale icons when the backend bumps its asset bundle.
     val tintHex: String? = null,
     val iconVersion: String? = null,
+    /**
+     * Line-only: the short display form ("Picc.", "H&C"), served by the lines
+     * API and cached into [com.stationly.core.util.LineNameStore].
+     *
+     * Same shape of contract as [tintHex] above — display metadata the backend
+     * owns, learned when the option list is fetched and kept for the surfaces
+     * that need it later. Null for every non-line dropdown, for bus routes
+     * (whose id is already the shortest true label), and for any backend that
+     * predates the field; all three fall back to
+     * [com.stationly.core.util.LineShortNames]' local table.
+     */
+    val shortName: String? = null,
     val upcomingStations: List<String>? = null,
     /**
      * The same stops as [upcomingStations] — same order, same length — carrying

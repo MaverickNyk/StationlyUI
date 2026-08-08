@@ -117,6 +117,15 @@ data class StationPrefs(
  * failure than a switch that appears not to respond.
  */
 object StationPrefsRepository {
+    /**
+     * Also read by `IosWidgetManager.boardPrefs` in core, which builds the
+     * widget's board and needs the same arrangement the home screen shows.
+     *
+     * It cannot import this object — core does not see `composeApp` — so it
+     * carries its own copy of this string. Renaming here without renaming there
+     * fails SILENTLY: the widget reads nothing and quietly reverts to the
+     * default arrangement.
+     */
     private const val KEY = "station_prefs_v1"
     private const val ORDER_KEY = "station_order_v1"
     private const val LAYOUT_KEY = "home_layout_v1"
