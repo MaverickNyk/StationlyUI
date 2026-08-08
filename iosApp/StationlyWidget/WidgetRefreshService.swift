@@ -414,7 +414,7 @@ enum WidgetRefreshService {
     // MARK: - Payload mapping (mirror of SyncPredictionsUseCase steps 1-5)
 
     /// Wire shape of GET /api/v1/stations/predictions/:naptanId — the same
-    /// `FcmPayload` schema the FCM topic delivers, so one mapper serves both.
+    /// `PredictionsPayload` schema the FCM topic delivers, so one mapper serves both.
     private struct PredictionsResponse: Decodable {
         struct Line: Decodable { let dirs: [String: Direction]? }
         struct Direction: Decodable { let preds: [Pred]? }

@@ -24,7 +24,7 @@ class SyncPredictionsUseCase(
      * @param selection The user's specific board selection (Line/Direction)
      * @return Formatted predictions for display
      */
-    suspend fun execute(payload: FcmPayload, selection: UserSelection): List<PredictionDisplay> {
+    suspend fun execute(payload: PredictionsPayload, selection: UserSelection): List<PredictionDisplay> {
         // ONE timestamp for this whole sync. We stamp the board's "last
         // backend update" time the moment the payload lands — BEFORE we know
         // whether it even contains rows for this line/direction — so a 0-row

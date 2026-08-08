@@ -1,7 +1,7 @@
 package com.stationly.core.platform
 
 import com.stationly.core.config.AppConfig
-import com.stationly.core.model.FcmPayload
+import com.stationly.core.model.PredictionsPayload
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.WidgetState
@@ -10,10 +10,11 @@ import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.repository.SqlStorage
 import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.FormatDeparturesUseCase
-import com.stationly.core.usecase.ProcessFcmPayloadUseCase
+import com.stationly.core.usecase.ProcessPredictionsUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.core.util.GlobalBoardProcessor
 import com.stationly.core.util.LineShortNames
+import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -326,8 +327,16 @@ class IosWidgetManager : WidgetManager {
         // from a Hammersmith & City one standing at the same platform. Resolved
         // to the short label here so the extension needs no line vocabulary —
         // see PredictionDisplay.lineShort.
+        //
+        // Blank on bus, matching MultiLineBoardProcessor.buildGroups exactly:
+        // the backend already appends the route to the destination ("39 Nags
+        // Head"), so a prefix would print it twice. Stamping it anyway and
+        // relying on the RENDERER to suppress it — which is what this did
+        // first — is two rules for one decision, and the second copy is the one
+        // that gets forgotten.
+        val isBus = MultiLineBoardProcessor.isBus(first?.mode)
         val merged = boards.flatMap { selection ->
-            val label = LineShortNames.shortName(selection.line)
+            val label = if (isBus) "" else LineShortNames.shortName(selection.line)
             sql.getPredictions(selection.station, selection.line, selection.direction)
                 .map { it.copy(lineShort = label) }
         }
@@ -567,7 +576,7 @@ class IosNotificationManager : NotificationManager {
 
     override suspend fun handleNotification(payload: Map<String, String>) {
         // Handled by Swift AppDelegate / UNUserNotificationCenterDelegate
-        // FCM payload processing is done by FcmPayloadBridge.processPayload()
+        // FCM payload processing is done by PushPayloadBridge.processPayload()
     }
 
     /**
@@ -735,10 +744,10 @@ object PushTrace {
     }
 }
 
-object FcmPayloadBridge {
+object PushPayloadBridge {
 
-    private val processUseCase: ProcessFcmPayloadUseCase by lazy {
-        ProcessFcmPayloadUseCase(
+    private val processUseCase: ProcessPredictionsUseCase by lazy {
+        ProcessPredictionsUseCase(
             departureRepository = DepartureRepository(
                 NetworkModule.tflApi,
                 Platform.storageManager,
@@ -774,9 +783,9 @@ object FcmPayloadBridge {
      * The argument is the WHOLE APNs userInfo dict as JSON. A real Syncer
      * topic push looks like:
      *   { "from": "/topics/Station_940GZZLUASL",   ← or LineStatus_tube_victoria
-     *     "payload": "{…inner JSON string…}",       ← FcmPayload or LineStatus
+     *     "payload": "{…inner JSON string…}",       ← PredictionsPayload or LineStatus
      *     "aps": { "content-available": 1 }, … }
-     * which is why decoding the top level directly as FcmPayload (the old
+     * which is why decoding the top level directly as PredictionsPayload (the old
      * code) dropped every real push — the data lives one level down, exactly
      * like Android's remoteMessage.data["payload"].
      */
@@ -812,16 +821,16 @@ object FcmPayloadBridge {
                     }
                 }
 
-                // Legacy/manual pushes that put the FcmPayload at the top level.
+                // Legacy/manual pushes that put the PredictionsPayload at the top level.
                 "lines" in root ->
                     processUseCase.processStationUpdate(null, json.decodeFromString(jsonString))
             }
         } catch (e: Exception) {
             // This used to be a bare println — invisible on device. A decode
-            // mismatch between the Syncer's payload and FcmPayload lands here
+            // mismatch between the Syncer's payload and PredictionsPayload lands here
             // and would otherwise look identical to "the push never arrived".
             PushTrace.log("kmp:EXCEPTION ${e::class.simpleName}: ${e.message?.take(160)}")
-            println("[FcmPayloadBridge] Failed to process payload: ${e.message}")
+            println("[PushPayloadBridge] Failed to process payload: ${e.message}")
         }
     }
 }

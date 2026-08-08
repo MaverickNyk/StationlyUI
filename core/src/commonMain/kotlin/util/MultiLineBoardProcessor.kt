@@ -504,6 +504,17 @@ object MultiLineBoardProcessor {
         feeds: List<Feed>,
         isBus: Boolean,
         prefs: BoardDisplayPrefs = BoardDisplayPrefs(),
+        /**
+         * Departures kept per block, overriding [BoardDisplayPrefs.rowCap].
+         *
+         * For the screen the cap IS the display depth and the preference is the
+         * right answer. The iOS widget is the exception: it re-derives its ETA
+         * labels every minute from a timeline built once, so it needs RESERVES
+         * behind the visible rows — trains that have not been shown yet, and
+         * departed ones it can hold when a platform empties out. Capping its
+         * payload at what fits would leave it with nothing to shift into view.
+         */
+        rowCap: Int = prefs.rowCap,
     ): List<Group> {
         // Flatten first, keeping each departure's feed so the row can name its
         // line and the header can collect the group's lines and directions.

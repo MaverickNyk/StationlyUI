@@ -1,6 +1,6 @@
 package com.stationly.app
 
-import com.stationly.core.platform.FcmPayloadBridge as CoreFcmPayloadBridge
+import com.stationly.core.platform.PushPayloadBridge as CorePushPayloadBridge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -8,8 +8,8 @@ import kotlinx.coroutines.withContext
 // Kotlin/Native generates the completionHandler/async bridge for suspend
 // functions only in the ROOT framework module — core's own suspend funcs are
 // absent from the ObjC header, hence these thin delegates.
-object FcmPayloadBridge {
-    fun processPayload(jsonString: String) = CoreFcmPayloadBridge.processPayload(jsonString)
+object PushPayloadBridge {
+    fun processPayload(jsonString: String) = CorePushPayloadBridge.processPayload(jsonString)
 
     /**
      * Swift sees `processPayloadAndWait(jsonString:completionHandler:)` (async).
@@ -20,6 +20,6 @@ object FcmPayloadBridge {
      * withContext hop keeps parsing/persisting off it.
      */
     suspend fun processPayloadAndWait(jsonString: String) = withContext(Dispatchers.Default) {
-        CoreFcmPayloadBridge.processPayloadAndWait(jsonString)
+        CorePushPayloadBridge.processPayloadAndWait(jsonString)
     }
 }

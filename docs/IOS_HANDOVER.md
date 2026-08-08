@@ -896,6 +896,229 @@ side, still unconfirmed: two widgets showing two different stations at once, the
 gallery showing one tile per station (`recommendations()`), and search inside
 the picker.
 
+## 6g. Session 2026-08-08: refresh speed, one grouping rule, FCM rename
+
+Three strands: making every refresh path fast, giving every board surface ONE
+grouping implementation, and correcting names that claimed FCM was involved
+where it is not. Plus three bugs found on device, two of them mine.
+
+### (1) Every refresh path was doing far more work than it needed to
+
+| Path | Before | Now |
+|---|---|---|
+| Home pull-to-refresh | serial loop over every SELECTION | concurrent fan-out over unique STOPS |
+| Cold start | refreshed `selections.firstOrNull()` only | every stale board |
+| Foreground | **no departure fetch at all** | stale boards refetched |
+| Stream frame lands | reloaded ALL boards | only the boards it touched |
+| Widget refresh button | one station, serial naptans | every installed widget, concurrent |
+
+**`DepartureRepository.refreshBoards`** is the new fan-out and the reason the
+first three rows changed. It deduplicates before it fetches, which matters more
+than the concurrency: a rail station tracked in both directions is two
+selections sharing one naptan, and the predictions endpoint answers with every
+line and direction calling there — so the second call fetched a payload
+identical to the first. Line status was worse: seven stations across five lines
+asked fourteen times for five answers. Deduplicating turns ~2N requests into
+(unique stops + unique lines); running them concurrently turns the remainder
+into roughly ONE round trip instead of a sum. `onUpdated` fires per selection as
+that stop lands, so boards repaint while their neighbours are still in flight.
+
+**The cold-start line was one character of scope.** `refreshDataIfStale(
+selections.firstOrNull())` meant everything after the FIRST board painted from
+SQLite and waited for the 30 s poll — which only re-READS SQL — or for a stream
+frame. Station two onwards could show departures minutes old with nothing
+saying so.
+
+**Foreground had no fetch at all.** `notifyForeground()` reopens the socket and
+asks it for nothing. So returning from another app showed whatever was in
+SQLite when you left, until a frame happened to arrive on a socket that had just
+been reopened — i.e. exactly when it is slowest.
+
+**`FreshDataNotifier` now names what changed.** It carried a bare `Unit`, so
+every collector assumed the worst and reloaded everything it owned. Affordable
+when the only trigger was an FCM push; not affordable against a live stream
+emitting per station every few seconds — a phone tracking seven stations in two
+directions did fourteen SQL reads plus fourteen board re-derivations **per
+frame**, nearly all re-reading unchanged rows. `FreshData.Station` /
+`.Line` / `.All`, with `All` kept as the honest fallback for an emitter that
+cannot name its scope. Android has always been targeted (`predictions_<station>_
+<line>` prefs pings); this is that precision in the shared notifier.
+
+### (2) REST is now hedged behind the WebSocket
+
+`StreamBackedTflApiService` served predictions and line status from the socket
+alone. That is the right transport in steady state and the WRONG one at exactly
+the moments a user is watching: a cold socket does a TCP connect, a TLS
+handshake, an HTTP upgrade, a subscribe and a wait for the server's snapshot
+before `ensureStation` returns, with a six-second ceiling. That is first launch,
+and every return from background where the socket was reaped.
+
+**Hedging, not racing.** Firing both every time would double request volume for
+a warm socket that was going to win anyway. The stream goes first alone; REST is
+asked only if the stream has not answered within `HEDGE_DELAY_MS` (250 ms) or
+has already failed.
+
+**Cancelling the loser does not unsubscribe** — this is what makes it safe
+rather than merely fast. `ensureStation`'s `finally` discards only the AWAITER;
+the subscription lives on the socket's own state. So when REST wins, the station
+is still subscribed and the stream keeps pushing. REST buys the first answer;
+the socket keeps doing the job it is good at.
+
+Verified on device: `stream:hedge REST won station:490012211N` in the push trace.
+
+### (3) One grouping implementation
+
+`MultiLineBoardProcessor.buildGroups` now does the grouping, ordering, capping
+and header text with no opinion about rendering; `buildRows` is a flattening of
+it. This exists because the widget re-derived its own grouping and got wrong the
+exact case this file warns about — it grouped buses by `platform`, so two poles
+at one hub with no letters between them collapsed into a single block with both
+directions interleaved. Confirmed in live App Group data: Smithwood Close, 7
+predictions, **every one with `platform=""`**, across two naptans.
+
+`buildGroups` takes a `rowCap` override because the widget needs RESERVES rather
+than a display depth — it re-derives ETA labels every minute from a timeline
+built once, so capping its payload at what fits leaves it nothing to shift into
+view.
+
+### (4) The FCM rename
+
+`FcmPayload` → **`PredictionsPayload`**, `ProcessFcmPayloadUseCase` →
+**`ProcessPredictionsUseCase`**, `FcmPayloadBridge` → **`PushPayloadBridge`**.
+
+The DTO was never FCM-specific: the same JSON shape arrives from an FCM push, a
+WebSocket frame and a REST response, and on iOS the socket is the board's real
+source. The name asserted otherwise, which is how the question "why are we
+relying on FCM here?" arises in the first place.
+
+**Nothing FCM-specific was renamed or removed, on either platform.** Android's
+`FcmMessagingService`, `onMessageReceived`, `onNewToken`, `subscribeToTopic`,
+its manifest registration and the `fcm_topics` / `fcm_token` App Group keys are
+all untouched — the Android diff is four lines, every one a type name. iOS keeps
+`FcmTokenRegistrar`, `FCMBridge.swift` and the APNs→FCM path in `AppDelegate`,
+which genuinely is FCM and genuinely is live.
+
+### (5) Three bugs found on device
+
+1. **SIGSEGV on every launch.** `staleRefreshLock` was declared BELOW `init`,
+   and `init` launches a coroutine that reads it. `viewModelScope` is
+   `Main.immediate`, so that coroutine runs synchronously during construction,
+   before the property exists. Signal 11, crash report naming only
+   `MetalRedrawer.draw`. **This is the second time this branch has paid for this
+   exact trap** — `BOARD_AND_DREAM_UI.md` §14 documents the first, on the
+   station settings screen. The declaration now carries a warning saying so.
+2. **Pull-to-refresh spun for ever.** `LiveStreamManager.ensureStation` bounds
+   itself with `withTimeout`, which throws `TimeoutCancellationException` — a
+   **subclass of `CancellationException`**. The hedge's `catch (CancellationException) { throw e }`
+   therefore re-threw a timed-out socket as "the hedge was cancelled", so it
+   never counted as a failed attempt; with REST also failing, nothing completed
+   the result. And because the await sat INSIDE `mutexFor(naptan).withLock`, the
+   hung fetch held that station's mutex for the life of the process, so every
+   later refresh for it blocked behind a lock that would never be released.
+   Fixed three ways: catch `TimeoutCancellationException` explicitly before the
+   cancellation clause (in `hedged` AND in `DepartureRepository.guarded`, which
+   had the identical trap); replace the failure counter with a watchdog that
+   joins both jobs and completes exceptionally if neither won — drawing the
+   conclusion from the jobs themselves, so no new failure route can slip past;
+   and a hard per-stop ceiling so a stall can never pin a spinner again.
+3. **One station added six seconds to every refresh.** All Saints DLR
+   (`940GZZDLALL`) sends `{"lines":{}, "name":null}` when it has nothing to
+   report. `PredictionsPayload.name` was a non-null `String` with **no default**,
+   and `coerceInputValues = true` (already set on both JSON configs) can only
+   coerce null to a DEFAULT — with none, the whole payload was rejected. Every
+   frame for that station failed to decode, `ensureStation` never resolved and
+   burned its full six seconds, and because REST deserialises the SAME model the
+   hedge could not rescue it. `name` and `lut` are defaulted now, as is
+   `LineData.name`. **The lesson is `coerceInputValues` without a default does
+   nothing** — the flag was there and looked like protection.
+
+### (6) Review pass
+
+- **`DepartureRepository.fetchPredictions` had zero callers.** Deleted.
+- **`fetchInitialData` was a second implementation of "refresh a board"** — its
+  own copy of the two fetches, the per-station lock and the error handling, and
+  the shipping Android app runs it. Now delegates to `refreshBoards`. The cache
+  fallback survives, expressed better: `refreshBoards` writes a fresh status to
+  SQL before returning, so reading it back yields the new value on success and
+  the cached one on failure, without needing to know which case it is in.
+- **`loadPredictions(x); loadLineStatus(x)` at four call sites** → one
+  `reloadBoard`. Four places to forget the second half, and forgetting it gives
+  fresh trains under a stale status strip, which reads as a backend bug.
+- **`buildBoard` stamped `lineShort` on bus rows** and relied on the RENDERER to
+  suppress it, while `buildGroups` blanks it at the source. Two rules for one
+  decision; the second copy is the one that gets forgotten.
+- **Every pull subscribed twice.** `refreshAll` called `notifyPullToRefresh()`
+  (blanket force-resubscribe of everything currently subscribed) and then the
+  fan-out force-subscribed each stop through `ensureStation`. The server replays
+  a cached snapshot per subscribe, so a pull cost double the frames — and the
+  blanket call also resubscribed stations no longer on screen. Removed; a dead
+  socket is still reconnected by `openIfNeeded` inside `ensureStation`.
+- `RefreshBoardIntent` no longer reloads on top of the service's own reload: a
+  DEBOUNCED tap, which deliberately does no work, was still asking WidgetKit to
+  regenerate all 61 entries of every timeline.
+
+### Gates
+
+`:core:testDebugUnitTest` **92 green** (was 88 — 4 new in
+`MultiLineBoardProcessorTest` covering the two-poles case, rail grouping across
+lines, the bus no-prefix rule, and an agreement test that `buildRows` and
+`buildGroups` never disagree), `:composeApp:compileKotlinIosArm64`,
+`:composeApp:compileDebugKotlinAndroid`, `:android:app:compileProdReleaseKotlin`,
+the `StationlyWidget` target, and a staging build installed and running on the
+iPhone 11 with the App Group verified by hand.
+
+### ⚠️ NOT FINISHED — pick these up first
+
+**Widget board parity with the home board (the big one).** `buildGroups` is in
+and tested, but `IosWidgetManager.buildBoard` still writes a flat list through
+`GlobalBoardProcessor`, and the extension still re-derives grouping in
+`WidgetViews.groupedByPlatform`. Until that is wired, three reported issues
+remain live:
+
+1. **Bus poles collapse into one page.** Smithwood Close tracked in both
+   directions is two naptans and must be two pages the arrows step between; it
+   renders as one block with both directions interleaved. Confirmed in device
+   data (§3 above).
+2. **No line name in the widget's platform header.** It shows
+   `Platform 1 (Westbound) 6/6` where the home board shows
+   `Northern Platform 1 Westbound`. `headerFor` already produces the right
+   string; the widget never receives it. `WidgetData.platformHeader` also
+   capitalises the RAW canonical id, so a single-line H&C station would render
+   `Hammersmith-City`.
+3. **Rows show "Gone" immediately after a refresh.** `ticked(keepAtLeast: 3)`
+   backfills departed rows unconditionally. "Gone" should mean "this data is
+   old, refresh me", so retention must key off the data's age at that entry's
+   date — fresh payload, no backfill; old payload, hold the last known
+   departures.
+
+The intended shape is written up in §6f/§6g thinking: `buildBoard` emits
+`buildGroups` output, the wire format carries an ordered group list with KMP's
+own headers, the extension renders those groups and pages by group index, and
+its REST refresh re-associates rows by group key and REUSES the KMP headers
+rather than inventing any — so header text keeps one implementation.
+
+**Also outstanding:**
+
+- **Android smoke test needed.** `fetchInitialData` now runs through
+  `refreshBoards`; it compiles and the logic is equivalent, but the add-a-station
+  path was not exercised on an Android device.
+- **The widget still cannot see `BoardDisplayPrefs`** (sort / rows-per-platform
+  / pin). `StationPrefs` lives in the standard NSUserDefaults suite; the
+  extension reads the App Group. Carried over from §6f.
+- **Backend `shortName` on the lines API.** `LineShortNames` is a client map
+  that has already drifted once (the 2024 Overground renames) and is documented
+  as a stopgap. Owner's ask this session: serve a short name per line and always
+  read from it, keeping the map as the fallback for older payloads.
+- **Batched stream subscribe.** The fan-out issues N concurrent `ensureStation`
+  calls, each sending its own subscribe frame. `requestSubscribe` already takes
+  lists, so one frame would do. Frames, not latency — they pipeline.
+- **The 30 s poll is now largely redundant on iOS** and still costs N SQL reads
+  plus N board re-derivations. It is a safety net; measure before removing.
+- **`WidgetRefreshService` mapper and `WidgetData.ticked` remain untested**, and
+  neither `:composeApp` nor the widget target has a test source set.
+- **Backend line-status subscriptions for multi-line** — one-per-line vs
+  one-per-board. Deferred through six sessions now and still never looked at.
+
 ---
 
 ## 7. Which doc to open
@@ -968,6 +1191,10 @@ its own `widget_refresh_trace`.
 
 ## 9. Next steps, in priority order
 
+0. **Finish the widget board parity work** — §6g "NOT FINISHED". Three reported
+   issues are still live and all three are the same missing wire-up: bus poles
+   collapsing into one page, no line name in the platform header, and "Gone"
+   rows straight after a refresh.
 1. **QA the 2026-08-07/08 work on device** (§6f "Not verified"): the three board
    controls; then two widgets pinned to two different stations, which is the
    whole point of the feature and the one thing a single widget cannot prove.

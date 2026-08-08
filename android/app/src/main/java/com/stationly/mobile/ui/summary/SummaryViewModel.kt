@@ -17,7 +17,7 @@ import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.service.TflApiServiceFactory
 import com.stationly.core.usecase.FormatDeparturesUseCase
-import com.stationly.core.usecase.ProcessFcmPayloadUseCase
+import com.stationly.core.usecase.ProcessPredictionsUseCase
 import com.stationly.core.platform.Platform
 import com.stationly.core.platform.AndroidStorageManager
 import com.stationly.core.platform.AndroidNotificationManager
@@ -69,7 +69,7 @@ class SummaryViewModel(application: Application) : AndroidViewModel(application)
         storageManager = Platform.storageManager
     )
 
-    private val processFcmPayloadUseCase = ProcessFcmPayloadUseCase(
+    private val processPredictionsPayloadUseCase = ProcessPredictionsUseCase(
         departureRepository,
         widgetManager,
         storageManager,

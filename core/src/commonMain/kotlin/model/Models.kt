@@ -212,14 +212,38 @@ data class LineStatus(
 
 /**
  * FCM payload for real-time predictions
- * Mirrors the MindTheTimeAndroid FcmPayload data class
+ * Mirrors the MindTheTimeAndroid PredictionsPayload data class
  */
 @Serializable
-data class FcmPayload(
-    val lines: Map<String, LineData>,
+data class PredictionsPayload(
+    val lines: Map<String, LineData> = emptyMap(),
     val id: String,
-    val name: String,
-    val lut: String // Last update time
+    /**
+     * Station name, DEFAULTED because the backend sends `null` for it.
+     *
+     * ## Why a default and not a nullable type
+     * Both JSON configs (`NetworkModule.json` and `LiveStreamManager.json`)
+     * already set `coerceInputValues = true`, which turns an explicit `null`
+     * into the property's DEFAULT — but only for a property that has one. With
+     * no default there was nothing to coerce to, so the whole payload was
+     * rejected: `Expected string value for a non-null key 'name', got null
+     * literal`.
+     *
+     * ## What that cost, because it was not a cosmetic failure
+     * Observed on device for All Saints DLR (`940GZZDLALL`), whose frames carry
+     * `{"lines":{}, "name":null}` when it has nothing to report. Every frame for
+     * it failed to decode, so `LiveStreamManager.ensureStation` never resolved
+     * its awaiter and burned the full six-second `ENSURE_TIMEOUT_MS` — and
+     * because REST deserialises the SAME model, the hedge could not rescue it
+     * either. One station in this state added six seconds to every
+     * pull-to-refresh, since the spinner waits for the slowest stop.
+     *
+     * The name is only ever used for display and the board already has one from
+     * the user's own selection, so an empty string here loses nothing.
+     */
+    val name: String = "",
+    /** Last update time. Defaulted for the same reason as [name]. */
+    val lut: String = ""
 )
 
 /**
@@ -229,8 +253,10 @@ data class FcmPayload(
 @Serializable
 data class LineData(
     val id: String,
-    val name: String,
-    val dirs: Map<String, DirectionPredictions>
+    /** Defaulted for the same reason as [PredictionsPayload.name] — a null here would
+     *  reject the whole payload, and one unnamed line must not blank a board. */
+    val name: String = "",
+    val dirs: Map<String, DirectionPredictions> = emptyMap()
 )
 
 /**

@@ -1,12 +1,12 @@
 package com.stationly.core.platform
 
 import com.stationly.core.config.AppConfig
-import com.stationly.core.model.FcmPayload
+import com.stationly.core.model.PredictionsPayload
 import com.stationly.core.model.LineStatus
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.FormatDeparturesUseCase
-import com.stationly.core.usecase.ProcessFcmPayloadUseCase
+import com.stationly.core.usecase.ProcessPredictionsUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.darwin.Darwin
@@ -47,7 +47,7 @@ import kotlinx.serialization.json.*
  * a send failure instead of hanging silently.
  *
  * Every inbound `snapshot`/`update` is handed off to the exact same
- * [ProcessFcmPayloadUseCase] pipeline FCM pushes already use — so SQLite
+ * [ProcessPredictionsUseCase] pipeline FCM pushes already use — so SQLite
  * writes, the widget refresh and [com.stationly.core.util.FreshDataNotifier]
  * behave identically regardless of which transport produced the data.
  */
@@ -88,10 +88,10 @@ object LiveStreamManager {
         }
     }
 
-    // Mirrors FcmPayloadBridge's construction in Platform.ios.kt — same
+    // Mirrors PushPayloadBridge's construction in Platform.ios.kt — same
     // pipeline, different transport feeding it.
-    private val processUseCase: ProcessFcmPayloadUseCase by lazy {
-        ProcessFcmPayloadUseCase(
+    private val processUseCase: ProcessPredictionsUseCase by lazy {
+        ProcessPredictionsUseCase(
             departureRepository = DepartureRepository(
                 NetworkModule.tflApi,
                 Platform.storageManager,
@@ -117,7 +117,7 @@ object LiveStreamManager {
 
     private val subscribedStations = mutableSetOf<String>()
     private val subscribedLines = mutableSetOf<String>()
-    private val pendingStations = mutableMapOf<String, MutableList<CompletableDeferred<FcmPayload>>>()
+    private val pendingStations = mutableMapOf<String, MutableList<CompletableDeferred<PredictionsPayload>>>()
     private val pendingLines = mutableMapOf<String, MutableList<CompletableDeferred<LineStatus>>>()
 
     // ── Public lifecycle ──
@@ -173,8 +173,8 @@ object LiveStreamManager {
 
     // ── Used by StreamBackedTflApiService (the fetchInitialData path) ──
 
-    suspend fun ensureStation(naptanId: String): FcmPayload {
-        val deferred = CompletableDeferred<FcmPayload>()
+    suspend fun ensureStation(naptanId: String): PredictionsPayload {
+        val deferred = CompletableDeferred<PredictionsPayload>()
         stateMutex.withLock { pendingStations.getOrPut(naptanId) { mutableListOf() }.add(deferred) }
         try {
             return withTimeout(ENSURE_TIMEOUT_MS) {
@@ -435,7 +435,7 @@ object LiveStreamManager {
                 val payload = root["payload"]
                 if (stationId != null && payload != null) {
                     try {
-                        val fcm = json.decodeFromJsonElement(FcmPayload.serializer(), payload)
+                        val fcm = json.decodeFromJsonElement(PredictionsPayload.serializer(), payload)
                         processUseCase.processStationUpdate(stationId, fcm)
                         PushTrace.log("stream:update station=$stationId")
                         resolveStation(stationId, fcm)
@@ -486,7 +486,7 @@ object LiveStreamManager {
         }
     }
 
-    private suspend fun resolveStation(id: String, payload: FcmPayload) {
+    private suspend fun resolveStation(id: String, payload: PredictionsPayload) {
         val list = stateMutex.withLock { pendingStations.remove(id) } ?: return
         list.forEach { it.complete(payload) }
     }

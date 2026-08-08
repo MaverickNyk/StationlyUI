@@ -12,6 +12,7 @@ import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.FormatDeparturesUseCase
 import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
+import com.stationly.core.util.FreshData
 import com.stationly.core.util.FreshDataNotifier
 import com.stationly.core.util.GlobalBoardProcessor
 import com.stationly.core.util.StationlyFormatters
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import com.stationly.app.platform.performHaptic
 import com.stationly.app.platform.HapticType
 import com.stationly.app.platform.getConnectivityFlow
@@ -125,6 +127,22 @@ class SummaryViewModel(
     /** Stacked list or one station per swipeable page — see [HomeLayout]. */
     val homeLayout: StateFlow<HomeLayout> = StationPrefsRepository.layout
 
+    /**
+     * Guards [refreshStaleBoards] — see the note there about cold start.
+     *
+     * ## This declaration MUST stay above `init`, and that is not a style rule
+     * `viewModelScope` is `Main.immediate`, so a coroutine `init` launches runs
+     * SYNCHRONOUSLY during construction — before any property declared below
+     * `init` has been initialised. `init` launches `refreshStaleBoards`, which
+     * reads this lock, so declaring it below cost a Kotlin/Native SIGSEGV on
+     * every launch: not a null-pointer exception, an immediate signal 11 with a
+     * crash report naming only `MetalRedrawer.draw`.
+     *
+     * The project has paid for this once already — see `BOARD_AND_DREAM_UI.md`
+     * §14, which documents the identical crash on the station settings screen.
+     */
+    private val staleRefreshLock = Mutex()
+
     init {
         viewModelScope.launch { StationPrefsRepository.ensureLoaded() }
         viewModelScope.launch { fetchAnnouncement() }
@@ -148,16 +166,17 @@ class SummaryViewModel(
         }
         viewModelScope.launch {
             selectionRepository.initialize()
-            selectionRepository.selections.value.firstOrNull()?.let { refreshDataIfStale(it) }
+            // EVERY stale board, not just the first — see refreshStaleBoards.
+            // This is the cold-start path: the sooner it starts the more of it
+            // overlaps with the screen composing, so it is deliberately the
+            // first thing after the selections are known.
+            refreshStaleBoards(selectionRepository.selections.value)
         }
         viewModelScope.launch {
             selectionRepository.selections.collect { newSelections ->
                 _selections.value = newSelections
                 maybeWarmModeIcons(newSelections)
-                newSelections.forEach { selection ->
-                    loadPredictions(selection)
-                    loadLineStatus(selection)
-                }
+                newSelections.forEach(::reloadBoard)
                 if (newSelections.isNotEmpty() && _uiState.value.activeStationId == null) {
                     val primary = newSelections.first()
                     _uiState.value = _uiState.value.copy(
@@ -174,16 +193,32 @@ class SummaryViewModel(
             }
         }
         // Instant refresh when an FCM push lands while the app is active:
-        // ProcessFcmPayloadUseCase emits after writing predictions to SQLite, so
+        // ProcessPredictionsUseCase emits after writing predictions to SQLite, so
         // we reload the board immediately rather than waiting on the 30 s poll.
         viewModelScope.launch {
-            FreshDataNotifier.events.collect {
-                _selections.value.forEach {
-                    loadPredictions(it)
+            FreshDataNotifier.events.collect { what ->
+                // Only the boards the event actually touched. This is the
+                // hottest path in the app on iOS — the live stream emits per
+                // station every few seconds, and reloading everything meant a
+                // SQL read plus a board re-derivation for all N selections on
+                // every frame, nearly all of them re-reading unchanged rows.
+                // Android has always been targeted (its prefs pings are keyed
+                // `predictions_<station>_<line>`); this is that precision.
+                when (what) {
+                    is FreshData.Station -> _selections.value
+                        .filter { it.station.equals(what.stationId, ignoreCase = true) }
+                        .forEach { loadPredictions(it) }
+
                     // A LineStatus_* push only touches the status table — reload
-                    // the board's status strip too, like Android's home VM does
-                    // on its line_status_data prefs ping.
-                    loadLineStatus(it)
+                    // the board's status strip, like Android's home VM does on
+                    // its line_status_data prefs ping.
+                    is FreshData.Line -> _selections.value
+                        .filter { it.line.equals(what.lineId, ignoreCase = true) }
+                        .forEach { loadLineStatus(it) }
+
+                    // The emitter could not name a scope, so nothing can be
+                    // ruled out. Correct, and the reason to keep naming them.
+                    FreshData.All -> _selections.value.forEach(::reloadBoard)
                 }
             }
         }
@@ -302,19 +337,68 @@ class SummaryViewModel(
         }
     }
 
-    private suspend fun refreshDataIfStale(selection: UserSelection) {
+    /**
+     * Whether this board's cached rows are too old to show without refetching.
+     *
+     * Split out from the fetch so the whole set can be judged first and then
+     * fetched in ONE fan-out — see [refreshStaleBoards].
+     */
+    /**
+     * Repaint one board from SQLite: its departures and its status strip.
+     *
+     * The pair was written out at four call sites (the selections collector,
+     * the fresh-data collector, the cold-start/foreground refresh and
+     * pull-to-refresh), which is four places to forget the second half — and
+     * forgetting `loadLineStatus` gives a board with fresh trains under a stale
+     * status strip, which looks like a backend bug rather than a missing line.
+     */
+    private fun reloadBoard(selection: UserSelection) {
+        loadPredictions(selection)
+        loadLineStatus(selection)
+    }
+
+    private suspend fun isStale(selection: UserSelection): Boolean {
         val existingPreds = Platform.sqlStorage.getPredictions(
             selection.station, selection.line, selection.direction
         )
         val existingStatus = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
         val lastUpdatedByStation = _stationUpdates.value[selection.boardKey] ?: 0L
         val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
-        val isStale = now - lastUpdatedByStation > 60_000
+        return existingPreds.isEmpty() || existingStatus == null ||
+            now - lastUpdatedByStation > 60_000
+    }
 
-        if (existingPreds.isEmpty() || existingStatus == null || isStale) {
-            departureRepository.fetchInitialData(selection)
-            loadPredictions(selection)
-            loadLineStatus(selection)
+    /**
+     * Bring every stale board up to date at once.
+     *
+     * ## This used to refresh exactly one station
+     * Launch called `refreshDataIfStale(selections.firstOrNull())`. Everything
+     * after the first board therefore painted from SQLite and waited for the
+     * 30 s poll or a stream frame to become true — so on a cold start the
+     * second station onwards showed departures that could be minutes old, with
+     * nothing on screen saying so.
+     *
+     * Now the whole set is judged, and whatever is stale is fetched
+     * concurrently and deduplicated. The cost is the same one round trip
+     * whether the user tracks one station or seven.
+     */
+    private suspend fun refreshStaleBoards(selections: List<UserSelection>) {
+        // Cold start fires this from `init` AND from the screen's first
+        // ON_RESUME, within milliseconds of each other. Both would pass the
+        // staleness test — neither has written anything yet — and every stop
+        // would be fetched twice, the second run merely blocking on the first's
+        // per-station lock before repeating its work.
+        //
+        // `tryLock` rather than `withLock` because the right answer to "a
+        // refresh is already in flight" is to do nothing: it is fetching the
+        // same stops, and its `onUpdated` will repaint the same boards.
+        if (!staleRefreshLock.tryLock()) return
+        try {
+            val stale = selections.filter { isStale(it) }
+            if (stale.isEmpty()) return
+            departureRepository.refreshBoards(stale, ::reloadBoard)
+        } finally {
+            staleRefreshLock.unlock()
         }
     }
 
@@ -325,21 +409,42 @@ class SummaryViewModel(
         // well double-buzzed when the user released quickly.
         if (Platform.getPlatformName() != "iOS") performHaptic(HapticType.TAP)
         _uiState.value = _uiState.value.copy(isRefreshing = true)
-        // No-op on Android. On iOS this forces a resubscribe on the live
-        // stream (the server replays a cached snapshot per subscribe), and
-        // reconnects only if the socket is actually dead — see
-        // core.platform.LiveStream.notifyPullToRefresh.
-        com.stationly.core.platform.LiveStream.notifyPullToRefresh()
+        // ── Deliberately NOT calling LiveStream.notifyPullToRefresh() ──
+        //
+        // It force-resubscribed every station and line at once, which was the
+        // right thing when a pull did nothing else. The fan-out below now asks
+        // for each stop explicitly, and `ensureStation` force-subscribes as part
+        // of that — so keeping both meant every pull sent a blanket resubscribe
+        // AND a per-station one, and the server replays a cached snapshot for
+        // each, doubling the frames a refresh costs.
+        //
+        // The two things that call justified are both still covered: a dead
+        // socket is reconnected by `openIfNeeded` inside `ensureStation`, and
+        // the forced snapshot is exactly what `ensureStation` is asking for. It
+        // also resubscribed stations the user no longer has on screen, which the
+        // fan-out cannot do.
         viewModelScope.launch {
             try {
-                _selections.value.forEach { selection ->
-                    departureRepository.fetchInitialData(selection)
-                    loadPredictions(selection)
-                    loadLineStatus(selection)
-                }
+                // One concurrent, deduplicated fan-out instead of a serial loop
+                // over every selection — see DepartureRepository.refreshBoards
+                // for the arithmetic. Boards repaint as each stop lands rather
+                // than all together at the end, so the first one is on screen
+                // in a single round trip instead of the sum of all of them.
+                val result = departureRepository.refreshBoards(_selections.value, ::reloadBoard)
                 val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
-                _uiState.value = _uiState.value.copy(isRefreshing = false, lastUpdated = now)
-                performHaptic(HapticType.SUCCESS)
+                if (result.allFailed) {
+                    // Every stop failed, which is the network rather than a
+                    // stop having a bad time. A partial failure deliberately
+                    // does NOT raise the banner: the boards that did refresh
+                    // are fresh, and the ones that did not already show it in
+                    // their own "ago" timer.
+                    _uiState.value = _uiState.value.copy(isRefreshing = false, isBackendOffline = true)
+                    performHaptic(HapticType.ERROR)
+                    scheduleAutoRetry()
+                } else {
+                    _uiState.value = _uiState.value.copy(isRefreshing = false, lastUpdated = now)
+                    performHaptic(HapticType.SUCCESS)
+                }
             } catch (_: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isRefreshing = false,
@@ -527,6 +632,19 @@ class SummaryViewModel(
             // edited on the Profile screen) — re-read them on every foreground.
             loadUserInitial()
             selectionRepository.initialize()
+            // ── The foreground fetch ──
+            //
+            // Until this existed, coming back from another app showed whatever
+            // was in SQLite when we left and nothing went to the network: the
+            // 30 s loop only re-READS SQL, and `notifyForeground` merely reopens
+            // the socket without asking it for anything. So the board sat on
+            // stale rows until a stream frame happened to arrive — which, on a
+            // socket that has just been reopened, is exactly when it is slowest.
+            //
+            // In its own coroutine so it starts NOW rather than queueing behind
+            // the token check below, and only for boards that are actually
+            // stale, so a five-second trip to the app switcher costs nothing.
+            launch { refreshStaleBoards(selectionRepository.selections.value) }
             // Cheap when nothing changed (one string compare, no network) —
             // catches a token that rotated while we were backgrounded.
             com.stationly.app.util.FcmTokenRegistrar.ensureRegistered()

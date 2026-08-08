@@ -202,7 +202,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
                                  withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         // Process FCM payload through KMP so the widget and SQLite cache update immediately
         PushTraceSwift.log("apns:fg-willPresent from=\(notification.request.content.userInfo["from"] as? String ?? "-")")
-        processFcmPayload(notification.request.content.userInfo)
+        processPredictionsPayload(notification.request.content.userInfo)
         completionHandler([.banner, .sound])
     }
 
@@ -210,7 +210,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
                                  didReceive response: UNNotificationResponse,
                                  withCompletionHandler completionHandler: @escaping () -> Void) {
         // Also process on tap (covers background delivery)
-        processFcmPayload(response.notification.request.content.userInfo)
+        processPredictionsPayload(response.notification.request.content.userInfo)
         completionHandler()
     }
 
@@ -234,7 +234,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         // restriction); the Kotlin wrapper hops to a background dispatcher
         // immediately, so nothing heavy runs on main.
         Task { @MainActor in
-            try? await FcmPayloadBridge.shared.processPayloadAndWait(jsonString: jsonString)
+            try? await PushPayloadBridge.shared.processPayloadAndWait(jsonString: jsonString)
             WidgetCenter.shared.reloadAllTimelines()
             completionHandler(.newData)
         }
@@ -242,14 +242,14 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
 
     // MARK: - FCM payload → KMP
 
-    private func processFcmPayload(_ userInfo: [AnyHashable: Any]) {
+    private func processPredictionsPayload(_ userInfo: [AnyHashable: Any]) {
         guard let jsonData = try? JSONSerialization.data(withJSONObject: userInfo),
               let jsonString = String(data: jsonData, encoding: .utf8) else { return }
         // Await the KMP write, then reload the widget — covers deliveries where
         // the foreground WidgetReloadObserver timer isn't running. (The
         // observer still handles in-session immediacy via the reload signal.)
         Task { @MainActor in
-            try? await FcmPayloadBridge.shared.processPayloadAndWait(jsonString: jsonString)
+            try? await PushPayloadBridge.shared.processPayloadAndWait(jsonString: jsonString)
             WidgetCenter.shared.reloadAllTimelines()
         }
     }

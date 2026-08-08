@@ -84,7 +84,7 @@ class AndroidNotificationManager(
     
     override suspend fun handleNotification(payload: Map<String, String>) {
         // This would be called from FcmMessagingService
-        // Would trigger ProcessFcmPayloadUseCase
+        // Would trigger ProcessPredictionsUseCase
     }
     
     override suspend fun registerDevice(): String {

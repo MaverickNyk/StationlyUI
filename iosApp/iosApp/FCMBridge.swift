@@ -7,7 +7,7 @@ import composeApp
 /// 1. Topic subscribe/unsubscribe requests queued by KMP in NSUserDefaults.standard
 ///    (keys: fcm_subscribe_pending, fcm_unsubscribe_pending)
 /// 2. Raw FCM payload JSON stored by AppDelegate under "pending_fcm_payload",
-///    forwarded to KMP FcmPayloadBridge once the framework is integrated.
+///    forwarded to KMP PushPayloadBridge once the framework is integrated.
 ///
 /// Called on: FCM token receipt, app foreground, and (debounced) whenever KMP
 /// writes to UserDefaults — so a station added mid-session subscribes its
@@ -80,7 +80,7 @@ class FCMBridge: NSObject {
         ud.removeObject(forKey: "pending_fcm_payload")
         ud.synchronize()
 
-        FcmPayloadBridge.shared.processPayload(jsonString: json)
+        PushPayloadBridge.shared.processPayload(jsonString: json)
     }
 
     // MARK: - Helpers for direct Swift-side enqueue (if needed)

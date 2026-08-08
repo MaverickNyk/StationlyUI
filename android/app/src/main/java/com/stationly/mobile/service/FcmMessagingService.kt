@@ -330,7 +330,7 @@ class FcmMessagingService : FirebaseMessagingService() {
             val stationIdFromTopic = remoteMessage.from?.replace("/topics/Station_", "") ?: ""
             
             // Parse FCM payload using KMP model
-            val payload = gson.fromJson(payloadJson, FcmPayload::class.java)
+            val payload = gson.fromJson(payloadJson, PredictionsPayload::class.java)
             
             // Get all selections
             val allSelections = getAllSelections()
