@@ -4,6 +4,7 @@ import platform.UIKit.UIImpactFeedbackGenerator
 import platform.UIKit.UIImpactFeedbackStyle
 import platform.UIKit.UINotificationFeedbackGenerator
 import platform.UIKit.UINotificationFeedbackType
+import platform.UIKit.UISelectionFeedbackGenerator
 
 /**
  * Feedback generators, created ONCE and kept warm.
@@ -24,6 +25,14 @@ private object Generators {
         style = UIImpactFeedbackStyle.UIImpactFeedbackStyleLight
     )
     val notification = UINotificationFeedbackGenerator()
+
+    /**
+     * The generator Apple built for exactly this: a value moving between discrete
+     * stops. Lighter and drier than any impact style, and it is what a native
+     * picker or a stepped slider uses — running an impact per detent instead
+     * feels like the control is being hit rather than turned.
+     */
+    val selection = UISelectionFeedbackGenerator()
 }
 
 actual fun performHaptic(type: HapticType) {
@@ -33,6 +42,12 @@ actual fun performHaptic(type: HapticType) {
             // Re-arm for the next one. Cheap on an already-warm generator, and it
             // is what keeps a rapid sequence — a drag crossing several rows —
             // feeling like one continuous thing rather than a series of restarts.
+            prepare()
+        }
+        HapticType.SELECTION -> with(Generators.selection) {
+            selectionChanged()
+            // Re-armed for the same reason, and it matters more here: a slider
+            // drag can cross three detents inside a second.
             prepare()
         }
         HapticType.SUCCESS -> with(Generators.notification) {

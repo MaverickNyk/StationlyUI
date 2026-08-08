@@ -350,15 +350,27 @@ belong on the card — they are the board's legend and carry each line's status 
 — but a tap has nothing to do, and a control that silently does nothing reads as
 broken.
 
-Tapping one now floats a hint over the panel offering to turn the countdown back
-on (`HeroHint`, dismissing itself after `HERO_HINT_MS`). Two rules shape it:
+Tapping one now floats a hint over the panel pointing at the setting
+(`HeroHint`, dismissing itself after `HERO_HINT_MS`). Four rules shape it:
 
 - **It floats; it does not take a row.** Anything occupying layout space would
   push the board down as it appeared and pull it back as it went — under the
   user's finger, milliseconds after they tapped (§5, §8, §9).
-- **It is an offer, not an error.** The user turned the countdown off, quite
-  possibly deliberately, so the hint says what they are missing and hands them
-  the switch rather than correcting them.
+- **It is an offer, not an error.** The user hid the hero, quite possibly
+  deliberately, so the hint says what they are missing and points at the setting
+  rather than correcting them.
+- **It is styled against the BOARD, not the theme.** Fixed dark palette, because
+  the panel it floats over is near-black in every theme. It used to take
+  `colorScheme.surface` and was a white capsule on a black board in light mode —
+  legible, but visibly app chrome dropped onto the signage rather than part of
+  it.
+- **Its label matches where it goes.** The action reads "Settings ›" and opens
+  the station's settings screen. It used to read "Turn on" while doing exactly
+  the same thing, which promises an immediate switch and then navigates.
+
+The copy says **"next departure"**, never "countdown" — that is what the hero
+prints and what the setting is called (`Next dept. + board`). A hint naming a
+control the user cannot then find is a dead end.
 
 `AnimatedVisibility` is called from its own composable, not inline: the enclosing
 card is a `Column`, and the `ColumnScope` extension wins over the plain overload
@@ -658,11 +670,35 @@ Four changes, each fixing something that read as "an app" rather than as iOS:
   old one. Now 220ms in behind 160ms out: the replacement arrives faster than
   the thing it replaces leaves.
 
-## 20b. iOS: the user arranges their own board (2026-08-07)
+## 20b. iOS: the user arranges their own board (2026-08-07, cut to two 2026-08-09)
 
-Three settings per station — what the board is ordered by, how deep each platform
-goes, and which block leads it. `BoardDisplayPrefs` in **core** holds them,
-`MultiLineBoardProcessor` applies them, `BoardArrangementSection` edits them.
+Two settings per station — how deep each platform goes, and which block leads it.
+`BoardDisplayPrefs` in **core** holds them, `MultiLineBoardProcessor` applies
+them, `BoardArrangementSection` edits them.
+
+### There were three, and the third was removed
+
+`BoardSort` offered **Time / Platform / Destination** in one segmented control.
+It went on 2026-08-09, along with the enum, the destination re-sort and its
+tests. Three reasons, and the first is the one worth remembering:
+
+- **Its segments acted at two different levels.** Time and Platform ordered the
+  BLOCKS; Destination ordered the ROWS inside a block and left block order on
+  Time. Three segments reading as three alternatives were two alternatives plus
+  an orthogonal switch — and the shape forbade the one combination a user might
+  actually want, platforms in number order with destinations grouped inside each.
+- **It was inert on any bus board.** A pole has no number, and at the unlettered
+  stops most people use it has no label either, so "order by stop" compared
+  empty strings and fell back to whatever order the user's selections were in.
+  A live control that cannot move anything.
+- **The pin already answers what Platform-order was justified by.** "My platform
+  is where it was yesterday" is served better by putting it FIRST than by fixing
+  it at position four.
+
+Block order is now fixed and not configurable: unassigned last, then the pin,
+then whichever block has the soonest train. Rows inside a block are always in
+arrival order. Old stored `sort` values decode away harmlessly — the prefs JSON
+is read with `ignoreUnknownKeys`.
 
 ### The grouping is not one of the settings, and must not become one
 
@@ -673,25 +709,21 @@ in one place you can walk to**. "Sort the whole board by destination" would
 dissolve that — the rows would be in a true global order and the user would have
 to read the platform off every single row to know where to stand.
 
-So each setting operates at exactly ONE level, and which level is decided by
-where the fact it names actually exists:
+So each setting operates at exactly ONE level, and neither can reorder rows
+across blocks:
 
 | Setting | Level it acts at | Level it leaves alone |
 |---|---|---|
-| Sort by **time** | blocks led by their soonest train | rows: arrival order |
-| Sort by **platform** | blocks in number order | rows: arrival order — there is no platform left to sort by once you are on one |
-| Sort by **destination** | rows grouped by where they go | blocks: unchanged, because a destination says nothing about which platform should lead |
-| **Rows per platform** (2–5, default 3) | how deep each block goes | nothing |
-| **Pin** | promotes a whole block | never lifts rows out of one |
+| **Rows per platform** (2–5, default 3) | how deep each block goes | order, at both levels |
+| **Pin to top** | promotes a whole block | never lifts rows out of one |
 
-### The cap picks WHICH trains; the sort only arranges them
+### The cap picks WHICH trains, off the TIME-ordered list
 
-Load-bearing, and the one thing to get wrong here. Applying the cap to a
-destination-sorted platform keeps the three alphabetically-first destinations,
-which at Green Park means three Cockfosters trains an hour out and no sign of
-the Uxbridge one leaving now. The soonest N are chosen first, and the sort
-arranges them afterwards. Tested (`destination sort still shows the SOONEST
-trains`).
+Load-bearing, and the one thing to get wrong here. Capping any other ordering
+keeps the wrong trains: three alphabetically-first destinations at Green Park
+means three Cockfosters trains an hour out and no sign of the Uxbridge one
+leaving now. The rows a user is shown must always be the soonest rows. Tested
+(`the cap keeps the SOONEST trains — never the alphabetically first ones`).
 
 ### A pinned LINE promotes every platform it calls at
 
@@ -716,42 +748,51 @@ Three rules around it:
   will be back tomorrow; silently forgetting a setting the user made is worse
   than one that waits.
 
-### The collapsed card takes the pin but not the sort
+### A collapsed station takes the pin but not the depth
 
 `collapsedLegs` shows the two soonest departures you could catch. A pinned block
-leads them and, more importantly, **survives the two-leg cap** — otherwise "show
-first" quietly does nothing for anyone whose stations are collapsed, which reads
-as a broken setting. The sort deliberately does not apply: ordering legs by
-platform number would pick the two lowest-numbered platforms rather than the two
-soonest, which answers a different question and answers it worse.
+leads them and, more importantly, **survives the two-leg cap** — otherwise the
+pin quietly does nothing for anyone whose stations are collapsed, which reads as
+a broken setting.
+
+The depth cap cannot apply: a leg IS one departure, so there is no depth to
+bound. That makes it the one board setting with no effect until a station is
+opened, which is why its caption says so ("Applies once the station is open").
+A setting that silently does nothing in the state the user is looking at is the
+same bug as a control that cannot move anything — it just hides better.
 
 ### There is no drawn preview here, unlike the layout picker above it
 
 Deliberate, and it is the one place this screen departs from "draw it, don't
-describe it" (§12). The layout picker draws two boards because "hide the
-countdown" is a shape the user would otherwise have to imagine. These three are
-different: the real board is one back-tap away and changes the instant you get
-there, so the honest preview is the board itself. Drawing one from the SQLite
-cache was the alternative and was rejected — cached ETAs are minutes or hours
-old, and a settings screen reading "Brixton 2 min" over stale rows is
+describe it" (§12). The layout picker draws two boards because hiding the
+next-departure hero is a shape the user would otherwise have to imagine. These
+two are different: the real board is one back-tap away and changes the instant
+you get there, so the honest preview is the board itself. Drawing one from the
+SQLite cache was the alternative and was rejected — cached ETAs are minutes or
+hours old, and a settings screen reading "Brixton 2 min" over stale rows is
 indistinguishable from one reading it over live rows.
 
-What carries the meaning instead: a caption per sort option that says what
-MOVES and what stays put; the numbers 2–5 drawn under the slider so the whole
-scale is visible before you drag; and a pin picker built from the platforms the
-board has **actually shown** (`MultiLineBoardProcessor.pinnablePlatforms`, read
-from cache), so it can never offer one that does not exist. Line chips carry
-their line's colour and platform chips do not, which is what keeps "Platform 4"
-and "Victoria" from reading as one flat list.
+What carries the meaning instead: **the heading is the readout** ("Show up to 3
+per platform"), so the number being set is in the sentence rather than explained
+by a caption underneath; the numbers 2–5 drawn under the slider so the whole
+scale is visible before you drag; and a pin picker built from the places the
+board has **actually shown**, so it can never offer one that does not exist.
+Line chips carry their line's colour and platform chips do not, which is what
+keeps "Platform 4" and "Victoria" from reading as one flat list.
 
 ### Two rules the controls themselves follow
 
-- **"Show first" is hidden when there is nothing to promote** — no platform has
+- **"Pin to top" is hidden when there is nothing to promote** — no platform has
   been seen yet and only one line is tracked, so every block on the board
-  carries it. A picker whose only option is "Nothing" is a control that cannot
-  do anything, and a caption explaining that is worse than the section not being
+  carries it. A picker whose only option is "None" is a control that cannot do
+  anything, and a caption explaining that is worse than the section not being
   there. It reappears if a pin is already set, however the options have since
   shrunk, so a setting in force is always reachable.
+- **The section is named for the ACTION, not the outcome.** It read "Show
+  first", which forced its off state to be a chip saying "Nothing" — show
+  nothing first, which is not a thing anyone asks for. Naming the action gives
+  it a natural absence, so the chip is "None". The empty-state caption then says
+  what happens WITHOUT a pin, which is the one thing the other branches cannot.
 - **The platforms offered are the ones the board has actually shown**
   (`MultiLineBoardProcessor.pinnablePlatforms`, read from the SQLite cache),
   ordered by number rather than by time. Ordered by whose train is soonest, the
@@ -759,6 +800,30 @@ and "Victoria" from reading as one flat list.
   refreshed. Unassigned blocks are excluded, because the board sinks them
   regardless of any pin — offering one would be offering a setting guaranteed to
   do nothing.
+
+### A bus hub pins POLES, named by where they go (2026-08-09)
+
+`pinnablePlatforms` cannot serve a bus hub and never could. TfL letters stops
+only at multi-stop interchanges, so at an ordinary one every pole's label is
+blank and there is nothing to offer — which left the picker showing routes and
+nothing else. And a route chip at a hub is usually a no-op: both sides of the
+road run the same routes, so pinning one promotes every block, which promotes
+none of them. The pin worth having there — *the side going towards Putney
+Bridge* — was the one thing unreachable.
+
+`BoardPin.Kind.STOP` + `MultiLineBoardProcessor.pinnableStops` fix it:
+
+- **Matched on the pole's naptan**, which is the board's own group key for buses
+  (`groupKeyFor`). Never on the label — blank equals blank, so a label pin would
+  match every unlettered pole at once.
+- **Shown as its most common destination**, "→ Putney Bridge". A naptan is not
+  something any user has seen. Most common rather than soonest: one
+  short-terminating service must not rename the side of the road, and the label
+  has to still be there tomorrow.
+- **Ordered by that label**, so the chips do not move between refreshes — the
+  same reason `pickerOrder` exists for rail.
+- **Exactly one of `platforms`/`stops` is ever populated.** Both would offer the
+  same block twice under two different names.
 
 ### `isBus` has one definition now
 
@@ -771,10 +836,24 @@ block: the exact bug `groupKeyFor` exists to prevent.
 
 ### Things that will bite
 
-- **The widget does not see any of this.** `StationPrefs` lives in the standard
-  NSUserDefaults suite; the extension is a separate process reading the App
-  Group. Its rows stay as they were, which is defensible (a widget is a glance,
-  not a board you configure) but is a divergence, not an oversight.
+- **The widget DOES see this** (since `0720622`), and not by sharing
+  `StationPrefs` — that is still in the standard NSUserDefaults suite and still
+  invisible to the extension. The board is built in the APP, where the
+  preferences live, and only finished blocks cross into the App Group. The
+  extension's own REST refresh is the one path that still re-derives rows
+  without them.
+- **The widget is pushed on the way OUT of the settings screen, not per change**
+  (`StationSettingsViewModel.onCleared`). `updateWidget` is
+  `IosWidgetManager.refreshAllBoards` — every station rebuilt from SQL — and the
+  depth slider fires once per detent crossed, so dragging 2→5 ran three full
+  rebuilds during one gesture. The push is also diffed against the arrangement
+  as it stood on entry: opening the screen to read it, or moving the slider and
+  putting it back, does no work at all. It runs on a scope that outlives the
+  ViewModel, because `viewModelScope` is already cancelled by `onCleared`.
+- **The home screen needs no push and never did.** `StationPrefsRepository.prefs`
+  is one shared `StateFlow` that `SummaryViewModel` exposes directly, and the
+  board derives rows with `remember(rendered, isBus, boardPrefs)`. Writing a
+  preference IS the redraw.
 - **`MAX_ROWS_PER_PLATFORM` on the processor is gone** — the ceiling is
   `BoardDisplayPrefs.rowCap` now, clamped on READ so a value stored by a build
   with different limits cannot render twelve rows. `MIN_BOARD_ROWS` stays a

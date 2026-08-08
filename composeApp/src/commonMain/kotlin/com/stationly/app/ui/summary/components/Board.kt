@@ -13,6 +13,8 @@ import androidx.compose.animation.core.EaseInCubic
 import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.EaseOutCubic
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.updateTransition
@@ -50,7 +52,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -95,6 +99,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.stationly.app.ui.common.pressScale
 import com.stationly.app.ui.theme.TflAmber
 import com.stationly.app.ui.theme.isDarkTheme
 import com.stationly.app.ui.util.BOARD_FALLBACK_ROW_COUNT
@@ -811,7 +816,6 @@ fun StationBoard(
                 Box(modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) {
                     HeroHintOverlay(
                         visible = heroHintVisible,
-                        accent = accent,
                         onEnable = onOpenSettings,
                     )
                 }
@@ -988,61 +992,123 @@ private fun boardScrollOwnership(scroll: ScrollState): NestedScrollConnection {
     }
 }
 
-/** How long the countdown hint stays up before dismissing itself. */
+/** How long the hint stays up before dismissing itself. */
 private const val HERO_HINT_MS = 3400L
 
 /**
- * Why the line pills did nothing, and how to make them do something.
+ * Why the line pills did nothing, and where to go about it.
  *
- * Shown when a pill is tapped on a card whose hero is hidden. Phrased as an
- * offer rather than an error — the user turned the countdown off, quite possibly
- * on purpose, so this explains what they are missing and hands them the switch
- * instead of telling them they did something wrong.
+ * Shown when a pill is tapped on a station whose next-departure hero is hidden.
+ * Phrased as an offer rather than an error — the user turned it off, quite
+ * possibly on purpose, so this says what they are missing and points at the
+ * setting instead of telling them they did something wrong.
  */
 @Composable
-private fun HeroHintOverlay(visible: Boolean, accent: Color, onEnable: () -> Unit) {
+private fun HeroHintOverlay(visible: Boolean, onEnable: () -> Unit) {
     // Its own function purely so `AnimatedVisibility` resolves to the plain
     // overload. Called inline from the card, the enclosing ColumnScope's
     // extension wins and lays the hint out IN the column instead of over the
     // panel — an explicit receiver would be the other fix, and is worse to read.
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { -it / 3 },
-        exit = fadeOut(tween(160)) + slideOutVertically(tween(200)) { -it / 3 },
+        // Springs in from slightly small rather than sliding down from above.
+        // It is not arriving from anywhere — it belongs to the pill that was
+        // just tapped — so growing into place reads as a response to that tap,
+        // where a slide reads as a banner the system decided to show.
+        enter = fadeIn(tween(160)) + scaleIn(
+            initialScale = 0.92f,
+            animationSpec = spring(dampingRatio = 0.62f, stiffness = Spring.StiffnessMediumLow),
+        ),
+        exit = fadeOut(tween(180)) + scaleOut(targetScale = 0.96f, animationSpec = tween(180)),
     ) {
-        HeroHint(accent = accent, onEnable = onEnable)
+        HeroHint(onEnable = onEnable)
     }
 }
 
+/**
+ * ## It is styled against the BOARD, not against the theme
+ * This floats over the dot-matrix panel, which is near-black in every theme by
+ * brand rule. It used to take `colorScheme.surface`, so in light mode it was a
+ * white capsule sitting on a black board — legible, but visibly a piece of the
+ * app's chrome dropped on top of the signage rather than part of it. The palette
+ * here is therefore fixed and dark, like the panel it sits on.
+ *
+ * ## It says "Settings", because that is where it goes
+ * The action used to read "Turn on" while the tap opened the station's settings
+ * screen. Two words that promise an immediate switch and then navigate somewhere
+ * are worse than no label: the user braces for one thing and gets another. The
+ * chevron and the word now agree with the behaviour.
+ *
+ * The copy also said "countdown", which is not what the setting is called any
+ * more — it is "Next dept. + board", and the hero itself says NEXT DEPARTURE.
+ * A hint naming a control the user then cannot find is a dead end.
+ */
 @Composable
-private fun HeroHint(accent: Color, onEnable: () -> Unit) {
+private fun HeroHint(onEnable: () -> Unit) {
+    // The board's own signage amber, NOT the card's line colour.
+    // The capsule is fixed dark (below), and a line colour is only
+    // lightened for dark THEME — so in light theme this drew Piccadilly
+    // #003688 on #1B1B1D at about 1.4:1, which is invisible. Amber is what
+    // the panel underneath already writes in, so it is both legible by
+    // construction and the colour this thing should have been all along.
+    val accent = TflAmber
     Surface(
         shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, accent.copy(alpha = 0.45f)),
-        shadowElevation = 8.dp,
-        modifier = Modifier.padding(horizontal = 12.dp).clip(RoundedCornerShape(50)).clickable(onClick = onEnable),
+        // Lifted a touch off the panel's own black so the capsule has an edge
+        // even where the shadow falls on an equally dark row.
+        color = Color(0xFF1B1B1D),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+        // Deeper than a card's, because this one has to read as floating ABOVE a
+        // surface it nearly matches in colour.
+        shadowElevation = 12.dp,
+        modifier = Modifier
+            .padding(horizontal = 12.dp)
+            .clip(RoundedCornerShape(50))
+            // The app's own press idiom. This was a bare `clickable`, which
+            // brings Material's ripple — a circle spreading from the touch, and
+            // the single loudest tell that a Compose app is not a native one.
+            .pressScale(onClick = onEnable, scale = 0.96f),
     ) {
         Row(
-            modifier = Modifier.padding(start = 12.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+            modifier = Modifier.padding(start = 12.dp, end = 10.dp, top = 9.dp, bottom = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(Modifier.size(6.dp).background(accent, CircleShape))
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "Turn on the countdown to compare lines",
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
+            // A stopwatch rather than the accent dot that was here. A dot is
+            // decoration; this one glyph says which feature is missing before
+            // the sentence is read.
+            Icon(
+                Icons.Rounded.Timer,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(14.dp),
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                "Turn on",
+                "Show the next departure to compare lines",
+                color = Color.White.copy(alpha = 0.90f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                // Weighted and ellipsised rather than sized to its own text: a
+                // capsule that wraps its content grows with the sentence, and
+                // this one has to survive a narrow station card at large text
+                // sizes without clipping its own action off the end.
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "Settings",
                 color = accent,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
+            )
+            Icon(
+                Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                contentDescription = null,
+                tint = accent.copy(alpha = 0.8f),
+                modifier = Modifier.size(15.dp),
             )
         }
     }

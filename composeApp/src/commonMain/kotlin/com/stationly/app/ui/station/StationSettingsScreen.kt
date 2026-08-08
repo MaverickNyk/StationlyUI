@@ -75,15 +75,15 @@ import com.stationly.app.ui.summary.components.lineColorForTheme
 import com.stationly.app.ui.theme.DisplayFamily
 import com.stationly.app.ui.theme.isDarkTheme
 import com.stationly.app.ui.util.HomeLayout
+import com.stationly.app.ui.util.StationPrefs
 import com.stationly.app.ui.util.StationPrefsRepository
 import com.stationly.core.model.UserSelection
-import com.stationly.core.util.BoardDisplayPrefs
 import com.stationly.core.util.BoardLabels
 import com.stationly.core.util.LineShortNames
 import com.stationly.core.util.MultiLineBoardProcessor
 
 /**
- * Everything about ONE station's card, on its own screen.
+ * Everything about ONE station, on its own screen.
  *
  * A screen rather than the popover this replaced. Three of the four things here
  * need more room than a menu row gives: the layout choice is best made by
@@ -117,10 +117,19 @@ fun StationSettingsScreen(
     val isDeleting by viewModel.isDeleting.collectAsStateWithLifecycle()
     val homeLayout by StationPrefsRepository.layout.collectAsStateWithLifecycle()
     val platforms by viewModel.platforms.collectAsStateWithLifecycle()
-    val prefs = prefsMap[stationId]
-    val startExpanded = prefs?.startExpanded == true
-    val heroVisible = prefs?.hideHero != true
-    val board = prefs?.board ?: BoardDisplayPrefs()
+    val stops by viewModel.stops.collectAsStateWithLifecycle()
+    // Defaulted ONCE, here, so every control below reads the same thing the home
+    // screen does. `persist` drops rows equal to the defaults, so a station
+    // nobody has configured is ABSENT from this map — and the previous
+    // `prefs?.startExpanded == true` therefore resolved to false for exactly
+    // those stations, now that the default is true. The screen showed
+    // "Collapsed" selected while the home screen opened the station expanded,
+    // and because the picker ignores a tap on the already-selected segment, the
+    // user could not collapse it without first tapping Expanded.
+    val prefs = prefsMap[stationId] ?: StationPrefs()
+    val startExpanded = prefs.startExpanded
+    val heroVisible = !prefs.hideHero
+    val board = prefs.board
     val isDark = isDarkTheme()
 
     // Re-read the boards whenever this screen comes back to the front — the
@@ -172,65 +181,31 @@ fun StationSettingsScreen(
 
             Spacer(Modifier.height(28.dp))
 
-            // ── Layout ──
-            SettingsSectionLabel("Card layout")
-            LayoutPicker(
-                heroVisible = heroVisible,
-                onChoose = {
-                    if (it != heroVisible) {
-                        performHaptic(HapticType.TAP)
-                        viewModel.setHeroVisible(it)
-                    }
-                },
-            )
-            SettingsCaption("The countdown shows the soonest train. Off, the board gets its space.")
-
-            Spacer(Modifier.height(28.dp))
-
-            // ── How the board itself is arranged ──
+            // ── How this station appears on the home screen ──
             //
-            // Directly under the layout picker because the two are one subject:
-            // that one decides what the card contains, this decides what the
-            // panel inside it does with the departures. Everything below is
-            // about lines and deletion, which is a different question.
-            //
-            // The grouping is not among these settings and must not become one —
-            // BoardDisplayPrefs in core carries the argument.
-            BoardArrangementSection(
-                prefs = board,
-                platforms = platforms,
-                // In selection order, which is the order the pills and the
-                // boards list are already in. The picker is one more place the
-                // user's own sequence should survive.
-                lines = boards.map { it.line }.distinct(),
-                isBus = MultiLineBoardProcessor.isBus(mode),
-                onSort = viewModel::setSort,
-                onRowsPerPlatform = viewModel::setRowsPerPlatform,
-                onPin = viewModel::setPin,
-            )
-
-            Spacer(Modifier.height(28.dp))
-
-            // ── Expansion ──
-            //
-            // Two named states rather than a switch. "Open by default" made the
-            // user work out what its off position meant, and the answer
-            // (collapsed to a few legs, not hidden) is not obvious enough to
-            // leave unsaid. Both words are on screen now.
-            //
-            // No "Pin to top" here any more. Every station's settings screen
-            // offered it, so every station could be pinned, and a rank that
-            // everything can claim ranks nothing. Ordering moved to home
-            // settings, where the stations are shown as one list and dragged
-            // into the sequence the user wants.
+            // These two first and together, because they are one subject: does
+            // it open, and what is in it when it does. They used to sit at
+            // opposite ends of this screen with the board settings between them,
+            // which put the two halves of one question two scrolls apart.
             //
             // Hidden in a carousel, where each station has a page to itself and
             // there is nothing to collapse.
             if (homeLayout != HomeLayout.CAROUSEL) {
+                // Two named states rather than a switch. "Open by default" made
+                // the user work out what its off position meant, and the answer
+                // (collapsed to its next departures, not hidden) is not obvious
+                // enough to leave unsaid. Both words are on screen now.
+                //
                 // "When the app opens" named the MOMENT and left the setting
                 // itself unlabelled, so the two words underneath had to carry
                 // both what they were and when they applied. "Default view" names
                 // the setting; the caption says when.
+                //
+                // No "Pin to top" here any more. Every station's settings screen
+                // offered it, so every station could be pinned, and a rank that
+                // everything can claim ranks nothing. Ordering moved to home
+                // settings, where the stations are shown as one list and dragged
+                // into the sequence the user wants.
                 SettingsSectionLabel("Default view")
                 ExpansionPicker(
                     startExpanded = startExpanded,
@@ -241,13 +216,67 @@ fun StationSettingsScreen(
                         }
                     },
                 )
+                // Both sentences are measured, so the page does not move when
+                // the choice changes — see the list overload of SettingsCaption.
                 SettingsCaption(
-                    if (startExpanded) "Opens with the full board every time."
-                    else "Opens showing the next departures. Tap it for the board."
+                    variants = listOf(
+                        "Opens showing just the next departure each way. Tap it for the board.",
+                        "Opens with the full board every time.",
+                    ),
+                    selected = if (startExpanded) 1 else 0,
                 )
 
                 Spacer(Modifier.height(28.dp))
             }
+
+            SettingsSectionLabel("Layout")
+            LayoutPicker(
+                heroVisible = heroVisible,
+                onChoose = {
+                    if (it != heroVisible) {
+                        performHaptic(HapticType.TAP)
+                        viewModel.setHeroVisible(it)
+                    }
+                },
+            )
+            // Says what each choice GIVES you, in the order you are choosing
+            // between them. The old copy ("the countdown shows the soonest
+            // train") described the thing rather than the decision, and its
+            // second half — "the board gets its space" — never said that the
+            // space buys real departure rows.
+            SettingsCaption(
+                variants = listOf(
+                    "The next train is called out above the board, counting down.",
+                    "No countdown. Those rows go back to the board as real departures.",
+                ),
+                selected = if (heroVisible) 0 else 1,
+            )
+
+            Spacer(Modifier.height(28.dp))
+
+            // ── How the board itself is arranged ──
+            //
+            // Below the two above because it is a narrower question: those decide
+            // where this station appears and what it contains, this decides what
+            // the panel inside it does with the departures. Everything after is
+            // about lines and deletion, which is different again.
+            //
+            // The grouping is not among these settings and must not become one —
+            // BoardDisplayPrefs in core carries the argument.
+            BoardArrangementSection(
+                prefs = board,
+                platforms = platforms,
+                stops = stops,
+                // In selection order, which is the order the pills and the
+                // boards list are already in. The picker is one more place the
+                // user's own sequence should survive.
+                lines = boards.map { it.line }.distinct(),
+                isBus = MultiLineBoardProcessor.isBus(mode),
+                onRowsPerPlatform = viewModel::setRowsPerPlatform,
+                onPin = viewModel::setPin,
+            )
+
+            Spacer(Modifier.height(28.dp))
 
             // ── Boards ──
             SettingsSectionLabel("Lines and directions")
@@ -380,7 +409,7 @@ private fun StationIdentity(
 }
 
 /**
- * The two card layouts, drawn rather than described.
+ * The two board layouts, drawn rather than described.
  *
  * "Hide next departure" was a sentence the user had to simulate in their head to
  * understand. These are small but honest renderings of the two real layouts —
@@ -391,7 +420,11 @@ private fun StationIdentity(
 private fun LayoutPicker(heroVisible: Boolean, onChoose: (Boolean) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         LayoutOption(
-            label = "Countdown + board",
+            // "Next dept." rather than "Countdown", because the hero it names
+            // says NEXT DEPARTURE in the app itself — a tile that invented its
+            // own word for it made the user match a description to a thing
+            // instead of reading the same words twice.
+            label = "Next dept. + board",
             withHero = true,
             selected = heroVisible,
             onClick = { onChoose(true) },
@@ -430,11 +463,11 @@ private fun LayoutOption(
 }
 
 /**
- * A miniature of the real card, with plausible departures on it.
+ * A miniature of the real station, with plausible departures on it.
  *
  * Drawn with the real thing's ingredients — the surface hero with its line dot
  * and countdown, the black panel, the amber platform header and rows — rather
- * than grey placeholder bars. The choice being made here is "what does my card
+ * than grey placeholder bars. The choice being made here is "what does my station
  * look like", and bars cannot answer that: they show a shape where the user
  * needs to see a board.
  *
@@ -522,21 +555,21 @@ private fun BoardPreview(withHero: Boolean, modifier: Modifier = Modifier) {
 }
 
 /**
- * How this station's card starts: Expanded or Collapsed.
+ * How this station starts on the home screen: Expanded or Collapsed.
  *
  * Two named states rather than a switch labelled with one of them. A switch
  * makes the user infer its off state, and here that inference is wrong as often
  * as not — "not open by default" sounds like the station is hidden, when in fact
  * it still shows its next departure each way.
  *
- * ## It is drawn as the card, not as a control
- * The glyph is the card header's own chevron, turned the way that card's chevron
+ * ## It is drawn as the station itself, not as a control
+ * The glyph is the station header's own chevron, turned the way that chevron
  * actually points in each state: up for expanded, down for collapsed. One icon
  * rotated rather than two icons chosen — whatever pair could be found, the two
  * halves never read as exact opposites, and these have to.
  *
  * And the selected segment's tinted pill is the same accent, at the same weight,
- * as the disc that appears behind the chevron on the card. Choosing "Expanded"
+ * as the disc that appears behind the chevron on the station. Choosing "Expanded"
  * here and going back shows the same shape in the same colour doing the same
  * job, which is what makes the two surfaces one setting rather than two.
  */

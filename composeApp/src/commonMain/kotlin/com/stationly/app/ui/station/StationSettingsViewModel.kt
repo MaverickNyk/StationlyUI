@@ -17,9 +17,10 @@ import com.stationly.core.usecase.SyncSubscribedStationsUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.core.util.BoardDisplayPrefs
 import com.stationly.core.util.BoardPin
-import com.stationly.core.util.BoardSort
 import com.stationly.core.util.MultiLineBoardProcessor
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,8 +31,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * One station's settings: which lines it tracks, how its card is laid out, and
- * whether it exists at all.
+ * Outlives any one settings screen, and holds exactly one job: the widget push
+ * that fires as the screen closes.
+ *
+ * A `viewModelScope` is cancelled before `onCleared` returns, so work started
+ * there never runs. This is deliberately a plain supervised scope rather than a
+ * per-instance one — the push must survive the ViewModel that asked for it, and
+ * a failure in one must not cancel the next.
+ */
+private val ExitScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+/**
+ * One station's settings: which lines it tracks, how it is laid out on the home
+ * screen, how its board is arranged, and whether it exists at all.
  *
  * [stationId] is the GROUPING id (the hub), which is what the home screen builds
  * one card per and what the preferences are keyed on. It is not a fetch key —
@@ -134,13 +146,89 @@ class StationSettingsViewModel(
     private val _platforms = MutableStateFlow<List<String>>(emptyList())
     val platforms: StateFlow<List<String>> = _platforms.asStateFlow()
 
+    /**
+     * The poles at a BUS hub, named by where their buses go — the pin picker's
+     * options when [platforms] cannot have any.
+     *
+     * Always empty on rail, and [platforms] is always empty on bus: the two are
+     * the same list for two kinds of station, and populating both would offer the
+     * same block twice under two different names.
+     *
+     * Also declared ABOVE [init] — see [towards] for the crash that rule exists
+     * to prevent.
+     */
+    private val _stops = MutableStateFlow<List<MultiLineBoardProcessor.StopOption>>(emptyList())
+    val stops: StateFlow<List<MultiLineBoardProcessor.StopOption>> = _stops.asStateFlow()
+
+    /**
+     * The arrangement as it stood when this screen opened, so leaving can tell
+     * whether anything actually moved — see [onCleared].
+     *
+     * Null until the first read completes. That is deliberate: a snapshot taken
+     * before [StationPrefsRepository.ensureLoaded] would be the DEFAULT
+     * arrangement, so a user who opened the screen and changed nothing would look
+     * like they had reset every setting they had ever made.
+     */
+    private var arrangementOnEntry: BoardDisplayPrefs? = null
+
     init {
         viewModelScope.launch {
             StationPrefsRepository.ensureLoaded()
+            arrangementOnEntry = StationPrefsRepository.of(stationId).board
             // This VM's repository starts empty — it is a separate instance from
             // the home screen's, so it holds no rows until it reads the database.
             selectionRepository.initialize()
             loadCachedBoard()
+        }
+    }
+
+    /**
+     * Push the new arrangement to the WIDGET on the way out, and only if it moved.
+     *
+     * ## Why this is not done as the user changes things
+     * It was, and it was expensive in a way that only shows on a real device.
+     * `updateWidget` is `IosWidgetManager.refreshAllBoards` — it rebuilds EVERY
+     * station's board from SQL and rewrites the App Group — and the depth slider
+     * fires once per detent crossed. Dragging it from two to five ran three full
+     * rebuilds during one gesture.
+     *
+     * The UI never stuttered for it (`refreshAllBoards` hops to `Dispatchers.IO`
+     * itself), which is exactly why it survived: the cost was three rounds of
+     * SQL per drag, and three bumps of the reload signal, none of it visible on
+     * the device doing it.
+     *
+     * ## Why the home screen needs nothing here
+     * It is already reactive and always was: `StationPrefsRepository.prefs` is one
+     * shared `StateFlow` that `SummaryViewModel` exposes directly, and the board
+     * derives its rows with `remember(rendered, isBus, boardPrefs)`. Writing a
+     * preference IS the redraw. The widget is the only surface that has to be
+     * told, because it lives in another process.
+     *
+     * ## The diff is the point
+     * A user who opens this screen to read it, or who moves the slider and puts it
+     * back, has changed nothing — and `BoardDisplayPrefs` is a data class, so
+     * saying so is one comparison. Rebuilding regardless would spend the same
+     * device work on a no-op and, worse, bump the reload signal that makes
+     * WidgetKit regenerate timelines, which Apple meters at roughly 40–70 a day.
+     *
+     * Not on [viewModelScope]: that is cancelled before this runs. The work is
+     * fire-and-forget platform sync that SHOULD outlive the screen — the
+     * preference is already persisted, so the worst case if it never lands is the
+     * widget picking the change up on its next natural refresh.
+     */
+    override fun onCleared() {
+        super.onCleared()
+        val entry = arrangementOnEntry ?: return
+        if (StationPrefsRepository.of(stationId).board == entry) return
+        ExitScope.launch {
+            runCatching {
+                Platform.widgetManager.updateWidget(
+                    WidgetState(
+                        stationName = "", lineName = "", predictions = emptyList(),
+                        status = null, lastUpdated = 0L,
+                    )
+                )
+            }
         }
     }
 
@@ -188,21 +276,39 @@ class StationSettingsViewModel(
                 ?.let { board.boardKey to it }
         }.toMap()
 
-        _platforms.value = MultiLineBoardProcessor.pinnablePlatforms(
-            feeds = cached.map { (board, predictions) ->
-                MultiLineBoardProcessor.Feed(
-                    // The resolved per-direction naptan (the POLE), not the hub —
-                    // exactly what the home screen passes, so the picker groups
-                    // the way the real card does and can never offer a platform
-                    // that board would not show.
-                    stationId = board.station,
-                    line = board.line,
-                    direction = board.direction,
-                    predictions = predictions,
-                )
-            },
-            isBus = isBus,
-        )
+        val feeds = cached.map { (board, predictions) ->
+            MultiLineBoardProcessor.Feed(
+                // The resolved per-direction naptan (the POLE), not the hub —
+                // exactly what the home screen passes, so the picker groups the
+                // way the real board does and can never offer a place that board
+                // would not show.
+                stationId = board.station,
+                line = board.line,
+                direction = board.direction,
+                predictions = predictions,
+            )
+        }
+        // Exactly one of these is ever populated. A bus hub's poles have no
+        // labels to offer, and a rail platform has no pole to name.
+        _platforms.value =
+            if (isBus) emptyList()
+            else MultiLineBoardProcessor.pinnablePlatforms(feeds = feeds, isBus = false)
+        _stops.value =
+            if (isBus) MultiLineBoardProcessor.pinnableStops(feeds = feeds)
+            else emptyList()
+
+        // A bus hub used to offer its LETTERED poles as platform chips, so a pin
+        // of that kind can still be stored. It has no chip any more — poles are
+        // offered as `stops` now — but `isPinned` still honours it, which leaves
+        // a setting in force that the picker shows as unset and gives the user
+        // no way to reach or clear. Dropped rather than migrated: the pole it
+        // names may not even be on today's board, and a pin nobody can see is
+        // worse than one they can set again from chips that exist.
+        if (isBus && StationPrefsRepository.of(stationId).board.pin?.kind == BoardPin.Kind.PLATFORM) {
+            StationPrefsRepository.update(stationId) {
+                it.copy(board = it.board.copy(pin = null))
+            }
+        }
     }
 
     /** Expand this station's card on every app open — see [StationPrefs.startExpanded]. */
@@ -216,8 +322,6 @@ class StationSettingsViewModel(
 
     /* ── How the board is arranged — see [BoardDisplayPrefs] ────────────────── */
 
-    fun setSort(sort: BoardSort) = updateBoard { it.copy(sort = sort) }
-
     /** Stored as asked and clamped on read — see [BoardDisplayPrefs.rowCap]. */
     fun setRowsPerPlatform(rows: Int) = updateBoard { it.copy(rowsPerPlatform = rows) }
 
@@ -225,33 +329,15 @@ class StationSettingsViewModel(
     fun setPin(pin: BoardPin?) = updateBoard { it.copy(pin = pin) }
 
     /**
-     * Persist an arrangement change, then push it to the WIDGET.
+     * Persist an arrangement change, and nothing else.
      *
-     * The push is not optional any more. These preferences used to reach the
-     * home screen only, so writing them was the whole job; the widget's board is
-     * now built by `IosWidgetManager` from the same `BoardDisplayPrefs`, and
-     * nothing else in the app has an event meaning "the arrangement changed".
-     * Without this, a user reordering their board watched the app obey and the
-     * widget ignore them until some unrelated refresh happened to rebuild it.
-     *
-     * The state passed is deliberately EMPTY. Both implementations ignore the
-     * argument and re-read their own source — iOS rebuilds every board from SQL
-     * plus these preferences, Android broadcasts and lets its provider re-read —
-     * so filling it in would be inventing a payload that nothing consumes. See
-     * `IosWidgetManager.updateWidget`, which documents why reading the caller's
-     * state there was a bug.
+     * The write IS the redraw for every surface inside this process — see
+     * [onCleared], which explains why, and which carries the one push that still
+     * has to happen.
      */
     private fun updateBoard(transform: (BoardDisplayPrefs) -> BoardDisplayPrefs) {
         viewModelScope.launch {
             StationPrefsRepository.update(stationId) { it.copy(board = transform(it.board)) }
-            runCatching {
-                Platform.widgetManager.updateWidget(
-                    WidgetState(
-                        stationName = "", lineName = "", predictions = emptyList(),
-                        status = null, lastUpdated = 0L,
-                    )
-                )
-            }
         }
     }
 

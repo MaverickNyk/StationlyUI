@@ -332,35 +332,80 @@ object MultiLineBoardProcessor {
      *     the board. (A pinned PLATFORM never collides with this — an unassigned
      *     block has no label for the picker to have offered.)
      *  2. **The pin** — one block, or every block carrying a pinned line.
-     *  3. **The chosen sort.** Time reads the soonest ABSOLUTE arrival, never the
-     *     `eta` label: the label is rounded AND deliberately bumped so
-     *     same-platform trains don't collide, so it does not round-trip back to a
-     *     sortable number. Platform reads the number out of the label so that 10
-     *     follows 9.
+     *  3. **The soonest train.** The soonest ABSOLUTE arrival, never the `eta`
+     *     label: the label is rounded AND deliberately bumped so same-platform
+     *     trains don't collide, so it does not round-trip back to a sortable
+     *     number.
+     *
+     * There is no user-chosen sort in here any more, and [BoardDisplayPrefs]
+     * carries the argument for why not.
      */
-    private fun groupOrder(isBus: Boolean, prefs: BoardDisplayPrefs): Comparator<Block> {
-        val label: (Block) -> String = { block -> groupLabelFor(block.value.first().first, isBus) }
-        val base = compareBy<Block> { if (isUnassigned(label(it))) 1 else 0 }
+    private fun groupOrder(isBus: Boolean, prefs: BoardDisplayPrefs): Comparator<Block> =
+        unassignedLast(isBus)
             .thenBy { if (isPinned(it, isBus, prefs.pin)) 0 else 1 }
-        return when (prefs.sort) {
-            BoardSort.PLATFORM -> base
-                .thenBy { platformNumber(label(it)) }
-                // Lettered and unnumbered blocks ("Stop C") have no number to
-                // order by and would otherwise sit in map order, which is
-                // arbitrary and changes as departures arrive.
-                .thenBy { label(it).lowercase() }
-            BoardSort.TIME, BoardSort.DESTINATION -> base.thenBy { block ->
+            .thenBy { block ->
                 block.value.mapNotNull { (p, _) -> p.targetEpochMs }.minOrNull() ?: Long.MAX_VALUE
             }
-        }
-    }
 
-    /** Whether [pin] names this block — by its platform label, or by a line calling at it. */
+    /** A block's own platform label — every ordering rule below keys off it. */
+    private fun labelOf(block: Block, isBus: Boolean): String =
+        groupLabelFor(block.value.first().first, isBus)
+
+    /**
+     * The one key BOTH orderings share, and the only one that is not a
+     * preference: a block you cannot walk to sorts last.
+     *
+     * Extracted so the two cannot drift. They answer different questions and are
+     * right to differ below this line — but a build where the board sank
+     * unassigned platforms and the picker did not would offer the user a pin
+     * guaranteed to do nothing.
+     *
+     * ## It does not apply to buses, and applying it was a bug
+     * "Unassigned" means the operator has not told you where to stand yet. A bus
+     * POLE is always somewhere you can stand: it has a naptan and a position on
+     * a street, and TfL simply does not letter it unless the stop is a
+     * multi-stop interchange. Judging poles by [isUnassigned] therefore marked
+     * every ordinary one — the blank label reads as unassigned — and sank it
+     * beneath any lettered pole at the same hub, *above* the pin, so pinning
+     * "→ Clapham Junction" at a hub with one lettered stop did nothing at all.
+     *
+     * It went unnoticed because a hub whose poles are ALL unlettered has every
+     * block on the same side of this key, where it cancels out.
+     */
+    private fun unassignedLast(isBus: Boolean): Comparator<Block> =
+        compareBy { if (!isBus && isUnassigned(labelOf(it, isBus))) 1 else 0 }
+
+    /**
+     * The order the "show first" PICKER lists blocks in — by platform number, so
+     * that 10 follows 9.
+     *
+     * Separate from [groupOrder] because it answers a different question. The
+     * board is ordered by whichever train is soonest, which is right for
+     * something you read at a glance and wrong for a list you pick from: ordered
+     * that way the chips would rearrange themselves under the user's finger
+     * every time the board refreshed.
+     */
+    private fun pickerOrder(isBus: Boolean): Comparator<Block> =
+        unassignedLast(isBus)
+            .thenBy { platformNumber(labelOf(it, isBus)) }
+            // Lettered and unnumbered blocks ("Stop C") have no number to order
+            // by and would otherwise sit in map order, which is arbitrary and
+            // changes as departures arrive.
+            .thenBy { labelOf(it, isBus).lowercase() }
+
+    /**
+     * Whether [pin] names this block — by its platform label, by its pole, or by
+     * a line calling at it.
+     */
     private fun isPinned(block: Block, isBus: Boolean, pin: BoardPin?): Boolean {
         if (pin == null || pin.id.isBlank()) return false
         return when (pin.kind) {
-            BoardPin.Kind.PLATFORM -> groupLabelFor(block.value.first().first, isBus)
-                .trim().equals(pin.id.trim(), ignoreCase = true)
+            BoardPin.Kind.PLATFORM ->
+                labelOf(block, isBus).trim().equals(pin.id.trim(), ignoreCase = true)
+            // The group key IS the pole naptan on bus — see [groupKeyFor]. Never
+            // matched on the label, which is blank at every unlettered stop and
+            // would pin all of them at once.
+            BoardPin.Kind.STOP -> block.key.trim().equals(pin.id.trim(), ignoreCase = true)
             // Every block this line calls at, not just the first — at an
             // interchange a line is genuinely on two platforms, and promoting
             // one of them would be answering "show me my line" with half of it.
@@ -561,29 +606,20 @@ object MultiLineBoardProcessor {
                 // BOARD_AND_DREAM_UI.md.
                 val label = groupLabelFor(sorted.first().first, isBus)
 
-                // ── The cap picks WHICH trains; the sort decides what ORDER
-                // they are shown in, and that order is applied AFTERWARDS ──
+                // ── The cap picks WHICH trains, and it picks them off the
+                // TIME-ordered list ──
                 //
-                // Taking from anything but the time-ordered list is the bug
-                // waiting here: cap 3 applied to a destination-sorted platform
-                // keeps the three alphabetically-first destinations, which at
-                // Green Park means three Cockfosters trains an hour out and no
-                // sign of the Uxbridge one leaving now. The user asked for their
-                // trains to be grouped by where they go, not to be shown a
-                // different set of trains.
+                // Taking from anything else is the bug waiting here: cap 3
+                // applied to a list ordered by destination keeps the three
+                // alphabetically-first ones, which at Green Park means three
+                // Cockfosters trains an hour out and no sign of the Uxbridge one
+                // leaving now. The rows the user is shown must always be the
+                // soonest rows.
                 //
                 // Ceiling per platform — NOT the board floor. See MIN_BOARD_ROWS.
                 // [rowCap], never `prefs.rowCap`: the widget passes its RESERVE
-                // depth here and still wants the user's sort and pin from prefs.
-                val shown = sorted.take(rowCap).let { picked ->
-                    if (prefs.sort == BoardSort.DESTINATION) {
-                        picked.sortedWith(
-                            compareBy<Pair<PredictionDisplay, Feed>> { (p, _) ->
-                                p.destination.trim().lowercase()
-                            }.thenBy { (p, _) -> StationlyFormatters.arrivalSortKey(p) }
-                        )
-                    } else picked
-                }
+                // depth here and still wants the user's pin from prefs.
+                val shown = sorted.take(rowCap)
 
                 val header = headerFor(label, lines, directions, isBus)
                 Group(
@@ -625,19 +661,71 @@ object MultiLineBoardProcessor {
      *  - **Unassigned and unlabelled blocks are left out.** [buildRows] sinks
      *    unassigned platforms to the bottom regardless of any pin, so offering
      *    one would be offering a setting guaranteed to have no effect.
-     *  - **Ordered by platform number, never by time.** This is a list someone
-     *    reads and picks from; ordered by whose train is soonest it would
-     *    rearrange itself under their finger every time the board refreshed.
+     *  - **Ordered by platform number, never by time** — see [pickerOrder].
+     *
+     * Buses go through [pinnableStops] instead: a pole's label is blank at every
+     * unlettered stop, so this returns nothing for most bus hubs by design.
      */
     fun pinnablePlatforms(feeds: List<Feed>, isBus: Boolean): List<String> {
         val all = feeds.flatMap { feed -> feed.predictions.map { it to feed } }
         if (all.isEmpty()) return emptyList()
         return all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus) }
             .entries
-            .sortedWith(groupOrder(isBus, BoardDisplayPrefs(sort = BoardSort.PLATFORM)))
+            .sortedWith(pickerOrder(isBus))
             .map { block -> groupLabelFor(block.value.first().first, isBus).trim() }
             .filter { it.isNotBlank() && !isUnassigned(it) }
             .distinct()
+    }
+
+    /**
+     * One bus pole the user could pin, named by where its buses go.
+     *
+     * [key] is the naptan — the board's group key for buses, and what
+     * [BoardPin.Kind.STOP] matches on. [towards] is the only part a person can
+     * recognise.
+     */
+    data class StopOption(val key: String, val towards: String)
+
+    /**
+     * The poles at a bus hub, for the "show first" picker.
+     *
+     * This exists because [pinnablePlatforms] cannot serve a bus hub and never
+     * could: TfL letters stops only at multi-stop interchanges, so at an ordinary
+     * one every pole's label is blank and there is nothing to offer. The pin that
+     * IS worth having there — "the side going towards Putney Bridge first" — was
+     * unreachable, while the only chips on offer were routes, and a routes chip
+     * at a hub where both sides run the same route promotes every pole and
+     * changes nothing.
+     *
+     * A pole is named by its most common destination rather than its soonest.
+     * One short-terminating service should not rename the side of the road the
+     * user stands on, and the point of the label is to be the same tomorrow.
+     *
+     * Poles with nothing to say are left out: a chip reading "towards —" is a
+     * choice the user cannot evaluate. Ordered by that label so the list is
+     * stable between refreshes, for the same reason [pickerOrder] exists.
+     *
+     * **One chip per destination**, even where two poles share one. The label is
+     * the entire way a user tells these apart, so two chips both reading
+     * "→ Putney Bridge" are a choice that cannot be made — and whichever they
+     * picked, the board would look like it had ignored half of it. Keeping the
+     * first is deterministic because the sort runs before the de-duplication.
+     */
+    fun pinnableStops(feeds: List<Feed>): List<StopOption> {
+        val all = feeds.flatMap { feed -> feed.predictions.map { it to feed } }
+        if (all.isEmpty()) return emptyList()
+        return all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus = true) }
+            .mapNotNull { (key, entries) ->
+                entries.map { (p, _) -> p.destination.trim() }
+                    .filter { it.isNotEmpty() }
+                    .groupingBy { it }
+                    .eachCount()
+                    .maxByOrNull { it.value }
+                    ?.key
+                    ?.let { StopOption(key = key, towards = it) }
+            }
+            .sortedBy { it.towards.lowercase() }
+            .distinctBy { it.towards.lowercase() }
     }
 
     /**
@@ -676,14 +764,14 @@ object MultiLineBoardProcessor {
      * Only [BoardPin]. A pinned block leads the legs and, more importantly,
      * survives the cap: at a four-platform station the two soonest legs may be
      * two platforms the user never uses, and a "show first" that quietly does
-     * nothing on the collapsed card is a setting that appears broken to anyone
+     * nothing on a collapsed station is a setting that appears broken to anyone
      * whose stations are collapsed by default.
      *
-     * [BoardSort] deliberately does NOT apply. A leg answers "what can I catch",
-     * so the two shown must be the two SOONEST — ordering by platform number
-     * would pick the two lowest-numbered platforms instead, which is a different
-     * question and a worse answer. There is no destination level to sort at
-     * either: a leg is already one departure.
+     * [BoardDisplayPrefs.rowsPerPlatform] deliberately does NOT apply — a leg IS
+     * one departure, so there is no depth here to bound. That is worth knowing
+     * when reading the settings screen: of the two board settings, only the pin
+     * has any effect until the station is opened, which is why the depth slider
+     * says so.
      */
     fun collapsedLegs(
         feeds: List<Feed>,

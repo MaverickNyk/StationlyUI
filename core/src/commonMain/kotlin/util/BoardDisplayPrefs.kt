@@ -14,10 +14,33 @@ import kotlinx.serialization.Serializable
  * the user would have to read the platform off every line to know where to
  * stand.
  *
- * So every setting here operates at ONE of two levels, never across them:
- *  - [sort] decides the order of the BLOCKS, or of the rows INSIDE a block,
- *    depending on which level the key it names exists at (see [BoardSort]);
- *  - [pin] promotes a whole block. It never lifts rows out of one.
+ * ## Two settings, both of which promote a BLOCK or bound one
+ *  - [pin] promotes a whole block to the top. It never lifts rows out of one.
+ *  - [rowsPerPlatform] bounds how deep each block goes.
+ *
+ * Neither can reorder rows across blocks, which is the invariant the grouping
+ * exists to hold.
+ *
+ * ## There was a third — a `sort` — and it should not come back
+ * `BoardSort` offered Time / Platform / Destination in one control, and it was
+ * wrong in a way that only shows up once you write down which LEVEL each option
+ * acts at. Time and Platform ordered the BLOCKS; Destination ordered the ROWS
+ * inside a block and left block order on Time. Three segments that read as three
+ * alternatives were two alternatives plus an orthogonal switch, and the shape
+ * forbade the one combination a user might actually want — platforms in number
+ * order with destinations grouped inside each.
+ *
+ * It was also dead on the surface it was most visible on. A bus pole has no
+ * number and, at the unlettered stops most people use, no label either, so
+ * "order by stop" compared empty strings and quietly fell back to the order the
+ * user's selections happened to be in.
+ *
+ * And [pin] already answers the question Platform-order was justified by. "My
+ * platform is where it was yesterday" is served better by putting that platform
+ * FIRST than by fixing it at position four.
+ *
+ * Block order is therefore fixed: unassigned last, then the pin, then whichever
+ * block has the soonest train. Rows inside a block are always in arrival order.
  *
  * ## Local, per station, and not on [com.stationly.core.model.UserSelection]
  * Lives on `StationPrefs` in the app layer, keyed by grouping id, for the reason
@@ -31,7 +54,6 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class BoardDisplayPrefs(
-    val sort: BoardSort = BoardSort.TIME,
     /**
      * Ceiling on the departures shown under each platform header.
      *
@@ -71,53 +93,6 @@ data class BoardDisplayPrefs(
 }
 
 /**
- * What the board is ordered BY, once it has been grouped.
- *
- * Each of these names a fact that exists at exactly one level, and that is what
- * decides where it applies. There is no setting here that can be honoured at
- * both levels at once, and inventing one would mean re-sorting rows across
- * platforms — see [BoardDisplayPrefs].
- */
-@Serializable
-enum class BoardSort {
-    /**
-     * The default and the board's natural order: blocks led by whichever has the
-     * soonest train, rows inside each block in arrival order.
-     */
-    TIME,
-
-    /**
-     * BLOCK order, by platform number — Platform 1, 2, 3, 10 — rather than by
-     * whose train is soonest.
-     *
-     * For someone who always leaves from the same platform this makes the board
-     * readable without scanning: their block is where it was yesterday. Rows
-     * inside a block stay in arrival order, because within one platform there is
-     * no platform left to order by.
-     *
-     * Numeric, not alphabetic: "Platform 10" sorts after "Platform 9", which a
-     * string sort gets wrong at exactly the interchanges with enough platforms
-     * for this setting to matter.
-     */
-    PLATFORM,
-
-    /**
-     * ROW order inside each block, by where the train is going, so every train
-     * to the same place sits together.
-     *
-     * Block order is untouched — a destination says nothing about which platform
-     * should lead the board, and ordering blocks by their alphabetically-first
-     * destination would be an arbitrary rank dressed up as a rule.
-     *
-     * The trains SHOWN are still the soonest ones (see
-     * [MultiLineBoardProcessor.buildRows]); this only orders them once chosen.
-     * Picking the alphabetically-first three instead would fill the board with
-     * trains an hour away and hide the one leaving now.
-     */
-    DESTINATION,
-}
-
-/**
  * One block promoted to the top of the board — "show this one first".
  *
  * ## Why this promotes a BLOCK and never extracts rows
@@ -129,9 +104,9 @@ enum class BoardSort {
  * and still be unactionable.
  *
  * So a pinned LINE promotes every block that carries it, in their usual order
- * among themselves, and a pinned PLATFORM promotes that one block. In both cases
- * the board is still a set of places with a queue at each, which is the one
- * thing about it that must not change.
+ * among themselves, and a pinned PLATFORM or STOP promotes that one block. In
+ * every case the board is still a set of places with a queue at each, which is
+ * the one thing about it that must not change.
  *
  * ## One pin, not a set
  * Deliberately a single nullable value. A rank that every platform can claim
@@ -148,16 +123,38 @@ enum class BoardSort {
 data class BoardPin(
     val kind: Kind,
     /**
-     * The platform LABEL verbatim ("Platform 4", "Stop C") or the canonical line
-     * id ("victoria"), depending on [kind].
-     *
-     * The platform is matched on its label rather than on the group key because
-     * the label is what the user picked off their own board, and on rail the two
-     * are the same string anyway. On bus the group key is a naptan, which is not
-     * something a user has ever seen.
+     * The platform LABEL verbatim ("Platform 4", "Stop C"), the pole's naptan, or
+     * the canonical line id ("victoria"), depending on [kind].
      */
     val id: String,
 ) {
     @Serializable
-    enum class Kind { PLATFORM, LINE }
+    enum class Kind {
+        /**
+         * Matched on the platform LABEL rather than on the group key, because the
+         * label is what the user picked off their own board and on rail the two
+         * are the same string anyway.
+         */
+        PLATFORM,
+
+        /**
+         * One bus POLE, matched on its naptan — the board's own group key for
+         * buses.
+         *
+         * A pole cannot be pinned by label the way a platform can. TfL letters
+         * stops only at multi-stop interchanges, so at the ordinary stops most
+         * people use every pole's label is blank, and a blank pin would match all
+         * of them at once. The naptan is the only thing that tells two poles
+         * apart.
+         *
+         * It is not a thing any user has seen, so the picker must label these
+         * with something a person recognises — where the buses from that pole are
+         * going. That is also the ONLY pin worth having at a hub: both sides of
+         * the road usually run the same routes, so a pinned LINE there promotes
+         * every pole and changes nothing.
+         */
+        STOP,
+
+        LINE,
+    }
 }

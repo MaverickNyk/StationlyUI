@@ -2,6 +2,7 @@ package com.stationly.app.ui.common
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,6 +33,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,16 +69,66 @@ fun SettingsSectionLabel(text: String) {
     )
 }
 
-/** One quiet line under a control, saying what it does. Keep it to one line. */
+/**
+ * One quiet line under a control, saying what it does. Keep it short.
+ *
+ * [minLines] reserves height for a caption whose WORDS change with the setting
+ * above it. Without it the block is as tall as whichever sentence is showing, so
+ * a caption that wraps to two lines in one state and one in the other resizes
+ * the page under the user's finger at the exact moment they tap — everything
+ * below jumps. Prefer the [SettingsCaption] overload taking every variant, which
+ * measures them instead of guessing; use this when the variants cannot be
+ * enumerated because they are built from live data.
+ */
 @Composable
-fun SettingsCaption(text: String) {
+fun SettingsCaption(text: String, minLines: Int = 1) {
     Text(
         text,
         fontSize = 12.sp,
         lineHeight = 17.sp,
+        minLines = minLines,
         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
         modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
     )
+}
+
+/**
+ * A caption that changes with the control above it, without the page moving.
+ *
+ * Every variant is laid out, one on top of another, so the block is always as
+ * tall as the LONGEST of them and the height cannot depend on which is showing.
+ * Only the selected one is painted; the rest sit at zero alpha.
+ *
+ * This is measured rather than reserved with a line count, because a line count
+ * is a guess about a width and a font scale. The same two sentences wrap
+ * differently on an SE and at accessibility text sizes, and a caption that stops
+ * jumping on the test device and starts again on someone else's has not been
+ * fixed.
+ *
+ * The swap is a cross-fade rather than a cut. The height is already still, so
+ * the only thing left moving is the words, and fading them reads as one caption
+ * rewording itself instead of two captions trading places.
+ */
+@Composable
+fun SettingsCaption(variants: List<String>, selected: Int) {
+    Box(modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp)) {
+        variants.forEachIndexed { index, text ->
+            val isShown = index == selected
+            val fade by animateFloatAsState(if (isShown) 1f else 0f, label = "caption_fade")
+            Text(
+                text,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .alpha(fade)
+                    // The unpainted variants are still in the layout, so without
+                    // this a screen reader would read every state of the setting
+                    // as though all of them were true at once.
+                    .then(if (isShown) Modifier else Modifier.clearAndSetSemantics {}),
+            )
+        }
+    }
 }
 
 /** A bordered surface holding a group of rows. */

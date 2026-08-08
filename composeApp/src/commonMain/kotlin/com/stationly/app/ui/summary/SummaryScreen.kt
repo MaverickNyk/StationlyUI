@@ -138,6 +138,9 @@ fun SummaryScreen(
     val showDreamPromo by viewModel.showDreamPromo.collectAsStateWithLifecycle()
     val showNotificationDeniedBanner by viewModel.showNotificationDeniedBanner.collectAsStateWithLifecycle()
     val stationPrefs by viewModel.stationPrefs.collectAsStateWithLifecycle()
+    // Tells "the user has no preferences" apart from "we have not read them
+    // yet" — the two are the same empty map, and they must not render the same.
+    val prefsLoaded by viewModel.prefsLoaded.collectAsStateWithLifecycle()
     val stationOrder by viewModel.stationOrder.collectAsStateWithLifecycle()
     val homeLayout by viewModel.homeLayout.collectAsStateWithLifecycle()
 
@@ -295,9 +298,8 @@ fun SummaryScreen(
                       // `null` is not the same as an empty set. Empty means the
                       // user closed everything during THIS session, which must
                       // survive; null means they have not touched anything yet,
-                      // and resolves to the stations marked open-by-default — or
-                      // the first station when none are, so the page never opens
-                      // on a list of shut drawers.
+                      // and resolves to exactly the stations marked
+                      // open-by-default.
                       //
                       // Session state, deliberately. What you had open is not a
                       // setting you configured; the setting is `startExpanded`,
@@ -306,15 +308,46 @@ fun SummaryScreen(
                           mutableStateOf<List<String>?>(null)
                       }
                       val expandedIds: Set<String> = when {
+                          // No station is open before we know which ones should
+                          // be. Nothing renders in this window either (see the
+                          // `prefsLoaded` gate around the cards), so this is not
+                          // what the user sees — it keeps the height budget and
+                          // `primaryStationId`, which ARE computed here, from
+                          // being derived from a guess.
+                          //
+                          // Above the carousel branch because it is the more
+                          // fundamental question: `homeLayout` comes from the
+                          // same read and is itself a default until it lands.
+                          !prefsLoaded -> emptySet()
                           // Every page is open in a carousel.
                           homeLayout == HomeLayout.CAROUSEL -> stationIds.toSet()
-                          // One station has nothing to collapse for.
+                          // One station has nothing to collapse for — and no
+                          // chevron either, since `collapsible` is `size > 1`.
+                          // There is no user intent to respect where there is no
+                          // control to express it with.
                           stationIds.size == 1 -> stationIds.toSet()
-                          expandedIdsState == null -> {
-                              val defaults = stationIds.filter { stationPrefs[it]?.startExpanded == true }
-                              if (defaults.isNotEmpty()) defaults.toSet()
-                              else setOfNotNull(stationIds.firstOrNull())
-                          }
+                          // Whatever the settings say, and NOTHING else. There
+                          // used to be an `else` here force-opening the first
+                          // station whenever no station was marked, so that the
+                          // page "never opens on a list of shut drawers" — but
+                          // that overrode a user who had deliberately collapsed
+                          // every one of them, using a rule no screen stated and
+                          // no setting could switch off. `startExpanded` now
+                          // defaults to true, so a fresh install and every newly
+                          // added station open by themselves; a page of shut
+                          // drawers is now only ever something the user asked
+                          // for.
+                          //
+                          // Read through the defaults, never off the map: rows
+                          // equal to the defaults are pruned on write, so a
+                          // station with default preferences is ABSENT from it,
+                          // and `stationPrefs[it]?.startExpanded == true` would
+                          // read the new default as false for exactly the
+                          // stations that have never been configured.
+                          expandedIdsState == null ->
+                              stationIds.filter {
+                                  (stationPrefs[it] ?: StationPrefs()).startExpanded
+                              }.toSet()
                           // A station can be deleted while it is open, leaving an
                           // id that matches no card — which would then be counted
                           // in the height budget.
@@ -543,25 +576,49 @@ fun SummaryScreen(
                                     )
                                 }
 
-                            if (isCarousel) {
-                                StationCarousel(
-                                    stationGroups = stationGroups,
-                                    pageHeight = primaryBoardMaxHeight,
-                                ) { stationId, groupSelections ->
-                                    stationCard(stationId, groupSelections, false, primaryBoardMaxHeight)
-                                }
-                            } else {
-                                stationGroups.forEach { (stationId, groupSelections) ->
-                                    stationCard(
-                                        stationId,
-                                        groupSelections,
-                                        stationGroups.size > 1 && !isCarousel,
-                                        // The top open station gets the leftover
-                                        // room; the rest get the floor, which is
-                                        // three departures (MIN_BOARD_HEIGHT).
-                                        if (stationId == primaryStationId) primaryBoardMaxHeight
-                                        else MIN_BOARD_HEIGHT,
-                                    )
+                            // ── Nothing is drawn until it can be drawn RIGHT ──
+                            //
+                            // The stations arrive from one read and their
+                            // arrangement from another, and the two races. Draw
+                            // on whichever lands first and the home screen paints
+                            // a state nobody configured and then corrects itself:
+                            // expanded stations snapping shut, or collapsed ones
+                            // springing open, a beat after launch. Either way the
+                            // first thing the app does is contradict itself.
+                            //
+                            // Waiting costs a frame or two — this is one
+                            // NSUserDefaults string, and it resolves long before
+                            // the departures it would be shown alongside. What it
+                            // buys is that the first painted frame IS the
+                            // configured one: no correction, and no board built
+                            // in a state it is about to leave.
+                            //
+                            // Deliberately renders NOTHING rather than a
+                            // placeholder. A skeleton here would be a second
+                            // wrong state on the way to the right one, and the
+                            // screen around it — the header, the banners — is
+                            // already up and already says the app is running.
+                            if (prefsLoaded) {
+                                if (isCarousel) {
+                                    StationCarousel(
+                                        stationGroups = stationGroups,
+                                        pageHeight = primaryBoardMaxHeight,
+                                    ) { stationId, groupSelections ->
+                                        stationCard(stationId, groupSelections, false, primaryBoardMaxHeight)
+                                    }
+                                } else {
+                                    stationGroups.forEach { (stationId, groupSelections) ->
+                                        stationCard(
+                                            stationId,
+                                            groupSelections,
+                                            stationGroups.size > 1 && !isCarousel,
+                                            // The top open station gets the leftover
+                                            // room; the rest get the floor, which is
+                                            // three departures (MIN_BOARD_HEIGHT).
+                                            if (stationId == primaryStationId) primaryBoardMaxHeight
+                                            else MIN_BOARD_HEIGHT,
+                                        )
+                                    }
                                 }
                             }
 

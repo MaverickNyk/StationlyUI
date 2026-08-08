@@ -697,29 +697,33 @@ nothing would change. Everything else is `core/iosMain`, `composeApp` or Swift.
 
 ### (1) The user arranges their own departure board
 
-Per station, on its settings screen: **Order** (time / platform / destination),
-**Departures per platform** (2–5, default 3), and **Show first** (pin one
-platform or one line to the top). Rules live in
-`core/util/BoardDisplayPrefs.kt`, are applied by `MultiLineBoardProcessor`, and
-are edited by `ui/station/BoardArrangement.kt`.
+Per station, on its settings screen: **Show up to N per platform** (2–5, default
+3) and **Pin to top** (one platform, one bus pole, or one line leads the board).
+Rules live in `core/util/BoardDisplayPrefs.kt`, are applied by
+`MultiLineBoardProcessor`, and are edited by `ui/station/BoardArrangement.kt`.
+
+There was a third — **Order** (time / platform / destination) — removed
+2026-08-09 with its enum, its re-sort and its tests. Its segments acted at two
+different levels, it was inert on any bus board, and the pin already answered
+what it was justified by. `BOARD_AND_DREAM_UI.md` §20b has the argument in full;
+**do not add it back without reading it.**
 
 **The platform grouping is not one of the settings and must not become one.**
 Everything under a header is one queue in one place you can walk to; a flat
 re-sort of the whole board would leave the user reading the platform off every
-row to know where to stand. So each control acts at exactly one level — block
-order, or row order inside a block — and `BOARD_AND_DREAM_UI.md` §20b has the
-table of which does which, plus the three rules most likely to be got wrong
-later:
+row to know where to stand. The rules most likely to be got wrong later:
 
-- **The cap picks WHICH trains; the sort only arranges them.** Applying the cap
-  after a destination sort keeps the alphabetically-first destinations, which at
-  Green Park means three Cockfosters trains an hour out and no sign of the one
-  leaving now.
+- **The cap picks WHICH trains, off the TIME-ordered list.** Capping any other
+  ordering keeps the wrong trains — at Green Park, three Cockfosters trains an
+  hour out and no sign of the one leaving now.
 - **A pinned LINE promotes every platform it calls at**, because a line at an
   interchange is genuinely on more than one, and lifting its rows out of their
   blocks would put them under a header naming no place you can stand.
 - **Unassigned platforms still sort last, above the pin.** A pin is a
   preference; "you cannot stand on a platform TfL has not allocated" is a fact.
+- **A bus hub pins POLES by naptan, shown as "→ <destination>".** A pole has no
+  label to pin at an unlettered stop, and a route pin there promotes both sides
+  of the road, which promotes neither.
 
 `MultiLineBoardProcessor.MAX_ROWS_PER_PLATFORM` is gone — the ceiling is
 `BoardDisplayPrefs.rowCap`, clamped on READ. `MIN_BOARD_ROWS` stays a constant
@@ -894,11 +898,12 @@ launched on the iPhone 11 with the App Group verified by hand (7 stations in
 
 ### Not verified on device
 
-The station-settings controls (Order / Departures per platform / Show first)
-are installed and running but have not been exercised by hand. On the widget
-side, still unconfirmed: two widgets showing two different stations at once, the
-gallery showing one tile per station (`recommendations()`), and search inside
-the picker.
+The station-settings controls (Show up to N per platform / Pin to top) are
+installed and running but have not been fully exercised by hand — in particular
+the bus-pole chips ("→ Putney Bridge"), which have unit coverage but no device
+run. On the widget side, still unconfirmed: two widgets showing two different
+stations at once, the gallery showing one tile per station
+(`recommendations()`), and search inside the picker.
 
 ## 6g. Session 2026-08-08: refresh speed, one grouping rule, FCM rename
 

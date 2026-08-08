@@ -58,9 +58,17 @@ data class StationPrefs(
     /**
      * Start expanded every time the app opens, not just the first time.
      *
-     * Several stations may set this. The height budget then shares the viewport
-     * between them (`boardMaxHeight`), so the honest outcome of opening four is
-     * a page that scrolls, not four unreadable boards.
+     * **Defaults to true, so a station the user has just added shows its board.**
+     * It used to default to false, and the home screen patched over that by
+     * force-opening whichever station happened to sort first — a rule nothing on
+     * screen expressed and no setting could undo. Adding a second station then
+     * silently collapsed it, which reads as the new station having failed to
+     * load rather than as a layout decision.
+     *
+     * Several stations may set this, and with this default they all do. The
+     * height budget shares the viewport between them (`boardMaxHeight`), so the
+     * honest outcome of four open stations is a page that scrolls, not four
+     * unreadable boards.
      *
      * Means nothing in [HomeLayout.CAROUSEL], where every station has a page to
      * itself and there is nothing to collapse.
@@ -69,9 +77,15 @@ data class StationPrefs(
      * what the setting now says on screen (Expanded / Collapsed), and renaming
      * the JSON field with it would have silently reset the preference for
      * everyone who had already set it.
+     *
+     * ⚠️ Flipping this default is a ONE-TIME behaviour change for existing
+     * installs, and it cannot be avoided. [StationPrefsRepository.persist] drops
+     * rows equal to the defaults, so a user who chose Collapsed under the old
+     * default was stored identically to one who never opened the screen. There
+     * is no fact on disk telling the two apart, so both now start expanded.
      */
     @SerialName("openByDefault")
-    val startExpanded: Boolean = false,
+    val startExpanded: Boolean = true,
     /**
      * Hide the big next-departure hero for this station, leaving the line pills
      * and the dot-matrix board.
@@ -163,7 +177,21 @@ object StationPrefsRepository {
     private val _layout = MutableStateFlow(HomeLayout.LIST)
     val layout: StateFlow<HomeLayout> = _layout.asStateFlow()
 
-    private var loaded = false
+    /**
+     * Whether the first read has finished, so a screen can tell "the user has no
+     * preferences" apart from "we have not looked yet".
+     *
+     * Observable because those two states must not render the same way. Every
+     * flow here reports its DEFAULT until the read lands — an empty prefs map,
+     * `HomeLayout.LIST` — and a default is indistinguishable from a real value.
+     * The home screen paid for that: with `startExpanded` defaulting to true,
+     * the first frames opened every station, and the ones the user had actually
+     * collapsed then snapped shut a moment later. A board that appears and
+     * retracts reads as a glitch, and it is genuinely wasted work — full boards
+     * built for every station and immediately thrown away.
+     */
+    private val _loaded = MutableStateFlow(false)
+    val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
 
     /**
      * Idempotent — every screen that reads prefs may call this on entry.
@@ -176,7 +204,7 @@ object StationPrefsRepository {
      * mistake.
      */
     suspend fun ensureLoaded() {
-        if (loaded) return
+        if (_loaded.value) return
         _prefs.value = runCatching {
             Platform.storageManager.loadString(KEY)
                 ?.let { json.decodeFromString<Map<String, StationPrefs>>(it) }
@@ -189,7 +217,7 @@ object StationPrefsRepository {
             Platform.storageManager.loadString(LAYOUT_KEY)
                 ?.let { name -> HomeLayout.entries.firstOrNull { it.name == name } }
         }.getOrNull() ?: HomeLayout.LIST
-        loaded = true
+        _loaded.value = true
     }
 
     suspend fun setLayout(layout: HomeLayout) {

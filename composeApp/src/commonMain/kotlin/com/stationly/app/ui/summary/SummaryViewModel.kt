@@ -129,6 +129,17 @@ class SummaryViewModel(
     val homeLayout: StateFlow<HomeLayout> = StationPrefsRepository.layout
 
     /**
+     * Whether the three flows above are answering from disk yet.
+     *
+     * Every one of them reports a DEFAULT until [StationPrefsRepository.ensureLoaded]
+     * lands — an empty map, an empty order, `HomeLayout.LIST` — and a default is
+     * indistinguishable from a real value. The home screen renders no station
+     * until this is true, so the first frame it paints is the configured one
+     * rather than a guess it then has to correct.
+     */
+    val prefsLoaded: StateFlow<Boolean> = StationPrefsRepository.loaded
+
+    /**
      * Guards [refreshStaleBoards] — see the note there about cold start.
      *
      * ## This declaration MUST stay above `init`, and that is not a style rule
