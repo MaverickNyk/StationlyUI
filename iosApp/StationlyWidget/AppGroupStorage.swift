@@ -149,6 +149,20 @@ struct DepartureRow: Codable, Identifiable {
     }
 }
 
+// MARK: - BoardFeed
+
+/// One (line, direction) the configured station tracks, plus the naptan it is
+/// fetched from — mirrors `WidgetFeed` in `core/iosMain/platform/WidgetAppGroup.kt`.
+///
+/// Only the refresh path uses it: the predictions endpoint answers per naptan
+/// with every line calling there, so rebuilding THIS board means keeping these
+/// pairs and dropping the rest.
+struct BoardFeed: Codable, Hashable {
+    let station: String
+    let line: String
+    let direction: String
+}
+
 // MARK: - WidgetData
 
 struct WidgetData {
@@ -160,6 +174,19 @@ struct WidgetData {
     let status: String
     let lastUpdated: Date
     let isEmpty: Bool
+    /// The GROUPING id of the station on screen, or "" for a board read from
+    /// the legacy single-station keys.
+    ///
+    /// Carried on the data rather than looked up in the views because every
+    /// interactive control on this widget now has to name its station: paging
+    /// and refresh are per-station once two widgets can show two different
+    /// boards, and a control that acted on "the widget" would move the wrong
+    /// one.
+    var stationId: String = ""
+    /// The naptan the extension's own refresh calls, and which (line,
+    /// direction) pairs to keep out of the reply. Empty on the legacy path,
+    /// where `WidgetRefreshService` falls back to the flat keys.
+    var feeds: [BoardFeed] = []
 
     /// True once the App Group has a real `widget_last_updated` timestamp — lets
     /// the footer show a live ticking "ago" only when there's genuine data age
@@ -297,10 +324,15 @@ struct WidgetData {
             result.append(contentsOf: Self.bumpPlatformGroup(retained + live, nowMs: nowMs))
         }
 
+        // stationId/feeds carried through: every timeline entry is a ticked
+        // copy, so dropping them here would leave the rendered board with no
+        // idea which station it is — and its paging and refresh buttons acting
+        // on whatever the legacy keys happened to hold.
         return WidgetData(
             stationName: stationName, lineName: lineName, direction: direction,
             mode: mode, departures: result, status: status,
-            lastUpdated: lastUpdated, isEmpty: isEmpty
+            lastUpdated: lastUpdated, isEmpty: isEmpty,
+            stationId: stationId, feeds: feeds
         )
     }
 
@@ -366,23 +398,94 @@ class AppGroupStorage {
         UserDefaults(suiteName: appGroupID)
     }
 
+    // MARK: - Multi-station
+
+    /// Every station the user tracks, in the app's own order — the list the
+    /// widget's configuration picker offers.
+    ///
+    /// Written by KMP on every board change (`AppGroupKeys.WIDGET_STATIONS`).
+    /// Empty is a legitimate answer, not an error: a signed-out user, or one
+    /// who has not added a board yet, genuinely has nothing to pick from.
+    func readStations() -> [StationEntity] {
+        guard let raw = defaults?.string(forKey: AppGroupKeys.stations),
+              let data = raw.data(using: .utf8),
+              let refs = try? JSONDecoder().decode([StationRef].self, from: data)
+        else { return [] }
+        return refs.map { StationEntity(id: $0.id, name: $0.name, mode: $0.mode, lines: $0.lines) }
+    }
+
+    /// The board for one configured station.
+    ///
+    /// Falls back to the legacy single-station keys when the id is unknown —
+    /// which covers a widget added before multi-station shipped (no
+    /// configuration at all) and one whose station has since been deleted. The
+    /// primary board is a better answer than an empty one in both cases: the
+    /// user still gets a working widget and can re-point it whenever they
+    /// notice.
+    func readWidgetData(stationId: String?) -> WidgetData {
+        guard let stationId, !stationId.isEmpty,
+              let raw = defaults?.string(forKey: AppGroupKeys.board(stationId)),
+              let data = raw.data(using: .utf8),
+              let board = try? JSONDecoder().decode(StoredBoard.self, from: data),
+              !board.stationName.isEmpty
+        else { return readWidgetData() }
+
+        return WidgetData(
+            stationName: board.stationName,
+            lineName: board.lineName,
+            direction: board.direction,
+            mode: board.mode,
+            departures: board.predictions,
+            status: board.status ?? "",
+            lastUpdated: board.lastUpdated > 0
+                ? Date(timeIntervalSince1970: TimeInterval(board.lastUpdated))
+                : Date(timeIntervalSince1970: 0),
+            isEmpty: false,
+            stationId: board.id,
+            feeds: board.feeds
+        )
+    }
+
+    /// Mirrors `core/iosMain/platform/WidgetAppGroup.kt`. Both sides change together.
+    private struct StationRef: Decodable {
+        let id: String
+        let name: String
+        let mode: String
+        let lines: [String]
+    }
+
+    private struct StoredBoard: Decodable {
+        let id: String
+        let stationId: String
+        let stationName: String
+        let lineName: String
+        let direction: String
+        let mode: String
+        let status: String?
+        let lastUpdated: Int
+        let feeds: [BoardFeed]
+        let predictions: [DepartureRow]
+    }
+
+    // MARK: - Legacy single-station keys
+
     func readWidgetData() -> WidgetData {
         guard let defaults = defaults else {
             print("[AppGroupStorage] Cannot open App Group suite: \(appGroupID)")
             return .empty
         }
 
-        let stationName = defaults.string(forKey: "widget_station_name") ?? ""
-        let lineName    = defaults.string(forKey: "widget_line_name")    ?? ""
-        let direction   = defaults.string(forKey: "widget_direction")    ?? ""
-        let mode        = defaults.string(forKey: "widget_mode")         ?? ""
-        let status      = defaults.string(forKey: "widget_status")       ?? ""
-        let tsRaw       = defaults.double(forKey: "widget_last_updated")
+        let stationName = defaults.string(forKey: AppGroupKeys.stationName) ?? ""
+        let lineName    = defaults.string(forKey: AppGroupKeys.lineName)    ?? ""
+        let direction   = defaults.string(forKey: AppGroupKeys.direction)    ?? ""
+        let mode        = defaults.string(forKey: AppGroupKeys.mode)         ?? ""
+        let status      = defaults.string(forKey: AppGroupKeys.status)       ?? ""
+        let tsRaw       = defaults.double(forKey: AppGroupKeys.lastUpdated)
         let lastUpdated = tsRaw > 0 ? Date(timeIntervalSince1970: tsRaw) : Date(timeIntervalSince1970: 0)
 
         guard !stationName.isEmpty else { return .empty }
 
-        let predictionsJson = defaults.string(forKey: "widget_predictions") ?? "[]"
+        let predictionsJson = defaults.string(forKey: AppGroupKeys.predictions) ?? "[]"
         let departures: [DepartureRow]
         do {
             departures = try JSONDecoder().decode([DepartureRow].self, from: Data(predictionsJson.utf8))

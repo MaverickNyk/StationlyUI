@@ -1,6 +1,6 @@
 # iOS — consolidated handover
 
-**Branch:** `ios-parity` · **Last updated:** 2026-08-05
+**Branch:** `ios-parity` · **Last updated:** 2026-08-08
 **Status:** builds clean, deployed and running on a physical iPhone 11 against
 **staging**. All four compile gates green (§6).
 
@@ -47,9 +47,9 @@ if the dependency graph ever changes.
 | Area | State |
 |---|---|
 | **Auth** | Email/password, Google, **Sign in with Apple** (live since the paid team landed), email verification, reset deep links. Keychain-restored sessions self-heal their identity keys. |
-| **Home / board** | Full Android parity: dot-matrix board, per-minute tick, pull-to-refresh, promos, offline banner, SDUI strings with hardcoded fallbacks. |
+| **Home / board** | Full Android parity: dot-matrix board, per-minute tick, pull-to-refresh, promos, offline banner, SDUI strings with hardcoded fallbacks. Plus iOS-only per-station **board arrangement** (order, depth, pin) — §6f(1). |
 | **Live departures** | **WebSocket stream**, iOS-only. Replaces REST polling for predictions + line status. See §3. |
-| **Widget** | Full-bleed board, interactive platform paging, interactive refresh button, live clock, per-minute tick, departed-row retention. |
+| **Widget** | Full-bleed board, **one station per widget** (configured like the Weather widget), platform paging by arrows, interactive refresh, live clock, per-minute tick, departed-row retention. §6f(2). |
 | **Dream / screensaver** | Full port as an in-app route (iOS has no system screensaver slot). SDUI-driven. |
 | **Push** | APNs + FCM live on the paid team. `aps-environment` tracks the build config. |
 | **Signing** | Stationly Limited org team **`7T7D5LLYSL`**. App Group **`group.com.stationly.shared`**. |
@@ -275,8 +275,9 @@ rules live in **core** (testable, shared) and Compose only renders them.
   line**; buses group by **pole naptan** (`UserSelection.station`). The old
   per-line "Circle · Inbound" strip is gone — the platform header carries it
   ("Northern Platform 8 Southbound", "Bus 39 Stop W").
-- **Two separate row limits**, previously conflated: `MAX_ROWS_PER_PLATFORM = 3`
-  is a per-platform ceiling; `MIN_BOARD_ROWS = 3` is a floor for the **whole**
+- **Two separate row limits**, previously conflated: a per-platform ceiling
+  (`MAX_ROWS_PER_PLATFORM = 3` then; `BoardDisplayPrefs.rowCap`, user-set, since
+  2026-08-07 — §6f) and `MIN_BOARD_ROWS = 3`, a floor for the **whole**
   board. Three platforms with two departures each get six rows and no padding.
 - **Unassigned platforms sort last** regardless of time — you cannot go and stand
   on one.
@@ -672,6 +673,224 @@ not move, the Initial-pass claim is being beaten by something new, and
 small screen with a promo showing; and whether the carousel's per-page haptic is
 welcome or annoying in practice.
 
+## 6f. Session 2026-08-07/08: board settings, multi-station widgets, platform arrows
+
+Two features plus a review pass. The first is iOS-only app work; the second
+changes the widget extension and `core/iosMain`, which Android does not compile.
+
+**Android safety.** `core/commonMain` gains three files
+(`BoardDisplayPrefs.kt`, additions to `MultiLineBoardProcessor`, tests) and
+every one of them is **additive with a default**: `buildRows` and
+`collapsedLegs` take `prefs: BoardDisplayPrefs = BoardDisplayPrefs()`, whose
+defaults reproduce the previous behaviour exactly. Android calls neither — they
+were written for the iOS multi-line board — but the defaults mean it could and
+nothing would change. Everything else is `core/iosMain`, `composeApp` or Swift.
+
+### (1) The user arranges their own departure board
+
+Per station, on its settings screen: **Order** (time / platform / destination),
+**Departures per platform** (2–5, default 3), and **Show first** (pin one
+platform or one line to the top). Rules live in
+`core/util/BoardDisplayPrefs.kt`, are applied by `MultiLineBoardProcessor`, and
+are edited by `ui/station/BoardArrangement.kt`.
+
+**The platform grouping is not one of the settings and must not become one.**
+Everything under a header is one queue in one place you can walk to; a flat
+re-sort of the whole board would leave the user reading the platform off every
+row to know where to stand. So each control acts at exactly one level — block
+order, or row order inside a block — and `BOARD_AND_DREAM_UI.md` §20b has the
+table of which does which, plus the three rules most likely to be got wrong
+later:
+
+- **The cap picks WHICH trains; the sort only arranges them.** Applying the cap
+  after a destination sort keeps the alphabetically-first destinations, which at
+  Green Park means three Cockfosters trains an hour out and no sign of the one
+  leaving now.
+- **A pinned LINE promotes every platform it calls at**, because a line at an
+  interchange is genuinely on more than one, and lifting its rows out of their
+  blocks would put them under a header naming no place you can stand.
+- **Unassigned platforms still sort last, above the pin.** A pin is a
+  preference; "you cannot stand on a platform TfL has not allocated" is a fact.
+
+`MultiLineBoardProcessor.MAX_ROWS_PER_PLATFORM` is gone — the ceiling is
+`BoardDisplayPrefs.rowCap`, clamped on READ. `MIN_BOARD_ROWS` stays a constant
+and is deliberately not user-facing.
+
+There is **no drawn preview**, unlike the layout picker directly above it on the
+same screen, and that is a decision rather than an omission: the real board is
+one back-tap away, and the alternative (drawing one from the SQLite cache) would
+put hours-old ETAs on a settings screen where they are indistinguishable from
+live ones. §20b records what carries the meaning instead.
+
+**Known gap: the widget does not see any of this.** `StationPrefs` lives in the
+standard NSUserDefaults suite and the extension reads the App Group.
+
+Tests: 12 new in `MultiLineBoardProcessorTest`, one per rule above (plus 4
+more from the review pass — see §6f(3) and the gate count below).
+
+### (2) One widget, one station — and arrows to page platforms
+
+Full write-up: `IOS_WIDGET_DESIGN.md` **§5 and §6**. The short version:
+
+- The widget is now configured per instance with a **station**, the iOS Weather
+  model (`AppIntentConfiguration` + `StationEntity`/`StationEntityQuery`). It
+  was a `StaticConfiguration` reading one set of flat keys, so every widget on
+  the home screen showed the same board.
+- KMP now writes **every** station to the App Group: `widget_stations` (the
+  directory the picker reads) and `widget_board_<groupingId>` per station. The
+  legacy flat keys are still written for the primary, which is what an
+  unconfigured widget reads.
+- A station's board is **merged across its lines**, the way the app's card
+  merges it.
+- The medium board's platform paging is now a **chevron at each end of the
+  header**, dimmed when there is nothing that way, with the board pushed in the
+  direction the arrow points. The page is clamped rather than modulo, and keyed
+  per station.
+
+Three things came out of using it on device, and each is a rule rather than a
+tweak:
+
+- **A dimmed control must still be a Button.** Drawn as plain content, the
+  disabled arrow fell through to the widget's own tap target and LAUNCHED THE
+  APP. Every non-interactive pixel of a widget belongs to that target. It is a
+  Button in both states now and the clamp makes the tap a no-op.
+- **Do not call `reloadTimelines` from an interactive intent** unless the DATA
+  changed. WidgetKit re-renders the tapped widget from the timeline it already
+  holds, which is immediate; the explicit reload threw that away and rebuilt all
+  61 entries (re-ticking every departure) before the new page could draw. That
+  rebuild was the entire lag between tap and movement.
+- **The picker's chrome is Apple's; its rows are ours.** The list cannot be
+  themed or inlined into the editor — it is the same sheet Weather's Location
+  picker uses. Title, subtitle and image are the three things we control, so the
+  image is the real roundel: `DisplayRepresentation.Image(data:)` takes a
+  bitmap (verified in the SDK's `AppIntents.swiftinterface`), and
+  `RoundelImage` falls through cached PNG → drawn roundel in the mode's colour →
+  SF Symbol. The middle rung is not optional: the `/modes` PNGs are absent on a
+  fresh install, which is exactly when someone is setting their widgets up.
+
+**The trap this session actually hit:** Kotlin edits made after
+`assembleComposeAppDebugXCFramework` has run are NOT in the build. Here it
+presented as an empty station picker — the widget's Swift was correct and
+shipping, `widget_stations` was simply never written, which looks exactly like a
+broken `EntityQuery`. §8's warning is not decorative. `IOS_WIDGET_DESIGN.md` §5
+has the one-liner that dumps the App Group to check.
+
+### (3) Review pass
+
+A full re-read of everything above. Findings, all fixed:
+
+**Correctness**
+
+1. **The disabled-arrow app launch** and **the paging lag**, above.
+2. **`RoundelImage`'s cache was a data race.** `EntityQuery` methods are `async`
+   and the system runs them off any executor; an unsynchronised static
+   Dictionary mutated from two of them can crash while resizing, not merely lose
+   a write. Behind an `NSLock` now, with the *build* outside the lock so one
+   slow row cannot serialise the sheet.
+3. **The pin picker could render with only a "Nothing" chip** — a station whose
+   board has never loaded and which tracks one line has nothing to promote. The
+   whole section is hidden in that case, and shown anyway if a pin is already
+   set, so a setting in force is always reachable.
+4. **Deleting a board left the picker offering its platforms.** The boards list
+   re-emits from the repository; the CACHED reads (`towards`, `platforms`) did
+   not. `deleteBoard` re-reads them now.
+
+**Cost**
+
+5. **The primary station's board was built twice per refresh** — once for its
+   own key and once for the legacy keys — which is ~3 SQL queries per selection
+   run twice on every stream frame. Built once, reused.
+6. **The reload signal was bumped on every write.** That signal is what makes
+   Swift call `WidgetCenter.reloadAllTimelines()`, so a push for a station no
+   widget shows still asked WidgetKit to regenerate every timeline — and Apple
+   meters those (~40–70/day). Writes are diffed (`putIfChanged`) and the signal
+   is bumped once per pass, only if something moved.
+7. **`pruneStaleBoards` called `dictionaryRepresentation()`**, which materialises
+   the entire user-defaults domain, on every push. The station ids are read back
+   out of the directory we already write, which is cheaper and more precise.
+
+**Duplication**
+
+8. **~20 raw App Group key literals across four Swift files**, with four keys
+   spelled out in two files each. This is the same failure mode as the App Group
+   ID rename in §6: a mistyped key reads `nil`, which is indistinguishable from
+   "the app never wrote it", and the symptom lands on the home screen rather
+   than in a compiler message. Now one `AppGroupKeys.swift` per target,
+   mirroring the Kotlin object, with the two paging keys declared on both sides
+   because KMP is the only side with an event for "this station is gone".
+9. **A second line-naming map in Swift.** The picker prettified canonical ids
+   ("hammersmith-city" → "Hammersmith & City") and disagreed with the app's own
+   station settings screen. KMP resolves display names through
+   `LineShortNames.displayName` before writing the directory; the extension has
+   no line vocabulary at all.
+10. **`mode == "bus"` written out at four call sites** — the board, the panel,
+    the settings screen, its ViewModel — agreeing only by coincidence. One
+    `MultiLineBoardProcessor.isBus(mode)`, beside the grouping rules that depend
+    on it, tested.
+11. **`WidgetRefreshService` kept its own aliases** for three keys that now live
+    in `AppGroupKeys`. Deleted; one name per key.
+12. **One key's name was nested inside another's prefix.** The paging state was
+    `widget_board_page_<id>`, which sits under the `widget_board_` prefix a
+    station's board uses: any prefix scan reads it as a station whose id begins
+    "page_". Nothing scans by prefix today — that is the point. Renamed
+    `widget_page_<id>` on both sides before something could.
+
+**Naming and clarity**
+
+13. `refreshFromPrimary` → **`refreshAllBoards`**: it stopped being about the
+    primary the moment it wrote every station.
+14. `updateWidget(state)`'s unused parameter now says WHY it is unused and that
+    it must stay that way — it describes one board, and the method has to leave
+    every station's board correct.
+15. The refresh guard tested `feeds.first`, so a board whose first feed carried
+    a blank naptan bailed even when the rest were fine. It tests the naptans it
+    is about to fetch.
+
+**Accessibility**
+
+16. The pin chips carry `Role.RadioButton` + `selected`. Selection was conveyed
+    by colour and weight alone, which VoiceOver cannot see. (The app's wider a11y
+    gap is tracked in `IOS_INFRA_AUDIT.md`; this is one control, not a sweep.)
+
+### Gates
+
+`:core:testDebugUnitTest` **88 green** (was 72 at session start — 16 new),
+`:composeApp:compileKotlinIosArm64`, `:composeApp:compileDebugKotlinAndroid`,
+`:android:app:compileProdReleaseKotlin`, plus a staging build installed and
+launched on the iPhone 11 with the App Group verified by hand (7 stations in
+`widget_stations`, King's Cross merged across Circle + H&C with all four feeds).
+
+### Known gaps, deliberately left
+
+- **The widget cannot see the board-arrangement settings.** `StationPrefs` is in
+  the standard NSUserDefaults suite; the extension reads the App Group. Moving
+  it is a real option and is not free — it would put a per-station preferences
+  blob on the hot write path.
+- **No line prefixes on a widget row at a mixed platform**, unlike the app's
+  board. The extension's own refresh re-derives rows from REST and cannot know
+  which line each came from, so prefixes would appear on a push and vanish on a
+  refresh tap.
+- **Two widgets on the same station share a page counter.** WidgetKit exposes no
+  per-instance identifier.
+- **The in-extension refresh still cannot write SQLite**, so a refreshed board
+  reaches the widget and not the app's store. Pre-existing; the app re-syncs on
+  next foreground.
+- **`widget_board_page`** (the old global page counter) and any
+  `widget_board_page_<id>` from this session's first cut are orphaned in the App
+  Group on devices that ran those builds. They are stale integers nothing reads;
+  migration code on the hot path to delete them would cost more than it saves.
+  A page counter carries no user intent, so losing one is invisible.
+- **No Swift tests.** `:composeApp` has no test source set either, which is why
+  everything with a rule in it keeps moving into `core`.
+
+### Not verified on device
+
+The station-settings controls (Order / Departures per platform / Show first)
+are installed and running but have not been exercised by hand. On the widget
+side, still unconfirmed: two widgets showing two different stations at once, the
+gallery showing one tile per station (`recommendations()`), and search inside
+the picker.
+
 ---
 
 ## 7. Which doc to open
@@ -744,19 +963,27 @@ its own `widget_refresh_trace`.
 
 ## 9. Next steps, in priority order
 
-1. **QA the 2026-08-06 work on device** (§6e "Not verified"): the drag first,
+1. **QA the 2026-08-07/08 work on device** (§6f "Not verified"): the three board
+   controls; then two widgets pinned to two different stations, which is the
+   whole point of the feature and the one thing a single widget cannot prove.
+2. **Commit this branch.** It now carries five sessions of uncommitted work
+   (§5 has the suggested split, and §6f is a natural commit boundary of its own).
+3. **QA the 2026-08-06 work on device** (§6e "Not verified"): the drag first,
    then the carousel on a small screen with a promo showing.
-2. **Review backend subscriptions for multi-line** (§6b "Still open"). Deferred
-   through four sessions now and never looked at.
-4. **QA the promos and the stream on device**: widget promo appears only with
+4. **Review backend subscriptions for multi-line** (§6b "Still open"). Deferred
+   through five sessions now and never looked at.
+5. **QA the promos and the stream on device**: widget promo appears only with
    no widget installed; dream promo retires after one run; notification banner
    tracks the Settings toggle; force-update dialog fires against a raised
    `app.minVersion`.
-5. **Re-check reconnect churn** now that the `openIfNeeded` race is fixed — the
+6. **Re-check reconnect churn** now that the `openIfNeeded` race is fixed — the
    trace should show no `stream:reconnect` bursts in steady state. If it still
    churns, the foreground/background-cycling hypothesis in
    `IOS_LIVE_STREAM.md` §7.2 is back on the table.
-6. **Exercise the stream past one station** — the 25-cap and `unknown_station`
+7. **Exercise the stream past one station** — the 25-cap and `unknown_station`
    paths are unexercised.
-7. **More tests**: `LiveStreamManager` reconnect/backoff and force-resubscribe.
-8. **Verify prod nginx** before pointing production builds at the stream.
+8. **More tests**: `LiveStreamManager` reconnect/backoff and force-resubscribe.
+   The widget's `WidgetData.ticked` and the extension's payload mapper are now
+   the largest untested surfaces, and neither has a test target to live in —
+   see §6f's note on `:composeApp` having none either.
+9. **Verify prod nginx** before pointing production builds at the stream.

@@ -529,6 +529,7 @@ fun SummaryScreen(
                                         } else null,
                                         startsExpanded = prefs.startExpanded && !isCarousel,
                                         showHero = !prefs.hideHero,
+                                        boardPrefs = prefs.board,
                                         onOpenSettings = {
                                             onOpenStationSettings(stationId, primary.mode, primary.stationName)
                                         },

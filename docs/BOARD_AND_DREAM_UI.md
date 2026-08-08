@@ -658,6 +658,134 @@ Four changes, each fixing something that read as "an app" rather than as iOS:
   old one. Now 220ms in behind 160ms out: the replacement arrives faster than
   the thing it replaces leaves.
 
+## 20b. iOS: the user arranges their own board (2026-08-07)
+
+Three settings per station — what the board is ordered by, how deep each platform
+goes, and which block leads it. `BoardDisplayPrefs` in **core** holds them,
+`MultiLineBoardProcessor` applies them, `BoardArrangementSection` edits them.
+
+### The grouping is not one of the settings, and must not become one
+
+Every question asked about this feature comes back to the same answer, so it is
+worth stating once. A board groups by platform (rail) or pole (bus) because
+that is what a passenger experiences: everything under a header is **one queue,
+in one place you can walk to**. "Sort the whole board by destination" would
+dissolve that — the rows would be in a true global order and the user would have
+to read the platform off every single row to know where to stand.
+
+So each setting operates at exactly ONE level, and which level is decided by
+where the fact it names actually exists:
+
+| Setting | Level it acts at | Level it leaves alone |
+|---|---|---|
+| Sort by **time** | blocks led by their soonest train | rows: arrival order |
+| Sort by **platform** | blocks in number order | rows: arrival order — there is no platform left to sort by once you are on one |
+| Sort by **destination** | rows grouped by where they go | blocks: unchanged, because a destination says nothing about which platform should lead |
+| **Rows per platform** (2–5, default 3) | how deep each block goes | nothing |
+| **Pin** | promotes a whole block | never lifts rows out of one |
+
+### The cap picks WHICH trains; the sort only arranges them
+
+Load-bearing, and the one thing to get wrong here. Applying the cap to a
+destination-sorted platform keeps the three alphabetically-first destinations,
+which at Green Park means three Cockfosters trains an hour out and no sign of
+the Uxbridge one leaving now. The soonest N are chosen first, and the sort
+arranges them afterwards. Tested (`destination sort still shows the SOONEST
+trains`).
+
+### A pinned LINE promotes every platform it calls at
+
+The literal reading of "pin my line to the top" is a block of that line's
+departures above everything else, and it cannot be built: a line at an
+interchange calls at several platforms, so its rows would have to be lifted out
+of the blocks they belong to and shown under a header naming no place you can
+stand. Instead the pin promotes **every block carrying that line**, in their
+usual order among themselves. A pinned platform promotes that one block. Either
+way the board is still a set of places with a queue at each.
+
+Three rules around it:
+
+- **Unassigned platforms still sort last, above the pin.** A pin is a
+  preference; "you cannot go and stand on a platform TfL has not allocated" is a
+  fact. The case this guards is a pinned line whose only departures are
+  unallocated.
+- **One pin, not a set.** A rank every block can claim ranks nothing — the same
+  argument that killed the per-station `pinned` flag (§11), with a sharper edge
+  here: pin every block and you have the board you started with.
+- **A pin that matches nothing does nothing, and is not pruned.** The platform
+  will be back tomorrow; silently forgetting a setting the user made is worse
+  than one that waits.
+
+### The collapsed card takes the pin but not the sort
+
+`collapsedLegs` shows the two soonest departures you could catch. A pinned block
+leads them and, more importantly, **survives the two-leg cap** — otherwise "show
+first" quietly does nothing for anyone whose stations are collapsed, which reads
+as a broken setting. The sort deliberately does not apply: ordering legs by
+platform number would pick the two lowest-numbered platforms rather than the two
+soonest, which answers a different question and answers it worse.
+
+### There is no drawn preview here, unlike the layout picker above it
+
+Deliberate, and it is the one place this screen departs from "draw it, don't
+describe it" (§12). The layout picker draws two boards because "hide the
+countdown" is a shape the user would otherwise have to imagine. These three are
+different: the real board is one back-tap away and changes the instant you get
+there, so the honest preview is the board itself. Drawing one from the SQLite
+cache was the alternative and was rejected — cached ETAs are minutes or hours
+old, and a settings screen reading "Brixton 2 min" over stale rows is
+indistinguishable from one reading it over live rows.
+
+What carries the meaning instead: a caption per sort option that says what
+MOVES and what stays put; the numbers 2–5 drawn under the slider so the whole
+scale is visible before you drag; and a pin picker built from the platforms the
+board has **actually shown** (`MultiLineBoardProcessor.pinnablePlatforms`, read
+from cache), so it can never offer one that does not exist. Line chips carry
+their line's colour and platform chips do not, which is what keeps "Platform 4"
+and "Victoria" from reading as one flat list.
+
+### Two rules the controls themselves follow
+
+- **"Show first" is hidden when there is nothing to promote** — no platform has
+  been seen yet and only one line is tracked, so every block on the board
+  carries it. A picker whose only option is "Nothing" is a control that cannot
+  do anything, and a caption explaining that is worse than the section not being
+  there. It reappears if a pin is already set, however the options have since
+  shrunk, so a setting in force is always reachable.
+- **The platforms offered are the ones the board has actually shown**
+  (`MultiLineBoardProcessor.pinnablePlatforms`, read from the SQLite cache),
+  ordered by number rather than by time. Ordered by whose train is soonest, the
+  list would rearrange itself under the user's finger every time the board
+  refreshed. Unassigned blocks are excluded, because the board sinks them
+  regardless of any pin — offering one would be offering a setting guaranteed to
+  do nothing.
+
+### `isBus` has one definition now
+
+`mode == "bus"` was written out at four call sites — the board, the panel, the
+station settings screen, its ViewModel — agreeing only by coincidence. It is
+`MultiLineBoardProcessor.isBus(mode)`, declared beside the grouping rules that
+depend on it and tested. A fifth caller spelling it `"Bus"` would have grouped a
+bus board by platform, which at an unlettered stop collapses every pole into one
+block: the exact bug `groupKeyFor` exists to prevent.
+
+### Things that will bite
+
+- **The widget does not see any of this.** `StationPrefs` lives in the standard
+  NSUserDefaults suite; the extension is a separate process reading the App
+  Group. Its rows stay as they were, which is defensible (a widget is a glance,
+  not a board you configure) but is a divergence, not an oversight.
+- **`MAX_ROWS_PER_PLATFORM` on the processor is gone** — the ceiling is
+  `BoardDisplayPrefs.rowCap` now, clamped on READ so a value stored by a build
+  with different limits cannot render twelve rows. `MIN_BOARD_ROWS` stays a
+  constant and is deliberately not user-facing: "how short may the panel get
+  before it stops looking like a board" is a layout fact the user cannot reason
+  about, and a floor above the ceiling is a state the settings screen would have
+  to defend against for nothing.
+- **The hero ignores the pin.** It answers "what do I run for" — the soonest
+  train across every tracked line — and the pills are how it is switched. Letting
+  the pin re-point it too would be one setting quietly doing two jobs.
+
 ## 21. Where the shared iOS UI lives (2026-08-06)
 
 Three settings screens, two previews of the same board and two axes of the same
@@ -672,6 +800,7 @@ each, and new work belongs in them rather than beside them:
 | `ui/common/ReorderBox.kt` | Hold-and-drag reordering, either axis, any item type |
 | `ui/common/Press.kt` | `pressScale` / `pressHighlight` |
 | `ui/station/StationOrder.kt` | What a station looks like while being dragged |
+| `ui/station/BoardArrangement.kt` | The sort / rows-per-platform / pin controls (§20b) |
 | `ui/summary/StationCarousel.kt` | The pager, its page transform, the dots |
 | `ui/summary/HomeBoardBudget.kt` | `MIN_BOARD_HEIGHT`, `boardMaxHeight` and the measurements behind them |
 

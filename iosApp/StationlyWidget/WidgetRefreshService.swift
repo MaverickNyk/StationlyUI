@@ -34,16 +34,15 @@ enum WidgetRefreshService {
     /// refuses. Short enough to feel immediate, long enough that spam-tapping
     /// a broken backend still can't fan out.
     private static let failedRetrySeconds: TimeInterval = 3
-    private static let lastRefreshKey = "widget_last_manual_refresh"
-    /// Set when a refresh couldn't complete, cleared on success. This is the
-    /// only refresh feedback a widget can actually show: it persists past
-    /// `perform()`, so it survives into the render WidgetKit does afterwards.
-    static let failedKey = "widget_refresh_failed"
-    /// Epoch-seconds of the last SUCCESSFUL manual refresh. Kept for the
-    /// on-device trace only — it deliberately drives no UI: a success glyph
-    /// was tried and removed (see RefreshButton) because swapping the arrow
-    /// on the happy path destroys the button's affordance.
-    static let lastOkKey = "widget_last_refresh_ok"
+    // Key names live in AppGroupKeys, one place per target. Two of them are
+    // worth knowing about here:
+    //   - `refreshFailed` is set when a refresh could not complete and cleared
+    //     on success. It is the ONLY refresh feedback a widget can show, because
+    //     it outlives `perform()` and so survives into the render WidgetKit does
+    //     afterwards; the header reads it directly.
+    //   - `lastRefreshOk` exists for the on-device trace and deliberately drives
+    //     no UI. A success glyph was tried and removed (see RefreshButton):
+    //     swapping the arrow on the happy path destroys the button's affordance.
 
     /// Mirrors SyncPredictionsUseCase's perPlatformCap = 8 — reserves for the
     /// tick layer to shift into the visible 3-row window, not rows to render.
@@ -73,10 +72,10 @@ enum WidgetRefreshService {
     /// `devicectl device copy from --domain-type appGroupDataContainer`.
     private static func trace(_ msg: String) {
         guard let d = defaults else { return }
-        var entries = (d.array(forKey: "widget_refresh_trace") as? [String]) ?? []
+        var entries = (d.array(forKey: AppGroupKeys.refreshTrace) as? [String]) ?? []
         entries.append("\(Int(Date().timeIntervalSince1970)) \(msg)")
         if entries.count > 20 { entries = Array(entries.suffix(20)) }
-        d.set(entries, forKey: "widget_refresh_trace")
+        d.set(entries, forKey: AppGroupKeys.refreshTrace)
     }
 
     enum RefreshOutcome { case refreshed, debounced, unavailable, failed }
@@ -90,80 +89,135 @@ enum WidgetRefreshService {
     /// there for why the full 15s would make the button lie.
     private static func markFailed() {
         guard let d = defaults else { return }
-        d.set(true, forKey: failedKey)
+        d.set(true, forKey: AppGroupKeys.refreshFailed)
         d.synchronize()
         WidgetCenter.shared.reloadTimelines(ofKind: StationlyDepartureBoardWidget.kind)
     }
 
     /// Returns without touching the network when tapped inside the debounce
     /// window, so a user drumming on the button can't fan out to TfL.
-    static func refresh() async -> RefreshOutcome {
+    ///
+    /// [configuredStation] is the grouping id the tapped widget is pinned to.
+    /// It decides both what is fetched and where the result is written: with
+    /// several widgets on screen, refreshing "the widget" would rewrite the
+    /// legacy keys and leave the board under the user's finger untouched while
+    /// silently changing a different one.
+    ///
+    /// The debounce is deliberately GLOBAL rather than per station. It exists
+    /// to protect TfL from a user drumming on a button, and three widgets are
+    /// three buttons — a per-station window would let the same finger fan out
+    /// as wide as the home screen has widgets.
+    static func refresh(stationId configuredStation: String = "") async -> RefreshOutcome {
         guard let d = defaults else { return .unavailable }
 
         let now = Date().timeIntervalSince1970
-        let last = d.double(forKey: lastRefreshKey)
-        let window = d.bool(forKey: failedKey) ? failedRetrySeconds : debounceSeconds
+        let last = d.double(forKey: AppGroupKeys.lastManualRefresh)
+        let window = d.bool(forKey: AppGroupKeys.refreshFailed) ? failedRetrySeconds : debounceSeconds
         if last > 0, now - last < window { return .debounced }
 
-        guard let stationId = d.string(forKey: "widget_station_id"), !stationId.isEmpty,
-              let baseUrl = d.string(forKey: "widget_api_base_url"), !baseUrl.isEmpty,
-              let apiKey = d.string(forKey: "widget_api_key"), !apiKey.isEmpty,
-              let lineId = d.string(forKey: "widget_line_name"), !lineId.isEmpty
-        else { return .unavailable }
+        // The configured board when there is one, the legacy keys otherwise —
+        // exactly the fallback the renderer uses, so the refresh can never
+        // target a board other than the one on screen.
+        let board = AppGroupStorage.shared.readWidgetData(stationId: configuredStation)
+        let feeds: [BoardFeed] = board.feeds.isEmpty
+            ? legacyFeed(d).map { [$0] } ?? []
+            : board.feeds
 
-        let direction = d.string(forKey: "widget_direction") ?? ""
+        // ONE call per distinct naptan, which is one call for every rail
+        // station and one per POLE at a bus hub — the poles are separate stops
+        // with separate ids and the endpoint is addressed by naptan. Capped:
+        // a hub with a dozen poles would spend the intent's whole window on
+        // network and be killed mid-flight.
+        //
+        // Derived BEFORE the guard so the guard tests what will actually be
+        // fetched. Testing `feeds.first` instead would bail on a board whose
+        // first feed happens to carry a blank naptan while the rest are fine.
+        var seenNaptans = Set<String>()
+        let naptans = feeds.map { $0.station }
+            .filter { !$0.isEmpty && seenNaptans.insert($0).inserted }
+            .prefix(maxNaptansPerRefresh)
+
+        guard !naptans.isEmpty,
+              let baseUrl = d.string(forKey: AppGroupKeys.apiBaseURL), !baseUrl.isEmpty,
+              let apiKey = d.string(forKey: AppGroupKeys.apiKey), !apiKey.isEmpty
+        else { return .unavailable }
 
         // Claim the window BEFORE awaiting: two taps landing together would
         // otherwise both pass the check above and both hit the network.
-        d.set(now, forKey: lastRefreshKey)
+        d.set(now, forKey: AppGroupKeys.lastManualRefresh)
 
         // NO in-flight/"loading" state is attempted here. Verified on device:
         // WidgetKit does not rasterise a reload requested from inside
         // `perform()` — the only render happens after perform() returns — so
         // a spinner or dimmed board is unreachable no matter how it's drawn.
         // What IS reachable is the OUTCOME, because it outlives perform();
-        // see `markFailed`, the `failedKey` clear on the success path, and the
+        // see `markFailed`, the refreshFailed clear on the success path, and the
         // header's warning glyph.
 
-        guard let url = URL(string: "\(baseUrl)/api/v1/stations/predictions/\(stationId)") else {
-            return .unavailable
-        }
-        var request = URLRequest(url: url)
-        request.setValue(apiKey, forHTTPHeaderField: "X-Stationly-Key")
-        request.timeoutInterval = 10
-
+        // Any naptan failing abandons the whole refresh, discarding what the
+        // earlier ones returned. Deliberate: half a board written over a whole
+        // one is a board that has silently lost a platform, and the retry glyph
+        // asks for a tap that will fix it.
         do {
-            trace("fetch \(stationId)/\(lineId)/\(direction)")
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                trace("http \((response as? HTTPURLResponse)?.statusCode ?? -1)")
-                markFailed()
-                return .failed
+            var rows: [DepartureRow] = []
+            for naptan in naptans {
+                guard let url = URL(string: "\(baseUrl)/api/v1/stations/predictions/\(naptan)") else {
+                    continue
+                }
+                var request = URLRequest(url: url)
+                request.setValue(apiKey, forHTTPHeaderField: "X-Stationly-Key")
+                request.timeoutInterval = 10
+
+                trace("fetch \(naptan) feeds=\(feeds.count)")
+                let (data, response) = try await session.data(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    trace("http \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+                    markFailed()
+                    return .failed
+                }
+                // Every (line, direction) this station tracks AT THIS NAPTAN,
+                // merged. The endpoint answers with every line calling there,
+                // so without the feed list a refresh would put lines on the
+                // board that the user never asked to track.
+                guard let mapped = mapPayload(
+                    data,
+                    feeds: feeds.filter { $0.station == naptan }
+                ) else {
+                    trace("decode-failed bytes=\(data.count)")
+                    markFailed()
+                    return .failed
+                }
+                rows.append(contentsOf: mapped)
             }
-            guard let rows = mapPayload(data, lineId: lineId, direction: direction) else {
-                trace("decode-failed bytes=\(data.count)")
-                markFailed()
-                return .failed
-            }
-            trace("rows=\(rows.count)")
+            // Re-group across naptans, so a bus hub's two poles interleave by
+            // platform exactly as KMP's GlobalBoardProcessor left them.
+            let merged = groupByPlatformSorted(rows)
+            trace("rows=\(merged.count)")
 
             // Only the rows and the timestamp change — station/line/mode
             // identity is owned by KMP and must not be rewritten from here.
-            let encoded = try JSONEncoder().encode(rows)
-            d.set(String(data: encoded, encoding: .utf8) ?? "[]", forKey: "widget_predictions")
-            d.set(now, forKey: "widget_last_updated")
-            d.set(d.integer(forKey: "widget_reload_signal") &+ 1, forKey: "widget_reload_signal")
+            let encoded = try JSONEncoder().encode(merged)
+            let encodedString = String(data: encoded, encoding: .utf8) ?? "[]"
+            if board.stationId.isEmpty {
+                // Legacy path: no configured station, so the flat keys ARE the
+                // board being shown.
+                d.set(encodedString, forKey: AppGroupKeys.predictions)
+                d.set(now, forKey: AppGroupKeys.lastUpdated)
+            } else {
+                writeBack(d, stationId: board.stationId, predictions: encodedString, at: now)
+            }
+            d.set(d.integer(forKey: AppGroupKeys.reloadSignal) &+ 1, forKey: AppGroupKeys.reloadSignal)
 
             // MUST flush before asking for a reload. cfprefsd can hold the
             // write in cache, and WidgetKit may regenerate the timeline in a
             // freshly-launched extension process that reads from disk — which
             // silently renders the PREVIOUS board despite the write having
             // "succeeded". KMP's IosWidgetManager.write ends the same way.
-            d.set(false, forKey: failedKey)
-            d.set(now, forKey: lastOkKey)
+            d.set(false, forKey: AppGroupKeys.refreshFailed)
+            d.set(now, forKey: AppGroupKeys.lastRefreshOk)
             d.synchronize()
 
-            trace("wrote ok")
+            trace("wrote ok \(board.stationId.isEmpty ? "legacy" : board.stationId)")
             WidgetCenter.shared.reloadTimelines(ofKind: StationlyDepartureBoardWidget.kind)
             return .refreshed
         } catch {
@@ -171,6 +225,44 @@ enum WidgetRefreshService {
             markFailed()
             return .failed
         }
+    }
+
+    private static let maxNaptansPerRefresh = 3
+
+    /// The single (line, direction) the pre-multi-station keys describe.
+    ///
+    /// Only reachable from a widget with no configured station — one added
+    /// before this build, or one whose station has been deleted. Kept because
+    /// dropping it would silently turn that widget's refresh button into a
+    /// no-op with nothing on screen to explain why.
+    private static func legacyFeed(_ d: UserDefaults) -> BoardFeed? {
+        guard let station = d.string(forKey: AppGroupKeys.stationId), !station.isEmpty,
+              let line = d.string(forKey: AppGroupKeys.lineName), !line.isEmpty
+        else { return nil }
+        return BoardFeed(station: station, line: line,
+                         direction: d.string(forKey: AppGroupKeys.direction) ?? "")
+    }
+
+    /// Patch the refreshed rows and timestamp into one station's stored board,
+    /// leaving every other field exactly as KMP wrote it.
+    ///
+    /// A read-modify-write of the JSON rather than a rewrite: identity (name,
+    /// mode, feeds, line) is the app's to own, and this process cannot
+    /// reconstruct it — it has no SQLite and no idea what the user tracks. Any
+    /// field it failed to copy back would silently vanish from the board.
+    private static func writeBack(_ d: UserDefaults, stationId: String,
+                                  predictions: String, at now: TimeInterval) {
+        let key = AppGroupKeys.board(stationId)
+        guard let raw = d.string(forKey: key),
+              let data = raw.data(using: .utf8),
+              var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let rows = (try? JSONSerialization.jsonObject(with: Data(predictions.utf8))) as? [Any]
+        else { return }
+        object["predictions"] = rows
+        object["lastUpdated"] = Int(now)
+        guard let out = try? JSONSerialization.data(withJSONObject: object),
+              let string = String(data: out, encoding: .utf8) else { return }
+        d.set(string, forKey: key)
     }
 
     // MARK: - Payload mapping (mirror of SyncPredictionsUseCase steps 1-5)
@@ -189,24 +281,38 @@ enum WidgetRefreshService {
         let lines: [String: Line]?
     }
 
-    static func mapPayload(_ data: Data, lineId: String, direction: String) -> [DepartureRow]? {
+    /// Every tracked (line, direction) at one naptan, merged.
+    ///
+    /// Takes a LIST because a widget is configured with a station and a station
+    /// can track several lines both ways — the same merge KMP does in
+    /// `IosWidgetManager.buildBoard`. Deduplication spans the whole list, so a
+    /// train appearing under two of the user's feeds is one row.
+    static func mapPayload(_ data: Data, feeds: [BoardFeed]) -> [DepartureRow]? {
         guard let payload = try? JSONDecoder().decode(PredictionsResponse.self, from: data),
               let lines = payload.lines else { return nil }
 
-        // Case-insensitive line then direction lookup, matching the Kotlin
-        // fallback chain (the API is not consistent about casing).
-        let lineKey = lineId.lowercased()
-        guard let line = lines[lineKey]
-                ?? lines.first(where: { $0.key.lowercased() == lineKey })?.value
-        else { return [] }
-
-        let dirs = line.dirs ?? [:]
-        let dirKey = direction.lowercased()
-        let preds = (dirs[direction] ?? dirs[dirKey]
-                     ?? dirs.first(where: { $0.key.lowercased() == dirKey })?.value)?.preds ?? []
-
         var seen = Set<String>()
         var mapped: [DepartureRow] = []
+        for feed in feeds {
+            // Case-insensitive line then direction lookup, matching the Kotlin
+            // fallback chain (the API is not consistent about casing).
+            let lineKey = feed.line.lowercased()
+            guard let line = lines[lineKey]
+                    ?? lines.first(where: { $0.key.lowercased() == lineKey })?.value
+            else { continue }
+
+            let dirs = line.dirs ?? [:]
+            let dirKey = feed.direction.lowercased()
+            let preds = (dirs[feed.direction] ?? dirs[dirKey]
+                         ?? dirs.first(where: { $0.key.lowercased() == dirKey })?.value)?.preds ?? []
+            mapRows(preds, into: &mapped, seen: &seen)
+        }
+        return groupByPlatformSorted(mapped)
+    }
+
+    private static func mapRows(_ preds: [PredictionsResponse.Pred],
+                                into mapped: inout [DepartureRow],
+                                seen: inout Set<String>) {
         for p in preds {
             let target = parseTargetEpochMs(p.eta)
             // "Unknown" is legacy for an unassigned stop; everything else is
@@ -233,8 +339,6 @@ enum WidgetRefreshService {
                 targetEpochMs: target.map(Double.init)
             ))
         }
-
-        return groupByPlatformSorted(mapped)
     }
 
     /// Mirror of GlobalBoardProcessor.processPredictions: rows sorted by

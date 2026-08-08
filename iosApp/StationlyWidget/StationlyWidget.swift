@@ -9,7 +9,18 @@ private let providerLog = Logger(subsystem: "com.stationly.mobile.StationlyWidge
 
 // MARK: - TimelineProvider
 
-struct DepartureBoardProvider: TimelineProvider {
+/// One widget, one station — chosen in the widget's own configuration.
+///
+/// This was a `TimelineProvider` reading a single set of flat App Group keys,
+/// which meant every widget on the home screen showed the same board (the
+/// app's primary station) and adding a second one was pointless. It is now an
+/// `AppIntentTimelineProvider`: `configuration.station` says which board to
+/// read, exactly as the Weather widget's configuration says which city.
+///
+/// An unconfigured widget resolves to the first station via
+/// `StationEntityQuery.defaultResult()`, so nothing added before this build
+/// changes what it shows.
+struct DepartureBoardProvider: AppIntentTimelineProvider {
 
     // Called immediately when the widget is added to the home screen.
     // Returns hard-coded placeholder data so the widget renders without delay.
@@ -19,9 +30,11 @@ struct DepartureBoardProvider: TimelineProvider {
 
     // Called for the widget gallery preview. Uses placeholder in preview mode,
     // real App Group data otherwise.
-    func getSnapshot(in context: Context, completion: @escaping (DepartureEntry) -> Void) {
-        let data = context.isPreview ? WidgetData.placeholder : AppGroupStorage.shared.readWidgetData()
-        completion(DepartureEntry(date: Date(), widgetData: data))
+    func snapshot(for configuration: SelectStationIntent, in context: Context) async -> DepartureEntry {
+        let data = context.isPreview
+            ? WidgetData.placeholder
+            : AppGroupStorage.shared.readWidgetData(stationId: configuration.station?.id)
+        return DepartureEntry(date: Date(), widgetData: data)
     }
 
     // Called when WidgetKit needs a fresh set of entries to display.
@@ -38,9 +51,9 @@ struct DepartureBoardProvider: TimelineProvider {
     // second on its own (`.timer` Text, see LiveClock); the per-minute entries
     // re-anchor it across midnight. `.atEnd` re-reads the App Group once an
     // hour (~24 refreshes/day, comfortably inside budget).
-    func getTimeline(in context: Context, completion: @escaping (Timeline<DepartureEntry>) -> Void) {
-        let data = AppGroupStorage.shared.readWidgetData()
-        providerLog.notice("getTimeline family=\(String(describing: context.family), privacy: .public) station=\(data.stationName.isEmpty ? "<none>" : "set", privacy: .public) deps=\(data.departures.count) statusLen=\(data.status.count)")
+    func timeline(for configuration: SelectStationIntent, in context: Context) async -> Timeline<DepartureEntry> {
+        let data = AppGroupStorage.shared.readWidgetData(stationId: configuration.station?.id)
+        providerLog.notice("timeline family=\(String(describing: context.family), privacy: .public) station=\(data.stationName.isEmpty ? "<none>" : "set", privacy: .public) id=\(data.stationId, privacy: .public) deps=\(data.departures.count) statusLen=\(data.status.count)")
 
         // Align entries to minute boundaries so the clock flips exactly on the minute.
         let calendar = Calendar.current
@@ -66,8 +79,20 @@ struct DepartureBoardProvider: TimelineProvider {
                     widgetData: data.ticked(at: date, keepAtLeast: slotsPerPlatform)))
             }
         }
-        providerLog.notice("getTimeline family=\(String(describing: context.family), privacy: .public) returning \(entries.count) entries")
-        completion(Timeline(entries: entries, policy: .atEnd))
+        providerLog.notice("timeline returning \(entries.count) entries")
+        return Timeline(entries: entries, policy: .atEnd)
+    }
+
+    /// Puts the station's name on the widget in the home-screen editor's
+    /// carousel of configured widgets, so three Stationly widgets are told
+    /// apart while being arranged.
+    func recommendations() -> [AppIntentRecommendation<SelectStationIntent>] {
+        AppGroupStorage.shared.readStations().map { station in
+            AppIntentRecommendation(
+                intent: SelectStationIntent(station: station),
+                description: Text(station.name)
+            )
+        }
     }
 }
 
@@ -77,11 +102,15 @@ struct StationlyDepartureBoardWidget: Widget {
     static let kind = "StationlyDepartureBoardWidget"
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: Self.kind, provider: DepartureBoardProvider()) { entry in
+        AppIntentConfiguration(
+            kind: Self.kind,
+            intent: SelectStationIntent.self,
+            provider: DepartureBoardProvider()
+        ) { entry in
             DepartureBoardEntryView(entry: entry)
         }
         .configurationDisplayName("Stationly Departures")
-        .description("Live TfL departure board for your saved station.")
+        .description("Live TfL departures. Add one per station.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         // The black dot-matrix panel IS the product identity — keep it under
         // the amber text everywhere (StandBy, lock screen contexts) instead of

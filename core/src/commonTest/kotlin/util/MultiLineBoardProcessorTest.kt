@@ -1,6 +1,9 @@
 package util
 
 import com.stationly.core.model.PredictionDisplay
+import com.stationly.core.util.BoardDisplayPrefs
+import com.stationly.core.util.BoardPin
+import com.stationly.core.util.BoardSort
 import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.MultiLineBoardProcessor.Row
 import kotlin.test.Test
@@ -279,6 +282,280 @@ class MultiLineBoardProcessorTest {
         )
         assertTrue(rows.isEmpty(), "the caller substitutes the board-wide fallback copy")
     }
+    // ── Arrangement: the user's own sort, depth and pin ──
+    //
+    // Every case here guards the same invariant from a different angle: a
+    // setting may reorder blocks, reorder rows INSIDE a block, or promote a
+    // block — and nothing may dissolve the grouping or change WHICH trains the
+    // board picked.
+
+    @Test
+    fun `sorts platform blocks by number so that ten follows nine`() {
+        // Reverse-ordered by time on purpose: under the default sort this board
+        // reads 10, 9, 2. A string sort would read 10, 2, 9, which is the bug
+        // this pins.
+        val rows = MultiLineBoardProcessor.buildRows(
+            feeds = listOf(
+                feed("northern", predictions = listOf(
+                    pred("A", 1, platform = "Platform 10"),
+                    pred("B", 2, platform = "Platform 9"),
+                    pred("C", 3, platform = "Platform 2"),
+                ))
+            ),
+            isBus = false,
+            prefs = BoardDisplayPrefs(sort = BoardSort.PLATFORM),
+        )
+        assertEquals(
+            listOf("Northern Platform 2 Northbound", "Northern Platform 9 Northbound",
+                "Northern Platform 10 Northbound"),
+            headers(rows),
+        )
+    }
+
+    @Test
+    fun `platform sort leaves the trains inside a platform in arrival order`() {
+        // There is no platform left to order by once you are on one.
+        val rows = MultiLineBoardProcessor.buildRows(
+            feeds = listOf(
+                feed("victoria", predictions = listOf(
+                    pred("Later", 5), pred("Soonest", 1), pred("Middle", 3),
+                ))
+            ),
+            isBus = false,
+            prefs = BoardDisplayPrefs(sort = BoardSort.PLATFORM),
+        )
+        assertEquals(listOf("Soonest", "Middle", "Later"), realDepartures(rows).map { it.destination })
+    }
+
+    @Test
+    fun `destination sort puts every train to the same place together`() {
+        val rows = MultiLineBoardProcessor.buildRows(
+            feeds = listOf(
+                feed("victoria", predictions = listOf(
+                    pred("Brixton", 2), pred("Morden", 4), pred("Brixton", 6),
+                ))
+            ),
+            isBus = false,
+            prefs = BoardDisplayPrefs(sort = BoardSort.DESTINATION),
+        )
+        assertEquals(
+            listOf("Brixton", "Brixton", "Morden"),
+            realDepartures(rows).map { it.destination },
+            "the two Brixton trains are the comparison the user is making",
+        )
+    }
+
+    @Test
+    fun `destination sort still shows the SOONEST trains — not the alphabetical ones`() {
+        // The cap picks which trains; the sort only arranges them. Applied the
+        // other way round this board would be two trains twenty minutes out with
+        // no sign of the one leaving now.
+        val rows = MultiLineBoardProcessor.buildRows(
+            feeds = listOf(
+                feed("piccadilly", predictions = listOf(
+                    pred("Zebra", 1), pred("Alpha", 20), pred("Beta", 25),
+                ))
+            ),
+            isBus = false,
+            prefs = BoardDisplayPrefs(sort = BoardSort.DESTINATION, rowsPerPlatform = 2),
+        )
+        assertEquals(listOf("Alpha", "Zebra"), realDepartures(rows).map { it.destination })
+    }
+
+    @Test
+    fun `shows as many departures per platform as the user asked for`() {
+        val eight = (1..8).map { pred("Morden", it) }
+        listOf(2, 3, 4, 5).forEach { asked ->
+            val rows = MultiLineBoardProcessor.buildRows(
+                feeds = listOf(feed("northern", predictions = eight)),
+                isBus = false,
+                prefs = BoardDisplayPrefs(rowsPerPlatform = asked),
+            )
+            assertEquals(asked, realDepartures(rows).size, "asked for $asked per platform")
+        }
+    }
+
+    @Test
+    fun `clamps a stored row count that is outside the range now offered`() {
+        // A value can arrive from a build whose limits differed. A board
+        // rendering twelve rows because an old preference said so is worse than
+        // one that quietly honours today's range.
+        val twelve = (1..12).map { pred("Morden", it) }
+        val tooMany = MultiLineBoardProcessor.buildRows(
+            feeds = listOf(feed("northern", predictions = twelve)),
+            isBus = false,
+            prefs = BoardDisplayPrefs(rowsPerPlatform = 12),
+        )
+        assertEquals(BoardDisplayPrefs.MAX_ROWS_PER_PLATFORM, realDepartures(tooMany).size)
+
+        val tooFew = MultiLineBoardProcessor.buildRows(
+            feeds = listOf(feed("northern", predictions = twelve)),
+            isBus = false,
+            prefs = BoardDisplayPrefs(rowsPerPlatform = 0),
+        )
+        assertEquals(BoardDisplayPrefs.MIN_ROWS_PER_PLATFORM, realDepartures(tooFew).size)
+    }
+
+    @Test
+    fun `a pinned platform leads the board however far off its trains are`() {
+        val rows = MultiLineBoardProcessor.buildRows(
+            feeds = listOf(
+                feed("northern", predictions = listOf(
+                    pred("Soon", 1, platform = "Platform 1"),
+                    pred("Later", 12, platform = "Platform 9"),
+                ))
+            ),
+            isBus = false,
+            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.PLATFORM, "Platform 9")),
+        )
+        assertTrue(headers(rows).first().contains("Platform 9"))
+        assertTrue(headers(rows).last().contains("Platform 1"), "the rest keep their own order")
+    }
+
+    @Test
+    fun `a pinned line promotes EVERY platform it calls at`() {
+        // A line at an interchange is genuinely on two platforms. Promoting one
+        // of them answers "show me my line" with half of it.
+        val rows = MultiLineBoardProcessor.buildRows(
+            feeds = listOf(
+                feed("northern", predictions = listOf(pred("Morden", 1, platform = "Platform 1"))),
+                feed("victoria", predictions = listOf(
+                    pred("Brixton", 6, platform = "Platform 3"),
+                    pred("Brixton", 4, platform = "Platform 6"),
+                )),
+            ),
+            isBus = false,
+            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.LINE, "victoria")),
+        )
+        assertEquals(
+            listOf("Victoria Platform 6 Northbound", "Victoria Platform 3 Northbound",
+                "Northern Platform 1 Northbound"),
+            headers(rows),
+            "both Victoria blocks lead — soonest first between them",
+        )
+    }
+
+    @Test
+    fun `an unassigned platform stays last even when the pinned line is on it`() {
+        // A pin is a preference. "You cannot go and stand on a platform TfL has
+        // not allocated" is a fact, and facts outrank preferences.
+        val rows = MultiLineBoardProcessor.buildRows(
+            feeds = listOf(
+                feed("elizabeth", predictions = listOf(
+                    pred("Soon", 0, platform = "Platform not assigned"),
+                    pred("Later", 8, platform = "Platform 3"),
+                )),
+            ),
+            isBus = false,
+            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.LINE, "elizabeth")),
+        )
+        assertTrue(headers(rows).last().contains("not assigned"))
+    }
+
+    @Test
+    fun `a pin that matches nothing tonight leaves the board exactly as it was`() {
+        val feeds = listOf(
+            feed("northern", predictions = listOf(
+                pred("Soon", 1, platform = "Platform 1"),
+                pred("Later", 12, platform = "Platform 9"),
+            ))
+        )
+        val pinned = MultiLineBoardProcessor.buildRows(
+            feeds = feeds,
+            isBus = false,
+            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.PLATFORM, "Platform 99")),
+        )
+        assertEquals(headers(MultiLineBoardProcessor.buildRows(feeds, isBus = false)), headers(pinned),
+            "the platform will be back tomorrow — the setting waits rather than being pruned")
+    }
+
+    @Test
+    fun `a pinned platform survives the two-leg cap on a collapsed card`() {
+        // Otherwise "show first" silently does nothing for anyone whose stations
+        // are collapsed by default, which reads as a broken setting.
+        val legs = MultiLineBoardProcessor.collapsedLegs(
+            feeds = listOf(
+                feed("victoria", predictions = listOf(pred("Brixton", 1, platform = "Platform 1"))),
+                feed("northern", predictions = listOf(pred("Morden", 2, platform = "Platform 2"))),
+                feed("central", predictions = listOf(pred("Epping", 9, platform = "Platform 7"))),
+            ),
+            isBus = false,
+            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.PLATFORM, "Platform 7")),
+        )
+        assertEquals(listOf("Epping", "Brixton"), legs.map { it.towards })
+    }
+
+    @Test
+    fun `collapsed legs ignore the sort — the two shown are always the soonest`() {
+        // A leg answers "what can I catch". Ordering by platform number would
+        // pick the two lowest-numbered platforms, which is a different question.
+        val legs = MultiLineBoardProcessor.collapsedLegs(
+            feeds = listOf(
+                feed("victoria", predictions = listOf(pred("Brixton", 9, platform = "Platform 1"))),
+                feed("northern", predictions = listOf(pred("Morden", 1, platform = "Platform 8"))),
+                feed("central", predictions = listOf(pred("Epping", 2, platform = "Platform 9"))),
+            ),
+            isBus = false,
+            prefs = BoardDisplayPrefs(sort = BoardSort.PLATFORM),
+        )
+        assertEquals(listOf("Morden", "Epping"), legs.map { it.towards })
+    }
+
+    // ── What the "show first" picker is allowed to offer ──
+
+    @Test
+    fun `offers the platforms the board has actually shown — in number order`() {
+        // Number order, never time order: this is a list someone reads and picks
+        // from, and ordering it by whose train is soonest would rearrange it
+        // under their finger every time the board refreshed.
+        val platforms = MultiLineBoardProcessor.pinnablePlatforms(
+            feeds = listOf(
+                feed("northern", predictions = listOf(
+                    pred("A", 1, platform = "Platform 10"),
+                    pred("B", 2, platform = "Platform 2"),
+                    pred("C", 3, platform = "Platform 2"),
+                ))
+            ),
+            isBus = false,
+        )
+        assertEquals(listOf("Platform 2", "Platform 10"), platforms)
+    }
+
+    @Test
+    fun `never offers an unassigned platform — pinning one could not do anything`() {
+        val platforms = MultiLineBoardProcessor.pinnablePlatforms(
+            feeds = listOf(
+                feed("elizabeth", predictions = listOf(
+                    pred("A", 1, platform = "Platform not assigned"),
+                    pred("B", 2, platform = "Platform 3"),
+                ))
+            ),
+            isBus = false,
+        )
+        assertEquals(listOf("Platform 3"), platforms)
+    }
+
+    @Test
+    fun `offers nothing for an unlettered bus stop, which has no label to show`() {
+        val platforms = MultiLineBoardProcessor.pinnablePlatforms(
+            feeds = listOf(
+                feed("39", stationId = "490008805N",
+                    predictions = listOf(pred("Putney", 3, platform = ""))),
+            ),
+            isBus = true,
+        )
+        assertTrue(platforms.isEmpty(), "a blank chip is worse than no chip")
+    }
+
+    @Test
+    fun `bus mode is decided in one place`() {
+        assertTrue(MultiLineBoardProcessor.isBus("bus"))
+        assertTrue(MultiLineBoardProcessor.isBus("Bus"))
+        assertTrue(MultiLineBoardProcessor.isBus(" bus "))
+        assertTrue(!MultiLineBoardProcessor.isBus("tube"))
+        assertTrue(!MultiLineBoardProcessor.isBus(null))
+    }
+
     // ── Collapsed legs: the whole board as one line per direction ──
 
     @Test

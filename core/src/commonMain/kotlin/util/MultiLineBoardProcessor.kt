@@ -3,6 +3,17 @@ package com.stationly.core.util
 import com.stationly.core.model.PredictionDisplay
 
 /**
+ * One block of the board — a platform (rail) or a pole (bus) — as it exists
+ * while the rows are being built: the group key, and every departure in it
+ * paired with the feed it came from.
+ *
+ * Named only so the ordering rules below can be written as comparators over
+ * something readable; `Map.Entry<String, List<Pair<PredictionDisplay, Feed>>>`
+ * repeated four times obscures which of the three is being compared.
+ */
+private typealias Block = Map.Entry<String, List<Pair<PredictionDisplay, MultiLineBoardProcessor.Feed>>>
+
+/**
  * Builds ONE departure board out of the several lines a user tracks at a station.
  *
  * ## What a board is
@@ -34,10 +45,10 @@ object MultiLineBoardProcessor {
     /**
      * TWO SEPARATE LIMITS, and conflating them is the easy mistake here.
      *
-     * [MAX_ROWS_PER_PLATFORM] is a CEILING, applied per platform: you only ever
-     * need the next few trains from the platform you are standing on, and a
+     * [BoardDisplayPrefs.rowCap] is a CEILING, applied per platform: you only
+     * ever need the next few trains from the platform you are standing on, and a
      * platform with twelve queued departures would otherwise push every other
-     * platform off the board.
+     * platform off the board. It is the one of the two the USER sets.
      *
      * [MIN_BOARD_ROWS] is a FLOOR, applied once to the WHOLE board: it keeps the
      * panel from collapsing to a sliver as the last trains of the night drop off.
@@ -49,11 +60,13 @@ object MultiLineBoardProcessor {
      * real plus one pad reaches the floor of three. A board showing three
      * platforms with two trains each gets NO blanks at all: six rows already
      * clears the floor, even though no single platform reaches three.
+     *
+     * The floor is deliberately NOT a setting. "How short may the panel get
+     * before it stops looking like a board" is a layout fact the user has no way
+     * to reason about, and a floor above the ceiling is a state a settings screen
+     * would have to defend against for no gain.
      */
     const val MIN_BOARD_ROWS = 3
-
-    /** Ceiling per platform — see [MIN_BOARD_ROWS] for how the two interact. */
-    const val MAX_ROWS_PER_PLATFORM = 3
 
     /**
      * One tracked line/direction at this station, plus its departures.
@@ -96,6 +109,19 @@ object MultiLineBoardProcessor {
             val eta: String,
         ) : Row()
     }
+
+    /**
+     * Whether a station groups by POLE rather than by platform.
+     *
+     * Every rule in this file that differs for buses hangs off this one
+     * question, and it was being asked with a copy of the same string literal
+     * at four call sites (the board, the panel, the settings screen, its
+     * ViewModel). They agreed only by coincidence, and a fifth caller spelling
+     * it `"Bus"` would have grouped a bus board by platform — which at an
+     * unlettered stop means every pole collapsing into one block, the exact bug
+     * [groupKeyFor] documents.
+     */
+    fun isBus(mode: String?): Boolean = mode?.trim().equals("bus", ignoreCase = true)
 
     /**
      * Group identity for one departure.
@@ -277,12 +303,91 @@ object MultiLineBoardProcessor {
     }
 
     /**
-     * The board's rows: a header per platform/stop, its departures in arrival
-     * order beneath it, groups ordered by whichever has the soonest train.
+     * The order the blocks appear in, which is the ONLY level [BoardDisplayPrefs]
+     * is allowed to touch besides the depth of each one.
+     *
+     * Three keys, and the sequence of them is the design:
+     *
+     *  1. **Unassigned platforms last, absolutely** — see [isUnassigned]. This
+     *     sits ABOVE the pin on purpose: a pin is a preference, and "you cannot
+     *     go and stand on a platform TfL has not allocated yet" is a fact. The
+     *     case it guards is a pinned LINE whose only departures are unallocated,
+     *     which would otherwise promote a block nobody can act on to the top of
+     *     the board. (A pinned PLATFORM never collides with this — an unassigned
+     *     block has no label for the picker to have offered.)
+     *  2. **The pin** — one block, or every block carrying a pinned line.
+     *  3. **The chosen sort.** Time reads the soonest ABSOLUTE arrival, never the
+     *     `eta` label: the label is rounded AND deliberately bumped so
+     *     same-platform trains don't collide, so it does not round-trip back to a
+     *     sortable number. Platform reads the number out of the label so that 10
+     *     follows 9.
+     */
+    private fun groupOrder(isBus: Boolean, prefs: BoardDisplayPrefs): Comparator<Block> {
+        val label: (Block) -> String = { block -> groupLabelFor(block.value.first().first, isBus) }
+        val base = compareBy<Block> { if (isUnassigned(label(it))) 1 else 0 }
+            .thenBy { if (isPinned(it, isBus, prefs.pin)) 0 else 1 }
+        return when (prefs.sort) {
+            BoardSort.PLATFORM -> base
+                .thenBy { platformNumber(label(it)) }
+                // Lettered and unnumbered blocks ("Stop C") have no number to
+                // order by and would otherwise sit in map order, which is
+                // arbitrary and changes as departures arrive.
+                .thenBy { label(it).lowercase() }
+            BoardSort.TIME, BoardSort.DESTINATION -> base.thenBy { block ->
+                block.value.mapNotNull { (p, _) -> p.targetEpochMs }.minOrNull() ?: Long.MAX_VALUE
+            }
+        }
+    }
+
+    /** Whether [pin] names this block — by its platform label, or by a line calling at it. */
+    private fun isPinned(block: Block, isBus: Boolean, pin: BoardPin?): Boolean {
+        if (pin == null || pin.id.isBlank()) return false
+        return when (pin.kind) {
+            BoardPin.Kind.PLATFORM -> groupLabelFor(block.value.first().first, isBus)
+                .trim().equals(pin.id.trim(), ignoreCase = true)
+            // Every block this line calls at, not just the first — at an
+            // interchange a line is genuinely on two platforms, and promoting
+            // one of them would be answering "show me my line" with half of it.
+            BoardPin.Kind.LINE -> block.value.any { (_, feed) ->
+                feed.line.trim().equals(pin.id.trim(), ignoreCase = true)
+            }
+        }
+    }
+
+    /**
+     * The number inside a platform label, for ordering — 10 must follow 9.
+     *
+     * The first run of digits anywhere in the string, so it survives whatever the
+     * backend wraps it in ("Platform 4", "Westbound Platform 4a"). Labels with no
+     * number at all sort after every numbered one rather than at position zero:
+     * "Stop C" belongs at the end of a numeric list, not the start of it.
+     */
+    private fun platformNumber(label: String): Int {
+        var start = 0
+        while (start < label.length && !label[start].isDigit()) start++
+        if (start == label.length) return Int.MAX_VALUE
+        var end = start
+        while (end < label.length && label[end].isDigit()) end++
+        return label.substring(start, end).toIntOrNull() ?: Int.MAX_VALUE
+    }
+
+    /**
+     * The board's rows: a header per platform/stop, its departures beneath it,
+     * arranged according to [prefs].
+     *
+     * Defaults reproduce the board exactly as it was before it had settings:
+     * blocks led by their soonest train, rows in arrival order, three per
+     * platform, nothing pinned.
      *
      * @param isBus buses group by stop and never show a direction suffix.
+     * @param prefs this station's arrangement — see [BoardDisplayPrefs] for why
+     *   nothing in it can change the GROUPING, only the order and the depth.
      */
-    fun buildRows(feeds: List<Feed>, isBus: Boolean): List<Row> {
+    fun buildRows(
+        feeds: List<Feed>,
+        isBus: Boolean,
+        prefs: BoardDisplayPrefs = BoardDisplayPrefs(),
+    ): List<Row> {
         // Flatten first, keeping each departure's feed so the row can name its
         // line and the header can collect the group's lines and directions.
         val all = feeds.flatMap { feed -> feed.predictions.map { it to feed } }
@@ -290,19 +395,7 @@ object MultiLineBoardProcessor {
 
         val groups = all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus) }
             .entries
-            .sortedWith(
-                // Unassigned platforms sink to the bottom whatever their times —
-                // see isUnassigned. Everything else is ordered by its soonest
-                // departure, on the absolute arrival time and never the `eta`
-                // label: the label is rounded AND deliberately bumped so
-                // same-platform trains don't collide, so it does not round-trip
-                // back to a sortable number.
-                compareBy<Map.Entry<String, List<Pair<PredictionDisplay, Feed>>>> { (_, entries) ->
-                    if (isUnassigned(groupLabelFor(entries.first().first, isBus))) 1 else 0
-                }.thenBy { (_, entries) ->
-                    entries.mapNotNull { (p, _) -> p.targetEpochMs }.minOrNull() ?: Long.MAX_VALUE
-                }
-            )
+            .sortedWith(groupOrder(isBus, prefs))
 
         val rows = mutableListOf<Row>()
         var departureCount = 0
@@ -340,8 +433,28 @@ object MultiLineBoardProcessor {
             // Buses never take a client-side prefix: the backend appends the
             // route number to the destination itself ("53 Nags Head"), so adding
             // one here would double it up.
+            //
+            // ── The cap picks WHICH trains; the sort decides what ORDER they
+            // are shown in, and that order is applied AFTERWARDS ──
+            //
+            // Taking from anything but the time-ordered list is the bug waiting
+            // here: cap 3 applied to a destination-sorted platform keeps the
+            // three alphabetically-first destinations, which at Green Park means
+            // three Cockfosters trains an hour out and no sign of the Uxbridge
+            // one leaving now. The user asked for their trains to be grouped by
+            // where they go, not to be shown a different set of trains.
+            //
             // Ceiling per platform — NOT the board floor. See MIN_BOARD_ROWS.
-            sorted.take(MAX_ROWS_PER_PLATFORM).forEach { (prediction, feed) ->
+            val shown = sorted.take(prefs.rowCap).let { picked ->
+                if (prefs.sort == BoardSort.DESTINATION) {
+                    picked.sortedWith(
+                        compareBy<Pair<PredictionDisplay, Feed>> { (p, _) ->
+                            p.destination.trim().lowercase()
+                        }.thenBy { (p, _) -> StationlyFormatters.arrivalSortKey(p) }
+                    )
+                } else picked
+            }
+            shown.forEach { (prediction, feed) ->
                 rows.add(
                     Row.Departure(
                         // Bracketed short form — "(Cir.) Edgware Road". The
@@ -365,6 +478,34 @@ object MultiLineBoardProcessor {
             rows.add(Row.Departure("", " ", " "))
         }
         return rows
+    }
+
+    /**
+     * The platform (or bus stop) labels a user could sensibly pin, for the "show
+     * first" picker on the settings screen.
+     *
+     * Read off the board itself rather than from anything configured, because a
+     * platform is not a thing the user configures — TfL decides it, and the only
+     * honest list is the one their board has actually been showing.
+     *
+     * Two rules, both of which exist so the picker cannot offer a choice that
+     * does nothing:
+     *  - **Unassigned and unlabelled blocks are left out.** [buildRows] sinks
+     *    unassigned platforms to the bottom regardless of any pin, so offering
+     *    one would be offering a setting guaranteed to have no effect.
+     *  - **Ordered by platform number, never by time.** This is a list someone
+     *    reads and picks from; ordered by whose train is soonest it would
+     *    rearrange itself under their finger every time the board refreshed.
+     */
+    fun pinnablePlatforms(feeds: List<Feed>, isBus: Boolean): List<String> {
+        val all = feeds.flatMap { feed -> feed.predictions.map { it to feed } }
+        if (all.isEmpty()) return emptyList()
+        return all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus) }
+            .entries
+            .sortedWith(groupOrder(isBus, BoardDisplayPrefs(sort = BoardSort.PLATFORM)))
+            .map { block -> groupLabelFor(block.value.first().first, isBus).trim() }
+            .filter { it.isNotBlank() && !isUnassigned(it) }
+            .distinct()
     }
 
     /**
@@ -398,18 +539,41 @@ object MultiLineBoardProcessor {
      * Ordered on [StationlyFormatters.arrivalSortKey] and never on the `eta`
      * label — the label is rounded and deliberately bumped, so ordering by it
      * would put the wrong train first exactly when two are close.
+     *
+     * ## What [prefs] does and does not reach here
+     * Only [BoardPin]. A pinned block leads the legs and, more importantly,
+     * survives the cap: at a four-platform station the two soonest legs may be
+     * two platforms the user never uses, and a "show first" that quietly does
+     * nothing on the collapsed card is a setting that appears broken to anyone
+     * whose stations are collapsed by default.
+     *
+     * [BoardSort] deliberately does NOT apply. A leg answers "what can I catch",
+     * so the two shown must be the two SOONEST — ordering by platform number
+     * would pick the two lowest-numbered platforms instead, which is a different
+     * question and a worse answer. There is no destination level to sort at
+     * either: a leg is already one departure.
      */
-    fun collapsedLegs(feeds: List<Feed>, isBus: Boolean): List<Leg> {
+    fun collapsedLegs(
+        feeds: List<Feed>,
+        isBus: Boolean,
+        prefs: BoardDisplayPrefs = BoardDisplayPrefs(),
+    ): List<Leg> {
         val all = feeds.flatMap { feed -> feed.predictions.map { it to feed } }
         if (all.isEmpty()) return emptyList()
 
         return all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus) }
-            .values
-            .mapNotNull { group ->
-                group.minByOrNull { (p, _) -> StationlyFormatters.arrivalSortKey(p) }
+            .entries
+            .mapNotNull { block ->
+                block.value.minByOrNull { (p, _) -> StationlyFormatters.arrivalSortKey(p) }
+                    ?.let { soonest -> block to soonest }
             }
-            .sortedBy { (p, _) -> StationlyFormatters.arrivalSortKey(p) }
+            .sortedWith(
+                compareBy<Pair<Block, Pair<PredictionDisplay, Feed>>> { (block, _) ->
+                    if (isPinned(block, isBus, prefs.pin)) 0 else 1
+                }.thenBy { (_, soonest) -> StationlyFormatters.arrivalSortKey(soonest.first) }
+            )
             .take(MAX_COLLAPSED_LEGS)
+            .map { (_, soonest) -> soonest }
             .map { (prediction, feed) ->
                 Leg(
                     line = feed.line,

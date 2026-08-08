@@ -1,6 +1,7 @@
 package com.stationly.app.ui.util
 
 import com.stationly.core.platform.Platform
+import com.stationly.core.util.BoardDisplayPrefs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -80,6 +81,22 @@ data class StationPrefs(
      * it is a large empty box, and the rows it costs are the ones you wanted.
      */
     val hideHero: Boolean = false,
+    /**
+     * How this station's board is arranged: what it is ordered by, how many
+     * departures each platform shows, and which block leads.
+     *
+     * Per-station rather than app-wide because the answer genuinely differs per
+     * station and not per person. At the one you commute from you know your
+     * platform and want it first with five trains on it; at the interchange you
+     * pass through twice a year you want whatever is leaving soonest. An app-wide
+     * version of this would be right for one of them and wrong for the other.
+     *
+     * The rules live in [BoardDisplayPrefs] and are applied by
+     * `MultiLineBoardProcessor` in core, where they are testable. Nothing here
+     * can change the platform GROUPING — see that file for why that is the one
+     * thing the settings screen does not offer.
+     */
+    val board: BoardDisplayPrefs = BoardDisplayPrefs(),
 )
 
 /**

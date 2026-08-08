@@ -13,6 +13,7 @@ import com.stationly.core.usecase.FormatDeparturesUseCase
 import com.stationly.core.usecase.ProcessFcmPayloadUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.core.util.GlobalBoardProcessor
+import com.stationly.core.util.LineShortNames
 import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,7 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
@@ -75,6 +77,44 @@ object AppGroupKeys {
     const val WIDGET_API_BASE_URL     = "widget_api_base_url"
     const val WIDGET_API_KEY          = "widget_api_key"
 
+    // ── Multi-station widgets ──
+    //
+    // A widget is configured with ONE station (the iOS Weather model: several
+    // widgets, each pinned to a place), so the App Group has to carry EVERY
+    // tracked station rather than just the primary. Two keys do it:
+    //
+    //  - [WIDGET_STATIONS] is the directory the configuration picker reads —
+    //    id, name, mode, lines. Small, and read while the user is in the widget
+    //    editor, which is a context where the app may not be running at all.
+    //  - [WIDGET_BOARD_PREFIX] + grouping id is one station's whole board.
+    //    Keyed rather than nested in one blob so a push touching one station
+    //    rewrites one key: NSUserDefaults has no partial write, and re-encoding
+    //    every station's departures on every frame of a live stream is work
+    //    that scales with how many boards the user keeps.
+    //
+    // The legacy single-board keys above are still written for the primary
+    // station. They are what a widget added before this build reads, and the
+    // window between installing the update and WidgetKit next asking for a
+    // timeline is exactly when a half-migrated App Group would show "No station
+    // set" on a widget that was working a second ago.
+    const val WIDGET_STATIONS         = "widget_stations"
+    const val WIDGET_BOARD_PREFIX     = "widget_board_"
+
+    // Written by the EXTENSION (which platform the medium board is showing for
+    // a station, and which way it last moved), declared here because their
+    // LIFETIME is the station's: KMP is the only side with an event for "this
+    // station is gone", so it is the only side that can clean them up.
+    // Mirrored in the widget target's own AppGroupKeys.swift.
+    //
+    // NOT `widget_board_page_…`, which is what these were first called. That
+    // name sits UNDER [WIDGET_BOARD_PREFIX], so any code that ever scans by
+    // that prefix reads `widget_board_page_940GZZ…` as a station whose id is
+    // `page_940GZZ…`. Nothing does today — the stale-key sweep diffs the
+    // directory instead — but the trap would be invisible until someone
+    // reintroduced a prefix scan, and by then it deletes real boards.
+    const val WIDGET_PAGE_PREFIX     = "widget_page_"
+    const val WIDGET_PAGE_DIR_PREFIX = "widget_page_dir_"
+
     // FCM topic management — written by KMP, processed by Swift FCMBridge
     const val FCM_TOPICS              = "fcm_topics"
     const val FCM_SUBSCRIBE_PENDING   = "fcm_subscribe_pending"
@@ -116,29 +156,61 @@ class IosWidgetManager : WidgetManager {
     private val appGroupDefaults: NSUserDefaults?
         get() = NSUserDefaults(suiteName = APP_GROUP_ID)
 
-    // Android parity (pull model): AndroidWidgetManager ignores the state it
-    // is handed — every method just broadcasts ACTION_UPDATE_WIDGET and the
-    // provider re-reads the PRIMARY (first) selection from SQL at render
-    // time. iOS has no provider process, so the re-read happens here: every
-    // trigger (FCM write, the home VM reloading ANY board, station add or
-    // remove) rewrites the App Group from the primary selection's SQL state.
-    // Writing the caller's state verbatim made the widget "last writer
-    // wins" — the home VM reloading a second board put a non-primary station
-    // on the widget, and deleting one of two boards blanked it.
-    override suspend fun updateWidget(state: WidgetState) = refreshFromPrimary()
+    /**
+     * Android parity (PULL model): `AndroidWidgetManager` ignores the state it
+     * is handed — every method broadcasts `ACTION_UPDATE_WIDGET` and the
+     * provider re-reads from SQL at render time. iOS has no provider process,
+     * so the re-read happens here: every trigger (a stream frame, an FCM push,
+     * the home VM reloading ANY board, a station added or removed) rebuilds the
+     * App Group from SQL.
+     *
+     * **[state] is deliberately unused, and must stay that way.** Writing the
+     * caller's state verbatim made the widget last-writer-wins: the home VM
+     * reloading its second board put a non-primary station on the widget, and
+     * deleting one of two boards blanked it. Now that a widget can be pinned to
+     * ANY station the argument is doubly wrong — it describes one board, and
+     * this has to leave every station's board correct.
+     *
+     * The parameter survives only because [WidgetManager] is shared with
+     * Android, where it is equally ignored.
+     */
+    override suspend fun updateWidget(state: WidgetState) = refreshAllBoards()
 
-    override suspend fun showWaitingState(station: String, line: String) = refreshFromPrimary()
+    override suspend fun showWaitingState(station: String, line: String) = refreshAllBoards()
 
     override suspend fun clearWidgetData() = withContext(Dispatchers.IO) {
         val d = appGroupDefaults ?: return@withContext
         wipe(d)
     }
 
-    private suspend fun refreshFromPrimary() = withContext(Dispatchers.IO) {
+    /**
+     * Rebuild every station's board in the App Group from SQL, and tell
+     * WidgetKit only if something actually moved.
+     *
+     * ## This runs on the hot path
+     * Every stream frame and every push lands here (via [updateWidget]), which
+     * on a busy station is every few seconds. Two things keep that affordable,
+     * and both are load-bearing rather than micro-optimisation:
+     *
+     *  1. **Each board is built ONCE.** The primary station's board used to be
+     *     built a second time to fill the legacy keys — the same ~3 SQL queries
+     *     per selection, run twice, on every frame.
+     *  2. **Writes are diffed, and the reload signal is bumped only if a value
+     *     changed.** That signal is what makes Swift call
+     *     `WidgetCenter.reloadAllTimelines()`, so bumping it unconditionally
+     *     asked WidgetKit to regenerate every widget's timeline on every push —
+     *     including pushes for a station none of the user's widgets show. Apple
+     *     meters reloads (~40–70/day); this was spending them on no-ops.
+     *
+     * The remaining cost is ~3 SQL reads per tracked (line, direction) plus one
+     * JSON encode per station. At a realistic 5 stations that is tens of
+     * milliseconds on `Dispatchers.IO`, and it is the price of the pull model —
+     * see the note on [updateWidget] for why the caller's own state is ignored.
+     */
+    private suspend fun refreshAllBoards() = withContext(Dispatchers.IO) {
         val d = appGroupDefaults ?: return@withContext
-        val sql = Platform.sqlStorage
-        val primary = sql.getAllSelections().firstOrNull()
-        if (primary == null) {
+        val all = Platform.sqlStorage.getAllSelections()
+        if (all.isEmpty()) {
             // Nothing left to show (last board deleted / logged out): wipe to
             // the widget's designed empty state ("No station set") — the iOS
             // analog of Android's "No boards yet" fallback rows.
@@ -146,68 +218,242 @@ class IosWidgetManager : WidgetManager {
             return@withContext
         }
 
-        // Same shape ProcessFcmPayloadUseCase.refreshWidgetFromStorage and the
-        // SummaryViewModel poll produce, so the widget never flips format
-        // depending on which trigger refreshed it.
+        // API coordinates are selection-independent and are what lets the
+        // extension refresh ITSELF (see WIDGET_API_BASE_URL). Deliberately not
+        // counted as a change: they cannot alter what is on screen, so a
+        // rotated key must not cost a timeline reload.
+        putIfChanged(d, AppGroupKeys.WIDGET_API_BASE_URL, AppConfig.apiBaseUrl)
+        putIfChanged(d, AppGroupKeys.WIDGET_API_KEY, Platform.getApiKey())
+
+        // ── Every station, one key each ──
         //
-        // Cap 8, not the default 3: the extension needs RESERVES, not just the
-        // visible window. The large family renders 6 rows, and the departed-row
-        // retention (WidgetData.ticked) can only hold a board together if
-        // already-departed trains are still in the payload to fall back on.
-        // At 3 the widget could never show more than 3 no matter its size, and
-        // emptied out the moment those 3 departed. Display caps stay in the
-        // views (BoardMetrics.maxRows); this is purely the buffer.
-        val preds = GlobalBoardProcessor.processPredictions(
-            sql.getPredictions(primary.station, primary.line, primary.direction),
-            perPlatformCap = 8,
-        )
-        val tsMs = sql.getLastUpdatedTimestamp(primary.station, primary.line, primary.direction)
-            ?: (NSDate().timeIntervalSince1970 * 1000).toLong()
-        val status = sql.getLineStatus(primary.mode, primary.line)?.let { s ->
-            val reason = StationlyFormatters.formatStatusReason(s.reason ?: "").trim()
-            if (reason.isNotEmpty()) "${s.statusSeverityDescription}: $reason"
-            else s.statusSeverityDescription
-        }
-        // Written alongside the board so the widget's own refresh always
-        // targets the station currently displayed (see WIDGET_STATION_ID).
-        d.setObject(primary.station, forKey = AppGroupKeys.WIDGET_STATION_ID)
-        d.setObject(AppConfig.apiBaseUrl, forKey = AppGroupKeys.WIDGET_API_BASE_URL)
-        d.setObject(Platform.getApiKey(), forKey = AppGroupKeys.WIDGET_API_KEY)
-
-        write(
-            d,
-            WidgetState(
-                stationName = primary.stationName,
-                lineName = primary.line,
-                predictions = preds,
-                status = status,
-                lastUpdated = tsMs / 1000,
-                direction = primary.direction,
-                mode = primary.mode,
+        // A widget is configured with one station, so all of them have to be
+        // here: the user may have pinned the third one to their home screen and
+        // never look at the primary. Grouped on the HUB, exactly as the app's
+        // home screen groups its cards — one card is one widget is one station,
+        // and a bus hub's poles must not become several entries in the picker.
+        // `groupBy` preserves first-encounter order, so the picker lists them
+        // in the order the user added them.
+        val byStation = all.groupBy { it.groupingId }
+        val boards = byStation.map { (id, selections) -> buildBoard(id, selections) }
+        val directory = byStation.map { (id, selections) ->
+            WidgetStationRef(
+                id = id,
+                name = selections.first().stationName,
+                mode = selections.first().mode,
+                // DISPLAY names, resolved here rather than in Swift. The
+                // extension would otherwise need its own copy of the line
+                // vocabulary, and two copies of a naming map that the backend
+                // is expected to own one day is one copy too many.
+                lines = selections.map { LineShortNames.displayName(it.line) }.distinct(),
             )
-        )
-    }
+        }
 
-    private fun write(d: NSUserDefaults, state: WidgetState) {
-        val predictionsJson = try {
-            json.encodeToString(ListSerializer(PredictionDisplay.serializer()), state.predictions)
-        } catch (_: Exception) { "[]" }
+        // Read BEFORE the overwrite: this is the only record of which stations
+        // had keys, and it is what [forgetStations] diffs against.
+        val previousIds = storedStationIds(d)
+        var changed = false
 
-        d.setObject(state.stationName,          forKey = AppGroupKeys.WIDGET_STATION_NAME)
-        d.setObject(state.lineName,              forKey = AppGroupKeys.WIDGET_LINE_NAME)
-        d.setObject(predictionsJson,             forKey = AppGroupKeys.WIDGET_PREDICTIONS)
-        d.setObject(state.status ?: "",          forKey = AppGroupKeys.WIDGET_STATUS)
-        d.setObject(state.direction,             forKey = AppGroupKeys.WIDGET_DIRECTION)
-        d.setObject(state.mode,                  forKey = AppGroupKeys.WIDGET_MODE)
-        d.setDouble(state.lastUpdated.toDouble(), forKey = AppGroupKeys.WIDGET_LAST_UPDATED)
-        bumpReloadSignal(d)
+        encode(ListSerializer(WidgetStationRef.serializer()), directory)?.let {
+            if (putIfChanged(d, AppGroupKeys.WIDGET_STATIONS, it)) changed = true
+        }
+        boards.forEach { board ->
+            encode(WidgetBoard.serializer(), board)?.let {
+                if (putIfChanged(d, AppGroupKeys.WIDGET_BOARD_PREFIX + board.id, it)) changed = true
+            }
+        }
+        if (forgetStations(d, previousIds - byStation.keys)) changed = true
+
+        // ── The primary, in the legacy single-board keys ──
+        //
+        // Still written, and not merely for compatibility: an unconfigured
+        // widget (one added before this build, or one whose station has since
+        // been deleted) resolves to the primary, and these are what it reads.
+        if (writeLegacy(d, boards.first())) changed = true
+
+        // ONE signal for the whole pass, and only when a value moved. Swift's
+        // observer turns this into reloadAllTimelines(); see the note above.
+        if (changed) bumpReloadSignal(d)
         d.synchronize()
     }
+
+    /**
+     * One station's whole board — every line and direction the user tracks
+     * there, merged the way the app's card merges them.
+     *
+     * ## Merged, because a station is what the widget is configured with
+     * The widget used to render one (line, direction) selection because that is
+     * what a board WAS. A user who tracks the Circle and the District at
+     * Edgware Road and pins that station to their home screen is asking for
+     * Edgware Road, not for whichever of the two happens to sort first. The
+     * merge is a plain concatenation followed by
+     * [GlobalBoardProcessor.processPredictions], which groups by platform and
+     * orders the groups by their soonest train — the same rule the widget's own
+     * REST refresh applies, so a refresh tap cannot rearrange the board.
+     *
+     * The per-platform line prefixes the app's board adds at a mixed platform
+     * ("(Cir.) Edgware Road") are deliberately NOT applied. The widget's own
+     * refresh path re-derives rows from the REST payload and has no idea which
+     * line each came from, so prefixes would appear from a push and vanish on a
+     * refresh tap — a board that changes shape depending on who last wrote it.
+     *
+     * `lineName` is the line only when the station tracks exactly one, because
+     * it is what the platform header prefixes ("Piccadilly: Platform 1"). With
+     * two lines on one platform that prefix would name one of them and be wrong
+     * about the other, so the header falls back to "Platform 1".
+     *
+     * Cap 8, not the default 3: the extension needs RESERVES, not just the
+     * visible window. The large family renders 6 rows, and the departed-row
+     * retention (WidgetData.ticked) can only hold a board together if
+     * already-departed trains are still in the payload to fall back on. Display
+     * caps stay in the views (BoardMetrics.maxRows); this is purely the buffer.
+     */
+    private fun buildBoard(stationId: String, boards: List<UserSelection>): WidgetBoard {
+        val sql = Platform.sqlStorage
+        val first = boards.firstOrNull()
+        val merged = boards.flatMap { sql.getPredictions(it.station, it.line, it.direction) }
+        val tsMs = boards.mapNotNull {
+            sql.getLastUpdatedTimestamp(it.station, it.line, it.direction)
+        }.maxOrNull() ?: (NSDate().timeIntervalSince1970 * 1000).toLong()
+
+        // Worst status across the station's lines would need a severity ranker
+        // the extension does not have; the FIRST line that actually has
+        // something to say speaks for the board, which on a healthy station is
+        // "Good Service" either way.
+        val status = boards.firstNotNullOfOrNull { board ->
+            sql.getLineStatus(board.mode, board.line)?.let { s ->
+                val reason = StationlyFormatters.formatStatusReason(s.reason ?: "").trim()
+                if (reason.isNotEmpty()) "${s.statusSeverityDescription}: $reason"
+                else s.statusSeverityDescription
+            }
+        }
+        val lines = boards.map { it.line }.distinct()
+
+        return WidgetBoard(
+            id = stationId,
+            // The naptan the extension refreshes AGAINST, which is a fetch key
+            // and not the hub: on bus each direction resolves to its own pole,
+            // and the hub id is not something the predictions endpoint knows.
+            stationId = first?.station.orEmpty(),
+            stationName = first?.stationName.orEmpty(),
+            lineName = lines.singleOrNull().orEmpty(),
+            direction = if (boards.size == 1) first?.direction.orEmpty() else "",
+            mode = first?.mode.orEmpty(),
+            status = status,
+            lastUpdated = tsMs / 1000,
+            // Everything the extension's own refresh needs to rebuild this
+            // exact board from one REST call: which naptan, and which
+            // (line, direction) pairs to keep out of the payload.
+            feeds = boards.map { WidgetFeed(it.station, it.line, it.direction) },
+            predictions = GlobalBoardProcessor.processPredictions(merged, perPlatformCap = 8),
+        )
+    }
+
+    /**
+     * The station ids currently holding `widget_board_*` keys, read back out of
+     * the directory.
+     *
+     * Deriving the list from the directory rather than scanning
+     * `dictionaryRepresentation()` is the point: that call materialises the
+     * ENTIRE user-defaults domain — every Apple-owned key in it — and this runs
+     * on every push. It is also more precise, because the directory is exactly
+     * what we wrote last time.
+     */
+    private fun storedStationIds(d: NSUserDefaults): Set<String> =
+        d.stringForKey(AppGroupKeys.WIDGET_STATIONS)
+            ?.let {
+                runCatching {
+                    json.decodeFromString(ListSerializer(WidgetStationRef.serializer()), it)
+                }.getOrNull()
+            }
+            ?.mapTo(mutableSetOf()) { it.id }
+            .orEmpty()
+
+    /**
+     * Drop everything belonging to stations the user no longer tracks.
+     *
+     * It has to happen on the normal write path rather than only in [wipe],
+     * because a station is usually removed while others remain — [wipe] runs
+     * only when the last one goes. Left behind, a stale board is not merely
+     * clutter: a widget still configured for the deleted station would keep
+     * rendering its last known departures for ever, with no refresh able to
+     * correct them.
+     *
+     * The paging keys go too. They are written by the extension rather than by
+     * us, but their LIFETIME is the station's, and the extension has no event
+     * to clean them up on.
+     */
+    private fun forgetStations(d: NSUserDefaults, removed: Set<String>): Boolean {
+        if (removed.isEmpty()) return false
+        removed.forEach { id ->
+            d.removeObjectForKey(AppGroupKeys.WIDGET_BOARD_PREFIX + id)
+            d.removeObjectForKey(AppGroupKeys.WIDGET_PAGE_PREFIX + id)
+            d.removeObjectForKey(AppGroupKeys.WIDGET_PAGE_DIR_PREFIX + id)
+        }
+        return true
+    }
+
+    /**
+     * The primary station in the pre-multi-station keys, which is what an
+     * unconfigured widget reads. Returns whether anything actually changed.
+     */
+    private fun writeLegacy(d: NSUserDefaults, board: WidgetBoard): Boolean {
+        val predictionsJson = encode(
+            ListSerializer(PredictionDisplay.serializer()), board.predictions
+        ) ?: return false
+
+        var changed = false
+        if (putIfChanged(d, AppGroupKeys.WIDGET_STATION_ID, board.stationId)) changed = true
+        if (putIfChanged(d, AppGroupKeys.WIDGET_STATION_NAME, board.stationName)) changed = true
+        if (putIfChanged(d, AppGroupKeys.WIDGET_LINE_NAME, board.lineName)) changed = true
+        if (putIfChanged(d, AppGroupKeys.WIDGET_PREDICTIONS, predictionsJson)) changed = true
+        if (putIfChanged(d, AppGroupKeys.WIDGET_STATUS, board.status.orEmpty())) changed = true
+        if (putIfChanged(d, AppGroupKeys.WIDGET_DIRECTION, board.direction)) changed = true
+        if (putIfChanged(d, AppGroupKeys.WIDGET_MODE, board.mode)) changed = true
+        if (putIfChanged(d, AppGroupKeys.WIDGET_LAST_UPDATED, board.lastUpdated.toDouble())) changed = true
+        return changed
+    }
+
+    /**
+     * Write only when the stored value differs.
+     *
+     * The saving is not the `setObject` call, which is cheap — it is the
+     * RELOAD the caller would otherwise ask WidgetKit for (see
+     * [refreshAllBoards]) and the cfprefsd churn of rewriting identical
+     * strings several times a minute for as many stations as the user keeps.
+     */
+    private fun putIfChanged(d: NSUserDefaults, key: String, value: String): Boolean {
+        if (d.stringForKey(key) == value) return false
+        d.setObject(value, forKey = key)
+        return true
+    }
+
+    private fun putIfChanged(d: NSUserDefaults, key: String, value: Double): Boolean {
+        if (d.objectForKey(key) != null && d.doubleForKey(key) == value) return false
+        d.setDouble(value, forKey = key)
+        return true
+    }
+
+    /**
+     * Encode, or `null` if it fails.
+     *
+     * `null` means the caller SKIPS the write, which is deliberate: leaving the
+     * last good value in place keeps a board on screen, where writing "" or
+     * "[]" would blank a working widget because one field failed to serialise.
+     */
+    private fun <T> encode(serializer: KSerializer<T>, value: T): String? =
+        runCatching { json.encodeToString(serializer, value) }.getOrNull()
 
     private fun wipe(d: NSUserDefaults) {
         // Clear the station id too — leaving it behind would let a refresh
         // tap repopulate the widget with the board the user just deleted.
         // The API coordinates are selection-independent, so they stay.
+        //
+        // The multi-station keys go the same way. A configured widget whose
+        // station is gone falls back to the (now empty) legacy keys and renders
+        // "No station set", which is the honest answer after a sign-out.
+        forgetStations(d, storedStationIds(d))
+        d.removeObjectForKey(AppGroupKeys.WIDGET_STATIONS)
         d.removeObjectForKey(AppGroupKeys.WIDGET_STATION_ID)
         d.removeObjectForKey(AppGroupKeys.WIDGET_STATION_NAME)
         d.removeObjectForKey(AppGroupKeys.WIDGET_LINE_NAME)

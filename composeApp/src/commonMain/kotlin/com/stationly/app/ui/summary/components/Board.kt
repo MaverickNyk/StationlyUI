@@ -109,6 +109,7 @@ import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.UserSelection
 import com.stationly.core.util.LineShortNames
 import com.stationly.core.util.LineStatusRanker
+import com.stationly.core.util.BoardDisplayPrefs
 import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.StationlyFormatters
 import kotlin.math.roundToInt
@@ -294,6 +295,22 @@ fun StationBoard(
     /** False hides the next-departure hero for this station — see `StationPrefs.hideHero`. */
     showHero: Boolean = true,
     /**
+     * How this station's board is arranged: what it is ordered by, how deep each
+     * platform goes, and which block leads. Set on the station's settings screen.
+     *
+     * Applied inside [MultiLineBoardProcessor], never here — the panel renders
+     * whatever rows it is given, and the reason for every one of these rules
+     * lives in `BoardDisplayPrefs` where it can be tested. The default is the
+     * board exactly as it was before it had settings.
+     *
+     * Not passed to the HERO on purpose. The hero answers "what do I run for",
+     * which is the soonest train across every line tracked here; a pin says
+     * which block leads the board, and letting it also re-point the hero would
+     * be one setting quietly doing two jobs. The pills are how the hero is
+     * switched, and they still are.
+     */
+    boardPrefs: BoardDisplayPrefs = BoardDisplayPrefs(),
+    /**
      * Opens this station's settings — lines, layout, pin, delete.
      *
      * A whole screen rather than a menu on the card. Two of those settings are
@@ -381,7 +398,7 @@ fun StationBoard(
     // One board is one station, and a bus stop groups by pole rather than by
     // platform. Hoisted out of the panel because the collapsed header needs the
     // same rule — a leg must never describe a platform the board would not show.
-    val isBus = mode.equals("bus", ignoreCase = true)
+    val isBus = MultiLineBoardProcessor.isBus(mode)
 
     // Which line's hero is showing. See the hero block below for why null is a
     // meaningful value rather than "nothing selected".
@@ -530,8 +547,8 @@ fun StationBoard(
         // empty list on the frame the card closed, so there was nothing to
         // animate in, and on opening they vanished instantly instead of folding
         // away.
-        val collapsedLegs = remember(rendered, isBus) {
-            MultiLineBoardProcessor.collapsedLegs(rendered.toFeeds(), isBus)
+        val collapsedLegs = remember(rendered, isBus, boardPrefs) {
+            MultiLineBoardProcessor.collapsedLegs(rendered.toFeeds(), isBus, boardPrefs)
         }
 
         StationHeader(
@@ -782,6 +799,7 @@ fun StationBoard(
                         rendered = rendered,
                         lastUpdated = lastUpdated,
                         homeConfig = homeConfig,
+                        boardPrefs = boardPrefs,
                     )
                 }
 
@@ -1247,15 +1265,22 @@ private fun DotMatrixPanel(
     rendered: List<SectionRender>,
     lastUpdated: Long,
     homeConfig: Map<String, String>,
+    boardPrefs: BoardDisplayPrefs,
 ) {
     // One board = one station. Buses group by stop (naptan) instead of platform
     // and never take a client-side line prefix on a row — the backend appends
     // the route number to the destination itself ("53 Nags Head").
-    val isBus = mode.equals("bus", ignoreCase = true)
+    val isBus = MultiLineBoardProcessor.isBus(mode)
 
-    // Platform/stop blocks across EVERY tracked line, in true arrival order.
-    val unifiedRows = remember(rendered, isBus) {
-        MultiLineBoardProcessor.buildRows(feeds = rendered.toFeeds(), isBus = isBus)
+    // Platform/stop blocks across EVERY tracked line, arranged the way this
+    // station's settings ask for. The grouping is not one of the settings —
+    // see BoardDisplayPrefs.
+    val unifiedRows = remember(rendered, isBus, boardPrefs) {
+        MultiLineBoardProcessor.buildRows(
+            feeds = rendered.toFeeds(),
+            isBus = isBus,
+            prefs = boardPrefs,
+        )
     }
 
     // Board-wide fallback: only when EVERY tracked line is empty. One line

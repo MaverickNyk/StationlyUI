@@ -77,8 +77,10 @@ import com.stationly.app.ui.theme.isDarkTheme
 import com.stationly.app.ui.util.HomeLayout
 import com.stationly.app.ui.util.StationPrefsRepository
 import com.stationly.core.model.UserSelection
+import com.stationly.core.util.BoardDisplayPrefs
 import com.stationly.core.util.BoardLabels
 import com.stationly.core.util.LineShortNames
+import com.stationly.core.util.MultiLineBoardProcessor
 
 /**
  * Everything about ONE station's card, on its own screen.
@@ -114,9 +116,11 @@ fun StationSettingsScreen(
     // teardown is computed from.
     val isDeleting by viewModel.isDeleting.collectAsStateWithLifecycle()
     val homeLayout by StationPrefsRepository.layout.collectAsStateWithLifecycle()
+    val platforms by viewModel.platforms.collectAsStateWithLifecycle()
     val prefs = prefsMap[stationId]
     val startExpanded = prefs?.startExpanded == true
     val heroVisible = prefs?.hideHero != true
+    val board = prefs?.board ?: BoardDisplayPrefs()
     val isDark = isDarkTheme()
 
     // Re-read the boards whenever this screen comes back to the front — the
@@ -180,6 +184,30 @@ fun StationSettingsScreen(
                 },
             )
             SettingsCaption("The countdown shows the soonest train. Off, the board gets its space.")
+
+            Spacer(Modifier.height(28.dp))
+
+            // ── How the board itself is arranged ──
+            //
+            // Directly under the layout picker because the two are one subject:
+            // that one decides what the card contains, this decides what the
+            // panel inside it does with the departures. Everything below is
+            // about lines and deletion, which is a different question.
+            //
+            // The grouping is not among these settings and must not become one —
+            // BoardDisplayPrefs in core carries the argument.
+            BoardArrangementSection(
+                prefs = board,
+                platforms = platforms,
+                // In selection order, which is the order the pills and the
+                // boards list are already in. The picker is one more place the
+                // user's own sequence should survive.
+                lines = boards.map { it.line }.distinct(),
+                isBus = MultiLineBoardProcessor.isBus(mode),
+                onSort = viewModel::setSort,
+                onRowsPerPlatform = viewModel::setRowsPerPlatform,
+                onPin = viewModel::setPin,
+            )
 
             Spacer(Modifier.height(28.dp))
 

@@ -14,6 +14,10 @@ import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.usecase.SyncSubscribedStationsUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
+import com.stationly.core.util.BoardDisplayPrefs
+import com.stationly.core.util.BoardPin
+import com.stationly.core.util.BoardSort
+import com.stationly.core.util.MultiLineBoardProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -108,6 +112,26 @@ class StationSettingsViewModel(
     private val _towards = MutableStateFlow<Map<String, String>>(emptyMap())
     val towards: StateFlow<Map<String, String>> = _towards.asStateFlow()
 
+    /**
+     * The platform (or bus stop) labels this station has actually shown, for the
+     * "show first" picker.
+     *
+     * Derived from the SQLite cache rather than from anything the user
+     * configured, because a platform is not something they configure: TfL
+     * decides it, and the only honest list is the one the board itself has been
+     * showing. Read, never fetched, for the same reason [towards] is — this
+     * screen has to open instantly and offline.
+     *
+     * Unassigned blocks are left out by [MultiLineBoardProcessor.pinnablePlatforms]:
+     * a pin on one would promote a block nobody can walk to, which the board
+     * refuses to do anyway, so offering it would be offering a setting
+     * guaranteed to have no effect.
+     *
+     * Also declared ABOVE [init] — see [towards] for the crash that rule exists
+     * to prevent.
+     */
+    private val _platforms = MutableStateFlow<List<String>>(emptyList())
+    val platforms: StateFlow<List<String>> = _platforms.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -115,7 +139,7 @@ class StationSettingsViewModel(
             // This VM's repository starts empty — it is a separate instance from
             // the home screen's, so it holds no rows until it reads the database.
             selectionRepository.initialize()
-            loadTowards()
+            loadCachedBoard()
         }
     }
 
@@ -123,32 +147,61 @@ class StationSettingsViewModel(
     fun refresh() {
         viewModelScope.launch {
             selectionRepository.initialize()
-            loadTowards()
+            loadCachedBoard()
         }
     }
 
-    private suspend fun loadTowards() {
+    /**
+     * One pass over the cached departures, feeding both things on this screen
+     * that describe the board as it actually is: each board's `towards` label,
+     * and the platforms the pin picker offers.
+     *
+     * One pass rather than two. They want the same rows, and reading them
+     * separately would mean two sets of SQLite queries that can disagree about
+     * what the board contains.
+     */
+    private suspend fun loadCachedBoard() {
         val current = selectionRepository.selections.value.filter { it.groupingId == stationId }
+        val isBus = MultiLineBoardProcessor.isBus(current.firstOrNull()?.mode)
         // One SQLite read per board, off the main thread: this screen opens over
         // a live departure board, and a handful of synchronous queries on the
         // main dispatcher is a visible hitch in the push animation.
-        _towards.value = withContext(Dispatchers.Default) {
-            current.mapNotNull { board ->
-                val cached = runCatching {
+        val cached = withContext(Dispatchers.Default) {
+            current.map { board ->
+                board to runCatching {
                     Platform.sqlStorage.getPredictions(board.station, board.line, board.direction)
                 }.getOrNull().orEmpty()
-                // The most common destination, not the soonest: one
-                // short-terminating service should not relabel the board it
-                // happens to be first on.
-                cached.map { it.destination.trim() }
-                    .filter { it.isNotEmpty() }
-                    .groupingBy { it }
-                    .eachCount()
-                    .maxByOrNull { it.value }
-                    ?.key
-                    ?.let { board.boardKey to it }
-            }.toMap()
+            }
         }
+
+        _towards.value = cached.mapNotNull { (board, predictions) ->
+            // The most common destination, not the soonest: one
+            // short-terminating service should not relabel the board it
+            // happens to be first on.
+            predictions.map { it.destination.trim() }
+                .filter { it.isNotEmpty() }
+                .groupingBy { it }
+                .eachCount()
+                .maxByOrNull { it.value }
+                ?.key
+                ?.let { board.boardKey to it }
+        }.toMap()
+
+        _platforms.value = MultiLineBoardProcessor.pinnablePlatforms(
+            feeds = cached.map { (board, predictions) ->
+                MultiLineBoardProcessor.Feed(
+                    // The resolved per-direction naptan (the POLE), not the hub —
+                    // exactly what the home screen passes, so the picker groups
+                    // the way the real card does and can never offer a platform
+                    // that board would not show.
+                    stationId = board.station,
+                    line = board.line,
+                    direction = board.direction,
+                    predictions = predictions,
+                )
+            },
+            isBus = isBus,
+        )
     }
 
     /** Expand this station's card on every app open — see [StationPrefs.startExpanded]. */
@@ -158,6 +211,22 @@ class StationSettingsViewModel(
 
     fun setHeroVisible(visible: Boolean) {
         viewModelScope.launch { StationPrefsRepository.update(stationId) { it.copy(hideHero = !visible) } }
+    }
+
+    /* ── How the board is arranged — see [BoardDisplayPrefs] ────────────────── */
+
+    fun setSort(sort: BoardSort) = updateBoard { it.copy(sort = sort) }
+
+    /** Stored as asked and clamped on read — see [BoardDisplayPrefs.rowCap]. */
+    fun setRowsPerPlatform(rows: Int) = updateBoard { it.copy(rowsPerPlatform = rows) }
+
+    /** `null` puts the board back to its natural order. One pin at a time. */
+    fun setPin(pin: BoardPin?) = updateBoard { it.copy(pin = pin) }
+
+    private fun updateBoard(transform: (BoardDisplayPrefs) -> BoardDisplayPrefs) {
+        viewModelScope.launch {
+            StationPrefsRepository.update(stationId) { it.copy(board = transform(it.board)) }
+        }
     }
 
     /**
@@ -178,6 +247,12 @@ class StationSettingsViewModel(
                 if (selectionRepository.selections.value.none { it.groupingId == stationId }) {
                     StationPrefsRepository.forget(stationId)
                     _deleted.value = true
+                } else {
+                    // The boards list re-emits on its own (it maps the
+                    // repository), but the CACHED reads do not: without this the
+                    // pin picker keeps offering the deleted line's platforms and
+                    // the rows keep their `towards` labels.
+                    loadCachedBoard()
                 }
                 performHaptic(HapticType.SUCCESS)
             } catch (_: Exception) {

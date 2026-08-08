@@ -292,7 +292,7 @@ struct DotMatrixHeader: View {
                 // unconditionally regardless, so centring can't shift.
                 Group {
                     if #available(iOS 17.0, *) {
-                        RefreshButton(size: m.icon * 0.72, clock: clock)
+                        RefreshButton(size: m.icon * 0.72, clock: clock, stationId: data.stationId)
                     }
                 }
                 .frame(width: refreshSlot)
@@ -321,6 +321,10 @@ private struct RefreshButton: View {
     /// straight after the tap) falls inside the window, entry[1] a minute
     /// later doesn't, so the tick reverts with no timer and no extra reload.
     let clock: Date
+    /// Which board to refresh. With several widgets on the home screen this is
+    /// the only thing distinguishing "refresh this one" from "refresh whichever
+    /// board the legacy keys happen to hold".
+    let stationId: String
 
     private var defaults: UserDefaults? {
         UserDefaults(suiteName: AppGroupID.value)
@@ -329,7 +333,7 @@ private struct RefreshButton: View {
     /// Read live rather than carried on the entry: entries are pre-rendered
     /// for future minutes, so a flag baked into them would be stale.
     private var lastRefreshFailed: Bool {
-        defaults?.bool(forKey: WidgetRefreshService.failedKey) ?? false
+        defaults?.bool(forKey: AppGroupKeys.refreshFailed) ?? false
     }
 
     // A success tick was tried here and removed: swapping the arrow out on
@@ -348,7 +352,7 @@ private struct RefreshButton: View {
     }
 
     var body: some View {
-        Button(intent: RefreshBoardIntent()) {
+        Button(intent: RefreshBoardIntent(stationId: stationId)) {
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .bold))
                 .foregroundColor(lastRefreshFailed ? WidgetTheme.amberDim : WidgetTheme.amber)
@@ -370,6 +374,130 @@ struct DotMatrixSectionHeader: View {
                 .foregroundColor(WidgetTheme.amber)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+        }
+    }
+}
+
+/// The platform header with a step arrow at each end — the medium board's
+/// answer to "this station has more than one platform".
+///
+/// ## Why arrows replaced a tappable header
+/// The whole header used to be one button that cycled forwards. It worked, and
+/// it could not say two things a user needs: which directions are available,
+/// and how to get BACK. From the last platform the only route to the first was
+/// to keep going forwards, and nothing on the widget hinted that this was
+/// possible at all — a header that happens to be tappable looks exactly like a
+/// header that is not.
+///
+/// ## The ends are not wrapped
+/// An arrow that is present but dim means "nothing that way", which is the
+/// entire reason to have two of them. Wrapping would make both arrows always
+/// live and leave the user with no way to tell a three-platform board from a
+/// two-platform one without tapping through it.
+///
+/// ## A dimmed arrow is still a Button, and it has to be
+/// The first version drew it as plain content, reasoning that a control which
+/// cannot act should not look tappable. On device that was actively wrong:
+/// every non-interactive pixel of a widget belongs to the widget's own tap
+/// target, so tapping the dim arrow LAUNCHED THE APP — the one thing a
+/// disabled control must never do. It is a Button in both states now, and at
+/// an end `WidgetBoardPage.move` clamps to the page it is already on, so the
+/// tap is swallowed and nothing happens. "Disabled" is the dimming; the Button
+/// is what makes it inert.
+///
+/// ## Layout
+/// Both arrow slots are reserved unconditionally, so the title sits optically
+/// centred and does not shift by half an arrow when it reaches an end. Same
+/// device-proven trick as the station header's refresh slot: an overlaid button
+/// sits outside the layout and a long platform name expands straight underneath
+/// it.
+struct PlatformPagerHeader: View {
+    let title: String
+    let page: Int
+    let groupCount: Int
+    let stationId: String
+    let m: BoardMetrics
+    /// The transition the whole board is moving on, so the title travels with
+    /// its rows instead of cross-fading while they slide.
+    let slide: AnyTransition
+
+    private var arrowSlot: CGFloat { m.platform + 10 }
+    private var canGoBack: Bool { page > 0 }
+    private var canGoForward: Bool { page < groupCount - 1 }
+
+    var body: some View {
+        // A single-platform board keeps the section header's original inset —
+        // it is the common case and must render exactly as it always has. The
+        // tighter one only applies where arrows need the width.
+        LitCell(vPad: 2, hPad: groupCount > 1 ? 6 : 10, radius: m.cellRadius) {
+            HStack(spacing: 4) {
+                if groupCount > 1 {
+                    arrow(back: true, enabled: canGoBack)
+                        .frame(width: arrowSlot)
+                }
+
+                // The title and its page marker travel together as one label —
+                // the marker is part of what changes, so it must not sit still
+                // while the platform name slides out from under it.
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.system(size: m.platform, weight: .bold))
+                        .foregroundColor(WidgetTheme.amber)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    if groupCount > 1 {
+                        // Position, not an affordance. The arrows now say what
+                        // can be tapped, so this is left to say only where you
+                        // are — the "‣" that used to prefix it was the tap
+                        // hint and has no job any more.
+                        Text("\(page + 1)/\(groupCount)")
+                            .font(.system(size: m.platform * 0.72, weight: .bold, design: .monospaced))
+                            .foregroundColor(WidgetTheme.amberDim)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .id(page)
+                .transition(slide)
+
+                if groupCount > 1 {
+                    arrow(back: false, enabled: canGoForward)
+                        .frame(width: arrowSlot)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func arrow(back: Bool, enabled: Bool) -> some View {
+        let glyph = Image(systemName: back ? "chevron.left" : "chevron.right")
+            .font(.system(size: m.platform * 0.86, weight: .bold))
+            .foregroundColor(enabled ? WidgetTheme.amber : WidgetTheme.amberDim.opacity(0.45))
+            // The tap target is the whole slot, not the glyph: a chevron is
+            // ~8pt of ink and a widget gets one chance at being hit.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+
+        if #available(iOS 17.0, *) {
+            // A Button in BOTH states — see the note above. At an end the
+            // intent clamps to the page it is already on, so the tap is
+            // absorbed and the board does not move; drawn as plain content it
+            // would fall through to the widget's own tap target and open the
+            // app instead.
+            Button(intent: MovePlatformPageIntent(
+                stationId: stationId,
+                forward: !back,
+                groupCount: groupCount
+            )) {
+                glyph
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(back ? "Previous platform" : "Next platform")
+            // Nothing to announce when there is nowhere to go, but the button
+            // still has to exist to swallow the touch.
+            .accessibilityHidden(!enabled)
+        } else {
+            glyph
         }
     }
 }
@@ -575,38 +703,51 @@ struct BoardWidgetView: View {
     /// blow the 6-cell budget. When the group can't fill all row slots the
     /// status strip backfills one, so a quiet board never shows dead space.
     ///
-    /// Multi-platform stations: WidgetKit can't scroll (static snapshots),
-    /// so where Android's widget scrolls a `rows_list` the medium board
-    /// PAGES — on iOS 17+ the header cell is an interactive Button cycling
-    /// through the platform groups, labelled "… ‣ p/N". Below 17 (and on
-    /// single-platform stations) it renders exactly as before.
+    /// Multi-platform stations: WidgetKit can't scroll (static snapshots), so
+    /// where Android's widget scrolls a `rows_list` the medium board PAGES.
+    /// The header carries an arrow at each end (iOS 17+ `Button(intent:)`),
+    /// and the board slides in the direction the arrow points. On a
+    /// single-platform station it renders exactly as it always did — no
+    /// arrows, no indicator, nothing to say.
     @ViewBuilder
     private var primaryPlatformSection: some View {
         let groups = groupedByPlatform(data.departures)
         if !groups.isEmpty {
-            let page = groups.count > 1 ? WidgetBoardPage.current % groups.count : 0
+            let page = WidgetBoardPage.page(data.stationId, groupCount: groups.count)
             let group = groups[page]
-            let baseHeader = data.platformHeader(platform: group.platform)
-            let header: String = {
-                guard groups.count > 1 else { return baseHeader }
-                let indicator = "‣ \(page + 1)/\(groups.count)"
-                return baseHeader.isEmpty ? indicator : "\(baseHeader)  \(indicator)"
-            }()
-            if !header.isEmpty {
-                if #available(iOS 17.0, *), groups.count > 1 {
-                    Button(intent: NextPlatformPageIntent()) {
-                        DotMatrixSectionHeader(title: header, m: metrics)
-                    }
-                    .buttonStyle(.plain)
-                    .frame(minHeight: metrics.platform + 8)
-                } else {
-                    DotMatrixSectionHeader(title: header, m: metrics)
-                        .frame(minHeight: metrics.platform + 8)
-                }
+            let header = data.platformHeader(platform: group.platform)
+
+            // The board moves as ONE thing. Header and rows carry the same
+            // transition and the same page-derived identity, so they enter
+            // together rather than each animating on its own schedule — the
+            // difference between a board sliding across and a stack of strips
+            // arriving one after another.
+            //
+            // Identity is `page`, deliberately NOT the row's own id: a
+            // DepartureRow's id is a fresh UUID on every decode, so keying on
+            // it would re-insert every row on every minute tick and animate a
+            // countdown as though the platform had changed.
+            let forward = WidgetBoardPage.lastMoveWasForward(data.stationId)
+            let slide: AnyTransition = groups.count > 1
+                ? .push(from: forward ? .trailing : .leading)
+                : .identity
+
+            if !header.isEmpty || groups.count > 1 {
+                PlatformPagerHeader(
+                    title: header,
+                    page: page,
+                    groupCount: groups.count,
+                    stationId: data.stationId,
+                    m: metrics,
+                    slide: slide
+                )
+                .frame(minHeight: metrics.platform + 8)
             }
-            ForEach(group.rows.prefix(metrics.maxRows)) { dep in
+            ForEach(Array(group.rows.prefix(metrics.maxRows).enumerated()), id: \.offset) { index, dep in
                 DotMatrixRow(dep: dep, m: metrics)
                     .frame(minHeight: metrics.row + 10)
+                    .id("\(page)-\(index)")
+                    .transition(slide)
             }
             if group.rows.count < metrics.maxRows {
                 statusStrip
