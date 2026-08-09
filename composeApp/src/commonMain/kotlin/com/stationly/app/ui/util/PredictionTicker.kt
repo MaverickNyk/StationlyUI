@@ -4,14 +4,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import com.stationly.core.model.PredictionDisplay
-import com.stationly.core.util.StationlyFormatters
+import com.stationly.core.util.BoardTicker
 
 /**
- * The prediction tick contract — Compose-Multiplatform port of Android
- * `ui/util/PredictionTicker.kt`, sharing [rememberMinuteTick] from
- * MinuteTick.kt. Every surface that renders "X min" (home board rows, home
- * hero, dream board rows, dream hero, widget) must show the same value at any
- * wall-clock moment; the only way to guarantee that is to share the math.
+ * The prediction tick contract, for the surfaces that render a FLAT list of
+ * departures rather than a grouped board — the dream board and its hero.
+ *
+ * Every surface that renders "X min" must show the same value at any wall-clock
+ * moment, and the only way to guarantee that is to share the math. The math is
+ * [BoardTicker], in core, where it is testable and where the Swift widget's own
+ * copy points; this file is now only the Compose wrapper around it plus the
+ * platform grouping a flat list needs.
+ *
+ * The station card does NOT come through here. It builds real blocks first (see
+ * `StationBoard`) and ticks those, because the bump has to run over the queue a
+ * passenger actually experiences — which on a bus hub is a POLE, and poles are
+ * indistinguishable once you are looking at `platform` alone.
  */
 
 /**
@@ -29,12 +37,10 @@ fun rememberTickedPredictions(predictions: List<PredictionDisplay>): List<Predic
  * How long after a train's `targetEpochMs` before we consider it departed
  * and drop it from the visible board.
  *
- * 30s — matches the dwell time of a tube train at a London platform, i.e.
- * the physical platform indicator's behaviour (the "Due" line stays up
- * while the train sits with doors open). MUST stay in lockstep with the
- * Android constant AND the Swift widget's `WidgetData.ticked(at:)` grace.
+ * Kept as an alias so existing call sites read unchanged; [BoardTicker] owns the
+ * value, and the Swift widget mirrors it there.
  */
-const val DEPARTED_GRACE_MS: Long = 30_000L
+const val DEPARTED_GRACE_MS: Long = BoardTicker.DEPARTED_GRACE_MS
 
 /**
  * Filter+tick step shared by [rememberTickedPredictions] and any non-Compose
@@ -50,62 +56,17 @@ const val DEPARTED_GRACE_MS: Long = 30_000L
  *
  * Rows with `targetEpochMs == null` (FCM ISO timestamp didn't parse) are
  * passed through untouched.
+ *
+ * No retention here: holding a departed row is a decision about how many SLOTS a
+ * block has to fill, and a flat list has no blocks and no slots. The surfaces
+ * that do have them pass through [BoardTicker.tick] instead.
  */
 fun tickPredictions(
     predictions: List<PredictionDisplay>,
     nowMs: Long,
 ): List<PredictionDisplay> {
     if (predictions.isEmpty()) return predictions
-    val departedBefore = nowMs - DEPARTED_GRACE_MS
-
-    val survivors = predictions.filter { p ->
-        val target = p.targetEpochMs ?: return@filter true
-        target >= departedBefore
-    }
-    if (survivors.isEmpty()) return survivors
-
-    return survivors
+    return predictions
         .groupBy { it.platform }
-        .flatMap { (_, group) -> bumpPlatformGroup(group, nowMs) }
-}
-
-/**
- * Per-platform monotonic bump. Sorts the group by `targetEpochMs` ascending
- * so the earliest train keeps its raw label, then walks the list enforcing
- * `label[i] >= label[i-1] + 1`. Null-target rows are pinned to the end of
- * the group and passed through unchanged.
- */
-private fun bumpPlatformGroup(
-    group: List<PredictionDisplay>,
-    nowMs: Long,
-): List<PredictionDisplay> {
-    if (group.size <= 1) {
-        // Single row still needs re-derive against current `now`.
-        return group.map { p ->
-            val target = p.targetEpochMs ?: return@map p
-            p.copy(
-                eta = StationlyFormatters.formatMinutesRemaining(target, nowMs, p.eta),
-                isDue = (target - nowMs) / 1000 < 30,
-            )
-        }
-    }
-
-    val (withTarget, withoutTarget) = group.partition { it.targetEpochMs != null }
-    val sorted = withTarget.sortedBy { it.targetEpochMs }
-    var prevMin = -1   // "Due" == 0; -1 means nothing taken yet
-    val bumped = sorted.map { p ->
-        val secs = (p.targetEpochMs!! - nowMs) / 1000
-        // Same TfL-style floor rounding as formatMinutesRemaining — inline
-        // only because the bump comparison needs the raw INT minutes.
-        // Keep in lockstep: secs<60 → 0 (Due), else floor(secs/60).
-        val raw = when {
-            secs < 60 -> 0   // Due
-            else      -> (secs / 60).toInt()
-        }
-        val effective = maxOf(raw, prevMin + 1)
-        prevMin = effective
-        val label = if (effective == 0) "Due" else "$effective min"
-        p.copy(eta = label, isDue = effective == 0)
-    }
-    return bumped + withoutTarget
+        .flatMap { (_, group) -> BoardTicker.tickRows(group, nowMs) }
 }

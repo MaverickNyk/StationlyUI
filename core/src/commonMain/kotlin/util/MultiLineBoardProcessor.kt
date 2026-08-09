@@ -69,6 +69,47 @@ object MultiLineBoardProcessor {
     const val MIN_BOARD_ROWS = 3
 
     /**
+     * Departures kept per block BEHIND the ones on screen.
+     *
+     * Neither a ceiling nor a floor on what is displayed — it is the buffer that
+     * makes a board tick without the network. [BoardTicker] re-derives every
+     * label each minute and sheds the trains that have left; a block capped at
+     * what fits would have nothing to shift up behind them, so the board would
+     * empty itself out and stay empty until the next push. It is also what the
+     * "Gone" retention holds when a block runs dry.
+     *
+     * ## Ten, which is everything TfL has
+     * Measured against the live feed: TfL returns at most **10** arrivals per
+     * platform and predicts ~25 minutes ahead — Edgware sends exactly 10 on each
+     * of its two Northern platforms, King's Cross 9 on its busiest. At 8 the cap
+     * genuinely bit: two trains dropped at Edgware, and the widget ran out of
+     * queue about five minutes early. At 10 nothing is trimmed in practice, so
+     * every departure the backend knows about is available to shift into view
+     * between refreshes.
+     *
+     * ## Why a number rather than no cap
+     * These rows cross a process boundary. `WidgetBoard.predictions` is
+     * `@Transient` precisely because duplicating them took a five-platform board
+     * from ~6KB to ~12KB in the App Group, parsed on every timeline build and
+     * every render, in a process iOS cold-launches for a single tap. An
+     * unbounded reserve puts the size of that payload in TfL's hands rather than
+     * ours, on a feed we do not control and cannot test against.
+     *
+     * ## What it does NOT buy
+     * Not a longer widget. The runway is bounded by how far TfL predicts (~25
+     * min), not by how many rows we keep — `DepartureBoardProvider.horizonMinutes`
+     * already sizes the timeline to the last departure, and past that the
+     * retention layer holds "Gone". Raising this further would reserve rows that
+     * do not exist.
+     *
+     * The ONE number for reserve depth: `SyncPredictionsUseCase` writes SQL at
+     * this cap and the board re-applies it per block, so there is no point in
+     * the two differing. Mirrored by hand as `WidgetRefreshService.perPlatformCap`
+     * in Swift for the widget's own REST refresh — change both together.
+     */
+    const val ROW_RESERVE = 10
+
+    /**
      * One tracked line/direction at this station, plus its departures.
      *
      * Carries `line`/`direction` alongside the predictions because
@@ -107,6 +148,16 @@ object MultiLineBoardProcessor {
             val linePrefix: String,
             val destination: String,
             val eta: String,
+            /**
+             * A retained already-departed train — see [BoardTicker.DEPARTED_LABEL].
+             *
+             * Carried as a flag rather than left for the renderer to infer from
+             * the label, so "has it left" stays a single decision made in
+             * [BoardTicker]. A renderer comparing `eta == "Gone"` would be a
+             * second copy of the rule, and the first constant to move would
+             * leave it dimming nothing.
+             */
+            val departed: Boolean = false,
         ) : Row()
     }
 
@@ -148,6 +199,18 @@ object MultiLineBoardProcessor {
         feed: Feed,
         isBus: Boolean,
     ): String = if (isBus) feed.stationId else prediction.platform
+
+    /**
+     * Every departure across every feed, each still paired with the feed it came
+     * from — the shape all four grouping passes below start from.
+     *
+     * Written out by hand at each of those call sites until now, which is four
+     * chances for one of them to lose the pairing and start grouping departures
+     * that no longer know which pole they were fetched from. That is the exact
+     * bug [groupKeyFor] documents, so the flattening belongs next to it.
+     */
+    private fun List<Feed>.withFeeds(): List<Pair<PredictionDisplay, Feed>> =
+        flatMap { feed -> feed.predictions.map { it to feed } }
 
     /**
      * Compass directions only. "Inbound"/"Outbound" are deliberately dropped.
@@ -335,17 +398,38 @@ object MultiLineBoardProcessor {
      *  3. **The soonest train.** The soonest ABSOLUTE arrival, never the `eta`
      *     label: the label is rounded AND deliberately bumped so same-platform
      *     trains don't collide, so it does not round-trip back to a sortable
-     *     number.
+     *     number. And the soonest train that has not ALREADY LEFT — see
+     *     [soonestArrival].
      *
      * There is no user-chosen sort in here any more, and [BoardDisplayPrefs]
      * carries the argument for why not.
      */
-    private fun groupOrder(isBus: Boolean, prefs: BoardDisplayPrefs): Comparator<Block> =
+    private fun groupOrder(isBus: Boolean, prefs: BoardDisplayPrefs, nowMs: Long?): Comparator<Block> =
         unassignedLast(isBus)
             .thenBy { if (isPinned(it, isBus, prefs.pin)) 0 else 1 }
-            .thenBy { block ->
-                block.value.mapNotNull { (p, _) -> p.targetEpochMs }.minOrNull() ?: Long.MAX_VALUE
-            }
+            .thenBy { block -> soonestArrival(block, nowMs) }
+
+    /**
+     * When this block's next train arrives, for ordering — ignoring the ones
+     * that have already gone.
+     *
+     * The filter is why [nowMs] is threaded this far in. Departed rows now reach
+     * the grouping (they are what [BoardTicker]'s retention holds, and they used
+     * to be filtered out one step earlier), and their targets are in the PAST —
+     * so a platform whose trains have all left would sort ahead of every
+     * platform you could still catch something from. Ordered on the soonest
+     * LIVE train, a block with nothing left sinks to the bottom, which is where
+     * a block of "Gone" rows belongs.
+     *
+     * [nowMs] null means "do not judge" — the pre-[BoardTicker] behaviour, kept
+     * for callers that have already shed their departed rows.
+     */
+    private fun soonestArrival(block: Block, nowMs: Long?): Long {
+        val targets = block.value.mapNotNull { (p, _) -> p.targetEpochMs }
+        if (nowMs == null) return targets.minOrNull() ?: Long.MAX_VALUE
+        val cutoff = nowMs - BoardTicker.DEPARTED_GRACE_MS
+        return targets.filter { it >= cutoff }.minOrNull() ?: Long.MAX_VALUE
+    }
 
     /** A block's own platform label — every ordering rule below keys off it. */
     private fun labelOf(block: Block, isBus: Boolean): String =
@@ -448,8 +532,25 @@ object MultiLineBoardProcessor {
         feeds: List<Feed>,
         isBus: Boolean,
         prefs: BoardDisplayPrefs = BoardDisplayPrefs(),
-    ): List<Row> {
-        val groups = buildGroups(feeds, isBus, prefs)
+    ): List<Row> = rowsFrom(buildGroups(feeds, isBus, prefs))
+
+    /**
+     * The same rows, from blocks that have already been built — and, on the home
+     * screen, already been through [BoardTicker].
+     *
+     * Split out from [buildRows] because a surface that ticks needs the blocks
+     * in between: the shed, the retention and the bump are all per-block, and a
+     * flat list of strings has thrown that structure away. [buildRows] is now
+     * this composed with [buildGroups], so a caller that does not tick is
+     * unchanged.
+     *
+     * @param rowCap departures drawn per block. This is where display depth is
+     *   decided on a ticked board — the blocks still carry their reserves, and
+     *   the Swift widget's `prefix(slots)` is the same step on the other side of
+     *   the wire. Anything below 1 means "draw them all", which is what a caller
+     *   that already capped at grouping time wants.
+     */
+    fun rowsFrom(groups: List<Group>, rowCap: Int = 0): List<Row> {
         // NOT padded to the floor: a board with nothing on it at all is the
         // caller's to describe ("No departures right now"), and three blank rows
         // would pre-empt that with something that looks like a broken board.
@@ -461,6 +562,10 @@ object MultiLineBoardProcessor {
         var departureCount = 0
 
         groups.forEach { group ->
+            // A block ticked down to nothing is a header with no departures
+            // under it. [BoardTicker.tick] already drops these; this guards the
+            // path where blocks are assembled some other way.
+            if (group.departures.isEmpty()) return@forEach
             // Omit the strip entirely rather than emitting a blank one.
             //
             // A single unlettered bus stop (Smithwood Close and most suburban
@@ -475,7 +580,9 @@ object MultiLineBoardProcessor {
             // anyway — the rows simply start.
             if (group.header.isNotBlank()) rows.add(Row.PlatformHeader(group.header))
 
-            group.departures.forEach { departure ->
+            val shown =
+                if (rowCap > 0) group.departures.take(rowCap) else group.departures
+            shown.forEach { departure ->
                 rows.add(
                     Row.Departure(
                         // Bracketed short form — "(Cir.) Edgware Road". The
@@ -485,11 +592,16 @@ object MultiLineBoardProcessor {
                         linePrefix = if (group.mixesLines) "(${departure.lineShort})" else "",
                         destination = departure.prediction.destination,
                         eta = departure.prediction.eta,
+                        departed = BoardTicker.isGone(departure.prediction),
                     )
                 )
                 departureCount++
             }
         }
+
+        // Every block was empty, so there is nothing here to pad OUT — same case
+        // as no blocks at all, and the caller's to describe.
+        if (rows.isEmpty()) return emptyList()
 
         // Board-wide floor, applied ONCE at the end across every platform —
         // never per group. See [MIN_BOARD_ROWS].
@@ -511,7 +623,32 @@ object MultiLineBoardProcessor {
         val prediction: PredictionDisplay,
         val line: String,
         val lineShort: String,
-    )
+        /**
+         * The naptan this departure was FETCHED from — [Feed.stationId].
+         *
+         * Carried through the merge so a caller can put a row back where it came
+         * from. The board's hero needs exactly that: it answers "when is the
+         * next train on THIS line", which is a per-selection question asked of a
+         * list that no longer has selections in it. Re-deriving the answer from
+         * the raw predictions instead is how the hero and the row beneath it
+         * came to disagree — the row's label has been through [BoardTicker]'s
+         * bump and the raw one has not.
+         */
+        val stationId: String = "",
+        /** "Eastbound" / "Inbound" — see [Feed.direction]. */
+        val direction: String = "",
+    ) {
+        /**
+         * [UserSelection.boardKey] for the selection this row came from. Kept in
+         * the same shape deliberately: it is what every per-board map on the home
+         * screen is keyed on, and a second spelling would silently fail to match.
+         */
+        val boardKey: String get() = "${stationId}_${line}_$direction"
+
+        /** Copy carrying a re-derived ETA — see [BoardTicker]. */
+        fun relabelled(eta: String, isDue: Boolean): GroupedDeparture =
+            copy(prediction = prediction.copy(eta = eta, isDue = isDue))
+    }
 
     /**
      * One block of the board: a platform (rail) or a pole (bus), its header, and
@@ -586,15 +723,24 @@ object MultiLineBoardProcessor {
          * payload at what fits would leave it with nothing to shift into view.
          */
         rowCap: Int = prefs.rowCap,
+        /**
+         * Wall clock, when the caller intends to tick these blocks afterwards.
+         *
+         * Only [soonestArrival] reads it, and only to keep a block whose trains
+         * have all left from leading the board. Null preserves the older
+         * behaviour, which is correct for any caller that sheds departed rows
+         * before it gets here.
+         */
+        nowMs: Long? = null,
     ): List<Group> {
         // Flatten first, keeping each departure's feed so the row can name its
         // line and the header can collect the group's lines and directions.
-        val all = feeds.flatMap { feed -> feed.predictions.map { it to feed } }
+        val all = feeds.withFeeds()
         if (all.isEmpty()) return emptyList()
 
         return all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus) }
             .entries
-            .sortedWith(groupOrder(isBus, prefs))
+            .sortedWith(groupOrder(isBus, prefs, nowMs))
             .map { (key, entries) ->
                 val sorted = entries.sortedBy { (p, _) -> StationlyFormatters.arrivalSortKey(p) }
                 val directions = sorted.mapTo(mutableSetOf()) { (_, feed) -> feed.direction }
@@ -636,6 +782,10 @@ object MultiLineBoardProcessor {
                             // ("53 Nags Head"), so adding one here would double
                             // it up.
                             lineShort = if (isBus) "" else LineShortNames.shortName(feed.line),
+                            // The last point at which a row knows which board it
+                            // came from — see [GroupedDeparture.stationId].
+                            stationId = feed.stationId,
+                            direction = feed.direction,
                         )
                     },
                     // Show the line on a row ONLY when the group actually mixes
@@ -667,7 +817,7 @@ object MultiLineBoardProcessor {
      * unlettered stop, so this returns nothing for most bus hubs by design.
      */
     fun pinnablePlatforms(feeds: List<Feed>, isBus: Boolean): List<String> {
-        val all = feeds.flatMap { feed -> feed.predictions.map { it to feed } }
+        val all = feeds.withFeeds()
         if (all.isEmpty()) return emptyList()
         return all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus) }
             .entries
@@ -712,7 +862,7 @@ object MultiLineBoardProcessor {
      * first is deterministic because the sort runs before the de-duplication.
      */
     fun pinnableStops(feeds: List<Feed>): List<StopOption> {
-        val all = feeds.flatMap { feed -> feed.predictions.map { it to feed } }
+        val all = feeds.withFeeds()
         if (all.isEmpty()) return emptyList()
         return all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus = true) }
             .mapNotNull { (key, entries) ->
@@ -746,8 +896,21 @@ object MultiLineBoardProcessor {
 
     /**
      * What a collapsed station shows instead of its board: the soonest departure
-     * from each PLACE you could stand, soonest first, capped at
-     * [MAX_COLLAPSED_LEGS].
+     * from each PLACE you could stand, soonest first.
+     *
+     * ## One leg per block, and no cap
+     * This used to stop at two, on the argument that "three legs is a board
+     * again, at which point the user should just expand it". That reasoning
+     * mistook the collapsed card for a teaser. It is not — for a user who keeps
+     * their stations collapsed it is the ONLY thing the home screen says about
+     * that station, and dropping the third and fourth platform means the card
+     * silently answers a question the user did not ask: not "when can I leave"
+     * but "when can I leave from one of the two platforms we happened to keep".
+     * A four-platform interchange with two legs looks complete and is wrong.
+     *
+     * The layout cost the cap was really paying for is handled where it belongs:
+     * `HomeBoardBudget.boardMaxHeight` now charges the open board for the legs a
+     * collapsed station will actually draw, instead of assuming a constant.
      *
      * Grouped on the same key the BOARD groups on — rail by platform, bus by
      * pole ([groupKeyFor]) — for two reasons. A leg can then never describe a
@@ -761,11 +924,10 @@ object MultiLineBoardProcessor {
      * would put the wrong train first exactly when two are close.
      *
      * ## What [prefs] does and does not reach here
-     * Only [BoardPin]. A pinned block leads the legs and, more importantly,
-     * survives the cap: at a four-platform station the two soonest legs may be
-     * two platforms the user never uses, and a "show first" that quietly does
-     * nothing on a collapsed station is a setting that appears broken to anyone
-     * whose stations are collapsed by default.
+     * Only [BoardPin], which now decides ORDER alone rather than survival: with
+     * every block getting a leg there is nothing left for a pin to rescue one
+     * from. It still leads, so the platform the user named is the first line
+     * their eye lands on.
      *
      * [BoardDisplayPrefs.rowsPerPlatform] deliberately does NOT apply — a leg IS
      * one departure, so there is no depth here to bound. That is worth knowing
@@ -778,7 +940,7 @@ object MultiLineBoardProcessor {
         isBus: Boolean,
         prefs: BoardDisplayPrefs = BoardDisplayPrefs(),
     ): List<Leg> {
-        val all = feeds.flatMap { feed -> feed.predictions.map { it to feed } }
+        val all = feeds.withFeeds()
         if (all.isEmpty()) return emptyList()
 
         return all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus) }
@@ -792,7 +954,6 @@ object MultiLineBoardProcessor {
                     if (isPinned(block, isBus, prefs.pin)) 0 else 1
                 }.thenBy { (_, soonest) -> StationlyFormatters.arrivalSortKey(soonest.first) }
             )
-            .take(MAX_COLLAPSED_LEGS)
             .map { (_, soonest) -> soonest }
             .map { (prediction, feed) ->
                 Leg(
@@ -834,11 +995,33 @@ object MultiLineBoardProcessor {
     }
 
     /**
-     * How many legs a collapsed card shows.
+     * How many blocks this station has — platforms on rail, poles on bus.
      *
-     * Two, because two is what "both directions" means and what a header-height
-     * row can hold legibly. A three-platform interchange collapsed to three legs
-     * is a board again — at which point the user should just expand it.
+     * The number of legs a collapsed card will draw, and the reason it exists
+     * separately from [collapsedLegs] is STABILITY. The home screen charges the
+     * open board for the height a collapsed one takes
+     * (`HomeBoardBudget.boardMaxHeight`), and that figure must not move every
+     * time a train departs, or every open board on the page re-flows underneath
+     * whatever the user is reading.
+     *
+     * So it counts blocks in the CACHED rows rather than legs in the ticked
+     * ones. The two differ in exactly one case — a platform whose departures
+     * have all gone drops its leg but keeps its block — which makes this a
+     * stable upper bound: it over-reserves by one row for a few minutes rather
+     * than jittering, and it can never under-reserve and push the board off
+     * screen. It settles on its own when `SqlStorage.getPredictions` drops the
+     * whole payload at [SqlStorage.PAYLOAD_TTL_MS].
+     *
+     * Counts into a set rather than through [withFeeds]: this runs for every
+     * collapsed station on every prediction update, and the pairs the shared
+     * flattening allocates would all be thrown away to answer "how many distinct
+     * keys" — the one grouping question that needs no departures kept.
      */
-    const val MAX_COLLAPSED_LEGS = 2
+    fun blockCount(feeds: List<Feed>, isBus: Boolean): Int {
+        val keys = mutableSetOf<String>()
+        feeds.forEach { feed ->
+            feed.predictions.forEach { keys.add(groupKeyFor(it, feed, isBus)) }
+        }
+        return keys.size
+    }
 }

@@ -1,6 +1,7 @@
 package com.stationly.core.platform
 
 import com.stationly.core.model.PredictionDisplay
+import com.stationly.core.util.BoardDisplayPrefs
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 
@@ -149,6 +150,31 @@ data class WidgetBoard(
     /** Epoch SECONDS, matching the legacy `widget_last_updated` key. */
     val lastUpdated: Long = 0L,
     val feeds: List<WidgetFeed> = emptyList(),
+    /**
+     * How many departures the user asked to see under each header —
+     * `BoardDisplayPrefs.rowsPerPlatform`, already clamped.
+     *
+     * ## Why it is on the wire rather than applied before sending
+     * [WidgetGroup.predictions] carries RESERVES, not display depth
+     * (`MultiLineBoardProcessor.ROW_RESERVE`): the extension re-derives its
+     * labels every minute from one timeline, so trimming to what fits would
+     * leave it nothing to shift up as trains depart. The cap therefore has to be
+     * applied on the far side, at render — which means the far side has to be
+     * told what it is.
+     *
+     * The extension cannot read it for itself. `StationPrefsRepository` writes to
+     * the app's own NSUserDefaults suite, not the App Group, so the widget has
+     * never been able to see this setting — which is why it hardcoded three rows
+     * and disagreed with the home board for anyone who moved the slider.
+     *
+     * A renderer still clamps this to what its family can physically draw: a
+     * medium widget has room for three rows whatever the setting says.
+     *
+     * Defaulted so a board written by an older build decodes to the depth that
+     * build was using — which is the same default the setting itself has, hence
+     * the constant rather than a literal.
+     */
+    val rowCap: Int = BoardDisplayPrefs.DEFAULT_ROWS_PER_PLATFORM,
     /**
      * The board as blocks — what the extension actually renders and pages
      * between. See [WidgetGroup].

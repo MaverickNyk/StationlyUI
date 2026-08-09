@@ -136,12 +136,8 @@ class SqlStorage(private val database: StationlyDatabase) {
         val now = Clock.System.now().toEpochMilliseconds()
         val timestamp = results.first().timestamp
 
-        // Drop stale data. Widened from 2 min → 8 min now that the UI
-        // self-ticks per-minute via targetEpochMs — between FCM pushes
-        // we want the rows to keep counting down instead of disappearing.
-        // 8 min covers a comfortable buffer for the longest "X min" rows
-        // we'd want to show; past that, the data is genuinely stale.
-        if (now - timestamp > 8 * 60 * 1000) {
+        // Drop stale data — see [PAYLOAD_TTL_MS] for why the number is what it is.
+        if (now - timestamp > PAYLOAD_TTL_MS) {
             return emptyList()
         }
 
@@ -202,6 +198,37 @@ class SqlStorage(private val database: StationlyDatabase) {
     }
 
     companion object {
+        /**
+         * How long a stored payload stays readable before the board treats it as
+         * gone entirely.
+         *
+         * ## Sized to TfL's own prediction horizon, not to a guess
+         * Measured against the live feed: the furthest arrival TfL returns is
+         * consistently **~25 minutes** out, and the same 24.5–24.8 minute ceiling
+         * appears across unrelated lines and stations. So a payload eight minutes
+         * old — the previous value — still describes trains up to seventeen
+         * minutes in the future, and discarding it threw away usable predictions
+         * to show an empty board. Underground, where signal is patchy and this
+         * path matters most, that is precisely backwards: the user is handed
+         * "Signal lost" while the device holds a perfectly good answer.
+         *
+         * Thirty minutes covers the feed's whole horizon with a little slack, so
+         * nothing is dropped while it still describes a future train.
+         *
+         * ## Why this can be generous now, when 8 could not
+         * It is no longer the only thing saying "this is old". A payload past its
+         * usefulness degrades on its own: every row crosses its target and
+         * [com.stationly.core.util.BoardTicker] relabels it "Gone", so a board
+         * nobody has refreshed becomes visibly spent without a cutoff, and the
+         * footer's "X ago" has been amber then red long before. The cutoff is now
+         * the backstop rather than the mechanism.
+         *
+         * It is NOT removed, and should not be. Without it the app would go on
+         * confidently counting down a train TfL cancelled an hour ago, with
+         * nothing left on the board to suggest otherwise.
+         */
+        const val PAYLOAD_TTL_MS: Long = 30L * 60 * 1000
+
         /**
          * The single runtime filter check, shared by ingest and re-apply so the
          * two can never disagree about what a board shows.

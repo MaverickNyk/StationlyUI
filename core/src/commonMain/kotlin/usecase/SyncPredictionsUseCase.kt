@@ -3,6 +3,7 @@ package com.stationly.core.usecase
 import com.stationly.core.model.*
 import com.stationly.core.repository.SqlStorage
 import com.stationly.core.util.GlobalBoardProcessor
+import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
@@ -92,15 +93,17 @@ class SyncPredictionsUseCase(
         }.distinctBy { "${it.destination}_${it.platform}_${it.targetEpochMs ?: it.eta}" }
         
         // 5. Use unified processor for sorting and platform grouping.
-        //    Cap at 8 per platform (not 3) so the in-memory tick layer
-        //    has a buffer of upcoming trains to shift into the visible
-        //    3-row window once the current top row has departed. The
-        //    display layer still caps at 3 — these are reserves, not
-        //    everything shown.
+        //    Capped at the RESERVE depth, not the display depth: the tick layer
+        //    needs a buffer of upcoming trains to shift into the visible rows as
+        //    the top one departs, and the board applies the user's own
+        //    `rowsPerPlatform` at render. See MultiLineBoardProcessor.ROW_RESERVE
+        //    for the measurement behind the number — it is deliberately above
+        //    what TfL actually returns per platform, so nothing is trimmed here
+        //    in practice.
         val processedPredictions = if (allowedDestIds.isEmpty()) {
             GlobalBoardProcessor.processPredictions(
                 predictions = formattedPredictions,
-                perPlatformCap = 8,
+                perPlatformCap = MultiLineBoardProcessor.ROW_RESERVE,
             )
         } else {
             // Cap matching and excluded rows SEPARATELY.
@@ -116,11 +119,11 @@ class SyncPredictionsUseCase(
             // change be re-applied on device without waiting for a refetch.
             val matching = GlobalBoardProcessor.processPredictions(
                 predictions = formattedPredictions.filter { it.matchesFilter },
-                perPlatformCap = 8,
+                perPlatformCap = MultiLineBoardProcessor.ROW_RESERVE,
             )
             val excluded = GlobalBoardProcessor.processPredictions(
                 predictions = formattedPredictions.filterNot { it.matchesFilter },
-                perPlatformCap = 8,
+                perPlatformCap = MultiLineBoardProcessor.ROW_RESERVE,
             )
             matching + excluded
         }

@@ -167,6 +167,19 @@ struct BoardMetrics {
         station: 19, platform: 15, row: 14.5, status: 12.5,
         clock: 18, ago: 10, icon: 22, logo: 22, cellRadius: 0, maxRows: 6,
         singlePlatform: false)
+
+    /// Rows one BLOCK may show here, given the station's own setting.
+    ///
+    /// Two limits meeting, and they answer different questions. [maxRows] is
+    /// what this canvas can physically draw — a medium widget has room for three
+    /// rows and no preference changes that. `WidgetData.rowCap` is how deep the
+    /// user asked their board to go, and it is the reason this exists at all:
+    /// the widget used to hardcode three and therefore contradicted the home
+    /// board for anyone who moved the slider off its default.
+    ///
+    /// The smaller of the two wins, which means the setting can make a widget
+    /// SHALLOWER but never taller than its canvas.
+    func rows(for rowCap: Int) -> Int { min(maxRows, rowCap) }
 }
 
 private let DueRed = Color(red: 1.0, green: 0.32, blue: 0.32)
@@ -1108,13 +1121,21 @@ struct BoardWidgetView: View {
                 )
                 .frame(minHeight: metrics.platform + 8)
             }
-            ForEach(Array(group.rows.prefix(metrics.maxRows).enumerated()), id: \.offset) { index, dep in
+            // The station's own depth, clamped to the canvas — see
+            // `BoardMetrics.rows(for:)`. `group.rows` is RESERVES, so this is
+            // where display depth is decided, exactly as the home board decides
+            // it in `BoardTicker.tick`.
+            let slots = metrics.rows(for: data.rowCap)
+            ForEach(Array(group.rows.prefix(slots).enumerated()), id: \.offset) { index, dep in
                 DotMatrixRow(dep: dep, m: metrics, showLine: mixesLines)
                     .frame(minHeight: metrics.row + 10)
                     .id("\(page)-\(index)-\(stamp)")
                     .transition(slide)
             }
-            if group.rows.count < metrics.maxRows {
+            // Spare CANVAS cells, not spare slots: the strip exists to fill dead
+            // space, and a board the user capped at two rows on a three-row
+            // canvas has exactly as much of it as a quiet platform does.
+            if min(group.rows.count, slots) < metrics.maxRows {
                 statusStrip
             }
         }
@@ -1164,10 +1185,15 @@ struct BoardWidgetView: View {
     /// lone header with nothing under it.
     private var budgetedGroups: [BoardGroup] {
         var remaining = metrics.maxRows
+        // Per-block depth as the user set it, bounded by the whole-board budget.
+        // Without it one deep platform ate all six cells and the platforms below
+        // it never appeared — and a user who asked for two rows per platform got
+        // six of the first one.
+        let perBlock = metrics.rows(for: data.rowCap)
         var out: [BoardGroup] = []
         for group in data.groups {
             guard remaining > 0 else { break }
-            let rows = Array(group.rows.prefix(remaining))
+            let rows = Array(group.rows.prefix(min(remaining, perBlock)))
             guard !rows.isEmpty else { continue }
             remaining -= rows.count
             out.append(group.with(rows: rows))

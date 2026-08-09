@@ -281,7 +281,27 @@ class SummaryViewModel(
                 val rawPreds = Platform.sqlStorage.getPredictions(
                     selection.station, selection.line, selection.direction
                 )
-                val dbPreds = GlobalBoardProcessor.processPredictions(rawPreds)
+                // EVERY row SQL holds, not the three that fit on screen.
+                //
+                // This called `processPredictions(rawPreds)`, whose default cap
+                // is 3 per platform — and that quietly broke the board's ability
+                // to tick. `SyncPredictionsUseCase` stores 8 per platform
+                // precisely so the countdown has trains behind the visible ones
+                // to shift up as they depart (see MultiLineBoardProcessor.ROW_RESERVE);
+                // trimming to 3 here threw the reserves away before the board
+                // ever saw them, so a card went 3 rows → 2 → 1 → empty over three
+                // minutes and stayed empty until the next push. The widget reads
+                // SQL directly and kept all 8, so the two surfaces disagreed
+                // within a minute of every update.
+                //
+                // The display cap belongs to the BOARD, where it is the user's
+                // own `rowsPerPlatform` and is applied after the departed rows
+                // have been shed. This call is now only a sort. (Android's own
+                // ViewModel has always passed MAX_VALUE here; the Compose port
+                // dropped it.)
+                val dbPreds = GlobalBoardProcessor.processPredictions(
+                    rawPreds, perPlatformCap = Int.MAX_VALUE
+                )
                 val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
                 // Android keeps "now" — unchanged behaviour. iOS uses the real
                 // last-sync time so the "ago" timer reflects genuine backend

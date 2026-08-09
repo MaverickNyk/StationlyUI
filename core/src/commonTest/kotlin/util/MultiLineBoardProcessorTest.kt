@@ -492,9 +492,14 @@ class MultiLineBoardProcessorTest {
     }
 
     @Test
-    fun `a pinned platform survives the two-leg cap on a collapsed card`() {
-        // Otherwise "show first" silently does nothing for anyone whose stations
-        // are collapsed by default, which reads as a broken setting.
+    fun `a pinned platform leads the legs on a collapsed card`() {
+        // The pin used to decide SURVIVAL as well as order, because the card
+        // stopped at two legs. With every block getting one there is nothing to
+        // rescue a platform from, so this is purely "show first" now — but it
+        // still has to work collapsed, or the setting reads as broken to anyone
+        // whose stations are closed by default.
+        //
+        // Platform 7's train is the LAST to arrive and still leads.
         val legs = MultiLineBoardProcessor.collapsedLegs(
             feeds = listOf(
                 feed("victoria", predictions = listOf(pred("Brixton", 1, platform = "Platform 1"))),
@@ -504,7 +509,7 @@ class MultiLineBoardProcessorTest {
             isBus = false,
             prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.PLATFORM, "Platform 7")),
         )
-        assertEquals(listOf("Epping", "Brixton"), legs.map { it.towards })
+        assertEquals(listOf("Epping", "Brixton", "Morden"), legs.map { it.towards })
     }
 
     @Test
@@ -523,7 +528,11 @@ class MultiLineBoardProcessorTest {
             isBus = false,
             prefs = BoardDisplayPrefs(rowsPerPlatform = 5),
         )
-        assertEquals(listOf("Morden", "Epping"), legs.map { it.towards })
+        // One leg per PLATFORM, never per departure: Platform 1 has two trains
+        // and contributes exactly one leg, for its soonest. Depth bounds a
+        // block's rows and a leg is not a row.
+        assertEquals(listOf("Morden", "Epping", "Brixton"), legs.map { it.towards })
+        assertEquals(listOf("1 min", "2 min", "9 min"), legs.map { it.eta })
     }
 
     // ── What the "show first" picker is allowed to offer ──
@@ -734,17 +743,51 @@ class MultiLineBoardProcessorTest {
     }
 
     @Test
-    fun `collapsed legs are capped at two`() {
-        val legs = MultiLineBoardProcessor.collapsedLegs(
-            feeds = listOf(
-                feed("victoria", predictions = listOf(pred("Brixton", 1, platform = "Platform 1"))),
-                feed("northern", predictions = listOf(pred("Morden", 2, platform = "Platform 2"))),
-                feed("central", predictions = listOf(pred("Epping", 3, platform = "Platform 3"))),
-            ),
-            isBus = false,
+    fun `every platform gets a leg — a collapsed card hides nothing`() {
+        // This used to stop at two. For anyone who keeps their stations
+        // collapsed the card IS the home screen's answer, and a four-platform
+        // station showing two legs looks complete while answering a narrower
+        // question than the one asked.
+        val feeds = listOf(
+            feed("victoria", predictions = listOf(pred("Brixton", 1, platform = "Platform 1"))),
+            feed("northern", predictions = listOf(pred("Morden", 2, platform = "Platform 2"))),
+            feed("central", predictions = listOf(pred("Epping", 3, platform = "Platform 3"))),
         )
-        assertEquals(MultiLineBoardProcessor.MAX_COLLAPSED_LEGS, legs.size)
-        assertEquals(listOf("1 min", "2 min"), legs.map { it.eta })
+        val legs = MultiLineBoardProcessor.collapsedLegs(feeds = feeds, isBus = false)
+        assertEquals(listOf("1 min", "2 min", "3 min"), legs.map { it.eta })
+        // The height budget charges the open board per leg, so its count has to
+        // agree with what the card will draw — see HomeBoardBudget.
+        assertEquals(legs.size, MultiLineBoardProcessor.blockCount(feeds, isBus = false))
+    }
+
+    @Test
+    fun `block count holds still when a platform runs dry`() {
+        // The budget's stability contract: `collapsedLegs` reads TICKED rows and
+        // loses a leg the moment a platform's last train goes, but `blockCount`
+        // reads the cached ones and keeps the block. Budgeting on the leg list
+        // would re-flow every open board on the page as trains depart.
+        val cached = listOf(
+            feed("victoria", predictions = listOf(pred("Brixton", 1, platform = "Platform 1"))),
+            feed("northern", predictions = listOf(pred("Morden", 2, platform = "Platform 2"))),
+        )
+        // What the card draws once Platform 2 has emptied out.
+        val live = listOf(cached[0], feed("northern", predictions = emptyList()))
+
+        assertEquals(1, MultiLineBoardProcessor.collapsedLegs(live, isBus = false).size)
+        assertEquals(2, MultiLineBoardProcessor.blockCount(cached, isBus = false))
+    }
+
+    @Test
+    fun `two bus poles at one hub count as two blocks even with no platform between them`() {
+        // The pole is the group key on bus — TfL letters stops only at
+        // multi-stop interchanges, so counting by `platform` would collapse an
+        // ordinary hub to one block and under-reserve its card's height.
+        val poles = listOf(
+            feed("39", stationId = "490008805N", predictions = listOf(pred("Putney Bridge", 1, platform = ""))),
+            feed("39", stationId = "490012211N", predictions = listOf(pred("Clapham Junction", 2, platform = ""))),
+        )
+        assertEquals(2, MultiLineBoardProcessor.blockCount(poles, isBus = true))
+        assertEquals(1, MultiLineBoardProcessor.blockCount(poles, isBus = false))
     }
 
     @Test

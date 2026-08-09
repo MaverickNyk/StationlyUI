@@ -273,8 +273,14 @@ class IosWidgetManager : WidgetManager {
 
         val byStation = all.groupBy { it.groupingId }
         val prefs = boardPrefs()
+        // ONE clock for the whole write, not one per station. Every board here
+        // is produced by the same pass and its block ordering is judged against
+        // "has this train already left" — reading the clock per station would
+        // let two boards written together disagree about that at a boundary,
+        // for no benefit.
+        val nowMs = (NSDate().timeIntervalSince1970 * 1000).toLong()
         val boards = byStation.map { (id, selections) ->
-            buildBoard(id, selections, prefs[id] ?: BoardDisplayPrefs())
+            buildBoard(id, selections, prefs[id] ?: BoardDisplayPrefs(), nowMs)
         }
         val directory = byStation.map { (id, selections) ->
             WidgetStationRef(
@@ -385,6 +391,8 @@ class IosWidgetManager : WidgetManager {
         stationId: String,
         boards: List<UserSelection>,
         prefs: BoardDisplayPrefs,
+        /** Shared across every board in this write — see the call site. */
+        nowMs: Long,
     ): WidgetBoard {
         val sql = Platform.sqlStorage
         val first = boards.firstOrNull()
@@ -403,7 +411,14 @@ class IosWidgetManager : WidgetManager {
             )
         }
         val groups = MultiLineBoardProcessor.buildGroups(
-            feeds, isBus, prefs, rowCap = WIDGET_ROW_RESERVE
+            feeds, isBus, prefs,
+            rowCap = MultiLineBoardProcessor.ROW_RESERVE,
+            // Block order is fixed HERE, at write time, and the extension never
+            // re-orders (that would move pages under the user's arrows). So the
+            // one thing it has to get right is not leading the board with a
+            // platform whose trains have all left — which the payload can
+            // contain, since SQL holds the previous fetch's rows too.
+            nowMs = nowMs,
         )
         val tsMs = boards.mapNotNull {
             sql.getLastUpdatedTimestamp(it.station, it.line, it.direction)
@@ -458,6 +473,10 @@ class IosWidgetManager : WidgetManager {
             feeds = boards.map {
                 WidgetFeed(it.station, it.line, it.direction, LineShortNames.shortName(it.line))
             },
+            // The user's display depth, carried across the process boundary
+            // because the extension cannot read the preference itself — see
+            // [WidgetBoard.rowCap].
+            rowCap = prefs.rowCap,
             groups = wireGroups,
             // Flattened FROM the groups rather than built alongside them, so the
             // legacy flat keys and an older extension build can never show a
@@ -507,20 +526,6 @@ class IosWidgetManager : WidgetManager {
     /** Just the `board` field of `composeApp`'s `StationPrefs` — see [boardPrefs]. */
     @Serializable
     private data class StoredStationPrefs(val board: BoardDisplayPrefs = BoardDisplayPrefs())
-
-    /**
-     * Departures kept per block in the App Group — reserves, not display depth.
-     *
-     * The extension builds one timeline and re-derives every ETA label from it
-     * per minute for the next hour, so a payload capped at what fits on screen
-     * has nothing to shift up as trains depart: the board would empty itself and
-     * stay empty until the next push. Eight covers the large family's six rows
-     * plus the departed-row retention `WidgetData.ticked` falls back on.
-     *
-     * Deliberately not [BoardDisplayPrefs.rowCap]: that is what the user asked
-     * to SEE, and the views apply it. This is the buffer behind it.
-     */
-    private val WIDGET_ROW_RESERVE = 8
 
     /**
      * The station ids currently holding `widget_board_*` keys, read back out of

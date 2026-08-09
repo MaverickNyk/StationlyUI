@@ -75,11 +75,18 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         } ?? now
 
         // PER-PLATFORM retention target, not a whole-board one: each platform
-        // holds its own last 3 departures when it has fewer than 3 upcoming.
-        // 3 regardless of family — every family renders at most 3 rows for a
-        // given platform group (medium/small show one group of 3; large shows
-        // several groups), so a per-platform figure doesn't vary by size.
-        let slotsPerPlatform = 3
+        // holds its own last few departures when it has fewer upcoming.
+        //
+        // It must not EXCEED the slots a block actually displays. Retained rows
+        // sort to the top of their block, so holding more of them than the
+        // renderer's `prefix` will show would hide the live trains underneath —
+        // the precise opposite of what retention is for. Under-shooting is
+        // harmless (a block simply renders short), which is why the large family
+        // is left at 3 rather than tracking its own 6-cell budget.
+        //
+        // `rowCap` is the station's own setting, so a user who asked for two
+        // rows per platform gets two held rather than three.
+        let slotsPerPlatform = min(data.rowCap, 3)
 
         // ── A tap gets a SHORT timeline; only quiet rebuilds get the full one ──
         //

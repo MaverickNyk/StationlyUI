@@ -57,11 +57,12 @@ enum WidgetRefreshService {
     //     no UI. A success glyph was tried and removed (see RefreshButton):
     //     swapping the arrow on the happy path destroys the button's affordance.
 
-    /// Mirrors `IosWidgetManager.WIDGET_ROW_RESERVE` — reserves for the tick
-    /// layer to shift into the visible 3-row window, not rows to render. A
-    /// refresh must leave a block the same depth a push does, or the board would
-    /// run out of trains to count down sooner after a tap than after a push.
-    private static let perPlatformCap = 8
+    /// Mirrors `MultiLineBoardProcessor.ROW_RESERVE` — reserves for the tick
+    /// layer to shift into the visible rows, not rows to render. A refresh must
+    /// leave a block the same depth a push does, or the board would run out of
+    /// trains to count down sooner after a tap than after a push. How many of
+    /// them are SHOWN is `WidgetData.rowCap`, applied at render.
+    private static let perPlatformCap = 10
 
     /// Shared — see `AppGroupDefaults`. The refresh path reads and writes it a
     /// dozen times per tap (in-flight guard, trace, per-station flags, write-back).

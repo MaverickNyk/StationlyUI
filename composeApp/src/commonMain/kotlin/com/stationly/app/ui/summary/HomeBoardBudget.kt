@@ -112,6 +112,24 @@ internal fun boardMaxHeight(
     viewportHeight: Dp,
     expandedCount: Int,
     collapsedCount: Int,
+    /**
+     * Legs every collapsed station will draw between them — one per platform
+     * (rail) or pole (bus), summed across the collapsed cards. See
+     * [MultiLineBoardProcessor.blockCount], which is what the caller counts and
+     * is deliberately NOT the live leg list.
+     *
+     * This was a constant, `LEG_HEIGHT * MAX_COLLAPSED_LEGS`, because a
+     * collapsed card could never show more than two legs. It can now show one
+     * per platform, so the assumption has to become a measurement — a
+     * four-platform station budgeted at two would have had its extra rows come
+     * out of the open board's height, pushing the bottom of the board off
+     * screen, which is the one thing this whole file exists to prevent.
+     *
+     * Counted from the CACHED rows, so it holds still while trains depart. The
+     * old comment's fear — re-flowing every open board each time a train leaves
+     * — is answered there rather than by rounding up to a constant.
+     */
+    collapsedLegCount: Int,
     chromeHeight: Dp,
     exploreHeight: Dp,
     bottomInset: Dp,
@@ -128,15 +146,14 @@ internal fun boardMaxHeight(
     // Collapsed stations cost a known amount, so they come out of the budget
     // before it is shared — this is what replaced the old viewport-fraction cap.
     //
-    // Budgeted at the MAXIMUM leg count rather than the actual one. The real
-    // number depends on live predictions, so budgeting on it would re-flow every
-    // open board each time a train departs — the height churn this whole layout
-    // exists to prevent. Over-reserving costs the open board a few dp and is
-    // stable; under-reserving pushes it off screen.
+    // Two terms, because they scale differently: the card's own chrome is per
+    // STATION, and the legs are per PLATFORM. Multiplying a per-station figure
+    // by an assumed leg count conflated them, which is why the constant had to
+    // go rather than just get bigger.
     val collapsedCost =
-        (CARD_CHROME_HEIGHT + STATION_HEADER_HEIGHT +
-            LEG_HEIGHT * MultiLineBoardProcessor.MAX_COLLAPSED_LEGS + HOME_GAP) *
-            collapsedCount.coerceAtLeast(0)
+        (CARD_CHROME_HEIGHT + STATION_HEADER_HEIGHT + HOME_GAP) *
+            collapsedCount.coerceAtLeast(0) +
+            LEG_HEIGHT * collapsedLegCount.coerceAtLeast(0)
     val budget = viewportHeight -
         (HOME_PADDING_V * 2) - bottomInset -
         chromeHeight - exploreHeight - collapsedCost - extraChrome -

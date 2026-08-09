@@ -109,12 +109,12 @@ import com.stationly.app.ui.util.computeBoardFallbackState
 import com.stationly.app.ui.util.parseHHmm
 import com.stationly.app.ui.util.resolveBoardFallbackCopy
 import com.stationly.app.ui.util.rememberMinuteTick
-import com.stationly.app.ui.util.tickPredictions
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.UserSelection
 import com.stationly.core.util.LineShortNames
 import com.stationly.core.util.LineStatusRanker
 import com.stationly.core.util.BoardDisplayPrefs
+import com.stationly.core.util.BoardTicker
 import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.StationlyFormatters
 import kotlin.math.roundToInt
@@ -127,6 +127,14 @@ import kotlinx.datetime.toLocalDateTime
 // Fixed TfL dot-matrix amber — the signage board is locked to this regardless
 // of app theme (matches android `@color/tfl_amber` = #FFC819).
 private val BoardAmber = Color(0xFFFFC819)
+
+/**
+ * The amber a retained already-departed row is drawn in — the widget's
+ * `WidgetTheme.amberDim`, to the component. A "Gone" row on the home board and
+ * the same row on the widget are the same fact and must not be two different
+ * shades of it.
+ */
+private val BoardAmberDim = Color(0xFFB88F1A)
 private val PanelBg = Color(0xFF0C0C0C)
 private val ActiveRowBg = Color(0xFF161616)
 private val StationlyRed = Color(0xFFE32017)
@@ -232,8 +240,38 @@ private fun List<SectionRender>.toFeeds(): List<MultiLineBoardProcessor.Feed> = 
     )
 }
 
+/**
+ * The same feeds built from the RAW stored departures, before anything has been
+ * shed or relabelled.
+ *
+ * This is what [MultiLineBoardProcessor.buildGroups] must be given, and the
+ * distinction from [toFeeds] is the whole point of the pipeline: grouping has to
+ * see the reserves AND the trains that have just left, because the first are
+ * what shift up and the second are what the "Gone" retention holds.
+ * [SectionRender.ticked] is the OUTPUT of that process, not an input to it.
+ */
+private fun List<BoardSection>.toRawFeeds(): List<MultiLineBoardProcessor.Feed> = map { section ->
+    MultiLineBoardProcessor.Feed(
+        stationId = section.selection.station,
+        line = section.selection.line,
+        direction = section.selection.direction,
+        predictions = section.predictions,
+    )
+}
+
 private data class SectionRender(
     val section: BoardSection,
+    /**
+     * This line's LIVE departures, with the labels the board is showing.
+     *
+     * Read back out of the ticked blocks rather than derived here, which is what
+     * makes the hero and the row beneath it the same object: a label that has
+     * been through the per-block bump ("Due, Due" → "Due, 1 min") cannot be
+     * recomputed from the timestamp without undoing the bump, and that is
+     * exactly how the two used to contradict each other. Retained "Gone" rows
+     * are excluded — they are board furniture, and the hero must never point at
+     * a train that has left.
+     */
     val ticked: List<PredictionDisplay>,
     val next: PredictionDisplay?,
     val fallbackState: BoardFallbackState?,
@@ -331,10 +369,9 @@ fun StationBoard(
     val isMulti = sections.size > 1
 
     // Self-tick ETAs each wall-clock minute so "5 min" drops to "4 min" between
-    // stream frames (the 30s SummaryViewModel poll handles fresh data). Shared
-    // tick contract (ui/util/PredictionTicker) — same 30s departed grace PLUS
-    // Android's per-platform monotonic bump, so two same-platform trains never
-    // collide on one label ("Due, Due" → "Due, 1 min") on any surface.
+    // stream frames (the 30s SummaryViewModel poll handles fresh data). No
+    // refetch is involved and none is needed: every label is re-derived from the
+    // absolute arrival time the backend already sent.
     val nowMin by rememberMinuteTick()
 
     val londonTime = remember(nowMin) {
@@ -342,17 +379,79 @@ fun StationBoard(
             .toLocalDateTime(TimeZone.of("Europe/London")).time
     }
 
+    // One board is one station, and a bus stop groups by pole rather than by
+    // platform. Hoisted to the top of the card because everything below now
+    // needs it: the blocks, the collapsed header's legs, and the panel.
+    val isBus = MultiLineBoardProcessor.isBus(mode)
+
+    // Footer freshness is the most recent update across the card's lines, and
+    // also what gates the "Gone" retention — see BoardTicker.RETENTION_MIN_AGE_MS.
+    val lastUpdated = remember(sections) { sections.maxOf { it.lastUpdated } }
+
+    // ── The board, at this minute ──
+    //
+    // Group FIRST (from the raw stored rows, reserves and departed trains
+    // included), tick SECOND. The order is load-bearing and is argued in
+    // BoardTicker: capping to what fits before shedding the departed rows leaves
+    // a block with nothing to shift up, which is how this board used to empty
+    // itself out between pushes while the widget kept counting down.
+    //
+    // Grouping is also what makes the bump correct. It used to run per
+    // `platform` on a per-line list, which on a bus hub — where every unlettered
+    // pole reports a blank platform — bumped two poles as though they were one
+    // queue. The blocks are the queues, so the blocks are what get bumped.
+    // `lastUpdated` is deliberately NOT a key: it is derived from `sections`, so
+    // it can never change without `sections` changing first.
+    val tickedGroups = remember(sections, isBus, boardPrefs, nowMin) {
+        BoardTicker.tick(
+            groups = MultiLineBoardProcessor.buildGroups(
+                feeds = sections.toRawFeeds(),
+                isBus = isBus,
+                prefs = boardPrefs,
+                rowCap = MultiLineBoardProcessor.ROW_RESERVE,
+                nowMs = nowMin,
+            ),
+            nowMs = nowMin,
+            // A board that has never updated has no age to speak of — treat it
+            // as fresh so an empty first paint says "no departures" rather than
+            // resurrecting rows that were never there.
+            payloadAgeMs = if (lastUpdated <= 0L) 0L else (nowMin - lastUpdated).coerceAtLeast(0L),
+            displayRows = boardPrefs.rowCap,
+        )
+    }
+
+    // The user's depth is applied HERE, at render, and not inside the tick —
+    // see BoardTicker.tick. The blocks keep their reserves so the hero below can
+    // still find a line's next train even when the board has no room to draw it.
+    val unifiedRows = remember(tickedGroups, boardPrefs) {
+        MultiLineBoardProcessor.rowsFrom(tickedGroups, rowCap = boardPrefs.rowCap)
+    }
+
+    // Each line's live departures, put back where they came from — see
+    // [SectionRender.ticked]. Already in arrival order per board, so the hero
+    // below is just `first()`.
+    val liveByBoard = remember(tickedGroups) {
+        tickedGroups.asSequence()
+            .flatMap { it.departures.asSequence() }
+            .filterNot { BoardTicker.isGone(it.prediction) }
+            .groupBy { it.boardKey }
+            .mapValues { (_, rows) ->
+                StationlyFormatters.sortPredictions(rows.map { it.prediction })
+            }
+    }
+
     // Everything per-section, derived in ONE remember rather than a remember per
     // loop iteration: the section list is dynamic, and per-iteration remembers
     // would rebuild their slots whenever a line is added or removed.
-    val rendered = remember(sections, nowMin, isOnline, homeConfig, londonTime, isDark) {
+    val rendered = remember(sections, liveByBoard, nowMin, isOnline, homeConfig, londonTime, isDark) {
         sections.map { section ->
-            val ticked = tickPredictions(section.predictions, nowMin)
+            val ticked = liveByBoard[section.selection.boardKey].orEmpty()
             val (sev, reason) = splitLineStatus(section.lineStatus)
             SectionRender(
                 section = section,
                 ticked = ticked,
-                next = StationlyFormatters.sortPredictions(ticked).firstOrNull(),
+                // Already in arrival order — `liveByBoard` sorted it.
+                next = ticked.firstOrNull(),
                 // Empty-board fallback message (Offline / Live updates paused /
                 // Service ended for tonight / Disrupted / Nothing departing right
                 // now / …) — parity with Android's Board. Computed PER LINE, since
@@ -395,15 +494,6 @@ fun StationBoard(
             .minByOrNull { (_, p) -> StationlyFormatters.arrivalSortKey(p) }
     }
     val heroPrediction = hero?.second
-
-    // Footer freshness is the most recent update across the card's lines.
-    val lastUpdated = remember(sections) { sections.maxOf { it.lastUpdated } }
-
-
-    // One board is one station, and a bus stop groups by pole rather than by
-    // platform. Hoisted out of the panel because the collapsed header needs the
-    // same rule — a leg must never describe a platform the board would not show.
-    val isBus = MultiLineBoardProcessor.isBus(mode)
 
     // Which line's hero is showing. See the hero block below for why null is a
     // meaningful value rather than "nothing selected".
@@ -800,11 +890,10 @@ fun StationBoard(
                     border = BorderStroke(if (isUrgent) 1.5.dp else 1.dp, accent.copy(alpha = 0.22f))
                 ) {
                     DotMatrixPanel(
-                        mode = mode,
+                        rows = unifiedRows,
                         rendered = rendered,
                         lastUpdated = lastUpdated,
                         homeConfig = homeConfig,
-                        boardPrefs = boardPrefs,
                     )
                 }
 
@@ -1327,34 +1416,33 @@ private fun StationHeader(
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun DotMatrixPanel(
-    mode: String,
+    /**
+     * The board's rows, already grouped, ticked and capped by the card — see the
+     * pipeline in [StationBoard].
+     *
+     * Built there rather than here because the hero has to be picked out of the
+     * SAME blocks, and a panel that re-derived its own would be a second answer
+     * to "what does this board say".
+     */
+    rows: List<MultiLineBoardProcessor.Row>,
     rendered: List<SectionRender>,
     lastUpdated: Long,
     homeConfig: Map<String, String>,
-    boardPrefs: BoardDisplayPrefs,
 ) {
-    // One board = one station. Buses group by stop (naptan) instead of platform
-    // and never take a client-side line prefix on a row — the backend appends
-    // the route number to the destination itself ("53 Nags Head").
-    val isBus = MultiLineBoardProcessor.isBus(mode)
-
-    // Platform/stop blocks across EVERY tracked line, arranged the way this
-    // station's settings ask for. The grouping is not one of the settings —
-    // see BoardDisplayPrefs.
-    val unifiedRows = remember(rendered, isBus, boardPrefs) {
-        MultiLineBoardProcessor.buildRows(
-            feeds = rendered.toFeeds(),
-            isBus = isBus,
-            prefs = boardPrefs,
-        )
-    }
-
-    // Board-wide fallback: only when EVERY tracked line is empty. One line
-    // having ended service for the night while another still runs is not an
-    // empty board — those rows still render, and that line simply contributes
-    // no block. Taking the first non-null keeps the existing copy resolution.
-    val boardFallback = remember(rendered) {
-        if (rendered.isNotEmpty() && rendered.all { it.ticked.isEmpty() }) {
+    // Board-wide fallback: only when the board has no rows AT ALL.
+    //
+    // Keyed on the rows rather than on "every line has a live departure", which
+    // is what it used to test. Those differ now that a block can hold retained
+    // "Gone" rows: a station whose trains have all left still has a board, and
+    // that board — dimmed, saying Gone — is the honest thing to show, because it
+    // says both what the last departures were and that nothing has updated
+    // since. The fallback copy takes over only when there is genuinely nothing
+    // to draw, which is the fresh-and-empty case it was written for (offline,
+    // service ended for the night, a suspended line), and the 8-minute staleness
+    // cutoff in `SqlStorage.getPredictions` guarantees a held board eventually
+    // becomes one.
+    val boardFallback = remember(rows, rendered) {
+        if (rows.isEmpty() && rendered.isNotEmpty()) {
             rendered.firstNotNullOfOrNull { it.fallbackState }
         } else null
     }
@@ -1416,7 +1504,7 @@ private fun DotMatrixPanel(
                     // fallback copy replaces the platform blocks entirely.
                     BoardFallbackRows(boardFallback)
                 } else {
-                    UnifiedBoardRows(rows = unifiedRows)
+                    UnifiedBoardRows(rows = rows)
                 }
             }
             BoardScrollbar(scroll = rowsScroll, modifier = Modifier.align(Alignment.CenterEnd))
@@ -1450,6 +1538,12 @@ private fun UnifiedBoardRows(rows: List<MultiLineBoardProcessor.Row>) {
             is MultiLineBoardProcessor.Row.PlatformHeader ->
                 ActiveStrip { PlatformHeaderText(row.title) }
             is MultiLineBoardProcessor.Row.Departure -> ActiveStrip {
+                // A train that has already left, held to keep the block from
+                // collapsing — see BoardTicker. Dimmed rather than removed,
+                // exactly as the widget dims it (WidgetTheme.amberDim): the row
+                // still carries a fact worth having ("the 14:32 has gone"), but
+                // it must never be mistaken for something you can still catch.
+                val tint = if (row.departed) BoardAmberDim else BoardAmber
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 0.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -1460,7 +1554,7 @@ private fun UnifiedBoardRows(rows: List<MultiLineBoardProcessor.Row>) {
                     // every destination.
                     if (row.linePrefix.isNotBlank()) {
                         Text(
-                            row.linePrefix, color = BoardAmber, fontSize = 15.sp,
+                            row.linePrefix, color = tint, fontSize = 15.sp,
                             fontWeight = FontWeight.Bold, maxLines = 1
                         )
                         Spacer(Modifier.width(6.dp))
@@ -1469,7 +1563,7 @@ private fun UnifiedBoardRows(rows: List<MultiLineBoardProcessor.Row>) {
                         // Match Android widget_departure_row.xml destination_text:
                         // 15sp, REGULAR weight (no textStyle), system font (no
                         // letter-spacing).
-                        row.destination, color = BoardAmber, fontSize = 15.sp,
+                        row.destination, color = tint, fontSize = 15.sp,
                         fontWeight = FontWeight.Normal,
                         modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis
                     )
@@ -1478,7 +1572,7 @@ private fun UnifiedBoardRows(rows: List<MultiLineBoardProcessor.Row>) {
                         // ETA = bold, DEFAULT font (Android eta_text: textStyle=bold,
                         // no monospace). Monospace bold read heavier than Android.
                         Text(
-                            row.eta, color = BoardAmber, fontSize = 15.sp,
+                            row.eta, color = tint, fontSize = 15.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -1772,11 +1866,29 @@ private fun BoardScrollbar(scroll: ScrollState, modifier: Modifier = Modifier) {
                 // gained a gradient — the solid fill it replaced took the same
                 // NaN and quietly drew nothing.
                 if (viewport <= 0f || overflow <= 0) return@drawBehind
-                val content = viewport + overflow
                 // Floor the thumb so a very long board still leaves something
                 // grabbable-looking rather than a single pixel.
+                val minThumb = 26.dp.toPx()
+                // A viewport shorter than its own minimum thumb, which is not a
+                // hypothetical: `card.AnimatedVisibility` expands the body from
+                // ZERO, so every open sweeps the rows area up through the small
+                // heights, and the scrollbar draws on those frames because
+                // `maxValue` already says the content overflows.
+                //
+                // This crashed the app — `coerceIn(min, max)` throws when the
+                // range is empty, and here `max` is the viewport. It went
+                // unnoticed for as long as it did because the bar only draws on
+                // a board that OVERFLOWS, so a station had to be tall enough to
+                // scroll before its expand animation could reach the bug; the
+                // retained "Gone" blocks pushed King's Cross over that line.
+                //
+                // Skipping is the whole fix: there is nothing meaningful to say
+                // about scroll position in a strip shorter than one thumb, and
+                // the animation is past it within a frame or two.
+                if (viewport < minThumb) return@drawBehind
+                val content = viewport + overflow
                 val thumbHeight = (viewport * viewport / content)
-                    .coerceIn(26.dp.toPx(), viewport)
+                    .coerceIn(minThumb, viewport)
                 val progress = (scroll.value.toFloat() / overflow).coerceIn(0f, 1f)
                 val offsetY = (viewport - thumbHeight) * progress
                 val radius = size.width / 2f

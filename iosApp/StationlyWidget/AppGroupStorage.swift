@@ -336,6 +336,17 @@ struct WidgetData {
     /// direction) pairs to keep out of the reply. Empty on the legacy path,
     /// where `WidgetRefreshService` falls back to the flat keys.
     var feeds: [BoardFeed] = []
+    /// How many departures this station shows under each header — the user's
+    /// own setting, mirroring `WidgetBoard.rowCap` in
+    /// `core/iosMain/platform/WidgetAppGroup.kt`.
+    ///
+    /// The extension cannot read the preference itself (it lives in the app's
+    /// NSUserDefaults suite, not the App Group), which is why this board used to
+    /// show three rows whatever the home screen was showing. `group.rows` is
+    /// RESERVES, so this is applied at render — always clamped by what the
+    /// family can physically draw, since a medium widget has room for three rows
+    /// however high the setting goes. See `BoardMetrics.rows(for:)`.
+    var rowCap: Int = 3
 
     // A `departures` property that flattened every block used to live here, and
     // it is deliberately gone: the render path only ever asked it three
@@ -458,7 +469,7 @@ struct WidgetData {
     init(stationName: String, lineName: String, lineDisplay: String = "",
          direction: String, mode: String, departures: [DepartureRow],
          status: String, lastUpdated: Date, isEmpty: Bool,
-         stationId: String = "", feeds: [BoardFeed] = []) {
+         stationId: String = "", feeds: [BoardFeed] = [], rowCap: Int = 3) {
         // The pre-`lineDisplay` fallback: capitalising a canonical id is what
         // rendered "Hammersmith-City", so it is last resort only — KMP writes
         // both keys on every board write, making this a window of one push.
@@ -468,14 +479,14 @@ struct WidgetData {
             direction: direction, mode: mode,
             groups: Self.fallbackGroups(departures, lineDisplay: display, mode: mode),
             status: status, lastUpdated: lastUpdated, isEmpty: isEmpty,
-            stationId: stationId, feeds: feeds
+            stationId: stationId, feeds: feeds, rowCap: rowCap
         )
     }
 
     init(stationName: String, lineName: String, lineDisplay: String,
          direction: String, mode: String, groups: [BoardGroup],
          status: String, lastUpdated: Date, isEmpty: Bool,
-         stationId: String = "", feeds: [BoardFeed] = []) {
+         stationId: String = "", feeds: [BoardFeed] = [], rowCap: Int = 3) {
         self.stationName = stationName
         self.lineName = lineName
         self.lineDisplay = lineDisplay
@@ -487,6 +498,7 @@ struct WidgetData {
         self.isEmpty = isEmpty
         self.stationId = stationId
         self.feeds = feeds
+        self.rowCap = rowCap
     }
 
     // Used for Xcode Previews and widget placeholder state
@@ -599,7 +611,7 @@ struct WidgetData {
             stationName: stationName, lineName: lineName, lineDisplay: lineDisplay,
             direction: direction, mode: mode, groups: tickedGroups, status: status,
             lastUpdated: lastUpdated, isEmpty: isEmpty,
-            stationId: stationId, feeds: feeds
+            stationId: stationId, feeds: feeds, rowCap: rowCap
         )
     }
 
@@ -656,12 +668,16 @@ struct WidgetData {
         let group = group.filter { !isDeparted($0) }
 
         if group.count <= 1 {
-            // Single row still re-derives against current now.
+            // Single row still re-derives against current now — through the SAME
+            // labelling as a bumped one (a one-row block has nothing to collide
+            // with, so the bump is a no-op). This used to be a parallel branch
+            // flagging `isDue: secs < 30`, which labelled a lone 45-second train
+            // "Due" while reporting isDue = false — and this view tints from the
+            // flag, so that train rendered amber where the identical train on a
+            // busier platform rendered red. Mirrors Kotlin `BoardTicker.label`.
             return departedRows + group.map { row in
-                guard let target = row.targetEpochMs else { return row }
-                let secs = (target - nowMs) / 1000.0
-                let eta = secs < 60 ? "Due" : "\(Int(secs / 60)) min"
-                return row.relabelled(eta: eta, isDue: secs < 30)
+                guard let minutes = Self.minutes(row, nowMs: nowMs) else { return row }
+                return row.relabelled(eta: Self.label(minutes), isDue: minutes == 0)
             }
         }
         let withTarget = group.filter { $0.targetEpochMs != nil }
@@ -669,15 +685,26 @@ struct WidgetData {
         let withoutTarget = group.filter { $0.targetEpochMs == nil }
         var prevMin = -1   // "Due" == 0; -1 means nothing taken yet
         let bumped = withTarget.map { row -> DepartureRow in
-            let secs = (row.targetEpochMs! - nowMs) / 1000.0
-            let raw = secs < 60 ? 0 : Int(secs / 60)   // floor, same as Kotlin Long division
-            let effective = max(raw, prevMin + 1)
+            let effective = max(Self.minutes(row, nowMs: nowMs) ?? 0, prevMin + 1)
             prevMin = effective
-            return row.relabelled(eta: effective == 0 ? "Due" : "\(effective) min",
-                                  isDue: effective == 0)
+            return row.relabelled(eta: Self.label(effective), isDue: effective == 0)
         }
         // Departed first (chronological), null-target rows pin to the end.
         return departedRows + bumped + withoutTarget
+    }
+
+    /// Whole minutes until this row arrives, or nil when it has no target.
+    /// FLOOR rounding, matching Kotlin's `Long` division and the platform signs.
+    private static func minutes(_ row: DepartureRow, nowMs: Double) -> Int? {
+        guard let target = row.targetEpochMs else { return nil }
+        let secs = (target - nowMs) / 1000.0
+        return secs < 60 ? 0 : Int(secs / 60)
+    }
+
+    /// The board's word for a whole-minute countdown; zero is "Due".
+    /// `isDue` means exactly "this row reads Due" — see Kotlin `BoardTicker.label`.
+    private static func label(_ minutes: Int) -> String {
+        minutes == 0 ? "Due" : "\(minutes) min"
     }
 }
 
@@ -743,7 +770,7 @@ class AppGroupStorage {
                 lineDisplay: lineDisplay, direction: board.direction, mode: board.mode,
                 departures: board.predictions, status: board.status ?? "",
                 lastUpdated: lastUpdated, isEmpty: false,
-                stationId: board.id, feeds: board.feeds
+                stationId: board.id, feeds: board.feeds, rowCap: board.rowCap
             )
         }
 
@@ -758,7 +785,8 @@ class AppGroupStorage {
             lastUpdated: lastUpdated,
             isEmpty: false,
             stationId: board.id,
-            feeds: board.feeds
+            feeds: board.feeds,
+            rowCap: board.rowCap
         )
     }
 
@@ -782,6 +810,10 @@ class AppGroupStorage {
         let status: String?
         let lastUpdated: Int
         let feeds: [BoardFeed]
+        /// The station's `rowsPerPlatform` setting — see `WidgetData.rowCap`.
+        /// Absent on a board written before it was sent, which decodes to the
+        /// depth that build hardcoded.
+        let rowCap: Int
         /// The board as blocks. Empty on a pre-`groups` payload, which
         /// `readWidgetData` handles by grouping `predictions` locally.
         let groups: [BoardGroup]
@@ -799,13 +831,17 @@ class AppGroupStorage {
             self.status = try c.decodeIfPresent(String.self, forKey: .status)
             self.lastUpdated = try c.decodeIfPresent(Int.self, forKey: .lastUpdated) ?? 0
             self.feeds = try c.decodeIfPresent([BoardFeed].self, forKey: .feeds) ?? []
+            // Normalised on the way IN, so no renderer has to defend against a
+            // zero or negative depth arriving from a build that wrote one. A
+            // board must always be able to draw at least one row.
+            self.rowCap = max(1, try c.decodeIfPresent(Int.self, forKey: .rowCap) ?? 3)
             self.groups = try c.decodeIfPresent([BoardGroup].self, forKey: .groups) ?? []
             self.predictions = try c.decodeIfPresent([DepartureRow].self, forKey: .predictions) ?? []
         }
 
         private enum CodingKeys: String, CodingKey {
             case id, stationId, stationName, lineName, lineDisplay, direction, mode
-            case status, lastUpdated, feeds, groups, predictions
+            case status, lastUpdated, feeds, rowCap, groups, predictions
         }
     }
 

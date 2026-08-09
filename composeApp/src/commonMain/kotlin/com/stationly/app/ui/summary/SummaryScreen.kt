@@ -98,6 +98,7 @@ import com.stationly.app.ui.summary.components.StationBoard
 import com.stationly.app.ui.summary.components.EmptyStationsState
 import com.stationly.app.ui.summary.components.StationExploreSection
 import com.stationly.app.ui.theme.DisplayFamily
+import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.app.ui.theme.TflAmber
 import com.stationly.app.ui.util.HomeLayout
 import com.stationly.app.ui.util.StationPrefs
@@ -285,6 +286,20 @@ fun SummaryScreen(
                           )
                       }
 
+                      // The selections behind each card, grouped on the HUB —
+                      // one card is one station, and a bus hub's poles must not
+                      // become several cards with the same name.
+                      //
+                      // Hoisted because two things need it and they must agree:
+                      // the height budget below counts a collapsed card's legs
+                      // from it, and the cards themselves are built from it. It
+                      // was grouped twice, which is two chances for the budget to
+                      // be reserving space for a different set of stations than
+                      // the one being drawn.
+                      val selectionsByStation = remember(currentSelections) {
+                          currentSelections.groupBy { it.groupingId }
+                      }
+
                       // ── Which stations are open ──
                       //
                       // Only asked in [HomeLayout.LIST]. A carousel gives every
@@ -374,10 +389,45 @@ fun SummaryScreen(
                       // to, so the page renders as a plain card and must not be
                       // charged for a row of dots it will not draw.
                       val isCarousel = homeLayout == HomeLayout.CAROUSEL && stationIds.size > 1
+
+                      // How many leg rows the collapsed cards will draw between
+                      // them — one per platform (rail) or pole (bus), since the
+                      // collapsed card no longer stops at two.
+                      //
+                      // Counted from the CACHED rows via `blockCount`, never from
+                      // the live legs: a platform that runs dry keeps its block
+                      // for a few minutes, so this figure holds still while
+                      // trains depart instead of re-flowing every open board
+                      // underneath whatever the user is reading. It is therefore
+                      // a stable upper bound — it can over-reserve one row
+                      // briefly, and can never under-reserve and push the board
+                      // off screen.
+                      val collapsedLegCount = remember(
+                          stationIds, expandedIds, selectionsByStation, predictions, isCarousel,
+                      ) {
+                          if (isCarousel) 0 else {
+                              stationIds.filterNot { it in expandedIds }.sumOf { id ->
+                                  val group = selectionsByStation[id].orEmpty()
+                                  if (group.isEmpty()) 0 else MultiLineBoardProcessor.blockCount(
+                                      feeds = group.map { selection ->
+                                          MultiLineBoardProcessor.Feed(
+                                              stationId = selection.station,
+                                              line = selection.line,
+                                              direction = selection.direction,
+                                              predictions = predictions[selection.boardKey].orEmpty(),
+                                          )
+                                      },
+                                      isBus = MultiLineBoardProcessor.isBus(group.first().mode),
+                                  )
+                              }
+                          }
+                      }
+
                       val primaryBoardMaxHeight = boardMaxHeight(
                           viewportHeight = maxHeight,
                           expandedCount = if (isCarousel) 1 else expandedIds.size,
                           collapsedCount = if (isCarousel) 0 else stationIds.size - expandedIds.size,
+                          collapsedLegCount = collapsedLegCount,
                           chromeHeight = with(density) { chromePx.toDp() },
                           exploreHeight = with(density) { explorePx.toDp() },
                           bottomInset = bottomInset,
@@ -524,9 +574,8 @@ fun SummaryScreen(
                             // Grouped by station, then walked in `stationIds`
                             // order so the user's own sequence wins — the map's
                             // order is insertion order and knows nothing of it.
-                            val byStation = currentSelections.groupBy { it.groupingId }
                             val stationGroups = stationIds.mapNotNull { id ->
-                                byStation[id]?.let { id to it }
+                                selectionsByStation[id]?.let { id to it }
                             }
 
                             // One card, wherever it is being placed. Written once
