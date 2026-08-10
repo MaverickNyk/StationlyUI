@@ -378,36 +378,49 @@ python3 -c "import plistlib;d=plistlib.load(open('/tmp/ag.xml','rb'));print(d.ge
 
 ## 6. Platform paging: arrows, not a tappable header (2026-08-07)
 
-WidgetKit cannot scroll, so the medium board pages between platform groups (§2).
-That paging was one `Button(intent:)` wrapping the whole header, cycling
-forwards with a "‣ 2/3" hint. It worked and it could not say two things the user
-needs: **which directions exist**, and **how to get back** — from the last
-platform the only route to the first was to keep going forwards, and nothing on
-screen suggested the header was tappable at all.
+WidgetKit cannot scroll, so the board pages between platform groups (§2). That
+paging was one `Button(intent:)` wrapping the whole header, cycling forwards with
+a "‣ 2/3" hint. It worked and it could not say two things the user needs:
+**which directions exist**, and **how to get back** — from the last platform the
+only route to the first was to keep going forwards, and nothing on screen
+suggested the header was tappable at all.
 
 Now: a chevron at each end of the header cell, and the board slides in the
 direction the arrow points.
 
-- **The ends are not wrapped.** An arrow that is present but dim means "nothing
-  that way", which is the entire reason to have two of them. A dimmed arrow is
-  drawn as plain content, **not** a disabled `Button` — a disabled button still
-  reads as a control that ought to respond.
+- **The platforms are a RING (2026-08-10).** Past the last platform the next
+  arrow press comes round to the first, and back from the first lands on the
+  last. They used to be a line with two ends, and the arrow pointing past an end
+  went dim — the theory being that a dim arrow says "nothing that way". In use it
+  says "this widget's controls are broken": on a two-platform board one of the
+  two arrows is always dead, and a user pressing the same place twice gets a
+  response once. Both arrows are live whenever the section has more than one
+  platform, and none is ever drawn dim.
+- **The "2/4" marker carries the whole position story** as a result, and is
+  therefore `fixedSize()` — it must never be the text a narrow canvas squeezes
+  out. It is also what tells a three-platform board from a two-platform one now
+  that no arrow dims.
 - **Both arrow slots are reserved unconditionally**, so the title stays optically
-  centred and does not shift by half an arrow at the ends. Same trick as the
+  centred and does not shift by half an arrow as it pages. Same trick as the
   station header's refresh slot, and for the same device-proven reason.
-- **The page is clamped, not modulo.** It used to be a counter that only ever
-  incremented, normalised with `% groupCount`. That is right for a control that
-  cycles and wrong for arrows, which need a real first and last.
-- **Page state is keyed per STATION** (`widget_board_page_<id>`). There is no
-  supported per-instance identifier in WidgetKit — the provider is handed a
-  configuration, not an instance — so two widgets pinned to the same station page
-  together. That is the one case this cannot separate.
+- **Two normalisations, and the difference is load-bearing.**
+  `WidgetBoardPage.move` CLAMPS what it reads and WRAPS what it writes. Wrapping
+  is the step. Clamping is what a reader does with a stored index it did not
+  write: a station whose Platform 4 goes quiet drops to three groups, and a
+  widget parked on the last page must land on the last platform there IS rather
+  than being flung back to the first. Both the renderer and the intent clamp the
+  stored value the same way, so they always agree about which page is current.
+- **Page state is keyed per STATION and per SECTION** (`widget_page_<id>`,
+  `widget_page_<id>#u`, `widget_page_<id>#d` — see §6.1). There is no supported
+  per-instance identifier in WidgetKit — the provider is handed a configuration,
+  not an instance — so two widgets pinned to the same station page together. That
+  is the one case this cannot separate.
 - **`groupCount` is passed into the intent**, not recomputed inside it. The
   intent runs with no access to the rendered board, and re-deriving the count
   from the App Group would use rows ticked to a different minute than the ones
   the user is looking at, which is exactly when the count can differ by one.
 
-### ⚠️ A dimmed control must still be a Button
+### ⚠️ An arrow must always be a Button
 
 The first version drew the disabled arrow as plain content, on the reasoning
 that something inert should not look tappable. On device that was actively
@@ -415,10 +428,142 @@ wrong: **every non-interactive pixel of a widget belongs to the widget's own tap
 target**, so tapping the dim arrow launched the app — the one thing a disabled
 control must never do.
 
-It is a `Button(intent:)` in both states now. At an end `WidgetBoardPage.move`
-clamps to the page it is already on, so the tap is swallowed and nothing
-happens; the dimming is the "disabled", and the Button is what makes it inert.
-The same reasoning applies to anything decorative added to this board later.
+There is no disabled state left to get wrong, but the rule outlived it: anything
+arrow-shaped on this board is a `Button(intent:)`, and the same reasoning applies
+to anything decorative added later.
+
+## 6.1 One board, three families (2026-08-10)
+
+Three gaps closed at once, and they were all the same gap: **layout decisions
+that lived in one family's view instead of in the shared board.**
+
+### The small family had its own view, and fell behind it
+
+`SmallWidgetView` drew a station lockup, the first three departures of whatever
+block came first, and a footer. So a 2×2 widget had **no refresh button and no
+platform pager** — not by decision, but because those were built in
+`BoardWidgetView` and this view simply never called them. A user tracking three
+platforms saw one of them, with nothing on screen admitting the others existed.
+
+It is deleted. Every family now renders `BoardWidgetView` at its own
+`BoardMetrics`, and the metrics carry what actually differs: type scale, the
+inset of the corner-zone cells, and the width of the tap targets (small's
+refresh slot is 22pt against medium's 30pt, its arrow slot 24pt against 37pt —
+two chevrons and a refresh button have to come out of a third of the width).
+`HeaderLadder` is what makes the header survive that: it steps down through
+KMP's shorter wordings ("Piccadilly Platform 2 Westbound" → "Pic. Plat. 2")
+rather than scaling or ellipsising, which is why the small pager can afford
+arrows at all.
+
+### The large family dropped platforms it had no room for
+
+Large rendered every block top-down against a whole-board row budget: the first
+platform took what it wanted, the next took the remainder, **and a third
+platform got nothing and was not drawn.** No arrow said so, because paging was
+medium-only. On the biggest widget iOS offers, a third platform was unreachable.
+
+Large now draws **two sections**, each a pager of its own (`BoardSection.upper` /
+`.lower`), 3 row cells each:
+
+| Platforms | Upper | Lower |
+|---|---|---|
+| 1 | the block, 6 rows | — |
+| 2 | one block | one block (unchanged from before) |
+| 3 | two blocks, arrows | one block |
+| 4 | two blocks, arrows | two blocks, arrows |
+
+### Which blocks share a section: `WidgetData.sections`
+
+A split purely by count would put the Piccadilly westbound above and the
+Piccadilly eastbound below — two halves of one decision, at opposite ends of the
+widget, each paging past the other line to be compared. So blocks are collected
+into runs of related ones first, and the split falls on a run boundary.
+
+- **Rail: the line**, read off the rows' `lineShort` (KMP resolves it on every
+  rail row; `mixesLines` only decides whether it is *drawn*). A shared
+  Circle/District platform is its own kind and pairs with another shared one.
+- **Bus: the routes calling at the pole.** A bus block IS a pole, so pole
+  identity groups nothing — every block would be its own run. Route 39 northbound
+  and southbound are two naptans on opposite sides of one road, and that
+  association lives in `feeds` (`station` = the pole = the bus block key, `line` =
+  the route).
+- **Neither: the block key**, which yields one run per block and therefore a
+  plain balanced split — the right answer when there is nothing to reason from.
+
+The boundary chosen is the one leaving the halves closest in size, ties going
+UPWARDS so three platforms put the pager on top where the eye lands first.
+
+**This is the one place a renderer reorders KMP's blocks**, and it is bounded:
+order within a run is untouched (unassigned last, the pin, the soonest train),
+runs appear in the order their first member did, and the function is pure — so
+every entry of a timeline sections identically and no page moves under an arrow.
+
+## 6.2 The cell count is fixed; only the data moves (2026-08-10)
+
+**Symptom:** "the widget keeps resizing, the font size keeps changing." It was
+not the font. Every cell is height-flexible at equal priority (§3.6), so the
+NUMBER of cells decides how tall each one is — and the board drew a cell per
+departure it happened to have. Four trains at 09:00, three at 09:03, and the
+whole panel re-laid itself out around the difference. A board that reflows while
+you are reading it looks broken, not live.
+
+So the skeleton is now a constant per family and the data moves inside it:
+
+| | small / medium | large |
+|---|---|---|
+| station | 1 | 1 |
+| platform header | **1, always** — even with no label to put in it | 1 per section = **2, always** |
+| departures | 3 | 3 per section = 6 |
+| status | takes the **3rd departure cell** when the platform can't fill it | **1 of its own**, always |
+| clock | 1 (shed under a 150pt canvas) | 1 |
+| **total** | **6** | **11** |
+
+Which gives, on small and medium:
+
+- **3+ departures** → three rows, no strip.
+- **2** → two rows and the strip.
+- **1** → one row, one dark cell, the strip. *(The dark cell is the point: without
+  it the two remaining cells would each grow by half a row.)*
+- **0** → "No departures right now" in the first cell, a dark cell, the strip —
+  which is where the reason ("Service Closed : …") actually gets said.
+
+and on large, a second platform section that is drawn empty when the station has
+only one platform, rather than collapsing and stretching everything above it.
+
+Three supporting pieces, all of which exist for the same reason:
+
+- **`EmptyRowCell`** is LIT, not black. The black gaps between cells read as the
+  panel bezel, so an unlit two-row gap looks like a hole in the panel rather than
+  an empty row on it.
+- **The status strip takes a departure cell's height** on the paged board
+  (`metrics.row + 10`, not `status + 8`). It is standing in for a row, so at its
+  own smaller minimum it would resize its neighbours every time it appeared.
+- **`SkeletonBoardView` draws the same cell count**, because it is what is on
+  screen immediately before the first data lands.
+
+`NoDeparturesRow` — a bare centred Text at `maxHeight: .infinity` — is gone; it
+was the largest single source of the reflow.
+
+### The status strip says WHICH line (2026-08-10)
+
+`buildBoard` used to send "the first line that has anything to say", with a note
+that ranking "would need a severity ranker the extension does not have". True,
+and the wrong side to look: the extension cannot rank, but KMP can, and
+`LineStatusRanker` — the home board's own — has been in `commonMain` all along.
+At King's Cross a part-closed Northern was hidden behind a healthy Victoria that
+merely sorted first, so the widget said "Good Service" while the app's board said
+"Northern Part Closure".
+
+The widget now gets the **worst line first, named**, through the same ranker and
+the same de-duplication ("Circle, District Minor Delays"). A line with no status
+record counts as Good Service rather than as an unknown severity, which would
+otherwise lead the board with an empty sentence.
+
+**The rotation is not ported.** The home board cycles the remaining disrupted
+lines every 8s; a widget is a sequence of static snapshots with no animation loop
+(§2.1), and a strip that changed its subject on the per-minute timeline is the
+same idea as the stepped marquee that was built and rejected (§3.3). The worst
+line is the one that changes a journey.
 
 ### Making it fast
 
@@ -497,7 +642,7 @@ there:
 | `widget_stations`, `widget_board_<id>` | KMP (all stations) | extension + configuration picker |
 | `widget_api_*` | KMP | extension's own REST refresh |
 | `widget_reload_signal` | KMP, and the extension after a refresh | the app's `WidgetReloadObserver` |
-| `widget_page_<id>`, `widget_page_dir_<id>` | extension | extension — **but KMP deletes them** when a station is removed, because it is the only side with an event for that |
+| `widget_page_<id>` (+ `#u`/`#d` sections), `widget_page_dir_<id>` | extension | extension — **but KMP deletes them** when a station is removed, because it is the only side with an event for that. A section added in Swift needs its suffix in `AppGroupKeys.WIDGET_PAGE_SECTIONS` or it leaks |
 | `widget_last_manual_refresh`, `widget_refresh_*` | extension | extension |
 
 ---

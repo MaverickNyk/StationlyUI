@@ -352,8 +352,14 @@ struct WidgetData {
     // it is deliberately gone: the render path only ever asked it three
     // questions — is it empty, give me the first few, how many — and answering
     // any of them by materialising the whole board is work paid on a process
-    // iOS cold-launched to service one tap. The three accessors below answer
-    // them without allocating, and none of them can be written past.
+    // iOS cold-launched to service one tap. The accessors below answer them
+    // without allocating, and none of them can be written past.
+    //
+    // (`firstDepartures(_:)` was the third, and went with the caller that
+    // needed it: the small family used to show the first three rows of whatever
+    // block happened to come first, which is precisely the behaviour that hid
+    // every other platform from it. It now pages blocks like the medium board,
+    // so there is nothing left that wants a flat prefix of the whole station.)
 
     /// Whether the board has any row at all, without building the list.
     ///
@@ -361,24 +367,130 @@ struct WidgetData {
     /// common case, against a full flatMap before.
     var hasDepartures: Bool { groups.contains { !$0.rows.isEmpty } }
 
-    /// The first [limit] rows across all blocks, stopping as soon as it has
-    /// them. The small family shows three; it was flattening a board of forty
-    /// to find them.
-    func firstDepartures(_ limit: Int) -> [DepartureRow] {
-        var out: [DepartureRow] = []
-        out.reserveCapacity(limit)
-        for group in groups {
-            for row in group.rows {
-                out.append(row)
-                if out.count == limit { return out }
-            }
-        }
-        return out
-    }
-
     /// Row count without building the list — for logging, which must never be
     /// the most expensive thing on a code path.
     var departureCount: Int { groups.reduce(0) { $0 + $1.rows.count } }
+
+    // MARK: Sections (how a tall canvas divides its blocks)
+
+    /// The board split into at most [count] stacked sections, each of which
+    /// pages through the blocks it was given.
+    ///
+    /// ## The problem this exists for
+    /// The large board used to render blocks top-down against a whole-board row
+    /// budget: the first platform took what it wanted, the next took the
+    /// remainder, and a third platform got nothing and was simply not drawn. A
+    /// user tracking three platforms at one station could not reach the third on
+    /// the biggest widget iOS offers — and there was no arrow to say so, because
+    /// paging was a medium-only feature.
+    ///
+    /// Sections turn the canvas into two boards. Two platforms fill them one
+    /// each, exactly as before. Three or more start sharing: the sections page,
+    /// and every platform is reachable.
+    ///
+    /// ## Related blocks travel together
+    /// A split purely by count would put the Piccadilly westbound above and the
+    /// Piccadilly eastbound below — two halves of one journey decision, on
+    /// opposite ends of the widget, each paging past the other line's platforms
+    /// to be compared. So blocks are collected into RUNS of related ones first
+    /// (see [affinity]) and the split falls on a run boundary: at a station
+    /// tracking the Piccadilly and the Victoria both ways, the top half pages
+    /// the Piccadilly's two platforms and the bottom half the Victoria's.
+    ///
+    /// This is the one place a renderer reorders KMP's blocks, and it is
+    /// deliberate: within a run the board's order is untouched (unassigned last,
+    /// the pin, the soonest train), and runs appear in the order their first
+    /// member did — so whatever KMP put at the top of the board still leads the
+    /// top section. It is also a pure function of the block list, so every entry
+    /// of a timeline sections identically and no page moves under an arrow.
+    ///
+    /// ## It always returns [count] sections, even empty ones
+    /// A station with one platform gets a section holding it and a section
+    /// holding nothing, and the renderer draws the empty one's cells anyway. The
+    /// board's cell count is what fixes its cell HEIGHTS — see
+    /// `BoardWidgetView.platformSections` — so a section that disappeared when a
+    /// platform went quiet would resize every other row on the widget.
+    func sections(_ count: Int) -> [[BoardGroup]] {
+        guard count > 1 else { return [groups] }
+        // Padded to [count] on every path below, so the caller can rely on the
+        // shape rather than checking it. The split itself is binary — an upper
+        // half and a lower half — and a third section would need a different
+        // rule than "the most balanced boundary", not just another loop.
+        func padded(_ split: [[BoardGroup]]) -> [[BoardGroup]] {
+            split + Array(repeating: [], count: max(0, count - split.count))
+        }
+        guard groups.count > 1 else { return padded([groups]) }
+
+        let isBus = BoardGroup.isBus(mode: mode)
+        var order: [String] = []
+        var byAffinity: [String: [BoardGroup]] = [:]
+        for group in groups {
+            let key = affinity(group, isBus: isBus)
+            if byAffinity[key] == nil { order.append(key); byAffinity[key] = [] }
+            byAffinity[key]?.append(group)
+        }
+        let runs = order.compactMap { byAffinity[$0] }
+
+        // One run means every block is the same thing to a passenger — three
+        // platforms of one line, or a board with no line vocabulary to judge by.
+        // There is no boundary worth respecting, so it splits on count, and the
+        // ODD block goes up: with three platforms that is what puts the pager on
+        // the top section, where the eye lands first.
+        guard runs.count > 1 else {
+            let cut = (groups.count + 1) / 2
+            return padded([Array(groups.prefix(cut)), Array(groups.dropFirst(cut))])
+        }
+
+        // The boundary that leaves the two halves closest in size. Balance is
+        // the point — a section holding four platforms next to one holding one
+        // wastes the space the large family exists to give.
+        var bestCut = 1
+        var bestDiff = Int.max
+        var taken = 0
+        for cut in 1..<runs.count {
+            taken += runs[cut - 1].count
+            let diff = abs(taken - (groups.count - taken))
+            // `<=`, so a tie hands the extra run UPWARDS for the same reason the
+            // single-run split does.
+            if diff <= bestDiff { bestDiff = diff; bestCut = cut }
+        }
+        return padded([runs.prefix(bestCut).flatMap { $0 },
+                       runs.dropFirst(bestCut).flatMap { $0 }])
+    }
+
+    /// What makes two blocks "the same thing" for [sections].
+    ///
+    /// **Rail: the line.** Two platforms of the Piccadilly are one line's two
+    /// directions, and that is the pairing a passenger holds in their head. The
+    /// lines are read off the rows because that is where they are — `lineShort`
+    /// is resolved by KMP on every row of every rail board (`mixesLines` only
+    /// decides whether it is DRAWN). A block with several lines is its own kind:
+    /// a shared Circle/District platform pairs with another shared one, not with
+    /// a Circle-only platform.
+    ///
+    /// **Bus: the routes calling at the pole.** A bus block IS a pole, so pole
+    /// identity groups nothing — every block would be its own run. What makes
+    /// two poles one thing is the routes they serve: route 39 northbound and
+    /// route 39 southbound are two naptans on opposite sides of the same road,
+    /// and that association lives in [feeds], where `station` is the pole (the
+    /// bus block key, see `MultiLineBoardProcessor.groupKeyFor`) and `line` is
+    /// the route.
+    ///
+    /// Both fall back to the block's own key, which yields one run per block and
+    /// therefore the plain balanced split — the right answer when there is
+    /// nothing to reason from (a legacy board with no feeds, rows written before
+    /// `lineShort` existed).
+    private func affinity(_ group: BoardGroup, isBus: Bool) -> String {
+        if isBus {
+            let routes = Set(feeds.lazy.filter { $0.station == group.key && !$0.line.isEmpty }
+                                       .map { $0.line })
+            return routes.isEmpty ? "pole:\(group.key)"
+                                  : "route:\(routes.sorted().joined(separator: ","))"
+        }
+        let lines = Set(group.rows.lazy.map { $0.lineShort }.filter { !$0.isEmpty })
+        return lines.isEmpty ? "block:\(group.key)"
+                             : "line:\(lines.sorted().joined(separator: ","))"
+    }
 
     /// True once the App Group has a real `widget_last_updated` timestamp — lets
     /// the footer show a live ticking "ago" only when there's genuine data age

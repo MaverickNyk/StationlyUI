@@ -151,7 +151,7 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         let movedAt = WidgetBoardPage.lastMoveAt(data.stationId)
         let refreshedAt = AppGroupDefaults.shared?.double(forKey: AppGroupKeys.lastRefreshOk) ?? 0
         let render = BoardRenderState(
-            page: WidgetBoardPage.storedPage(data.stationId),
+            pages: WidgetBoardPage.storedPages(data.stationId),
             // An arrow press wins only when it is more recent than both the last
             // refresh and the payload itself — compared as absolute times
             // because a page move does not rebuild the data, so "recent" cannot

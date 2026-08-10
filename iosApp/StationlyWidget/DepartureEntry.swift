@@ -18,13 +18,23 @@ import WidgetKit
 /// stands between the tap and the pixels, and it makes an entry's appearance
 /// depend on when it happened to be rasterised rather than on what it holds.
 struct BoardRenderState {
-    /// The stored page index, UNCLAMPED.
+    /// The stored page index of every pager on the board, keyed by
+    /// `BoardSection`'s raw value, UNCLAMPED.
+    ///
+    /// A map rather than one index because the large family stacks two pagers
+    /// and they hold two independent positions — see `BoardSection`. Every
+    /// section is read whichever family is being built, so one entry type
+    /// describes any board it might be handed.
     ///
     /// Clamping stays at render time because the group count is a property of
     /// the ticked entry — blocks that empty out are dropped — so the valid range
     /// genuinely differs between entries built from one payload. Clamping is
-    /// arithmetic; reading the page was the part worth hoisting.
-    var page: Int = 0
+    /// arithmetic; reading the pages was the part worth hoisting.
+    var pages: [String: Int] = [:]
+
+    /// This section's stored page, or the first page for a section the board
+    /// does not use.
+    func page(_ section: BoardSection = .single) -> Int { pages[section.rawValue] ?? 0 }
     /// Whether an ARROW caused this render, rather than new departures landing.
     /// Decides push-vs-flip; see `boardTransition`.
     var isPageMove: Bool = false

@@ -154,8 +154,10 @@ widget or home screen."** The in-app Compose board is done; the **widget is
 not** yet. The widget is native SwiftUI, so it needs separate wiring:
 
 Files: `iosApp/StationlyWidget/WidgetViews.swift` — the `DotMatrixHeader`,
-`DotMatrixSectionHeader`, `DotMatrixRow`, `DotMatrixStatusStrip`,
-`DotMatrixFooter` structs currently use system fonts.
+`PlatformPagerHeader`, `DotMatrixRow`, `DotMatrixStatusStrip`,
+`DotMatrixFooter` structs currently use system fonts. (Every family renders
+these now, small included — see `IOS_WIDGET_DESIGN.md` §6.1 — so the sizes come
+from `BoardMetrics` rather than from literals.)
 
 Steps:
 1. **Add the font to the widget extension target.** Easiest: copy

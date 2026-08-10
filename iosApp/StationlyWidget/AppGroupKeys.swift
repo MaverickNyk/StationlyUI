@@ -116,13 +116,23 @@ enum AppGroupKeys {
     // station's paging state when the station is deleted, because it is the
     // only side with an event for that.
 
-    /// Which platform group the medium board is showing, per station.
+    /// Which platform group a pager is showing, per station and per SECTION.
     ///
     /// Deliberately NOT `widget_board_page_…`: that name sits under the
     /// `widget_board_` prefix, so any prefix scan would read it as a station
     /// whose id begins "page_". Nothing scans by prefix today, and the point is
     /// that nothing should be able to start.
-    static func page(_ stationId: String) -> String { "widget_page_\(stationId)" }
+    ///
+    /// The section is part of the key because the large board stacks TWO pagers
+    /// (see `BoardSection`) and they walk different platforms: paging the
+    /// Piccadilly half must not move the Victoria half underneath it. The
+    /// unsectioned form is byte-identical to the key that shipped before
+    /// sections existed, so a widget keeps the page it was already on across
+    /// this update — and KMP still removes it by that name when a station is
+    /// deleted (`Platform.ios.kt`, which removes the sectioned forms too).
+    static func page(_ stationId: String, _ section: String = "") -> String {
+        section.isEmpty ? "widget_page_\(stationId)" : "widget_page_\(stationId)#\(section)"
+    }
     /// Which way that station's last page move went, for the push transition.
     static func pageDirection(_ stationId: String) -> String { "widget_page_dir_\(stationId)" }
     /// When it moved, so a render can tell an arrow press from new data

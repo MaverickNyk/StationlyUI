@@ -1258,7 +1258,7 @@ depend on when it happened to be rasterised.
 Other wins: the flat `predictions` array is `@Transient` (every departure was on
 the wire twice, parsed twice per render); `WidgetData.departures` was a computed
 `flatMap` the render path called just to test emptiness, replaced by
-`hasDepartures` / `firstDepartures` / `departureCount`; `UserDefaults(suiteName:)`
+`hasDepartures` / `departureCount`; `UserDefaults(suiteName:)`
 was a computed property in five places, now opened once per process via
 `AppGroupDefaults`.
 

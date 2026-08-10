@@ -15,6 +15,7 @@ import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.core.util.BoardDisplayPrefs
 import com.stationly.core.util.LineNameStore
 import com.stationly.core.util.LineShortNames
+import com.stationly.core.util.LineStatusRanker
 import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.CoroutineScope
@@ -137,6 +138,20 @@ object AppGroupKeys {
     const val WIDGET_PAGE_DIR_PREFIX = "widget_page_dir_"
     const val WIDGET_PAGE_AT_PREFIX  = "widget_page_at_"
 
+    /**
+     * Suffixes on [WIDGET_PAGE_PREFIX] for the boards that hold more than one
+     * page — the large widget stacks two pagers (`BoardSection` in the widget
+     * target), so one station has up to three stored positions.
+     *
+     * Listed here rather than spelled out at the removal site because that is
+     * the only thing this side does with them: the extension writes them, and
+     * KMP's whole job is knowing when the station they belong to is gone. A
+     * section added in Swift and not added here leaks one integer per deleted
+     * station — harmless in isolation, and exactly the kind of drift the
+     * hand-kept contract between these two files exists to catch.
+     */
+    val WIDGET_PAGE_SECTIONS = listOf("", "#u", "#d")
+
     // Whether one station's last in-extension refresh failed, so its widget can
     // show "tap to retry". Written by the extension for the same reason as the
     // paging keys, and cleaned up here for the same reason: KMP is the only side
@@ -213,6 +228,17 @@ object AppGroupKeys {
 // ─────────────────────────────────────────────────────────
 // Widget Manager
 // ─────────────────────────────────────────────────────────
+
+/**
+ * What a line with no status record is reported as.
+ *
+ * TODO(i18n): the home board takes this word from `homeConfig`
+ * (`board.good_service_label`). Remote config is not reachable from this write
+ * path, and a widget saying "Good Service" in English while the app says it in
+ * another language is a smaller wrong than a widget saying nothing — but the two
+ * should share one source once config is available here.
+ */
+private const val GOOD_SERVICE = "Good Service"
 
 class IosWidgetManager : WidgetManager {
 
@@ -462,16 +488,47 @@ class IosWidgetManager : WidgetManager {
             sql.getLastUpdatedTimestamp(it.station, it.line, it.direction)
         }.maxOrNull() ?: (NSDate().timeIntervalSince1970 * 1000).toLong()
 
-        // Worst status across the station's lines would need a severity ranker
-        // the extension does not have; the FIRST line that actually has
-        // something to say speaks for the board, which on a healthy station is
-        // "Good Service" either way.
-        val status = boards.firstNotNullOfOrNull { board ->
-            sql.getLineStatus(board.mode, board.line)?.let { s ->
-                val reason = StationlyFormatters.formatStatusReason(s.reason ?: "").trim()
-                if (reason.isNotEmpty()) "${s.statusSeverityDescription}: $reason"
-                else s.statusSeverityDescription
+        // ── The status the widget's one strip shows ──
+        //
+        // WORST FIRST, and the line is NAMED — the same two rules the home
+        // board's strip follows, through the same [LineStatusRanker] it calls.
+        //
+        // This used to be "the first line that has anything to say", with a note
+        // that ranking "would need a severity ranker the extension does not
+        // have". True, and it was the wrong side to look: the extension cannot
+        // rank, but this code can, and the ranker has been in commonMain all
+        // along. The old rule produced the failure it was warned about at any
+        // multi-line station — at King's Cross a part-closed Northern was hidden
+        // behind a healthy Victoria that merely sorted first, so the widget said
+        // "Good Service" while the app's own board said "Northern Part Closure".
+        //
+        // Only the leading entry travels. The home board ROTATES through the
+        // rest every 8s, which a widget cannot do — it is a sequence of static
+        // snapshots with no animation loop (IOS_WIDGET_DESIGN.md §2.1), and a
+        // strip that changed its subject on the per-minute timeline was tried
+        // for the marquee and read as broken. The worst line is the one that
+        // changes a journey anyway.
+        val status = LineStatusRanker.rotation(
+            boards.distinctBy { it.mode to it.line }.map { board ->
+                val s = sql.getLineStatus(board.mode, board.line)
+                LineStatusRanker.Entry(
+                    lineLabel = LineShortNames.displayName(board.line),
+                    // A line we have no status for is NOT a disruption. Left
+                    // blank it would rank as unknown-severity and lead the
+                    // board with an empty sentence; "Good Service" is both what
+                    // the home board substitutes and what the strip already
+                    // falls back to when this field arrives empty.
+                    severity = s?.statusSeverityDescription?.takeIf { it.isNotBlank() }
+                        ?: GOOD_SERVICE,
+                    reason = StationlyFormatters.formatStatusReason(s?.reason ?: "").trim(),
+                )
             }
+        ).firstOrNull()?.let { entry ->
+            val label = LineStatusRanker.label(entry)
+            // "Northern Part Closure: reason" — the strip splits on the first
+            // colon and renders what precedes it bold, exactly as the home
+            // board bolds the label and trails the reason.
+            if (entry.reason.isNotBlank()) "$label: ${entry.reason}" else label
         }
         val lines = boards.map { it.line }.distinct()
 
@@ -659,7 +716,9 @@ class IosWidgetManager : WidgetManager {
         if (removed.isEmpty()) return false
         removed.forEach { id ->
             d.removeObjectForKey(AppGroupKeys.WIDGET_BOARD_PREFIX + id)
-            d.removeObjectForKey(AppGroupKeys.WIDGET_PAGE_PREFIX + id)
+            AppGroupKeys.WIDGET_PAGE_SECTIONS.forEach { section ->
+                d.removeObjectForKey(AppGroupKeys.WIDGET_PAGE_PREFIX + id + section)
+            }
             d.removeObjectForKey(AppGroupKeys.WIDGET_PAGE_DIR_PREFIX + id)
             d.removeObjectForKey(AppGroupKeys.WIDGET_PAGE_AT_PREFIX + id)
             d.removeObjectForKey(AppGroupKeys.WIDGET_REFRESH_FAILED_PREFIX + id)
