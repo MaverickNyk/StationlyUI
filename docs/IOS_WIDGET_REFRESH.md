@@ -82,21 +82,52 @@ peak (16:00–19:30) asking for 15 minutes, WidgetKit delivered:
 17:01:00  CHARGED   (+30m)
 ```
 
-So the requested 15 became an actual **30–60 minutes**. This is not a bug and
-not fixable from our side: WidgetKit batches reloads with other system activity
-and rations them against a per-widget allowance it tunes to how often the widget
-is *visible*. Asking for 14 reloads inside a 3.5-hour peak is dense relative to
-what ~40–70/day averages to, so the system smooths it.
+So the requested 15 became an actual **30–60 minutes**. WidgetKit batches
+reloads with other system activity and rations them against a per-widget
+allowance it tunes to how often the widget is *visible*. Asking for 14 reloads
+inside a 3.5-hour peak is dense relative to what ~40–70/day averages to.
+
+Later the same evening it was worse still — **18 minutes with no build at all**,
+despite two independent requests landing in that window:
+
+```
+17:16:14  last render
+17:31:13  BGTask refreshed the DATA and called reloadAllTimelines()  → no build
+17:31:14  .after() scheduled reload due                              → no build
+17:34:37  WidgetKit push                                             → build, ~15s
+```
+
+**This is the one claim in this document still resting on assumption.** The
+device had absorbed ~15 reinstalls and dozens of pushes that day, so the most
+likely explanation is an exhausted Apple-side allowance rather than a fault in
+the timeline policy — but that has NOT been demonstrated. Settling it needs a
+genuinely quiet observation: no pushes, launches or installs for ~40 minutes,
+then read `widget_scheduled_build_log`. Do that before concluding anything about
+steady-state behaviour, and be aware that any push sent during the window
+invalidates the result — an earlier attempt was contaminated exactly that way
+and produced a false "auto-refresh fired".
 
 Three consequences worth holding in mind:
 
 1. **The tier interval is a request describing priority**, not a guarantee. Its
    real job is to tell iOS this period matters more than 03:00 does.
-2. **`BGAppRefreshTask` is the engine meant to close that gap** — a separate
-   budget, so it can wake the app between throttled timeline reloads. On the
-   development device it has **never been granted**: iOS learns from usage
-   patterns and ~15 reinstalls in a day resets that learning. On a normally-used
-   phone it should contribute; treat it as unproven.
+2. **`BGAppRefreshTask` works, and it refreshes DATA but not the DISPLAY.**
+   Verified 2026-08-10: scheduled at 17:15:54, fired at 17:31:13 —
+   `refresh(bgtask) refreshed=true`, board rewritten. But the
+   `reloadAllTimelines()` it then issues is **ignored, because the app is
+   background-woken**, so the widget kept showing its 17:16 render:
+
+   ```
+   data  lastUpdated  17:31:13   ← BGTask refreshed it
+   widget last render 17:16:14   ← 15 minutes stale on screen
+   ```
+
+   This is the single most important thing to understand about the feature:
+   **freshness of the DATA and freshness of the PIXELS are separate problems on
+   iOS, and only one of them can be solved from the device.** BGTask solves the
+   data; only a timeline build — granted by WidgetKit, or forced by a WidgetKit
+   push — repaints. A user watching an "ago" timer is watching the pixels, so
+   they see the older number even when the data underneath is current.
 3. **Push is the only path that reliably closes the gap on demand**, which is
    why the disruption trigger matters more than the tier density does.
 
@@ -149,6 +180,13 @@ the two conflict, err toward asking.
 Pushes and taps have their own budgets; charging them against the timeline quota
 drove the ledger to 84 against an allowance of 43. **Fix:** store the requested
 `.after` date; a build arriving >60 s early was externally triggered, so free.
+
+Known imprecision, accepted: a push landing *after* the scheduled time is
+indistinguishable from the schedule firing, so it is charged. Observed once
+(17:34:37 push recorded as `n=1`). It over-counts in the safe direction — the
+model believes we have spent slightly more than we have — and the alternative
+(a marker written by the push handler) would have to survive a process that may
+never run, which is a worse trade.
 
 ### 3.4 Boost had zero visible effect
 `boost.start` sent both pushes concurrently. The widget push repainted with the
@@ -278,10 +316,28 @@ curl -s -X POST -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/
   -d '{"kind":"boost.start","minutes":90,"reason":"match:wembley"}' "$API/admin/device-push/send"
 ```
 
-Verified on device: `widget.refresh` (foreground and backgrounded), line-scoped
-targeting, `boost.start`/`stop` with the widget acting on the new cadence,
-`user.sync` targeted by uid, live P2→P3 tier transition at 23:00, ledger
-metering, and the 120-minute back-off ceiling.
+### What is verified, and what is not
+
+**Verified on device (2026-08-09/10):**
+
+| Behaviour | Evidence |
+|---|---|
+| `widget.refresh` push → fetch + repaint | foreground and backgrounded (`state=2`) |
+| WidgetKit push repaint latency | build ~15 s after send |
+| Line-scoped targeting | Piccadilly-scoped push → `devicesTargeted: 1` |
+| `boost.start` / `stop` | widget moved to `tier=P1 boost next=15m`, 90-min window |
+| `user.sync` by uid | `widgetpush recv kind=user.sync` |
+| BGAppRefreshTask | `refresh(bgtask) refreshed=true`, 15 min after scheduling |
+| Disruption trigger | live TfL severity transitions, correctly classified |
+| Tier vs wall clock | Mon 17:20 → P1/15m; live P2→P3 transition at 23:00 |
+| Ledger metering | charged builds only; foreground marked FREE |
+| Back-off ceiling | `next=120m`, not 627m |
+| Served vs compiled policy | tiers, windows, budget all agree |
+
+**NOT verified — the one open question:** that scheduled `.after` timeline
+reloads fire on a device that has not been hammered by a day of development.
+See §2.4.1. Everything else above rests on measurement; this rests on a
+plausible explanation.
 
 ---
 
@@ -301,9 +357,19 @@ metering, and the 120-minute back-off ceiling.
    deploying you **must** also send `{"kind":"policy.update"}`. This belongs in
    `.scripts/staging_deploy.sh` — considered and deliberately deferred.
 
-3. **The automatic disruption trigger is unproven.** Deployed and accumulating
-   per-line severity baselines, but it cannot fire until a real TfL line changes
-   state. Edge-triggered, 10-min per-line cooldown, `apns-collapse-id` per line.
+3. ~~The automatic disruption trigger is unproven.~~ **Verified on live TfL data
+   (2026-08-10).** Observed firing on real severity transitions, correctly
+   classified:
+
+   ```
+   DISRUPTION: ⚡ bakerloo changed   — "Severe Delays" → "Minor Delays"
+   DISRUPTION: ⚡ district recovered — "Minor Delays"  → "Good Service"
+   DISRUPTION: ⚡ northern disrupted — "Good Service"  → "Minor Delays"
+   ```
+
+   The test device tracks Piccadilly and Victoria and was correctly NOT woken by
+   any of the above — the line scoping works, and a device is only disturbed by
+   lines it actually shows.
 
 4. **A weekday has ~1 reload of headroom** (41.8 of 43). Apple's real ceiling is
    40–70 and varies per device, so a device at the low end could be throttled
@@ -323,10 +389,17 @@ metering, and the 120-minute back-off ceiling.
    minute between reloads, so it reads live; what is 30 minutes old is the
    underlying prediction set, not the displayed countdown.
 
-8. **`BGAppRefreshTask` has never been observed running.** It is registered and
-   scheduled correctly (`bgtask scheduled in 15m` appears in the trace), but iOS
-   has never granted it on the development device. Expected given repeated
-   reinstalls; unproven on a normally-used phone.
+8. **The visible "ago" timer can lag the data by a full interval.** BGTask
+   refreshes the board on time (verified), but cannot repaint the widget — so
+   the user sees the previous render's age climbing while current data sits
+   underneath. See §2.4.1. The only reliable repaint is a WidgetKit push, which
+   is why the disruption trigger matters more than tier density does.
+
+   If this becomes the dominant complaint, the lever worth trying is **lowering
+   total reload demand** so more of what we ask for is granted: we currently
+   request ~42/day against an Apple allowance of 40–70 that is tuned per device
+   and per visibility. Asking for less may get a higher proportion honoured.
+   That is a hypothesis, not a measurement — it has not been tested.
 
 9. **Not eyes-verified:** the widget visibly repainting on the home screen. The
    traces show reloads with fresh data; nobody has watched the pixels.

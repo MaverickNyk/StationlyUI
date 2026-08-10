@@ -136,6 +136,11 @@ object RefreshPolicyDefaults {
             dailyReloadCeiling = 55,
             reserveForBoost = 12,
             minIntervalMinutes = 10,
+            // Stated explicitly even though it matches the model default. This
+            // is the number that stops a mis-counted ledger becoming a
+            // ten-hour blackout, so someone reading the shipped schedule should
+            // be able to see it rather than having to know it is inherited.
+            maxIntervalMinutes = 120,
         ),
         boost = BoostSpec(tierId = TIER_RUSH, maxDurationMinutes = 90),
         ttlMinutes = 720,
