@@ -54,6 +54,62 @@ enum AppGroupKeys {
     static let stations      = "widget_stations"
     static func board(_ stationId: String) -> String { "widget_board_\(stationId)" }
 
+    /// The refresh cadence, precomputed by KMP as a list of time SEGMENTS.
+    ///
+    /// A schedule rather than a single current decision, because this extension
+    /// is the only thing running when the app is not: handed one decision, a
+    /// phone untouched since last evening would still apply rush-hour cadence
+    /// at 03:00. See `RefreshScheduleStore`.
+    static let refreshSchedule   = "widget_refresh_schedule"
+    /// When KMP last published the schedule — how we tell "the app agrees this
+    /// is current" from "the app has not run in days".
+    static let refreshScheduleAt = "widget_refresh_schedule_at"
+
+    // MARK: - Written here, read by KMP
+
+    /// Rolling 24-hour tally of timeline builds, and when that window opened.
+    ///
+    /// Written HERE because only this process sees a timeline build happen —
+    /// the app is not running for most of them, so an app-side count would
+    /// under-report badly and the budget governor would never engage until the
+    /// widget had already been throttled. KMP reads these to decide how hard to
+    /// economise; see `RefreshBudgetStore` on the Kotlin side.
+    static let budgetWindowStart = "widget_budget_window_start"
+    static let budgetCount       = "widget_budget_count"
+
+    /// When we last told WidgetKit to come back (`.after(next)`).
+    ///
+    /// Used to tell a SCHEDULED rebuild from an externally-triggered one. A
+    /// build arriving well before this time was caused by a push or an
+    /// app-side reload — both of which Apple meters on their own budgets — so
+    /// charging it against the timeline quota over-counts. That over-counting
+    /// is what drove the governor to a 627-minute interval on a real device.
+    static let nextScheduledAt   = "widget_next_scheduled_at"
+
+    // MARK: - Written by the app, read here
+
+    /// Heartbeat proving the APP is in the foreground right now.
+    ///
+    /// Exists because reloads requested while the app is foreground are EXEMPT
+    /// from WidgetKit's budget, and counting them would be a serious
+    /// over-charge: a fresh install with three widgets recorded fourteen
+    /// timeline builds in five seconds, none of which cost anything. Left
+    /// uncorrected, opening the app a few times a day would exhaust the modelled
+    /// budget and leave the governor permanently degrading intervals it never
+    /// needed to.
+    ///
+    /// A HEARTBEAT rather than a boolean because a flag has no way to be wrong
+    /// safely: an app killed while foregrounded would strand it at `true` and
+    /// silently stop all metering. A timestamp refreshed on the app's existing
+    /// 5-second observer tick goes stale on its own within seconds of the app
+    /// stopping, whatever the reason.
+    static let appForegroundHeartbeat = "widget_app_foreground_heartbeat"
+
+    /// The push token WidgetKit hands this extension (iOS 26+), for KMP to
+    /// register with the backend. Addresses the WIDGET, not the app — a push to
+    /// it reloads the timeline without launching us.
+    static let widgetPushToken   = "widget_push_token"
+
     // MARK: - Written here, read here
     //
     // Extension-local state. KMP still knows two of these keys — it removes a
@@ -107,5 +163,22 @@ enum AppGroupKeys {
         stationId.isEmpty ? "widget_refresh_failed" : "widget_refresh_failed_\(stationId)"
     }
     /// Bounded ring buffer of refresh breadcrumbs; an extension has no console.
+    ///
+    /// Deliberately short (20 entries) because it is chatty — every render, tap
+    /// and timing line goes here — so during active use it covers only minutes.
+    /// For "is the widget refreshing on schedule over hours?" use
+    /// [scheduledBuildLog] instead.
     static let refreshTrace      = "widget_refresh_trace"
+
+    /// One line per METERED build, and nothing else.
+    ///
+    /// Exists because [refreshTrace] cannot answer the question that actually
+    /// matters operationally — *did the widget refresh by itself over the last
+    /// few hours?* At 20 chatty entries it rolls in minutes, so a report of
+    /// "it didn't update for two hours" was uninvestigable: by the time anyone
+    /// looked, the evidence had been overwritten by the very act of looking.
+    ///
+    /// Only scheduled (charged) builds are recorded, so at ~42/day this spans
+    /// well over a day in 60 entries and the gaps between lines ARE the answer.
+    static let scheduledBuildLog = "widget_scheduled_build_log"
 }

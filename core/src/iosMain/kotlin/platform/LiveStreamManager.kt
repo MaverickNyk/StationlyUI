@@ -247,6 +247,33 @@ object LiveStreamManager {
         }
     }
 
+    /**
+     * Drop every subscription this socket holds — the sign-out path.
+     *
+     * Reads the current sets rather than taking a list, because the caller
+     * (`IosNotificationManager.clearAllTopics`) no longer has one: it used to
+     * derive it from the FCM topic ledger, and that ledger is gone along with
+     * FirebaseMessaging. This manager already knows what it is subscribed to,
+     * which makes it the right owner of the question anyway.
+     */
+    fun unsubscribeAll() {
+        scope.launch {
+            val (stations, lines) = stateMutex.withLock {
+                subscribedStations.toList() to subscribedLines.toList()
+            }
+            if (stations.isEmpty() && lines.isEmpty()) return@launch
+            stateMutex.withLock {
+                subscribedStations.clear()
+                subscribedLines.clear()
+            }
+            sendFrame(buildJsonObject {
+                put("action", "unsubscribe")
+                if (stations.isNotEmpty()) putJsonArray("stations") { stations.forEach { add(it) } }
+                if (lines.isNotEmpty()) putJsonArray("lines") { lines.forEach { add(it) } }
+            })
+        }
+    }
+
     // ── Internals ──
 
     /**

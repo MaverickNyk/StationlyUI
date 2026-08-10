@@ -145,11 +145,44 @@ object AppGroupKeys {
     // NOT under [WIDGET_BOARD_PREFIX] — see the note above on why that matters.
     const val WIDGET_REFRESH_FAILED_PREFIX = "widget_refresh_failed_"
 
-    // FCM topic management — written by KMP, processed by Swift FCMBridge
-    const val FCM_TOPICS              = "fcm_topics"
-    const val FCM_SUBSCRIBE_PENDING   = "fcm_subscribe_pending"
-    const val FCM_UNSUBSCRIBE_PENDING = "fcm_unsubscribe_pending"
-    const val FCM_TOKEN               = "fcm_token"    // FCM registration token stored by AppDelegate
+    // ── Refresh scheduling ──
+    //
+    // The cadence the widget extension applies, precomputed by KMP. A SEGMENTED
+    // schedule rather than a single current decision, because the extension is
+    // the only thing running when the app is not: handed one decision, a phone
+    // untouched since last evening would still apply rush-hour cadence at 03:00
+    // and spend the user's battery doing it. See `RefreshSegment`.
+    const val WIDGET_REFRESH_SCHEDULE    = "widget_refresh_schedule"
+    const val WIDGET_REFRESH_SCHEDULE_AT = "widget_refresh_schedule_at"
+
+    // The reload tally, WRITTEN BY THE EXTENSION and read here.
+    //
+    // Direction matters: a WidgetKit timeline build is the thing Apple meters,
+    // it happens in the extension, and the app is not running for most of them.
+    // So the extension is the only process that can count honestly, and KMP is
+    // a reader — see RefreshBudgetStore. KMP writes these only to open a fresh
+    // window or to clear on wipe.
+    const val WIDGET_BUDGET_WINDOW_START = "widget_budget_window_start"
+    const val WIDGET_BUDGET_COUNT        = "widget_budget_count"
+
+    // The build the tally above was accumulated by. A change means the count
+    // was produced by different code and can no longer be trusted, so the
+    // window is restarted — see `RefreshScheduleAppGroup.resetLedgerOnNewBuild`.
+    const val WIDGET_BUDGET_BUILD        = "widget_budget_build"
+
+    // Written by Swift when WidgetKit hands the extension its push token
+    // (iOS 26+), read by KMP so it can be registered with the backend. The
+    // token addresses the WIDGET, not the app — a push to it reloads the
+    // timeline without launching us.
+    const val WIDGET_PUSH_TOKEN          = "widget_push_token"
+
+    // NOTE: the `fcm_topics` / `fcm_subscribe_pending` / `fcm_unsubscribe_pending`
+    // / `fcm_token` keys that used to live here are GONE, along with
+    // FirebaseMessaging on iOS. They were a ledger written by KMP for a Swift
+    // bridge to flush into `Messaging.subscribe`, and that bridge no longer
+    // exists — see the note atop `AppDelegate.swift` for what replaced it.
+    // Do not reintroduce them: on this platform a "topic" is now only ever a
+    // live-stream subscription id (see `IosNotificationManager.parseTopics`).
 
     // Auth state — written by Swift AuthBridge, read by KMP IosPlatformAuthProvider
     const val FIREBASE_AUTH_TOKEN     = "firebase_auth_token"
@@ -292,6 +325,11 @@ class IosWidgetManager : WidgetManager {
                 // vocabulary, and two copies of a naming map that the backend
                 // is expected to own one day is one copy too many.
                 lines = selections.map { LineShortNames.displayName(it.line) }.distinct(),
+                // The raw ids alongside them, for matching rather than
+                // rendering — see `WidgetStationRef.lineIds`. Lower-cased here
+                // so every consumer compares the same thing.
+                lineIds = selections.map { it.line.trim().lowercase() }
+                    .filter { it.isNotEmpty() }.distinct(),
             )
         }
 
@@ -738,37 +776,47 @@ class IosWidgetManager : WidgetManager {
 // Notification Manager
 // ─────────────────────────────────────────────────────────
 
+/**
+ * Routes the app's subscription intent to the LIVE STREAM. Nothing here talks
+ * to Firebase Cloud Messaging any more.
+ *
+ * ## Why the FCM half is gone
+ * This class used to do two things per call: drive the stream, and maintain an
+ * FCM topic ledger in `NSUserDefaults` for a Swift bridge to flush into
+ * `Messaging.subscribe`. The second half has been removed entirely — iOS no
+ * longer links FirebaseMessaging, so those queues had no reader, and a ledger
+ * nothing consumes is worse than no ledger: it looks like a working
+ * subscription path to anyone reading the code.
+ *
+ * What iOS uses instead: the live stream while the app is foregrounded (below),
+ * the adaptive refresh schedule while it is not (`RefreshPolicyEvaluator`), and
+ * direct APNs pushes for immediate triggers (`WidgetPushService` on the
+ * backend). See the note atop `AppDelegate.swift`.
+ *
+ * The METHOD NAMES still say "topics" because [NotificationManager] is shared
+ * with Android, where they genuinely are FCM topics. On this side a topic is
+ * just an identifier that [parseTopics] turns into a stream subscription.
+ */
 class IosNotificationManager : NotificationManager {
 
-    private val defaults = NSUserDefaults.standardUserDefaults
-
     override suspend fun subscribeToTopics(topics: List<String>) = withContext(Dispatchers.IO) {
-        val existing = pendingList(AppGroupKeys.FCM_TOPICS)
-        defaults.setObject((existing + topics).distinct(), forKey = AppGroupKeys.FCM_TOPICS)
-        val pending = pendingList(AppGroupKeys.FCM_SUBSCRIBE_PENDING)
-        defaults.setObject((pending + topics).distinct(), forKey = AppGroupKeys.FCM_SUBSCRIBE_PENDING)
-        defaults.synchronize()
         val (stations, lines) = parseTopics(topics)
         LiveStreamManager.subscribeTopics(stations, lines)
-        Unit
     }
 
     override suspend fun unsubscribeFromTopics(topics: List<String>) = withContext(Dispatchers.IO) {
-        val existing = pendingList(AppGroupKeys.FCM_TOPICS)
-        defaults.setObject(existing - topics.toSet(), forKey = AppGroupKeys.FCM_TOPICS)
-        val pending = pendingList(AppGroupKeys.FCM_UNSUBSCRIBE_PENDING)
-        defaults.setObject((pending + topics).distinct(), forKey = AppGroupKeys.FCM_UNSUBSCRIBE_PENDING)
-        defaults.synchronize()
         val (stations, lines) = parseTopics(topics)
         LiveStreamManager.unsubscribeTopics(stations, lines)
-        Unit
     }
 
     /**
-     * "Station_{naptanId}" / "LineStatus_{mode}_{line}" — the same topic
-     * identifiers FCM already uses — mapped onto the stream's station/line
-     * subscribe ids so a station add/remove keeps both channels in sync
-     * without a second call site.
+     * "Station_{naptanId}" / "LineStatus_{mode}_{line}" mapped onto the
+     * stream's station/line subscribe ids, so a station add/remove keeps the
+     * stream in sync without a second call site.
+     *
+     * The identifiers are the ones Android's FCM topics use, which is
+     * deliberate: one vocabulary for "what this device cares about", whatever
+     * transport a platform happens to use to act on it.
      */
     private fun parseTopics(topics: List<String>): Pair<List<String>, List<String>> {
         val stations = topics.mapNotNull { it.removePrefix("Station_").takeIf { s -> s != it } }
@@ -779,40 +827,30 @@ class IosNotificationManager : NotificationManager {
     }
 
     override suspend fun clearAllTopics() = withContext(Dispatchers.IO) {
-        val all = pendingList(AppGroupKeys.FCM_TOPICS)
-        if (all.isNotEmpty()) {
-            val pending = pendingList(AppGroupKeys.FCM_UNSUBSCRIBE_PENDING)
-            defaults.setObject((pending + all).distinct(), forKey = AppGroupKeys.FCM_UNSUBSCRIBE_PENDING)
-        }
-        defaults.removeObjectForKey(AppGroupKeys.FCM_TOPICS)
-        defaults.removeObjectForKey(AppGroupKeys.FCM_SUBSCRIBE_PENDING)
-        defaults.synchronize()
-        Unit
+        LiveStreamManager.unsubscribeAll()
     }
 
     override suspend fun handleNotification(payload: Map<String, String>) {
-        // Handled by Swift AppDelegate / UNUserNotificationCenterDelegate
-        // FCM payload processing is done by PushPayloadBridge.processPayload()
+        // Nothing to do. Push handling is entirely Swift-side now
+        // (`WidgetPushRegistrar.handle`), and the envelopes it receives are
+        // SIGNALS — "refetch", "policy changed", "boost" — so there is no
+        // payload for shared code to decode.
     }
 
     /**
-     * The device's FCM registration token, for backend registration.
+     * No device token to report from Kotlin.
      *
-     * Reads the APP GROUP suite first: sign-out wipes the whole standard
-     * NSUserDefaults domain (`clearAll` → `removePersistentDomainForName`),
-     * which used to take the token with it. The next login then read "" and
-     * skipped registration silently, leaving the backend with no token for
-     * that user and every push failing "No registered tokens for uid".
-     * Swift's AppDelegate writes both locations; the standard-domain read
-     * stays as a fallback for a token persisted before that change.
+     * This used to return the FCM registration token, which the shared
+     * `registerDevice()` flow posted to `/user/fcm/register`. iOS no longer has
+     * one: the device is addressed by its APNs tokens, which are issued to the
+     * app and to the widget extension and registered from Swift
+     * (`WidgetPushRegistrar`) where they actually live.
+     *
+     * The empty string is the established "nothing to register" signal — every
+     * caller already guards on `isNotBlank()` — so this correctly no-ops the
+     * FCM registration path on iOS while leaving Android's untouched.
      */
-    override suspend fun registerDevice(): String =
-        NSUserDefaults(suiteName = APP_GROUP_ID).stringForKey(AppGroupKeys.FCM_TOKEN)
-            ?: defaults.stringForKey(AppGroupKeys.FCM_TOKEN)
-            ?: ""
-
-    private fun pendingList(key: String): List<String> =
-        (defaults.arrayForKey(key) as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+    override suspend fun registerDevice(): String = ""
 }
 
 // ─────────────────────────────────────────────────────────
@@ -960,93 +998,14 @@ object PushTrace {
     }
 }
 
-object PushPayloadBridge {
-
-    private val processUseCase: ProcessPredictionsUseCase by lazy {
-        ProcessPredictionsUseCase(
-            departureRepository = DepartureRepository(
-                NetworkModule.tflApi,
-                Platform.storageManager,
-                Platform.sqlStorage,
-                SyncPredictionsUseCase(Platform.sqlStorage)
-            ),
-            widgetManager          = Platform.widgetManager,
-            storageManager         = Platform.storageManager,
-            formatDeparturesUseCase = FormatDeparturesUseCase(),
-            // iOS persists selections only to SQLite — pass it so FCM can find
-            // the primary board and actually update the widget.
-            sqlStorage             = Platform.sqlStorage
-        )
-    }
-
-    /**
-     * Fire-and-forget variant for foreground deliveries where Swift doesn't
-     * need to await the write (the WidgetReloadObserver picks up the signal).
-     */
-    fun processPayload(jsonString: String) {
-        GlobalScope.launch(Dispatchers.IO) {
-            processPayloadAndWait(jsonString)
-        }
-    }
-
-    /**
-     * Process an FCM message and return only when SQLite + the App Group have
-     * been written. Swift sees this as `processPayloadAndWait(jsonString:completionHandler:)`
-     * — AppDelegate awaits it in didReceiveRemoteNotification before calling
-     * the background-fetch completion handler, so iOS doesn't suspend the
-     * process mid-write and the widget reload sees fresh data.
-     *
-     * The argument is the WHOLE APNs userInfo dict as JSON. A real Syncer
-     * topic push looks like:
-     *   { "from": "/topics/Station_940GZZLUASL",   ← or LineStatus_tube_victoria
-     *     "payload": "{…inner JSON string…}",       ← PredictionsPayload or LineStatus
-     *     "aps": { "content-available": 1 }, … }
-     * which is why decoding the top level directly as PredictionsPayload (the old
-     * code) dropped every real push — the data lives one level down, exactly
-     * like Android's remoteMessage.data["payload"].
-     */
-    suspend fun processPayloadAndWait(jsonString: String) {
-        try {
-            val root = json.parseToJsonElement(jsonString).jsonObject
-            val topic = (root["from"] as? JsonPrimitive)?.contentOrNull
-            val inner = (root["payload"] as? JsonPrimitive)?.contentOrNull
-            PushTrace.log("kmp:enter topic=${topic ?: "-"} innerLen=${inner?.length ?: -1}")
-
-            when {
-                topic?.contains("LineStatus_") == true && inner != null -> {
-                    PushTrace.log("kmp:route=lineStatus")
-                    processUseCase.processLineStatusUpdate(json.decodeFromString(inner))
-                }
-
-                topic?.contains("Station_") == true && inner != null -> {
-                    val sid = topic.substringAfter("Station_")
-                    PushTrace.log("kmp:route=station sid=$sid")
-                    processUseCase.processStationUpdate(
-                        topicStationId = sid,
-                        payload = json.decodeFromString(inner)
-                    )
-                }
-
-                // No topic (direct/test push) — sniff the payload shape.
-                inner != null -> {
-                    val parsed = json.parseToJsonElement(inner).jsonObject
-                    if ("lines" in parsed) {
-                        processUseCase.processStationUpdate(null, json.decodeFromString(inner))
-                    } else if ("statusSeverityDescription" in parsed) {
-                        processUseCase.processLineStatusUpdate(json.decodeFromString(inner))
-                    }
-                }
-
-                // Legacy/manual pushes that put the PredictionsPayload at the top level.
-                "lines" in root ->
-                    processUseCase.processStationUpdate(null, json.decodeFromString(jsonString))
-            }
-        } catch (e: Exception) {
-            // This used to be a bare println — invisible on device. A decode
-            // mismatch between the Syncer's payload and PredictionsPayload lands here
-            // and would otherwise look identical to "the push never arrived".
-            PushTrace.log("kmp:EXCEPTION ${e::class.simpleName}: ${e.message?.take(160)}")
-            println("[PushPayloadBridge] Failed to process payload: ${e.message}")
-        }
-    }
-}
+// PushPayloadBridge lived here: it decoded an FCM topic push (Station_* /
+// LineStatus_*) into the prediction pipeline for the Swift AppDelegate.
+//
+// Removed with FirebaseMessaging. iOS receives no data pushes any more — the
+// APNs envelopes it does get are SIGNALS ("refetch", "policy changed",
+// "boost"), handled entirely in Swift by `WidgetPushRegistrar`, which then
+// calls back into `RefreshScheduleBridge.refreshAllBoards()` to run the real
+// pipeline. See the note atop `AppDelegate.swift`.
+//
+// `ProcessPredictionsUseCase` itself is very much alive: `LiveStreamManager`
+// is its remaining iOS caller and constructs it the same way this did.

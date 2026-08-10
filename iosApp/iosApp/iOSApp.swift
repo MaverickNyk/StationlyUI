@@ -31,6 +31,13 @@ struct StationlyApp: App {
                 LiveStreamBridge.shared.notifyForeground()
             } else if phase == .background {
                 LiveStreamBridge.shared.notifyBackground()
+                // Stop claiming the foreground, so the widget extension starts
+                // charging its timeline builds against the budget again.
+                WidgetReloadObserver.shared.markBackgrounded()
+                // Queue the next background wake from the tier in force. Doing
+                // it on the way out matters: this is the moment we know the app
+                // is about to stop being the thing keeping the widget fresh.
+                BackgroundRefreshScheduler.schedule()
             }
         }
     }

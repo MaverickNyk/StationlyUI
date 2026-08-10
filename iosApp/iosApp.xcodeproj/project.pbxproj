@@ -14,16 +14,19 @@
 		307C2654CD5972A25FB7FD87 /* iOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668CECA83ACC03A83C85A623 /* iOSApp.swift */; };
 		38BC8C0A2A20C409AD35F500 /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17F56BCEA93D417E080182A7 /* AppGroupStorage.swift */; };
 		3A939B1447CB25EBEE98671B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 258D481022F14E09267EE7BD /* Assets.xcassets */; };
-		445C052442747365B7CB2124 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = AC813CE66F97994D9BE8A812 /* FirebaseMessaging */; };
+		445C052442747365B7CB2124 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */; };
 		4F51E6F943E79B5999B8A52B /* composeApp.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 118F41A10A55B84CE576769B /* composeApp.xcframework */; };
 		56B0305B5D3847FC6B326502 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE8509E5A49E4A5CAAEB3ADB /* ContentView.swift */; };
+		6DE7FA15AE6C76B0C10ABF8A /* BackgroundRefreshScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89C826F096F43CDC328C3DD8 /* BackgroundRefreshScheduler.swift */; };
 		73956648F92E8FEC62F6D73D /* AuthBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88370C3FDDC238D3448AC2D1 /* AuthBridge.swift */; };
 		7ECDD355828B7FFCA7AF9072 /* AppGroupID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97E45A83D0043D7E5591F183 /* AppGroupID.swift */; };
+		875215AA235312C1FEF7D5E1 /* WidgetPushHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = D168F4502EC6C4FECA881F67 /* WidgetPushHandler.swift */; };
 		8B590E4A471A5538649CEBCF /* WidgetRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AA433530A96563307A6CAA8 /* WidgetRefreshService.swift */; };
+		99B49945DB0F17F7094153A9 /* RefreshScheduleStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72065508ED95ACC5AA5B3711 /* RefreshScheduleStore.swift */; };
 		9F3A175D3B8A470544BB8BE2 /* AppGroupKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71BBE9EECA29F7BC9A109C5B /* AppGroupKeys.swift */; };
 		A566BB023C1056C96F41D335 /* StationlyWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EE7E10119EC01AC8676B703D /* StationlyWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A774AD58CF3505F914CB83D7 /* WidgetPageIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 306E4366DEB79A6AD438619D /* WidgetPageIntent.swift */; };
-		B7C4F6137AC8345E71E92063 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */; };
+		B431C9F829F237B6A780A8FC /* DevicePushCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEDD6C1E78B90F6BC67D20E5 /* DevicePushCoordinator.swift */; };
 		BAE7B40F755CB01E45657AA8 /* HomeStateProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57D3E21FAEDF7ED0B74AE07 /* HomeStateProbe.swift */; };
 		C0D402F91C254C0EFB1C3A91 /* StationlyWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC75E3E8045F2DC8D1922D50 /* StationlyWidget.swift */; };
 		C3E3BCF8F138F630927C544F /* StationlyWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F7BF3D0F900FDF96129BA89 /* StationlyWidgetBundle.swift */; };
@@ -32,8 +35,8 @@
 		C87B4FA04BDA1DA04158D48E /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = A55143988C4C8F291BE72E9A /* GoogleService-Info.plist */; };
 		CB006310D02489A5D2220318 /* WidgetTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FD2D2AA7865370F9D9B2E85 /* WidgetTheme.swift */; };
 		CFE992350AE1D45C71A414A2 /* StationConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75982716E6D0AEC8FEED4D33 /* StationConfiguration.swift */; };
+		EE0B2E5554D43A66C83DA33C /* AppGroupKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7171BEFAE1F981889803668C /* AppGroupKeys.swift */; };
 		EEAED07AD42E134D78BBE3AD /* AppGroupID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96749FEEFB87671930DBEF31 /* AppGroupID.swift */; };
-		F5590281266A7B295361D031 /* FCMBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02C0D79CCE01D0B3BA51EC14 /* FCMBridge.swift */; };
 		FDE52B8D57A097A60A4CF366 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B6C1F485E0CF8BB70C9DDD2 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
 
@@ -73,7 +76,6 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		02C0D79CCE01D0B3BA51EC14 /* FCMBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FCMBridge.swift; sourceTree = "<group>"; };
 		118F41A10A55B84CE576769B /* composeApp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = composeApp.xcframework; path = ../composeApp/build/XCFrameworks/debug/composeApp.xcframework; sourceTree = "<group>"; };
 		17F56BCEA93D417E080182A7 /* AppGroupStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorage.swift; sourceTree = "<group>"; };
 		258D481022F14E09267EE7BD /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -81,11 +83,14 @@
 		4AA433530A96563307A6CAA8 /* WidgetRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetRefreshService.swift; sourceTree = "<group>"; };
 		5BA8E3A8CB73FA587D96BD12 /* DepartureEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DepartureEntry.swift; sourceTree = "<group>"; };
 		668CECA83ACC03A83C85A623 /* iOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSApp.swift; sourceTree = "<group>"; };
+		7171BEFAE1F981889803668C /* AppGroupKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupKeys.swift; sourceTree = "<group>"; };
 		71BBE9EECA29F7BC9A109C5B /* AppGroupKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupKeys.swift; sourceTree = "<group>"; };
+		72065508ED95ACC5AA5B3711 /* RefreshScheduleStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RefreshScheduleStore.swift; sourceTree = "<group>"; };
 		725E230C3D1AA4C519DEBC68 /* WidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetViews.swift; sourceTree = "<group>"; };
 		75982716E6D0AEC8FEED4D33 /* StationConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationConfiguration.swift; sourceTree = "<group>"; };
 		86038AE1032E284E79B32AD6 /* iosApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = iosApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		88370C3FDDC238D3448AC2D1 /* AuthBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthBridge.swift; sourceTree = "<group>"; };
+		89C826F096F43CDC328C3DD8 /* BackgroundRefreshScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefreshScheduler.swift; sourceTree = "<group>"; };
 		8B6C1F485E0CF8BB70C9DDD2 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		8F7BF3D0F900FDF96129BA89 /* StationlyWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationlyWidgetBundle.swift; sourceTree = "<group>"; };
 		8FD2D2AA7865370F9D9B2E85 /* WidgetTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetTheme.swift; sourceTree = "<group>"; };
@@ -94,7 +99,9 @@
 		A55143988C4C8F291BE72E9A /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		C117AD187833E2513BD2F553 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		CE8509E5A49E4A5CAAEB3ADB /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		D168F4502EC6C4FECA881F67 /* WidgetPushHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPushHandler.swift; sourceTree = "<group>"; };
 		DC75E3E8045F2DC8D1922D50 /* StationlyWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationlyWidget.swift; sourceTree = "<group>"; };
+		DEDD6C1E78B90F6BC67D20E5 /* DevicePushCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicePushCoordinator.swift; sourceTree = "<group>"; };
 		E57D3E21FAEDF7ED0B74AE07 /* HomeStateProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeStateProbe.swift; sourceTree = "<group>"; };
 		E6E60D8AB263A747C2061338 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		ECA4FAF25F90834251640413 /* PushTraceSwift.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushTraceSwift.swift; sourceTree = "<group>"; };
@@ -108,8 +115,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1C81D6F669B7BB6D2FFCCEB3 /* FirebaseAuth in Frameworks */,
-				445C052442747365B7CB2124 /* FirebaseMessaging in Frameworks */,
-				B7C4F6137AC8345E71E92063 /* GoogleSignIn in Frameworks */,
+				445C052442747365B7CB2124 /* GoogleSignIn in Frameworks */,
 				4F51E6F943E79B5999B8A52B /* composeApp.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -122,10 +128,12 @@
 			children = (
 				8B6C1F485E0CF8BB70C9DDD2 /* AppDelegate.swift */,
 				97E45A83D0043D7E5591F183 /* AppGroupID.swift */,
+				7171BEFAE1F981889803668C /* AppGroupKeys.swift */,
 				F543015C899423D4B01CEB2E /* Assets.xcassets */,
 				88370C3FDDC238D3448AC2D1 /* AuthBridge.swift */,
+				89C826F096F43CDC328C3DD8 /* BackgroundRefreshScheduler.swift */,
 				CE8509E5A49E4A5CAAEB3ADB /* ContentView.swift */,
-				02C0D79CCE01D0B3BA51EC14 /* FCMBridge.swift */,
+				DEDD6C1E78B90F6BC67D20E5 /* DevicePushCoordinator.swift */,
 				A55143988C4C8F291BE72E9A /* GoogleService-Info.plist */,
 				E57D3E21FAEDF7ED0B74AE07 /* HomeStateProbe.swift */,
 				C117AD187833E2513BD2F553 /* Info.plist */,
@@ -173,10 +181,12 @@
 				258D481022F14E09267EE7BD /* Assets.xcassets */,
 				5BA8E3A8CB73FA587D96BD12 /* DepartureEntry.swift */,
 				E6E60D8AB263A747C2061338 /* Info.plist */,
+				72065508ED95ACC5AA5B3711 /* RefreshScheduleStore.swift */,
 				75982716E6D0AEC8FEED4D33 /* StationConfiguration.swift */,
 				DC75E3E8045F2DC8D1922D50 /* StationlyWidget.swift */,
 				8F7BF3D0F900FDF96129BA89 /* StationlyWidgetBundle.swift */,
 				306E4366DEB79A6AD438619D /* WidgetPageIntent.swift */,
+				D168F4502EC6C4FECA881F67 /* WidgetPushHandler.swift */,
 				4AA433530A96563307A6CAA8 /* WidgetRefreshService.swift */,
 				8FD2D2AA7865370F9D9B2E85 /* WidgetTheme.swift */,
 				725E230C3D1AA4C519DEBC68 /* WidgetViews.swift */,
@@ -224,7 +234,6 @@
 			name = iosApp;
 			packageProductDependencies = (
 				617043448F4869026C2F0BB4 /* FirebaseAuth */,
-				AC813CE66F97994D9BE8A812 /* FirebaseMessaging */,
 				B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */,
 			);
 			productName = iosApp;
@@ -323,9 +332,11 @@
 			files = (
 				FDE52B8D57A097A60A4CF366 /* AppDelegate.swift in Sources */,
 				7ECDD355828B7FFCA7AF9072 /* AppGroupID.swift in Sources */,
+				EE0B2E5554D43A66C83DA33C /* AppGroupKeys.swift in Sources */,
 				73956648F92E8FEC62F6D73D /* AuthBridge.swift in Sources */,
+				6DE7FA15AE6C76B0C10ABF8A /* BackgroundRefreshScheduler.swift in Sources */,
 				56B0305B5D3847FC6B326502 /* ContentView.swift in Sources */,
-				F5590281266A7B295361D031 /* FCMBridge.swift in Sources */,
+				B431C9F829F237B6A780A8FC /* DevicePushCoordinator.swift in Sources */,
 				BAE7B40F755CB01E45657AA8 /* HomeStateProbe.swift in Sources */,
 				C654091523394E0AFE6EA794 /* PushTraceSwift.swift in Sources */,
 				307C2654CD5972A25FB7FD87 /* iOSApp.swift in Sources */,
@@ -340,10 +351,12 @@
 				9F3A175D3B8A470544BB8BE2 /* AppGroupKeys.swift in Sources */,
 				38BC8C0A2A20C409AD35F500 /* AppGroupStorage.swift in Sources */,
 				15004BFF21C3E1734FA5E510 /* DepartureEntry.swift in Sources */,
+				99B49945DB0F17F7094153A9 /* RefreshScheduleStore.swift in Sources */,
 				CFE992350AE1D45C71A414A2 /* StationConfiguration.swift in Sources */,
 				C0D402F91C254C0EFB1C3A91 /* StationlyWidget.swift in Sources */,
 				C3E3BCF8F138F630927C544F /* StationlyWidgetBundle.swift in Sources */,
 				A774AD58CF3505F914CB83D7 /* WidgetPageIntent.swift in Sources */,
+				875215AA235312C1FEF7D5E1 /* WidgetPushHandler.swift in Sources */,
 				8B590E4A471A5538649CEBCF /* WidgetRefreshService.swift in Sources */,
 				CB006310D02489A5D2220318 /* WidgetTheme.swift in Sources */,
 				C549E9404F60E91D428ED213 /* WidgetViews.swift in Sources */,
@@ -369,7 +382,7 @@
 				CODE_SIGN_ENTITLEMENTS = iosApp/iosApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -454,7 +467,7 @@
 				CODE_SIGN_ENTITLEMENTS = iosApp/iosApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -483,7 +496,7 @@
 				CODE_SIGN_ENTITLEMENTS = iosApp/iosApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -507,12 +520,13 @@
 		86FE6E6113093C1275D9B15E /* Release Staging */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = production;
 				CODE_SIGN_ENTITLEMENTS = StationlyWidget/StationlyWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				INFOPLIST_FILE = StationlyWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -586,12 +600,13 @@
 		A6E729A32E20FB90F7F3C38F /* Debug Production */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = development;
 				CODE_SIGN_ENTITLEMENTS = StationlyWidget/StationlyWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				INFOPLIST_FILE = StationlyWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -609,12 +624,13 @@
 		B173C12BF3E6DE291E250DBC /* Debug Staging */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = development;
 				CODE_SIGN_ENTITLEMENTS = StationlyWidget/StationlyWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				INFOPLIST_FILE = StationlyWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -700,7 +716,7 @@
 				CODE_SIGN_ENTITLEMENTS = iosApp/iosApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -724,12 +740,13 @@
 		F3BB44D9B810BE436CE70F01 /* Release Production */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = production;
 				CODE_SIGN_ENTITLEMENTS = StationlyWidget/StationlyWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				INFOPLIST_FILE = StationlyWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -869,11 +886,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 7C4F1707FE80007C7DCEAE3C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseAuth;
-		};
-		AC813CE66F97994D9BE8A812 /* FirebaseMessaging */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 7C4F1707FE80007C7DCEAE3C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseMessaging;
 		};
 		B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */ = {
 			isa = XCSwiftPackageProductDependency;

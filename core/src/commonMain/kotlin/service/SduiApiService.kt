@@ -1,5 +1,6 @@
 package com.stationly.core.service
 
+import com.stationly.core.model.refresh.RefreshPolicy
 import com.stationly.core.model.sdui.*
 import com.stationly.core.platform.Platform
 import io.ktor.client.*
@@ -34,6 +35,17 @@ interface SduiApiService {
      * never block on this network call. See [SduiThemeTokens] docstring.
      */
     suspend fun getThemeTokens(): SduiThemeTokens
+
+    /**
+     * The cadence schedule for glanceable surfaces — see
+     * [com.stationly.core.model.refresh.RefreshPolicy].
+     *
+     * Read on cold launch and when a `policy.update` push says the cached copy
+     * is stale, NOT per refresh: the client caches the document and evaluates
+     * it locally, so the schedule costs one small GET a day rather than a
+     * request every time a widget wants to know what to do.
+     */
+    suspend fun getRefreshPolicy(): RefreshPolicy
     suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption>
     suspend fun getNearbyStations(lat: Double, lon: Double, mode: String? = null): List<SduiDropdownOption>
 
@@ -108,6 +120,10 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
 
     override suspend fun getThemeTokens(): SduiThemeTokens {
         return client.get("$baseUrl/sdui/app/theme-tokens").body()
+    }
+
+    override suspend fun getRefreshPolicy(): RefreshPolicy {
+        return client.get("$baseUrl/sdui/app/refresh-policy").body()
     }
 
     override suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption> {

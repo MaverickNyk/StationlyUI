@@ -5,7 +5,6 @@ import CryptoKit
 import Security
 import FirebaseCore
 import FirebaseAuth
-import FirebaseMessaging
 import GoogleSignIn
 // import ComposeApp  // Uncomment after Xcode framework integration
 
@@ -137,11 +136,6 @@ class AuthBridge {
                 }
 
             case "signOut":
-                // Unsubscribe from all active FCM topics directly — cannot rely on the
-                // pending-unsubscribe queue because KMP clears UserDefaults immediately after.
-                if let topics = ud.array(forKey: "fcm_topics") as? [String] {
-                    topics.forEach { Messaging.messaging().unsubscribe(fromTopic: $0) { _ in } }
-                }
                 await logout()
                 ud.set("1", forKey: "auth_operation_success")
                 ud.synchronize()
@@ -345,6 +339,21 @@ class AuthBridge {
         GIDSignIn.sharedInstance.signOut()
         clearUserInfo()
         NotificationCenter.default.post(name: .authStateDidChange, object: nil)
+    }
+
+    /// Sign out because the account was deleted somewhere else.
+    ///
+    /// Reached from a `user.sync` push with `reason = "deleted"` — the user
+    /// deleted their account on another device, and this one is holding a
+    /// session for something that no longer exists. Android does the same via
+    /// `UserSyncCoordinator.forceLogout`.
+    ///
+    /// Separate from [logout] only so the intent is visible at the call site and
+    /// in the trace; the mechanics are identical, because a session for a
+    /// deleted account has to be torn down exactly as thoroughly as one the user
+    /// ended deliberately.
+    func signOutForAccountDeletion() async {
+        await logout()
     }
 
     // MARK: - Token refresh

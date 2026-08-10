@@ -2,6 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Required for WidgetKit push (iOS 26+). The extension gets its OWN push
+	     token, addressed as <bundle>.push-type.widgets, and a push to it
+	     reloads the timeline without waking the app. Without this entitlement
+	     no token is ever issued — silently: no error, no log, just a widget
+	     the backend can never push to. Must be present on the EXTENSION, not
+	     only on the app. -->
+	<key>aps-environment</key>
+	<string>$(APS_ENVIRONMENT)</string>
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>group.com.stationly.shared</string>

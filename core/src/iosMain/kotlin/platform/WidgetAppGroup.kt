@@ -30,8 +30,23 @@ data class WidgetStationRef(
     val name: String,
     /** "tube", "bus", "dlr" — the picker turns this into a roundel. */
     val mode: String,
-    /** Canonical line ids, for the picker's subtitle. */
+    /** DISPLAY names ("Hammersmith & City"), for the picker's subtitle. */
     val lines: List<String> = emptyList(),
+    /**
+     * Canonical line IDs ("hammersmith-city"), for anything that has to MATCH
+     * rather than render.
+     *
+     * Added because [lines] holds display names and the two are not
+     * interchangeable: the backend scopes disruption pushes by line id, so a
+     * device registering "Hammersmith & City" would never match a
+     * `hammersmith-city` incident and would silently receive nothing. Tube
+     * lines whose display name is just the id capitalised hid this — it only
+     * breaks on the ones with punctuation, which are exactly the ones people
+     * notice.
+     *
+     * Defaulted so a board written by an older build still decodes.
+     */
+    val lineIds: List<String> = emptyList(),
 )
 
 /** One tracked (line, direction) at a station, as the extension needs it. */

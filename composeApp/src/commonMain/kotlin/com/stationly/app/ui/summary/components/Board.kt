@@ -106,7 +106,7 @@ import com.stationly.app.ui.util.BOARD_FALLBACK_ROW_COUNT
 import com.stationly.app.ui.util.BoardFallbackDefaults
 import com.stationly.app.ui.util.BoardFallbackState
 import com.stationly.app.ui.util.computeBoardFallbackState
-import com.stationly.app.ui.util.parseHHmm
+import com.stationly.core.util.parseHHmm
 import com.stationly.app.ui.util.resolveBoardFallbackCopy
 import com.stationly.app.ui.util.rememberMinuteTick
 import com.stationly.core.model.PredictionDisplay

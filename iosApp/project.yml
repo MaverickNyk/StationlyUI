@@ -42,16 +42,53 @@ targets:
         # doesn't churn — branding lives here, not in PRODUCT_NAME.
         CFBundleDisplayName: Stationly
         CFBundleName: Stationly
+        # Wired through from the build settings. Without these the generated
+        # plist carries a hardcoded "1" forever, whatever CURRENT_PROJECT_VERSION
+        # says — which silently broke the widget's build-change ledger reset
+        # (`RefreshScheduleAppGroup.resetLedgerOnNewBuild` compares CFBundleVersion)
+        # and would also have shipped every App Store build as version 1.
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
         CADisableMinimumFrameDurationOnPhone: true
+        # ── Firebase must NOT swizzle the app delegate ──
+        #
+        # Absent, this defaults to YES and FirebaseAuth proxies the APNs
+        # delegate methods (it wants device tokens for phone-number auth, which
+        # we do not use). Measured on device: registration succeeded
+        # (`isRegisteredForRemoteNotifications == true` within a second) while
+        # our `didRegisterForRemoteNotificationsWithDeviceToken` NEVER fired —
+        # the token was being issued and intercepted, so the device-push
+        # registry stayed empty with no error anywhere. Survived restart and
+        # reinstall, because it is in-process behaviour present in every build.
+        #
+        # With Messaging gone and phone auth unused, nothing needs the proxy.
+        # If phone-number sign-in is ever added, forward the token manually via
+        # `Auth.auth().setAPNSToken(_:type:)` instead of re-enabling this.
+        FirebaseAppDelegateProxyEnabled: false
         NSLocationWhenInUseUsageDescription: "Stationly uses your location to show nearby stops."
         StationlyEnvironment: $(STATIONLY_ENVIRONMENT)
-        # Background remote notifications: without this, silent FCM data pushes
-        # (content-available:1 — the station/line-status topic updates) are
-        # NEVER delivered to a backgrounded app, so didReceiveRemoteNotification
-        # can't run and the widget never refreshes between app opens. This is
-        # the iOS equivalent of Android's FirebaseMessagingService wake-up.
+        # Two background modes, doing two different jobs:
+        #
+        # `remote-notification` — silent pushes (content-available:1). Without
+        # it a backgrounded app never gets didReceiveRemoteNotification, so the
+        # disruption/boost/policy triggers could not land at all. Note these are
+        # additionally gated on the per-app Background App Refresh switch; see
+        # the bgRefresh trace in AppDelegate.handleDidBecomeActive.
+        #
+        # `fetch` — BGAppRefreshTask. This is what makes rush-hour cadence
+        # affordable: it wakes the APP on a budget SEPARATE from the widget's
+        # ~40–70/day timeline quota, so a 15-minute peak interval does not have
+        # to come out of the allowance that gets the widget throttled when it
+        # runs dry. See BackgroundRefreshScheduler.
         UIBackgroundModes:
           - remote-notification
+          - fetch
+        # Must list every identifier passed to BGTaskScheduler.register, or the
+        # registration throws at launch. Kept in step with
+        # BackgroundRefreshScheduler.taskIdentifier by hand — a mismatch is a
+        # launch-time crash, not a warning.
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.stationly.mobile.widgetrefresh
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         # Branded launch screen, matching Android's Theme.Stationly.Splash: the
@@ -107,7 +144,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stationly.mobile
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "4"
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         CODE_SIGN_ENTITLEMENTS: iosApp/iosApp.entitlements
@@ -131,10 +168,11 @@ targets:
           STATIONLY_ENVIRONMENT: production
           APS_ENVIRONMENT: production
     dependencies:
+      # FirebaseAuth only. FirebaseMessaging was removed: iOS talks to APNs
+      # directly now (see AppDelegate), which is both fewer moving parts and
+      # strictly more capable — FCM cannot send the WidgetKit push type.
       - package: Firebase
         product: FirebaseAuth
-      - package: Firebase
-        product: FirebaseMessaging
       - package: GoogleSignIn
         product: GoogleSignIn
       - framework: ../composeApp/build/XCFrameworks/debug/composeApp.xcframework
@@ -169,11 +207,30 @@ targets:
   StationlyWidget:
     type: app-extension
     platform: iOS
-    # 17.0, not the app's 16.0: the board header's refresh control is
-    # `Button(intent:)`, which is iOS 17+. Must match the explicit
-    # IPHONEOS_DEPLOYMENT_TARGET below — they used to disagree (16 here, 17
-    # there), and only the build setting was actually taking effect.
-    deploymentTarget: "17.0"
+    # 26.0, raised from 17.0 on 2026-08-09 to enable WidgetKit push.
+    #
+    # ## Why this is worth the tail it costs
+    # A silent push wakes the APP, which fetches and writes the board — but iOS
+    # will NOT honour `reloadAllTimelines()` from a background-woken app, so the
+    # widget keeps showing its last render until its own scheduled rebuild. That
+    # was measured on device: a push at 23:35 wrote fresh data at 23:35:24 and
+    # the extension did not rebuild until the app was foregrounded three minutes
+    # later. Overnight the next scheduled rebuild was 395 minutes away.
+    #
+    # `.pushHandler` (iOS 26+) is the fix and the only one: it reloads THIS
+    # extension directly, without the app, on a budget separate from the
+    # timeline quota. It cannot be applied conditionally — SwiftUI has no
+    # `AnyWidgetConfiguration` to erase the branch, and `WidgetBundleBuilder`
+    # has no `buildEither` (both verified against the iOS 26.5 SDK) — so the
+    # only way to use it is to require 26.0 here.
+    #
+    # The APP target keeps its 16.0 deployment target and is unaffected; only
+    # the widget requires 26.0. Below that the app still works, it simply
+    # offers no widget.
+    #
+    # Must match IPHONEOS_DEPLOYMENT_TARGET below — they used to disagree
+    # (16 here, 17 there) and only the build setting actually took effect.
+    deploymentTarget: "26.0"
     sources:
       - path: StationlyWidget
         excludes:
@@ -189,28 +246,42 @@ targets:
     entitlements:
       path: StationlyWidget/StationlyWidget.entitlements
       properties:
+        # Required for WidgetKit push (iOS 26+): the token is issued to the
+        # EXTENSION, addressed as <bundle>.push-type.widgets, and a push to it
+        # reloads the timeline without waking the app. Without this entitlement
+        # no token is ever issued — silently. Value tracks APS_ENVIRONMENT in
+        # this target's settings, config for config.
+        aps-environment: $(APS_ENVIRONMENT)
         com.apple.security.application-groups:
           - group.com.stationly.shared
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stationly.mobile.StationlyWidget
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "4"
         SWIFT_VERSION: "5.9"
-        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "26.0"
         CODE_SIGN_ENTITLEMENTS: StationlyWidget/StationlyWidget.entitlements
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 7T7D5LLYSL
         STATIONLY_ENVIRONMENT: production
+        # The extension carries its OWN aps-environment now, because WidgetKit
+        # push (iOS 26+) issues the token to the EXTENSION rather than the app.
+        # Must track the app target's value config-for-config: the two binaries
+        # would otherwise ask APNs for tokens in different environments, and the
+        # mismatch shows up only as pushes that are accepted and never arrive.
+        APS_ENVIRONMENT: development
       configs:
         Debug Staging:
           STATIONLY_ENVIRONMENT: staging
         Release Staging:
           STATIONLY_ENVIRONMENT: staging
+          APS_ENVIRONMENT: production
         Debug Production:
           STATIONLY_ENVIRONMENT: production
         Release Production:
           STATIONLY_ENVIRONMENT: production
+          APS_ENVIRONMENT: production
 
 # Explicit shared schemes — required because the 4 custom config names above
 # (Debug/Release × Staging/Production) leave xcodegen unable to auto-pick a

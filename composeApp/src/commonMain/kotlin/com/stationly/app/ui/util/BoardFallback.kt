@@ -1,5 +1,6 @@
 package com.stationly.app.ui.util
 
+import com.stationly.core.util.inTimeWindow
 import kotlinx.datetime.LocalTime
 
 /**
@@ -76,17 +77,6 @@ object BoardFallbackDefaults {
     const val DISRUPTED_DETAIL      = "No departures expected here\nWe'll update as things change"
 }
 
-/** Parses an "HH:mm" SDUI override into a [LocalTime], else [default]. */
-fun parseHHmm(raw: String?, default: LocalTime): LocalTime {
-    val s = raw?.trim() ?: return default
-    val parts = s.split(":")
-    if (parts.size != 2) return default
-    val h = parts[0].toIntOrNull() ?: return default
-    val m = parts[1].toIntOrNull() ?: return default
-    if (h !in 0..23 || m !in 0..59) return default
-    return LocalTime(h, m)
-}
-
 /**
  * @param hasPredictions board has at least one upcoming row to render
  * @param isOnline device/backend reachability (iOS uses `!isBackendOffline`)
@@ -141,11 +131,6 @@ fun computeBoardFallbackState(
         else -> BoardFallbackState(BoardFallbackKind.NO_UPCOMING)
     }
 }
-
-/** Inclusive start, exclusive end. Supports windows that wrap midnight. */
-private fun inTimeWindow(now: LocalTime, start: LocalTime, endExclusive: LocalTime): Boolean =
-    if (start <= endExclusive) now >= start && now < endExclusive
-    else now >= start || now < endExclusive
 
 /** Resolved fallback copy: a bold title + 0..n normal-weight detail lines. */
 data class BoardFallbackCopy(val title: String, val detailLines: List<String>)
