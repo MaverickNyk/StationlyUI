@@ -58,8 +58,10 @@ import com.stationly.app.ui.common.SettingsDivider
 import com.stationly.app.ui.common.SettingsSectionLabel
 import com.stationly.app.ui.theme.AppTheme
 import com.stationly.app.ui.theme.LocalAppTheme
-import com.stationly.app.ui.util.HomeLayout
-import com.stationly.app.ui.util.StationPrefsRepository
+import com.stationly.core.model.user.HomeLayout
+import com.stationly.core.repository.UserSettings
+import com.stationly.core.activity.ActivityEvents
+import com.stationly.core.activity.ActivityLog
 import com.stationly.core.platform.Platform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -82,8 +84,11 @@ fun HomeSettingsScreen(
     onOpenStationSettings: (stationId: String, mode: String, stationName: String) -> Unit = { _, _, _ -> },
 ) {
     val themeState = LocalAppTheme.current
-    val savedOrder by StationPrefsRepository.order.collectAsStateWithLifecycle()
-    val homeLayout by StationPrefsRepository.layout.collectAsStateWithLifecycle()
+    // The board CONFIGS, because the user's order is each board's own
+    // `position` — one flow to watch instead of a list kept beside the boards it
+    // ranks and reconciled with them on every read.
+    val boardConfigs by UserSettings.configs.collectAsStateWithLifecycle()
+    val homeLayout by UserSettings.layout.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     // Every tracked station, in the user's own order. Names and modes as well as
@@ -91,11 +96,11 @@ fun HomeSettingsScreen(
     // of keys.
     var stations by remember { mutableStateOf<List<HomeStation>>(emptyList()) }
     LaunchedEffect(Unit) {
-        StationPrefsRepository.ensureLoaded()
+        UserSettings.ensureLoaded()
         stations = withContext(Dispatchers.Default) {
             val byId = Platform.sqlStorage.getAllSelections()
                 .groupBy { it.groupingId }
-            StationPrefsRepository.orderedIds(byId.keys.toList()).mapNotNull { id ->
+            UserSettings.ordered(byId.keys.toList()).mapNotNull { id ->
                 byId[id]?.firstOrNull()?.let { first ->
                     HomeStation(
                         id = id,
@@ -111,9 +116,9 @@ fun HomeSettingsScreen(
     // into line with it. Cheap insurance rather than a second source of truth:
     // the drag already updates `stations` optimistically, and this only matters
     // if the write is rejected or something else reorders while the screen is up.
-    LaunchedEffect(savedOrder) {
+    LaunchedEffect(boardConfigs) {
         if (stations.isNotEmpty()) {
-            val ordered = StationPrefsRepository.orderedIds(stations.map { it.id })
+            val ordered = UserSettings.ordered(stations.map { it.id })
             if (ordered != stations.map { it.id }) {
                 stations = ordered.mapNotNull { id -> stations.firstOrNull { it.id == id } }
             }
@@ -162,7 +167,12 @@ fun HomeSettingsScreen(
                 onSelect = { option ->
                     if (option != homeLayout) {
                         performHaptic(HapticType.TAP)
-                        scope.launch { StationPrefsRepository.setLayout(option) }
+                        // The repository publishes to the backend itself, so
+                        // there is no sync call here — every write through it
+                        // syncs, which is the only way a setting cannot be
+                        // added without one.
+                        scope.launch { UserSettings.setLayout(option) }
+                        ActivityLog.record(ActivityEvents.SETTINGS_HOME_LAYOUT, "layout", option.name)
                     }
                 },
             )
@@ -192,7 +202,15 @@ fun HomeSettingsScreen(
                 // picture onto the other every time.
                 val reorder: (List<HomeStation>) -> Unit = { reordered ->
                     stations = reordered
-                    scope.launch { StationPrefsRepository.setOrder(reordered.map { it.id }) }
+                    scope.launch { UserSettings.reorder(reordered.map { it.id }) }
+                    // Fires per drag step, and the upload behind it is debounced
+                    // — so a drag across four positions is four events and one
+                    // request. The events are the cheap half and worth keeping
+                    // at that grain; the request is the one that had to be
+                    // collapsed.
+                    ActivityLog.record(
+                        ActivityEvents.SETTINGS_HOME_REORDERED, "count", reordered.size.toString()
+                    )
                 }
                 val openStation: (HomeStation) -> Unit = { s ->
                     performHaptic(HapticType.TAP)

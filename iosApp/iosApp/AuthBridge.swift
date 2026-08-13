@@ -6,7 +6,11 @@ import Security
 import FirebaseCore
 import FirebaseAuth
 import GoogleSignIn
-// import ComposeApp  // Uncomment after Xcode framework integration
+// The KMP framework. Needed for `UserSyncBridge.tearDownDeletedAccount()` —
+// signing out of a DELETED account has to tear down the Kotlin-owned state
+// (SQLite boards, widget, topics, per-account settings) as well as the Firebase
+// session, and that half lives on the other side of this bridge.
+import composeApp
 
 /// Swift-side Firebase Auth adapter.
 ///
@@ -348,16 +352,58 @@ class AuthBridge {
     /// session for something that no longer exists. Android does the same via
     /// `UserSyncCoordinator.forceLogout`.
     ///
-    /// Separate from [logout] only so the intent is visible at the call site and
-    /// in the trace; the mechanics are identical, because a session for a
-    /// deleted account has to be torn down exactly as thoroughly as one the user
-    /// ended deliberately.
+    /// A session for a deleted account has to be torn down exactly as thoroughly
+    /// as one the user ended deliberately — and until now it was not. This used
+    /// to be a bare `await logout()`, which is only the SWIFT half: Firebase
+    /// out, Google out, identity keys cleared. Everything Kotlin owns — the
+    /// boards in SQLite, the widget, the topic subscriptions, the per-account
+    /// settings — was left exactly as it was, because on the deliberate path
+    /// that work lives in `ProfileViewModel.signOut` and nothing here called the
+    /// equivalent.
+    ///
+    /// What that produced is the confusing part: a device with no credentials
+    /// and a completely working app. Browsing, refreshing and the departure
+    /// stream all keep going, because they authenticate with the API KEY rather
+    /// than the user's token and the boards render from local SQLite. Nothing
+    /// looks wrong, so nothing suggests the account is gone.
+    ///
+    /// Order is load-bearing: the Kotlin teardown reads the uid from storage
+    /// that `logout()` wipes.
     func signOutForAccountDeletion() async {
+        _ = try? await UserSyncBridge.shared.tearDownDeletedAccount()
         await logout()
     }
 
     // MARK: - Token refresh
 
+    /// Refresh the ID token on foreground — and, in doing so, find out whether
+    /// this account still exists.
+    ///
+    /// ## Why the refresh is FORCED
+    /// `getIDToken()` returns the cached token until it is within ~5 minutes of
+    /// expiring, so for most of an hour it answers without asking Firebase
+    /// anything. That made this the wrong kind of quiet: an account deleted on
+    /// another device left this one running normally for the rest of the token's
+    /// life, and it genuinely could not tell — measured, on a real deletion.
+    ///
+    /// Nothing else was going to notice either. Browsing the app touches
+    /// `/stations/*`, `/sdui/*` and the departure stream, all authenticated by
+    /// the API KEY rather than the user's token, and the boards render from local
+    /// SQLite. A signed-out-but-not-yet-aware device therefore has a complete,
+    /// working app and no reason to contact `/user/*` at all — the only route by
+    /// which the backend could have told it otherwise.
+    ///
+    /// `forcingRefresh: true` asks Google directly, on every foreground. It costs
+    /// our backend nothing — it is not our endpoint — and it is authoritative:
+    /// a deleted user, a disabled one, or one whose tokens were revoked all fail
+    /// here immediately.
+    ///
+    /// ## Only a GONE session signs out
+    /// The distinction is the whole safety of doing this. A refresh failing
+    /// because the device is on a train with no signal must change nothing;
+    /// failing because the user no longer exists must end the session. Treating
+    /// the two alike would sign people out every time they went into a tunnel —
+    /// which, for this app, is most of the time.
     func refreshTokenIfNeeded() async {
         guard let user = Auth.auth().currentUser else { return }
         // Re-persist identity on every refresh too — this runs on each
@@ -366,11 +412,40 @@ class AuthBridge {
         // keys were lost.
         persistUserIdentity(user)
         do {
-            let token = try await user.getIDToken()
+            let token = try await user.getIDToken(forcingRefresh: true)
             UserDefaults.standard.set(token, forKey: "firebase_auth_token")
             UserDefaults.standard.synchronize()
         } catch {
-            print("[AuthBridge] Token refresh failed: \(error.localizedDescription)")
+            if Self.isSessionGone(error) {
+                PushTraceSwift.log("token refresh → account gone, signing out")
+                print("[AuthBridge] Account no longer exists — signing out")
+                await logout()
+                return
+            }
+            // Offline, or Firebase having a moment. Keep the session: the stored
+            // token is still valid for now, and the next foreground tries again.
+            print("[AuthBridge] Token refresh failed (kept session): \(error.localizedDescription)")
+        }
+    }
+
+    /// Whether an auth error means "this session is over", as opposed to "ask
+    /// again later".
+    ///
+    /// Listed explicitly rather than inverting a network check, so a code that
+    /// is not understood is treated as retryable. The failure directions are not
+    /// symmetric: missing a deletion for one more foreground is a small bug,
+    /// while signing a user out on an unrecognised transient error is a large
+    /// one they experience as the app losing their account.
+    private static func isSessionGone(_ error: Error) -> Bool {
+        guard let code = AuthErrorCode(rawValue: (error as NSError).code) else { return false }
+        switch code {
+        case .userNotFound,      // deleted, on this or another device
+             .userDisabled,      // disabled in the console
+             .userTokenExpired,  // refresh tokens revoked — what deletion does first
+             .invalidUserToken:
+            return true
+        default:
+            return false
         }
     }
 

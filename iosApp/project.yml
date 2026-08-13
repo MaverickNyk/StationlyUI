@@ -80,15 +80,25 @@ targets:
         # ~40–70/day timeline quota, so a 15-minute peak interval does not have
         # to come out of the allowance that gets the widget throttled when it
         # runs dry. See BackgroundRefreshScheduler.
+        #
+        # `processing` — BGProcessingTask, for the nightly activity upload. A
+        # THIRD budget again, and deliberately: the system runs these when the
+        # device is idle and on power, with a long slice. Putting the upload on
+        # the `fetch` budget instead would have made every widget wake carry a
+        # network round-trip it does not need, and given work with no deadline
+        # a slice measured in seconds. See ActivityUploadScheduler.
         UIBackgroundModes:
           - remote-notification
           - fetch
+          - processing
         # Must list every identifier passed to BGTaskScheduler.register, or the
         # registration throws at launch. Kept in step with
-        # BackgroundRefreshScheduler.taskIdentifier by hand — a mismatch is a
+        # BackgroundRefreshScheduler.taskIdentifier and
+        # ActivityUploadScheduler.taskIdentifier by hand — a mismatch is a
         # launch-time crash, not a warning.
         BGTaskSchedulerPermittedIdentifiers:
           - com.stationly.mobile.widgetrefresh
+          - com.stationly.mobile.activityupload
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         # Branded launch screen, matching Android's Theme.Stationly.Splash: the
@@ -241,6 +251,19 @@ targets:
         # Widget-gallery header title (the per-widget name/description are set
         # in StationlyWidget.swift via configurationDisplayName/description).
         CFBundleDisplayName: Stationly
+        # Same treatment as the app target, and for the same reason: XcodeGen
+        # writes a hardcoded "1" into a generated plist unless the properties are
+        # named explicitly. The app target says so in its own comment; this
+        # target was never given the equivalent, so it stayed at "1" while the
+        # app moved to "4".
+        #
+        # That is not cosmetic. An app extension's CFBundleVersion MUST match its
+        # containing app's or App Store Connect refuses the upload — so the first
+        # submission would have failed validation, having only ever warned at
+        # build time ("The CFBundleVersion of an app extension ('1') must match
+        # that of its containing parent app ('4')").
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:

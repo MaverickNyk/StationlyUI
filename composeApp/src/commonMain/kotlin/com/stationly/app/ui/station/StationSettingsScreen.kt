@@ -74,9 +74,10 @@ import com.stationly.app.ui.common.SettingsSectionLabel
 import com.stationly.app.ui.summary.components.lineColorForTheme
 import com.stationly.app.ui.theme.DisplayFamily
 import com.stationly.app.ui.theme.isDarkTheme
-import com.stationly.app.ui.util.HomeLayout
-import com.stationly.app.ui.util.StationPrefs
-import com.stationly.app.ui.util.StationPrefsRepository
+import com.stationly.core.model.user.HomeLayout
+import com.stationly.core.model.user.BoardConfig
+import com.stationly.core.model.user.BoardView
+import com.stationly.core.repository.UserSettings
 import com.stationly.core.model.UserSelection
 import com.stationly.core.util.BoardLabels
 import com.stationly.core.util.LineShortNames
@@ -108,28 +109,26 @@ fun StationSettingsScreen(
 ) {
     val boards by viewModel.boards.collectAsStateWithLifecycle()
     val towards by viewModel.towards.collectAsStateWithLifecycle()
-    val prefsMap by viewModel.prefs.collectAsStateWithLifecycle()
+    val configs by viewModel.configs.collectAsStateWithLifecycle()
     val deleted by viewModel.deleted.collectAsStateWithLifecycle()
     // Deleting a board tears down its stream subscriptions and its widget rows,
     // which is not instant. Every control that could start another one is held
     // shut until it finishes — a second tap would race the `remaining` list the
     // teardown is computed from.
     val isDeleting by viewModel.isDeleting.collectAsStateWithLifecycle()
-    val homeLayout by StationPrefsRepository.layout.collectAsStateWithLifecycle()
+    val homeLayout by UserSettings.layout.collectAsStateWithLifecycle()
     val platforms by viewModel.platforms.collectAsStateWithLifecycle()
     val stops by viewModel.stops.collectAsStateWithLifecycle()
     // Defaulted ONCE, here, so every control below reads the same thing the home
-    // screen does. `persist` drops rows equal to the defaults, so a station
-    // nobody has configured is ABSENT from this map — and the previous
-    // `prefs?.startExpanded == true` therefore resolved to false for exactly
-    // those stations, now that the default is true. The screen showed
-    // "Collapsed" selected while the home screen opened the station expanded,
-    // and because the picker ignores a tap on the already-selected segment, the
-    // user could not collapse it without first tapping Expanded.
-    val prefs = prefsMap[stationId] ?: StationPrefs()
-    val startExpanded = prefs.startExpanded
-    val heroVisible = !prefs.hideHero
-    val board = prefs.board
+    // screen does. Rows equal to the defaults are dropped on write, so a board
+    // nobody has configured is ABSENT from this map — and reading a field off it
+    // with `?.` resolves every default to false. That cost real behaviour once:
+    // the screen showed "Collapsed" selected while the home screen opened the
+    // station expanded, and because the picker ignores a tap on the
+    // already-selected segment, the user could not collapse it without first
+    // tapping Expanded.
+    val config = configs[stationId] ?: BoardConfig()
+    val startExpanded = config.expanded
     val isDark = isDarkTheme()
 
     // Re-read the boards whenever this screen comes back to the front — the
@@ -212,7 +211,7 @@ fun StationSettingsScreen(
                     onChoose = {
                         if (it != startExpanded) {
                             performHaptic(HapticType.TAP)
-                            viewModel.setStartExpanded(it)
+                            viewModel.setExpanded(it)
                         }
                     },
                 )
@@ -231,11 +230,11 @@ fun StationSettingsScreen(
 
             SettingsSectionLabel("Layout")
             LayoutPicker(
-                heroVisible = heroVisible,
+                view = config.view,
                 onChoose = {
-                    if (it != heroVisible) {
+                    if (it != config.view) {
                         performHaptic(HapticType.TAP)
-                        viewModel.setHeroVisible(it)
+                        viewModel.setView(it)
                     }
                 },
             )
@@ -248,8 +247,9 @@ fun StationSettingsScreen(
                 variants = listOf(
                     "The next train is called out above the board, counting down.",
                     "No countdown. Those rows go back to the board as real departures.",
+                    "Just the countdown. The shortest this card gets.",
                 ),
-                selected = if (heroVisible) 0 else 1,
+                selected = BoardView.entries.indexOf(config.view),
             )
 
             Spacer(Modifier.height(28.dp))
@@ -262,9 +262,9 @@ fun StationSettingsScreen(
             // about lines and deletion, which is different again.
             //
             // The grouping is not among these settings and must not become one —
-            // BoardDisplayPrefs in core carries the argument.
+            // BoardConfig in core carries the argument.
             BoardArrangementSection(
-                prefs = board,
+                prefs = config,
                 platforms = platforms,
                 stops = stops,
                 // In selection order, which is the order the pills and the
@@ -417,26 +417,27 @@ private fun StationIdentity(
  * made by looking rather than by parsing.
  */
 @Composable
-private fun LayoutPicker(heroVisible: Boolean, onChoose: (Boolean) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        LayoutOption(
-            // "Next dept." rather than "Countdown", because the hero it names
-            // says NEXT DEPARTURE in the app itself — a tile that invented its
-            // own word for it made the user match a description to a thing
-            // instead of reading the same words twice.
-            label = "Next dept. + board",
-            withHero = true,
-            selected = heroVisible,
-            onClick = { onChoose(true) },
-            modifier = Modifier.weight(1f),
-        )
-        LayoutOption(
-            label = "Board only",
-            withHero = false,
-            selected = !heroVisible,
-            onClick = { onChoose(false) },
-            modifier = Modifier.weight(1f),
-        )
+private fun LayoutPicker(view: BoardView, onChoose: (BoardView) -> Unit) {
+    // Driven off the enum rather than hand-written tiles, so a view added there
+    // cannot be missing here — and the labels are the enum's own, which is what
+    // stops this screen and the rest of the app naming the same thing two ways.
+    // "Next dept." rather than "Countdown", because the hero it names says NEXT
+    // DEPARTURE in the app itself: a tile that invents its own word for it makes
+    // the user match a description to a thing instead of reading the same words
+    // twice.
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        BoardView.entries.forEach { option ->
+            LayoutOption(
+                label = when (option) {
+                    BoardView.FULL -> "Next dept. + board"
+                    BoardView.BOARD_ONLY -> "Board only"
+                },
+                withHero = option.showsHero,
+                selected = option == view,
+                onClick = { onChoose(option) },
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
 

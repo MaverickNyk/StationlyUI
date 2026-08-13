@@ -335,6 +335,15 @@ class SqlStorage(private val database: StationlyDatabase) {
         queries.clearLineStatuses()
     }
 
+    /**
+     * Wipe the user's cached transport data — run at login and at logout.
+     *
+     * ⚠️ Names its tables explicitly, and `ActivityEventEntity` is deliberately
+     * NOT among them. The activity queue has to outlive an auth change or it
+     * can never report one: "logged out" is enqueued moments before this runs,
+     * and a blanket wipe would delete the event as its own side effect. Adding
+     * a `deleteAll` here would silently take the queue with it.
+     */
     fun clearAllData() {
         queries.transaction {
             queries.clearSelections()
@@ -343,4 +352,45 @@ class SqlStorage(private val database: StationlyDatabase) {
             queries.clearSyncStatuses()
         }
     }
+
+    // ── Activity trail ──────────────────────────────────────────────────────
+    //
+    // Thin pass-throughs; the policy (queue cap, batching, when to flush) lives
+    // in `ActivityLog` / `ActivityUploader`, which is also where it is testable
+    // without a database.
+
+    fun enqueueActivityEvent(id: String, uid: String, name: String, t: Long, props: String) {
+        queries.enqueueActivityEvent(id = id, uid = uid, name = name, t = t, props = props)
+    }
+
+    /** Oldest-first, for [uid] plus the signed-out rows. See the query's note. */
+    fun activityBatch(uid: String, limit: Int): List<ActivityRow> =
+        queries.selectActivityBatch(uid, limit.toLong()).executeAsList().map {
+            ActivityRow(id = it.id, name = it.name, t = it.t, props = it.props)
+        }
+
+    fun activityCount(): Long = queries.countActivityEvents().executeAsOne()
+
+    /** Epoch millis of the oldest queued event, or null when the queue is empty. */
+    fun oldestActivityEventAt(): Long? = queries.oldestActivityEvent().executeAsOne().oldest
+
+    /** Delete an uploaded batch. One transaction so a crash cannot half-drain it. */
+    fun deleteActivityEvents(ids: List<String>) {
+        if (ids.isEmpty()) return
+        queries.transaction { ids.forEach { queries.deleteActivityEvent(it) } }
+    }
+
+    /** Drop the [count] oldest rows — the queue cap. See `trimActivityEvents`. */
+    fun trimActivityEvents(count: Int) {
+        if (count <= 0) return
+        queries.trimActivityEvents(count.toLong())
+    }
+
+    /** One queued event as stored. `props` is the raw JSON object string. */
+    data class ActivityRow(
+        val id: String,
+        val name: String,
+        val t: Long,
+        val props: String,
+    )
 }

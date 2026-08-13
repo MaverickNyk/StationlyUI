@@ -54,6 +54,19 @@ enum AppGroupKeys {
     static let stations      = "widget_stations"
     static func board(_ stationId: String) -> String { "widget_board_\(stationId)" }
 
+    /// Which stations are actually ON the home screen, written BY the widget.
+    ///
+    /// The only direction this information can travel. WidgetKit tells the app
+    /// how many widgets are placed and at what sizes (`getCurrentConfigurations`),
+    /// but the station is inside an AppIntent configuration whose type is
+    /// compiled into this target — reading it from the app would mean dragging
+    /// `StationEntity`, and therefore `AppGroupStorage` and the roundel
+    /// artwork, into the app target too. The widget already knows the answer,
+    /// so it writes it down: one stamp per (station, family), refreshed on
+    /// every timeline build. See `HomeStateProbe`, which reconciles the stamps
+    /// against the authoritative COUNT.
+    static let placements    = "widget_placements"
+
     /// The refresh cadence, precomputed by KMP as a list of time SEGMENTS.
     ///
     /// A schedule rather than a single current decision, because this extension

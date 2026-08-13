@@ -113,7 +113,7 @@ import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.UserSelection
 import com.stationly.core.util.LineShortNames
 import com.stationly.core.util.LineStatusRanker
-import com.stationly.core.util.BoardDisplayPrefs
+import com.stationly.core.model.user.BoardConfig
 import com.stationly.core.util.BoardTicker
 import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.StationlyFormatters
@@ -333,9 +333,15 @@ fun StationBoard(
      * the header renders without a tap target.
      */
     onToggleExpanded: (() -> Unit)? = null,
-    /** Marked in the header — see `StationPrefs.startExpanded`. */
+    /** Marked in the header — see `BoardConfig.expanded`. */
     startsExpanded: Boolean = false,
-    /** False hides the next-departure hero for this station — see `StationPrefs.hideHero`. */
+    /**
+     * Whether the hero is drawn above the board, from `BoardConfig.view`.
+     *
+     * A boolean here rather than the enum itself, because this composable renders
+     * what it is told and has no business knowing which views are offered — that
+     * rule belongs to `BoardView`, where it is one type and cannot be got wrong.
+     */
     showHero: Boolean = true,
     /**
      * How this station's board is arranged: what it is ordered by, how deep each
@@ -343,7 +349,7 @@ fun StationBoard(
      *
      * Applied inside [MultiLineBoardProcessor], never here — the panel renders
      * whatever rows it is given, and the reason for every one of these rules
-     * lives in `BoardDisplayPrefs` where it can be tested. The default is the
+     * lives in `BoardConfig` where it can be tested. The default is the
      * board exactly as it was before it had settings.
      *
      * Not passed to the HERO on purpose. The hero answers "what do I run for",
@@ -352,7 +358,7 @@ fun StationBoard(
      * be one setting quietly doing two jobs. The pills are how the hero is
      * switched, and they still are.
      */
-    boardPrefs: BoardDisplayPrefs = BoardDisplayPrefs(),
+    boardPrefs: BoardConfig = BoardConfig(),
     /**
      * Opens this station's settings — lines, layout, pin, delete.
      *
@@ -855,9 +861,9 @@ fun StationBoard(
             //
             // The breathing glow is part of the board's identity — never gate, pin or
             // otherwise "optimise" it away while the board is VISIBLE. It reads as
-            // continuously running because it is. Declared inside this branch only so
-            // that a COLLAPSED card, which draws no glow at all, does not keep an
-            // infinite transition subscribed to the frame clock: with four stations
+            // continuously running because it is. Declared inside the expanded branch
+            // only so that a COLLAPSED card, which draws no glow at all, does not keep
+            // an infinite transition subscribed to the frame clock: with four stations
             // collapsed that was four animations driving nothing.
             val glowAlpha by rememberInfiniteTransition(label = "board_fx").animateFloat(
                 initialValue = 0.06f, targetValue = 0.18f,

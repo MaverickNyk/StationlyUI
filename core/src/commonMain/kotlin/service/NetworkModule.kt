@@ -4,6 +4,7 @@ import com.stationly.core.platform.Platform
 import io.ktor.client.*
 import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
+import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.CoroutineScope
@@ -62,7 +63,24 @@ object NetworkModule {
                             || path.endsWith("/sdui/app/register")
                             || path.endsWith("/sdui/app/forgot-password")
                             || path.contains("/user/sync/")
-                        if (!isAuthEndpoint) {
+                        // ── `account_gone` overrides the skip list ──
+                        //
+                        // The exemption above exists for a 401 that means "not
+                        // signed in YET", which is an ordinary step of logging in.
+                        // It must not swallow a 401 that means "this account no
+                        // longer exists", and it did: `/user/sync/*` is exactly
+                        // what a device left running on a deleted account keeps
+                        // calling, so the one signal that could have ended that
+                        // session was suppressed on the only path carrying it.
+                        //
+                        // The two are distinguishable because the server labels
+                        // them — see `validateUserToken`. A body that cannot be
+                        // read at all falls back to the path rule, which is the
+                        // behaviour that was here before.
+                        val accountGone = runCatching {
+                            response.bodyAsText().contains("\"account_gone\"")
+                        }.getOrDefault(false)
+                        if (accountGone || !isAuthEndpoint) {
                             authExpiryScope.launch { Platform.signOutFromAuthExpiry() }
                         }
                     }

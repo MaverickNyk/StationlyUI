@@ -18,9 +18,9 @@ import com.stationly.core.util.GlobalBoardProcessor
 import com.stationly.core.util.LineNameStore
 import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.delay
-import com.stationly.app.ui.util.HomeLayout
-import com.stationly.app.ui.util.StationPrefs
-import com.stationly.app.ui.util.StationPrefsRepository
+import com.stationly.core.model.user.BoardConfig
+import com.stationly.core.model.user.HomeLayout
+import com.stationly.core.repository.UserSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -106,38 +106,33 @@ class SummaryViewModel(
     val showNotificationDeniedBanner: StateFlow<Boolean> = _showNotificationDeniedBanner.asStateFlow()
 
     /**
-     * Per-station card preferences (start expanded, hide hero).
+     * Every board's configuration — expanded, view, arrangement, position.
      *
-     * Passed straight through from [StationPrefsRepository] rather than mirrored
-     * into a flow of this VM's own: the station settings screen writes the same
-     * preferences from a different destination, and a mirror would go stale the
-     * moment it did.
-     */
-    val stationPrefs: StateFlow<Map<String, StationPrefs>> = StationPrefsRepository.prefs
-
-    /**
-     * The user's card ordering, for the same reason and by the same route.
+     * Passed straight through from [UserSettings] rather than mirrored into a
+     * flow of this VM's own: the board settings screen writes the same
+     * configuration from a different destination, and a mirror would go stale
+     * the moment it did.
      *
-     * The home screen does not read this list directly — it asks
-     * [StationPrefsRepository.orderedIds] to apply it — but it has to OBSERVE it,
-     * or a reorder made in home settings would not reach the cards until
-     * something else happened to recompose them.
+     * This flow also carries the ORDER, since a board's position is part of its
+     * configuration — so a reorder made in home settings reaches the cards on
+     * the same emission a rows-per-platform change does, and there is no second
+     * list to observe or to keep in step.
      */
-    val stationOrder: StateFlow<List<String>> = StationPrefsRepository.order
+    val boardConfigs: StateFlow<Map<String, BoardConfig>> = UserSettings.configs
 
     /** Stacked list or one station per swipeable page — see [HomeLayout]. */
-    val homeLayout: StateFlow<HomeLayout> = StationPrefsRepository.layout
+    val homeLayout: StateFlow<HomeLayout> = UserSettings.layout
 
     /**
-     * Whether the three flows above are answering from disk yet.
+     * Whether the two flows above are answering from disk yet.
      *
-     * Every one of them reports a DEFAULT until [StationPrefsRepository.ensureLoaded]
-     * lands — an empty map, an empty order, `HomeLayout.LIST` — and a default is
-     * indistinguishable from a real value. The home screen renders no station
-     * until this is true, so the first frame it paints is the configured one
-     * rather than a guess it then has to correct.
+     * Both report a DEFAULT until [UserSettings.ensureLoaded] lands — an empty
+     * map, `HomeLayout.LIST` — and a default is indistinguishable from a real
+     * value. The home screen renders no board until this is true, so the first
+     * frame it paints is the configured one rather than a guess it then has to
+     * correct.
      */
-    val prefsLoaded: StateFlow<Boolean> = StationPrefsRepository.loaded
+    val prefsLoaded: StateFlow<Boolean> = UserSettings.loaded
 
     /**
      * Guards [refreshStaleBoards] — see the note there about cold start.
@@ -156,7 +151,7 @@ class SummaryViewModel(
     private val staleRefreshLock = Mutex()
 
     init {
-        viewModelScope.launch { StationPrefsRepository.ensureLoaded() }
+        viewModelScope.launch { UserSettings.ensureLoaded() }
         // Before the first board is drawn, so a row that names its line uses
         // the backend's short form rather than falling back to the local table
         // for one render and then changing under the user. Cheap — one small

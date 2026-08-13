@@ -851,6 +851,63 @@ class AppGroupStorage {
         return refs.map { StationEntity(id: $0.id, name: $0.name, mode: $0.mode, lines: $0.lines) }
     }
 
+    // MARK: - Widget placement
+
+    /// One placed widget, as the extension itself sees it.
+    ///
+    /// `at` is what makes removal detectable at all: a widget that is gone stops
+    /// refreshing, so its stamp stops moving. See `readPlacements`.
+    struct WidgetPlacementStamp: Codable {
+        let station: String
+        let family: String
+        let at: TimeInterval
+    }
+
+    /// Record that a widget showing [station] at [family] was just asked for a
+    /// timeline.
+    ///
+    /// Called from the timeline provider, which is the one place that knows both
+    /// halves. A read-modify-write on a single small array: WidgetKit builds one
+    /// extension process and serialises timeline requests within it, so there is
+    /// no cross-process race to lose here, and the worst case if one were lost
+    /// is a stamp that refreshes on the next build a few minutes later.
+    func notePlacement(station: String, family: String) {
+        guard !station.isEmpty, let defaults else { return }
+        let now = Date().timeIntervalSince1970
+        var stamps = readPlacementStamps()
+        if let index = stamps.firstIndex(where: { $0.station == station && $0.family == family }) {
+            stamps[index] = WidgetPlacementStamp(station: station, family: family, at: now)
+        } else {
+            stamps.append(WidgetPlacementStamp(station: station, family: family, at: now))
+        }
+        // Bounded so a user who has churned through many stations over months
+        // cannot grow this without limit. Oldest first out; the app trims it
+        // further against the real count on every foreground.
+        if stamps.count > Self.maxPlacementStamps {
+            stamps = Array(stamps.sorted { $0.at > $1.at }.prefix(Self.maxPlacementStamps))
+        }
+        guard let encoded = try? JSONEncoder().encode(stamps),
+              let raw = String(data: encoded, encoding: .utf8) else { return }
+        defaults.set(raw, forKey: AppGroupKeys.placements)
+    }
+
+    func readPlacementStamps() -> [WidgetPlacementStamp] {
+        guard let raw = defaults?.string(forKey: AppGroupKeys.placements),
+              let data = raw.data(using: .utf8),
+              let stamps = try? JSONDecoder().decode([WidgetPlacementStamp].self, from: data)
+        else { return [] }
+        return stamps
+    }
+
+    func writePlacementStamps(_ stamps: [WidgetPlacementStamp]) {
+        guard let defaults else { return }
+        guard let encoded = try? JSONEncoder().encode(stamps),
+              let raw = String(data: encoded, encoding: .utf8) else { return }
+        defaults.set(raw, forKey: AppGroupKeys.placements)
+    }
+
+    private static let maxPlacementStamps = 24
+
     /// The board for one configured station.
     ///
     /// Falls back to the legacy single-station keys when the id is unknown —

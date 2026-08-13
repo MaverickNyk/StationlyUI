@@ -28,8 +28,25 @@ import composeApp
 /// **Android is unaffected** and still uses FCM throughout.
 class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
 
+    /// Whether launch has completed, so `handleDidBecomeActive` can tell a
+    /// RESUME from the first activation of a cold start.
+    ///
+    /// Needed because the scene lifecycle sends `.active` on both, and the two
+    /// are different facts about how the app is used — collapsing them into one
+    /// "opened" count makes it impossible to tell an app people return to from
+    /// one they keep relaunching. The cold case is recorded in
+    /// `didFinishLaunchingWithOptions`, which by definition runs once.
+    private var didFinishLaunch = false
+
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // FIRST, before anything can read the device id. A reinstall destroys
+        // the App Group container while Firebase's Keychain session survives it,
+        // so without this restore the user comes back silently signed in under
+        // a brand new device id and leaves a ghost session behind on the server.
+        // See DeviceIdentityStore.
+        DeviceIdentityStore.sync()
+
         let firebaseReady = configureFirebaseIfAvailable()
         if firebaseReady {
             UNUserNotificationCenter.current().delegate = self
@@ -95,6 +112,17 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         // for the whole session. Scheduling the first request is separate and
         // happens on foreground, once KMP can say what the cadence should be.
         BackgroundRefreshScheduler.register()
+        // Same rule, different budget: the nightly activity upload is a
+        // BGProcessingTask so it cannot compete with the widget's refresh
+        // slices. See ActivityUploadScheduler.
+        ActivityUploadScheduler.register()
+
+        // Bind the settings stores to the backend BEFORE any UI can write to
+        // them. A widget tap can launch straight into a settings screen, and a
+        // preference changed before this ran would be saved locally and never
+        // sync — silently, and only for that one change.
+        ActivityBridge.shared.start()
+        ActivityBridge.shared.appOpened(cold: true)
 
         // Poll App Group UserDefaults every 5 s; reload widget when KMP bumps signal
         WidgetReloadObserver.shared.start()
@@ -199,6 +227,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
                    : bg == .restricted ? "RESTRICTED" : "unknown"
         PushTraceSwift.log("bgRefresh=\(bgName) lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled)")
 
+        // Again on foreground, this time to SAVE: on a first run the id did not
+        // exist at launch and Kotlin has minted one since. Idempotent — once
+        // both stores agree it does one Keychain read and returns.
+        DeviceIdentityStore.sync()
+
         if FirebaseApp.app() != nil {
             Task { await AuthBridge.shared.refreshTokenIfNeeded() }
         }
@@ -240,7 +273,46 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
             // one KMP has just refreshed — and the widget push token may have
             // been written by the extension since we last looked.
             DevicePushCoordinator.register()
+            // Safety net for a device whose nightly processing task never runs
+            // — Low Power Mode, a user who force-quits, a phone never left on a
+            // charger. A no-op unless the queue has actually gone stale, so on
+            // a healthy device this reads one integer from SQLite and returns.
+            _ = try? await ActivityBridge.shared.uploadActivityIfStale()
+
+            // The same safety net, for the ACCOUNT. `user.sync` pushes are
+            // best-effort — iOS will not deliver one to an app the user
+            // force-quit — and until now the push was the only way a board
+            // deleted on another device ever reached this one. Debounced inside,
+            // so an app-switch and back costs nothing.
+            let accountChanged = (try? await UserSyncBridge.shared.reconcileOnForeground())?.boolValue == true
+
+            // Rebuild the widget's boards on EVERY foreground, not only when the
+            // account changed.
+            //
+            // A foreground rebuild is free: WidgetKit exempts reloads requested
+            // while the app is on screen, and `RefreshScheduleStore` honours that
+            // — `isAppForeground` is checked before anything is charged against
+            // the ~40-70/day timeline quota. So the only thing gating this would
+            // save is a few milliseconds of SQL, at the cost of the widget
+            // showing older departures than the app the user is looking at.
+            //
+            // This is the moment we have the freshest data and the cheapest
+            // reload available, which makes it the moment to spend it.
+            _ = await BackgroundRefreshScheduler.refreshNow(reason: "foreground.sync")
+
+            // The device's registered station list, on the other hand, is a
+            // network write — worth sending only when the boards actually moved.
+            if accountChanged { DevicePushCoordinator.register() }
         }
+
+        // A RESUME, not a launch: `didFinishLaunching` fires once and this
+        // fires on every return to the foreground, so recording the session
+        // start here is what makes "opened the app" count returns as well as
+        // cold starts. The `cold: true` case is recorded at launch instead.
+        if didFinishLaunch {
+            ActivityBridge.shared.appOpened(cold: false)
+        }
+        didFinishLaunch = true
 
         WidgetCenter.shared.reloadAllTimelines()
     }

@@ -2,6 +2,10 @@ package com.stationly.app.ui.selection
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.stationly.app.sync.UserStateSync
+import com.stationly.core.repository.UserSettings
+import com.stationly.core.activity.ActivityEvents
+import com.stationly.core.activity.ActivityLog
 import com.stationly.core.model.FilterMode
 import com.stationly.core.model.UserSelection
 import com.stationly.core.util.BoardFilterResolver
@@ -11,7 +15,6 @@ import com.stationly.core.model.sdui.SduiRouteStop
 import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.model.sdui.SduiAppScreen
 import com.stationly.core.model.sdui.SduiDropdownOption
-import com.stationly.core.model.sdui.SubscribedStation
 import com.stationly.core.config.AppConfig
 import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
@@ -1114,34 +1117,55 @@ class SelectionViewModel(
                 // nothing saved to hand back. Symptom: "Subscribed stations (0)"
                 // in admin while the board works fine locally.
                 //
-                // ⚠️ Sends the FULL selection list, not just what was added.
-                // `syncStations` is a full REPLACE that diffs old vs new ids to
-                // inc/dec subscription counts — so posting only the new boards
-                // would silently release every station the user already had.
-                // That was correct when a save wiped the others; it is a data
-                // loss bug now that saves are additive.
+                // Writes the v2 `boards` list, NOT the legacy `stations` array
+                // this used to post to. Both platforms writing that one array is
+                // what made it lossy: Android calls `cleanupAll()` before saving,
+                // so the "full list" it posts is always a single board, and a
+                // full-replace endpoint then deleted every board added here.
                 //
-                // Best-effort: the board must still appear if this fails, and
-                // the Profile / board-delete paths re-sync the full list.
-                try {
-                    val uid = Platform.storageManager.loadString("firebase_user_uid")
-                    if (uid != null) {
-                        sduiService.syncStations(
-                            uid,
-                            selectionRepository.selections.value.map { sel ->
-                                com.stationly.core.model.sdui.SubscribedStation(
-                                    id        = sel.station,
-                                    parentStationId = sel.parentStationId,
-                                    name      = sel.stationName,
-                                    line      = sel.line,
-                                    mode      = sel.mode,
-                                    direction = sel.direction,
-                                )
-                            }
+                // `boardsChanged()` reads the selections itself, at push time —
+                // so a partial list cannot be posted by accident (the mistake
+                // this call site made twice), and a burst of saves collapses
+                // into one request instead of sending each intermediate list.
+                //
+                // Best-effort and debounced: the board must still appear if the
+                // network is down, and the next change re-sends everything
+                // because the payload is a full replacement rather than a delta.
+                // A station whose last row was unticked is no longer a board,
+                // so its configuration must go with it — otherwise re-adding
+                // the station silently restores the arrangement of the one the
+                // user removed, and the orphan row keeps a `position` that
+                // reorders the boards still on the home screen.
+                if (selectionRepository.selections.value.none { it.groupingId == stationId }) {
+                    UserSettings.forget(stationId)
+                }
+                // This screen SAVES, but unticking every row is a delete — and
+                // unticking the last row of the only station empties the account.
+                // The server refuses to store an empty board list unless the
+                // client says the user is what emptied it.
+                UserStateSync.boardsChanged(
+                    emptiedByUser = selectionRepository.selections.value.isEmpty(),
+                )
+                newSelections.forEach { sel ->
+                    ActivityLog.record(
+                        ActivityEvents.BOARD_ADDED,
+                        mapOf(
+                            "station" to sel.station,
+                            "line" to sel.line,
+                            "mode" to sel.mode,
+                            "direction" to sel.direction,
+                        ),
+                    )
+                    if (!sel.isUnfiltered) {
+                        ActivityLog.record(
+                            ActivityEvents.BOARD_FILTERED,
+                            mapOf(
+                                "station" to sel.station,
+                                "filter" to sel.filterMode.name,
+                                "count" to sel.destinationIds.size.toString(),
+                            ),
                         )
                     }
-                } catch (_: Exception) {
-                    // Retried by the Profile/delete sync paths.
                 }
 
                 // Subscribe the DISTINCT poles once, not once per board.

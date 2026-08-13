@@ -1,7 +1,7 @@
 package com.stationly.core.platform
 
 import com.stationly.core.model.PredictionDisplay
-import com.stationly.core.util.BoardDisplayPrefs
+import com.stationly.core.model.user.BoardConfig
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 
@@ -167,7 +167,7 @@ data class WidgetBoard(
     val feeds: List<WidgetFeed> = emptyList(),
     /**
      * How many departures the user asked to see under each header —
-     * `BoardDisplayPrefs.rowsPerPlatform`, already clamped.
+     * `BoardConfig.rowsPerPlatform`, already clamped.
      *
      * ## Why it is on the wire rather than applied before sending
      * [WidgetGroup.predictions] carries RESERVES, not display depth
@@ -177,7 +177,7 @@ data class WidgetBoard(
      * applied on the far side, at render — which means the far side has to be
      * told what it is.
      *
-     * The extension cannot read it for itself. `StationPrefsRepository` writes to
+     * The extension cannot read it for itself. `UserSettings` writes to
      * the app's own NSUserDefaults suite, not the App Group, so the widget has
      * never been able to see this setting — which is why it hardcoded three rows
      * and disagreed with the home board for anyone who moved the slider.
@@ -189,7 +189,7 @@ data class WidgetBoard(
      * build was using — which is the same default the setting itself has, hence
      * the constant rather than a literal.
      */
-    val rowCap: Int = BoardDisplayPrefs.DEFAULT_ROWS_PER_PLATFORM,
+    val rowCap: Int = BoardConfig.DEFAULT_ROWS_PER_PLATFORM,
     /**
      * The board as blocks — what the extension actually renders and pages
      * between. See [WidgetGroup].

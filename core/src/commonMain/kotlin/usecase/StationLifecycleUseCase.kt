@@ -108,6 +108,30 @@ class StationLifecycleUseCase(
     }
 
     /**
+     * Update a board that already exists, keeping its cached rows.
+     *
+     * For a board whose FILTER changed elsewhere — the user narrowed it to two
+     * destinations on another device. Deliberately not `discardStation` +
+     * `setupStation`: that pair tears down the topic subscription and clears the
+     * predictions, so a board the user is looking at would empty and refill for
+     * a change that touches which of its existing rows are shown and nothing
+     * else.
+     *
+     * The re-apply is the necessary half. `matchesFilter` is computed once at
+     * ingest so the board never filters on read, which means a filter change
+     * has no effect at all until the stored rows are re-evaluated against it.
+     */
+    suspend fun updateBoardFilter(selection: UserSelection) {
+        selectionRepository.updateSelectionInPlace(selection)
+        sqlStorage.reapplyFilter(
+            selection.station,
+            selection.line,
+            selection.direction,
+            selection.destinationIds.toSet(),
+        )
+    }
+
+    /**
      * Discard a station: Unsubscribe and Wipe Data
      *
      * @param remaining the selections that will still exist after this delete.

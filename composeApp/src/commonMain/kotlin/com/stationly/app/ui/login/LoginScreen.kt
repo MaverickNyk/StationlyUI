@@ -687,7 +687,12 @@ private fun FormScreenContent(
                 screenType = screenType,
                 components = uiState.layout?.components ?: emptyList(),
                 inputs = uiState.inputs,
-                error = if (!uiState.isBackendOffline) uiState.error else null,
+                // The deletion notice takes precedence over a form error, and
+                // survives `isBackendOffline`: it explains why the user is on
+                // this screen at all, which matters more than anything the form
+                // has to say about the attempt they have not made yet.
+                error = uiState.accountRemovedNotice
+                    ?: if (!uiState.isBackendOffline) uiState.error else null,
                 showPasswordResetSuccess = showPasswordResetSuccess,
                 onInputChanged = onInputChanged,
                 onSubmit = onSubmit,

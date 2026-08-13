@@ -1,8 +1,8 @@
 package util
 
 import com.stationly.core.model.PredictionDisplay
-import com.stationly.core.util.BoardDisplayPrefs
-import com.stationly.core.util.BoardPin
+import com.stationly.core.model.user.BoardConfig
+import com.stationly.core.model.user.BoardPin
 import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.MultiLineBoardProcessor.Row
 import kotlin.test.Test
@@ -335,7 +335,7 @@ class MultiLineBoardProcessorTest {
     fun `block order is the soonest train, and no setting can change it`() {
         // This board reads 10, 9, 2 because that is the order the trains arrive
         // in, not because anything was configured. Block order is fixed — see
-        // BoardDisplayPrefs for why the sort that used to be here was removed.
+        // BoardConfig for why the sort that used to be here was removed.
         val rows = MultiLineBoardProcessor.buildRows(
             feeds = listOf(
                 feed("northern", predictions = listOf(
@@ -379,7 +379,7 @@ class MultiLineBoardProcessorTest {
                 ))
             ),
             isBus = false,
-            prefs = BoardDisplayPrefs(rowsPerPlatform = 2),
+            prefs = BoardConfig(rowsPerPlatform = 2),
         )
         assertEquals(listOf("Zebra", "Alpha"), realDepartures(rows).map { it.destination })
     }
@@ -391,7 +391,7 @@ class MultiLineBoardProcessorTest {
             val rows = MultiLineBoardProcessor.buildRows(
                 feeds = listOf(feed("northern", predictions = eight)),
                 isBus = false,
-                prefs = BoardDisplayPrefs(rowsPerPlatform = asked),
+                prefs = BoardConfig(rowsPerPlatform = asked),
             )
             assertEquals(asked, realDepartures(rows).size, "asked for $asked per platform")
         }
@@ -406,16 +406,16 @@ class MultiLineBoardProcessorTest {
         val tooMany = MultiLineBoardProcessor.buildRows(
             feeds = listOf(feed("northern", predictions = twelve)),
             isBus = false,
-            prefs = BoardDisplayPrefs(rowsPerPlatform = 12),
+            prefs = BoardConfig(rowsPerPlatform = 12),
         )
-        assertEquals(BoardDisplayPrefs.MAX_ROWS_PER_PLATFORM, realDepartures(tooMany).size)
+        assertEquals(BoardConfig.MAX_ROWS_PER_PLATFORM, realDepartures(tooMany).size)
 
         val tooFew = MultiLineBoardProcessor.buildRows(
             feeds = listOf(feed("northern", predictions = twelve)),
             isBus = false,
-            prefs = BoardDisplayPrefs(rowsPerPlatform = 0),
+            prefs = BoardConfig(rowsPerPlatform = 0),
         )
-        assertEquals(BoardDisplayPrefs.MIN_ROWS_PER_PLATFORM, realDepartures(tooFew).size)
+        assertEquals(BoardConfig.MIN_ROWS_PER_PLATFORM, realDepartures(tooFew).size)
     }
 
     @Test
@@ -428,7 +428,7 @@ class MultiLineBoardProcessorTest {
                 ))
             ),
             isBus = false,
-            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.PLATFORM, "Platform 9")),
+            prefs = BoardConfig(pin = BoardPin(BoardPin.Kind.PLATFORM, "Platform 9")),
         )
         assertTrue(headers(rows).first().contains("Platform 9"))
         assertTrue(headers(rows).last().contains("Platform 1"), "the rest keep their own order")
@@ -447,7 +447,7 @@ class MultiLineBoardProcessorTest {
                 )),
             ),
             isBus = false,
-            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.LINE, "victoria")),
+            prefs = BoardConfig(pin = BoardPin(BoardPin.Kind.LINE, "victoria")),
         )
         assertEquals(
             listOf("Victoria Platform 6 Northbound", "Victoria Platform 3 Northbound",
@@ -469,7 +469,7 @@ class MultiLineBoardProcessorTest {
                 )),
             ),
             isBus = false,
-            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.LINE, "elizabeth")),
+            prefs = BoardConfig(pin = BoardPin(BoardPin.Kind.LINE, "elizabeth")),
         )
         assertTrue(headers(rows).last().contains("not assigned"))
     }
@@ -485,7 +485,7 @@ class MultiLineBoardProcessorTest {
         val pinned = MultiLineBoardProcessor.buildRows(
             feeds = feeds,
             isBus = false,
-            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.PLATFORM, "Platform 99")),
+            prefs = BoardConfig(pin = BoardPin(BoardPin.Kind.PLATFORM, "Platform 99")),
         )
         assertEquals(headers(MultiLineBoardProcessor.buildRows(feeds, isBus = false)), headers(pinned),
             "the platform will be back tomorrow — the setting waits rather than being pruned")
@@ -507,7 +507,7 @@ class MultiLineBoardProcessorTest {
                 feed("central", predictions = listOf(pred("Epping", 9, platform = "Platform 7"))),
             ),
             isBus = false,
-            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.PLATFORM, "Platform 7")),
+            prefs = BoardConfig(pin = BoardPin(BoardPin.Kind.PLATFORM, "Platform 7")),
         )
         assertEquals(listOf("Epping", "Brixton", "Morden"), legs.map { it.towards })
     }
@@ -526,7 +526,7 @@ class MultiLineBoardProcessorTest {
                 feed("central", predictions = listOf(pred("Epping", 2, platform = "Platform 9"))),
             ),
             isBus = false,
-            prefs = BoardDisplayPrefs(rowsPerPlatform = 5),
+            prefs = BoardConfig(rowsPerPlatform = 5),
         )
         // One leg per PLATFORM, never per departure: Platform 1 has two trains
         // and contributes exactly one leg, for its soonest. Depth bounds a
@@ -634,7 +634,7 @@ class MultiLineBoardProcessorTest {
                     predictions = listOf(pred("Clapham Junction", 1, platform = ""))),
             ),
             isBus = true,
-            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.STOP, "490008805N")),
+            prefs = BoardConfig(pin = BoardPin(BoardPin.Kind.STOP, "490008805N")),
         )
         assertEquals(listOf("490008805N", "490012211N"), groups.map { it.key })
     }
@@ -657,7 +657,7 @@ class MultiLineBoardProcessorTest {
                     predictions = listOf(pred("Clapham Junction", 1, platform = "Stop C"))),
             ),
             isBus = true,
-            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.STOP, "490008805N")),
+            prefs = BoardConfig(pin = BoardPin(BoardPin.Kind.STOP, "490008805N")),
         )
         assertEquals(listOf("490008805N", "490012211N"), groups.map { it.key })
     }
@@ -674,7 +674,7 @@ class MultiLineBoardProcessorTest {
                 )),
             ),
             isBus = false,
-            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.LINE, "elizabeth")),
+            prefs = BoardConfig(pin = BoardPin(BoardPin.Kind.LINE, "elizabeth")),
         )
         assertEquals(listOf("Platform 3", "Platform not assigned"), groups.map { it.key })
     }
@@ -692,7 +692,7 @@ class MultiLineBoardProcessorTest {
         val byRoute = MultiLineBoardProcessor.buildGroups(
             feeds = feeds,
             isBus = true,
-            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.LINE, "39")),
+            prefs = BoardConfig(pin = BoardPin(BoardPin.Kind.LINE, "39")),
         )
         assertEquals(
             listOf("490012211N", "490008805N"),
@@ -933,7 +933,7 @@ class MultiLineBoardProcessorTest {
             )),
             feed("victoria", predictions = listOf(pred("Walthamstow", 4, platform = "Platform 1"))),
         )
-        val prefs = BoardDisplayPrefs(rowsPerPlatform = 2)
+        val prefs = BoardConfig(rowsPerPlatform = 2)
         val groups = MultiLineBoardProcessor.buildGroups(feeds, isBus = false, prefs = prefs)
         val rows = MultiLineBoardProcessor.buildRows(feeds, isBus = false, prefs = prefs)
 
@@ -967,7 +967,7 @@ class MultiLineBoardProcessorTest {
         val groups = MultiLineBoardProcessor.buildGroups(
             feeds = listOf(feed("northern", predictions = ten)),
             isBus = false,
-            prefs = BoardDisplayPrefs(rowsPerPlatform = 3),
+            prefs = BoardConfig(rowsPerPlatform = 3),
             rowCap = 8,
         )
         assertEquals(8, groups.single().departures.size)
@@ -985,7 +985,7 @@ class MultiLineBoardProcessorTest {
         val pinned = MultiLineBoardProcessor.buildGroups(
             feeds = feeds,
             isBus = false,
-            prefs = BoardDisplayPrefs(pin = BoardPin(BoardPin.Kind.PLATFORM, "Platform 2")),
+            prefs = BoardConfig(pin = BoardPin(BoardPin.Kind.PLATFORM, "Platform 2")),
             rowCap = 8,
         )
         assertEquals(

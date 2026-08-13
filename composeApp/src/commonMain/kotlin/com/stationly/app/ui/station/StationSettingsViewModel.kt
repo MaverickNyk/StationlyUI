@@ -2,8 +2,10 @@ package com.stationly.app.ui.station
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.stationly.app.ui.util.StationPrefs
-import com.stationly.app.ui.util.StationPrefsRepository
+import com.stationly.app.sync.UserStateSync
+import com.stationly.core.repository.UserSettings
+import com.stationly.core.activity.ActivityEvents
+import com.stationly.core.activity.ActivityLog
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.WidgetState
 import com.stationly.app.platform.HapticType
@@ -13,10 +15,10 @@ import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.StationLifecycleUseCase
-import com.stationly.core.usecase.SyncSubscribedStationsUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
-import com.stationly.core.util.BoardDisplayPrefs
-import com.stationly.core.util.BoardPin
+import com.stationly.core.model.user.BoardConfig
+import com.stationly.core.model.user.BoardView
+import com.stationly.core.model.user.BoardPin
 import com.stationly.core.util.MultiLineBoardProcessor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -65,16 +67,16 @@ class StationSettingsViewModel(
         SyncPredictionsUseCase(Platform.sqlStorage),
     )
 
-    /**
-     * Deleting a board is TWO jobs: the local teardown below, and telling the
-     * backend the board is gone. Without the second one the deletion is local
-     * only — the backend still lists the board, and a cloud restore or another
-     * device brings it straight back.
-     */
-    private val syncSubscribedStations = SyncSubscribedStationsUseCase(
-        NetworkModule.sduiApi,
-        Platform.storageManager,
-    )
+    // Deleting a board is TWO jobs: the local teardown below, and telling the
+    // backend the board is gone. Without the second one the deletion is local
+    // only — the backend still lists the board, and a cloud restore or another
+    // device brings it straight back.
+    //
+    // That second job now goes through `UserStateSync`, which writes the v2
+    // board list. It used to be `SyncSubscribedStationsUseCase`, which posts to
+    // the LEGACY `stations` array — the one Android replaces wholesale on every
+    // board setup. Writing there from here put both platforms on one list and
+    // is what let an Android save delete every board added on an iPhone.
 
     private val stationLifecycleUseCase = StationLifecycleUseCase(
         selectionRepository = selectionRepository,
@@ -97,7 +99,7 @@ class StationSettingsViewModel(
         .map { all -> all.filter { it.groupingId == stationId } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    val prefs: StateFlow<Map<String, StationPrefs>> = StationPrefsRepository.prefs
+    val configs: StateFlow<Map<String, BoardConfig>> = UserSettings.configs
 
     /** True once the last board here is gone, so the screen can dismiss itself. */
     private val _deleted = MutableStateFlow(false)
@@ -165,16 +167,16 @@ class StationSettingsViewModel(
      * whether anything actually moved — see [onCleared].
      *
      * Null until the first read completes. That is deliberate: a snapshot taken
-     * before [StationPrefsRepository.ensureLoaded] would be the DEFAULT
-     * arrangement, so a user who opened the screen and changed nothing would look
-     * like they had reset every setting they had ever made.
+     * before [UserSettings.ensureLoaded] would be the DEFAULT arrangement, so a
+     * user who opened the screen and changed nothing would look like they had
+     * reset every setting they had ever made.
      */
-    private var arrangementOnEntry: BoardDisplayPrefs? = null
+    private var arrangementOnEntry: BoardConfig? = null
 
     init {
         viewModelScope.launch {
-            StationPrefsRepository.ensureLoaded()
-            arrangementOnEntry = StationPrefsRepository.of(stationId).board
+            UserSettings.ensureLoaded()
+            arrangementOnEntry = UserSettings.configOf(stationId)
             // This VM's repository starts empty — it is a separate instance from
             // the home screen's, so it holds no rows until it reads the database.
             selectionRepository.initialize()
@@ -198,7 +200,7 @@ class StationSettingsViewModel(
      * the device doing it.
      *
      * ## Why the home screen needs nothing here
-     * It is already reactive and always was: `StationPrefsRepository.prefs` is one
+     * It is already reactive and always was: `UserSettings.configs` is one
      * shared `StateFlow` that `SummaryViewModel` exposes directly, and the board
      * derives its rows with `remember(rendered, isBus, boardPrefs)`. Writing a
      * preference IS the redraw. The widget is the only surface that has to be
@@ -206,7 +208,7 @@ class StationSettingsViewModel(
      *
      * ## The diff is the point
      * A user who opens this screen to read it, or who moves the slider and puts it
-     * back, has changed nothing — and `BoardDisplayPrefs` is a data class, so
+     * back, has changed nothing — and `BoardConfig` is a data class, so
      * saying so is one comparison. Rebuilding regardless would spend the same
      * device work on a no-op and, worse, bump the reload signal that makes
      * WidgetKit regenerate timelines, which Apple meters at roughly 40–70 a day.
@@ -219,7 +221,13 @@ class StationSettingsViewModel(
     override fun onCleared() {
         super.onCleared()
         val entry = arrangementOnEntry ?: return
-        if (StationPrefsRepository.of(stationId).board == entry) return
+        // Only the fields the WIDGET renders. `expanded`, `view` and `position`
+        // are home-screen facts the extension never reads, and comparing the
+        // whole config would spend a full board rebuild — and a bump of the
+        // reload signal Apple meters at roughly 40-70 timelines a day — on a
+        // change the widget cannot show.
+        val now = UserSettings.configOf(stationId)
+        if (now.rowCap == entry.rowCap && now.pin == entry.pin) return
         ExitScope.launch {
             runCatching {
                 Platform.widgetManager.updateWidget(
@@ -304,29 +312,30 @@ class StationSettingsViewModel(
         // no way to reach or clear. Dropped rather than migrated: the pole it
         // names may not even be on today's board, and a pin nobody can see is
         // worse than one they can set again from chips that exist.
-        if (isBus && StationPrefsRepository.of(stationId).board.pin?.kind == BoardPin.Kind.PLATFORM) {
-            StationPrefsRepository.update(stationId) {
-                it.copy(board = it.board.copy(pin = null))
-            }
+        if (isBus && UserSettings.configOf(stationId).pin?.kind == BoardPin.Kind.PLATFORM) {
+            UserSettings.update(stationId) { it.copy(pin = null) }
         }
     }
 
-    /** Expand this station's card on every app open — see [StationPrefs.startExpanded]. */
-    fun setStartExpanded(expanded: Boolean) {
-        viewModelScope.launch { StationPrefsRepository.update(stationId) { it.copy(startExpanded = expanded) } }
+    /** Open this board's card on every app open — see [BoardConfig.expanded]. */
+    fun setExpanded(expanded: Boolean) = updateConfig("expanded", expanded.toString()) {
+        it.copy(expanded = expanded)
     }
 
-    fun setHeroVisible(visible: Boolean) {
-        viewModelScope.launch { StationPrefsRepository.update(stationId) { it.copy(hideHero = !visible) } }
+    /** Which halves of the card this board draws — see [BoardView]. */
+    fun setView(view: BoardView) = updateConfig("view", view.name) { it.copy(view = view) }
+
+    /* ── How the board is arranged — see [BoardConfig] ────────────────── */
+
+    /** Stored as asked and clamped on read — see [BoardConfig.rowCap]. */
+    fun setRowsPerPlatform(rows: Int) = updateConfig("rowsPerPlatform", rows.toString()) {
+        it.copy(rowsPerPlatform = rows)
     }
-
-    /* ── How the board is arranged — see [BoardDisplayPrefs] ────────────────── */
-
-    /** Stored as asked and clamped on read — see [BoardDisplayPrefs.rowCap]. */
-    fun setRowsPerPlatform(rows: Int) = updateBoard { it.copy(rowsPerPlatform = rows) }
 
     /** `null` puts the board back to its natural order. One pin at a time. */
-    fun setPin(pin: BoardPin?) = updateBoard { it.copy(pin = pin) }
+    fun setPin(pin: BoardPin?) = updateConfig("pin", pin?.let { "${it.kind}:${it.id}" } ?: "none") {
+        it.copy(pin = pin)
+    }
 
     /**
      * Persist an arrangement change, and nothing else.
@@ -334,11 +343,36 @@ class StationSettingsViewModel(
      * The write IS the redraw for every surface inside this process — see
      * [onCleared], which explains why, and which carries the one push that still
      * has to happen.
+     *
+     * There is no BACKEND write here at all, and that is the point rather than an
+     * omission. Arrangement is device-local (see `UserSettings`), so a slider
+     * drag costs a disk write per detent and nothing on the wire. This used to
+     * mark the board list dirty and push it debounced, which put a Firestore
+     * write behind every toggle on the one document every login reads.
      */
-    private fun updateBoard(transform: (BoardDisplayPrefs) -> BoardDisplayPrefs) {
-        viewModelScope.launch {
-            StationPrefsRepository.update(stationId) { it.copy(board = transform(it.board)) }
-        }
+    private fun updateConfig(
+        key: String,
+        value: String,
+        transform: (BoardConfig) -> BoardConfig,
+    ) {
+        viewModelScope.launch { UserSettings.update(stationId, transform) }
+        recordSettingChange(key, value)
+    }
+
+    /**
+     * Fires per change, including every step of a slider drag.
+     *
+     * Deliberately not debounced the way the network write is. An event is a
+     * row in a local queue and costs nothing; knowing that a user dragged
+     * through 2-3-4 before settling on 5 is more informative than knowing only
+     * where they stopped, and collapsing it here would throw that away to save
+     * something that was never expensive.
+     */
+    private fun recordSettingChange(key: String, value: String) {
+        ActivityLog.record(
+            ActivityEvents.SETTINGS_STATION_CHANGED,
+            mapOf("station" to stationId, "key" to key, "value" to value),
+        )
     }
 
     /**
@@ -355,9 +389,22 @@ class StationSettingsViewModel(
             _isDeleting.value = true
             try {
                 discard(board)
-                syncSubscribedStations.sync(selectionRepository.selections.value)
+                // The live answer, not a literal: deleting one of a station's
+                // four boards must not hand out permission to empty the account.
+                UserStateSync.boardsChanged(
+                    emptiedByUser = selectionRepository.selections.value.isEmpty(),
+                )
+                ActivityLog.record(
+                    ActivityEvents.BOARD_DELETED,
+                    mapOf(
+                        "station" to board.station,
+                        "line" to board.line,
+                        "mode" to board.mode,
+                        "direction" to board.direction,
+                    ),
+                )
                 if (selectionRepository.selections.value.none { it.groupingId == stationId }) {
-                    StationPrefsRepository.forget(stationId)
+                    UserSettings.forget(stationId)
                     _deleted.value = true
                 } else {
                     // The boards list re-emits on its own (it maps the
@@ -386,9 +433,28 @@ class StationSettingsViewModel(
                 for (board in doomed) discard(board)
                 // ONE sync for the whole station, after the last teardown: the
                 // endpoint replaces the list it is given, so syncing per board
-                // would send several intermediate lists for no gain.
-                syncSubscribedStations.sync(selectionRepository.selections.value)
-                StationPrefsRepository.forget(stationId)
+                // would send several intermediate lists for no gain. (The push
+                // is debounced anyway, so several calls here would coalesce —
+                // but the intent is worth stating at the call site.)
+                //
+                // Deleting the user's ONLY station is the ordinary way to reach
+                // an empty account, and the server refuses to store an empty list
+                // without being told so explicitly.
+                UserStateSync.boardsChanged(
+                    emptiedByUser = selectionRepository.selections.value.isEmpty(),
+                )
+                doomed.forEach { board ->
+                    ActivityLog.record(
+                        ActivityEvents.BOARD_DELETED,
+                        mapOf(
+                            "station" to board.station,
+                            "line" to board.line,
+                            "mode" to board.mode,
+                            "direction" to board.direction,
+                        ),
+                    )
+                }
+                UserSettings.forget(stationId)
                 _deleted.value = true
                 performHaptic(HapticType.SUCCESS)
             } catch (_: Exception) {

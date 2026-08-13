@@ -93,11 +93,30 @@ class WebStorageManager : StorageManager {
     }
     
     override suspend fun clearCache() {
-        localStorage.clear()
+        clearExceptDurable()
     }
 
     override suspend fun clearAll() {
-        localStorage.clear()
+        clearExceptDurable()
+    }
+
+    /**
+     * Wipe the session, keeping the durable prefix.
+     *
+     * `localStorage.clear()` was wrong for both callers: it is one namespace for
+     * the session store AND the durable one, so a logout took the per-account
+     * settings with it and this platform silently failed the contract the other
+     * two keep. Enumerated rather than clear-then-restore, because a restore
+     * loses anything written by another tab in between.
+     */
+    private fun clearExceptDurable() {
+        val doomed = buildList {
+            for (i in 0 until localStorage.length) {
+                val key = localStorage.key(i) ?: continue
+                if (!key.startsWith(DURABLE_PREFIX)) add(key)
+            }
+        }
+        doomed.forEach { localStorage.removeItem(it) }
     }
     
     override suspend fun saveString(key: String, value: String) {
@@ -107,4 +126,17 @@ class WebStorageManager : StorageManager {
     override suspend fun loadString(key: String): String? {
         return localStorage.getItem(key)
     }
+
+    // Same localStorage, under a prefix the session wipe does not clear.
+    override suspend fun saveDurable(key: String, value: String) {
+        localStorage.setItem("$DURABLE_PREFIX$key", value)
+    }
+
+    override suspend fun loadDurable(key: String): String? = localStorage.getItem("$DURABLE_PREFIX$key")
+
+    override suspend fun removeDurable(key: String) {
+        localStorage.removeItem("$DURABLE_PREFIX$key")
+    }
+
+    private val DURABLE_PREFIX = "durable_"
 }

@@ -67,6 +67,16 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         let tStart = Date()
         var data = AppGroupStorage.shared.readWidgetData(stationId: configuration.station?.id)
 
+        // Tell the APP which station this widget is on. It cannot find out for
+        // itself — the answer lives in an AppIntent type compiled into this
+        // target — and `Board.widget` is the only per-board fact the app has no
+        // other source for. Written before the fetch below, so a widget whose
+        // refresh fails is still counted as placed.
+        AppGroupStorage.shared.notePlacement(
+            station: configuration.station?.id ?? data.stationId,
+            family: String(describing: context.family)
+        )
+
         // ── Fetch when what we hold is stale ──
         //
         // A reload re-runs this provider against whatever is in the App Group;

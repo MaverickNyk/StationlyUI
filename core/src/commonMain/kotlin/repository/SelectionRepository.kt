@@ -20,9 +20,30 @@ class SelectionRepository(
     private val sqlStorage: SqlStorage
 ) {
     
-    // In-memory cache for fast access
-    private val _selections = MutableStateFlow<List<UserSelection>>(emptyList())
-    val selections: StateFlow<List<UserSelection>> = _selections.asStateFlow()
+    /**
+     * In-memory cache for fast access — **shared by every instance**.
+     *
+     * Six places construct a `SelectionRepository` (login, home, selection,
+     * station settings, profile, the iOS sync bridge) and each used to get its
+     * own cache over the same SQLite table. That is two records of one fact, and
+     * they diverged exactly as `UserSettings` describes: one instance writes, the
+     * others never hear about it.
+     *
+     * It showed up as the worst possible symptom. Signing in restored the boards
+     * through the LOGIN repository — SQLite correct, Firestore correct — while
+     * the home screen collected a different instance's flow, which still held the
+     * empty list it was constructed with. The user landed on "Your board is
+     * empty" with their boards sitting on disk, and it fixed itself on a trip to
+     * the profile screen and back, because that rebuilt the ViewModel and its
+     * repository re-read SQLite.
+     *
+     * Process-wide rather than injected, because the storage underneath is a
+     * process-wide singleton too: these instances are already the same
+     * repository, and this makes them behave like it. `initialize()` re-seeds it
+     * from SQLite at a session boundary.
+     */
+    private val _selections get() = shared
+    val selections: StateFlow<List<UserSelection>> = shared.asStateFlow()
     
     /**
      * Initialize repository by loading from storage
@@ -122,5 +143,10 @@ class SelectionRepository(
         _selections.value = emptyList()
         sqlStorage.clearSelections()
         storageManager.clearCache()
+    }
+
+    companion object {
+        /** The one cache. See the note on [_selections]. */
+        private val shared = MutableStateFlow<List<UserSelection>>(emptyList())
     }
 }

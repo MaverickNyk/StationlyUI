@@ -1,7 +1,7 @@
 package util
 
 import com.stationly.core.model.PredictionDisplay
-import com.stationly.core.util.BoardDisplayPrefs
+import com.stationly.core.model.user.BoardConfig
 import com.stationly.core.util.BoardTicker
 import com.stationly.core.util.MultiLineBoardProcessor
 import kotlin.test.Test
@@ -56,7 +56,7 @@ class BoardTickerTest {
         payloadWrittenAt: Long = t0,
         isBus: Boolean = false,
     ): List<MultiLineBoardProcessor.Group> {
-        val prefs = BoardDisplayPrefs(rowsPerPlatform = rows)
+        val prefs = BoardConfig(rowsPerPlatform = rows)
         return BoardTicker.tick(
             groups = MultiLineBoardProcessor.buildGroups(
                 feeds, isBus, prefs,
@@ -296,7 +296,7 @@ class BoardTickerTest {
         val now = t0 + 5 * minute
         val groups = BoardTicker.tick(
             groups = MultiLineBoardProcessor.buildGroups(
-                feeds, isBus = false, prefs = BoardDisplayPrefs(),
+                feeds, isBus = false, prefs = BoardConfig(),
                 rowCap = MultiLineBoardProcessor.ROW_RESERVE, nowMs = now,
             ),
             nowMs = now, payloadAgeMs = now - t0, displayRows = 3,

@@ -97,6 +97,34 @@ CREATE TABLE SyncStatusEntity (
     PRIMARY KEY (stationId, lineId, direction)
 );
 
+-- The user's activity trail, queued locally and uploaded in batches on a
+-- schedule. See `ActivityLog` for the contract.
+--
+-- ⚠️ Deliberately NOT cleared by `SqlStorage.clearAllData()`, which login and
+-- logout both run. That is the whole reason this is a table and not part of the
+-- existing wipe: the events worth having most are the ones AROUND an auth
+-- change ("logged out", "logged in on a new device"), and a queue emptied by
+-- the very event it is recording can never report it. `clearAllData` names its
+-- tables explicitly rather than dropping everything, so this survives by
+-- construction — keep it that way.
+--
+-- The `uid` is stamped at ENQUEUE time, not at upload: an event belongs to
+-- whoever was signed in when it happened, and a queue that outlives a session
+-- would otherwise attribute yesterday's activity to today's account. Blank for
+-- an event recorded while signed out, which is uploaded under whoever signs in
+-- next — the honest answer, since it happened on their device.
+CREATE TABLE ActivityEventEntity (
+    id TEXT NOT NULL PRIMARY KEY,
+    uid TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL,
+    -- Device clock when the event happened, epoch millis.
+    t INTEGER NOT NULL,
+    -- JSON object of flat string properties.
+    props TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX activity_by_time ON ActivityEventEntity(t);
+
 -- Queries
 insertSelection:
 INSERT INTO UserSelectionEntity(mode, line, station, parentStationId, stationName, direction, destinations, destinationIds, filterMode, viaStationId, viaStationName, routeResolvedAt)
@@ -169,3 +197,44 @@ SELECT lastSyncMs FROM SyncStatusEntity WHERE stationId = ? AND lineId = ? AND d
 
 clearSyncStatuses:
 DELETE FROM SyncStatusEntity;
+
+-- ── Activity trail ──
+--
+-- OR IGNORE so re-recording an event that is already queued is a no-op rather
+-- than a crash. The id is generated per event, so this only fires on a genuine
+-- double-enqueue — which a lifecycle callback delivered twice will produce.
+enqueueActivityEvent:
+INSERT OR IGNORE INTO ActivityEventEntity(id, uid, name, t, props)
+VALUES (?, ?, ?, ?, ?);
+
+-- Oldest first, so a queue too long for one batch drains in the order things
+-- happened and a device that has been offline for a week uploads that week in
+-- sequence rather than newest-first with the tail perpetually behind.
+--
+-- Scoped by uid so one account's flush can never carry another's events. The
+-- blank-uid rows are swept in with whoever is signed in — see the table note.
+selectActivityBatch:
+SELECT * FROM ActivityEventEntity
+WHERE uid = ? OR uid = ''
+ORDER BY t
+LIMIT ?;
+
+countActivityEvents:
+SELECT COUNT(*) AS total FROM ActivityEventEntity;
+
+oldestActivityEvent:
+SELECT MIN(t) AS oldest FROM ActivityEventEntity;
+
+deleteActivityEvent:
+DELETE FROM ActivityEventEntity WHERE id = ?;
+
+-- Drop the oldest rows when the queue outgrows its cap. Oldest rather than
+-- newest because a queue this long means uploads have been failing for a long
+-- time, and recent activity is the part still worth having.
+trimActivityEvents:
+DELETE FROM ActivityEventEntity WHERE id IN (
+    SELECT id FROM ActivityEventEntity ORDER BY t LIMIT ?
+);
+
+clearActivityEvents:
+DELETE FROM ActivityEventEntity;

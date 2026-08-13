@@ -65,8 +65,8 @@ import com.stationly.app.ui.common.SettingsSectionLabel
 import com.stationly.app.ui.common.pressScale
 import com.stationly.app.ui.summary.components.lineColorForTheme
 import com.stationly.app.ui.theme.isDarkTheme
-import com.stationly.core.util.BoardDisplayPrefs
-import com.stationly.core.util.BoardPin
+import com.stationly.core.model.user.BoardConfig
+import com.stationly.core.model.user.BoardPin
 import com.stationly.core.util.LineShortNames
 import com.stationly.core.util.MultiLineBoardProcessor.StopOption
 import kotlin.math.roundToInt
@@ -77,7 +77,7 @@ import kotlin.math.roundToInt
  *
  * ## What is deliberately NOT here
  * **The platform grouping.** It is the one thing about the board that is not
- * negotiable, and `BoardDisplayPrefs` in core says why at length: everything
+ * negotiable, and `BoardConfig` in core says why at length: everything
  * under a header is one queue in one place you can walk to, and a flat re-sort
  * of the whole board would leave the user reading the platform off every
  * individual row to know where to stand.
@@ -104,7 +104,7 @@ import kotlin.math.roundToInt
  */
 @Composable
 fun BoardArrangementSection(
-    prefs: BoardDisplayPrefs,
+    prefs: BoardConfig,
     platforms: List<String>,
     stops: List<StopOption>,
     lines: List<String>,
@@ -236,8 +236,8 @@ private val TICK_INSET = 9.5.dp
  */
 @Composable
 private fun DepthSlider(rows: Int, label: String, onChange: (Int) -> Unit) {
-    val min = BoardDisplayPrefs.MIN_ROWS_PER_PLATFORM
-    val max = BoardDisplayPrefs.MAX_ROWS_PER_PLATFORM
+    val min = BoardConfig.MIN_ROWS_PER_PLATFORM
+    val max = BoardConfig.MAX_ROWS_PER_PLATFORM
     val accent = MaterialTheme.colorScheme.primary
     val onBackground = MaterialTheme.colorScheme.onBackground
     val onAccent = MaterialTheme.colorScheme.onPrimary

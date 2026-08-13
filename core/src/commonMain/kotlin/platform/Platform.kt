@@ -29,6 +29,32 @@ interface StorageManager {
     suspend fun clearAll()
     suspend fun saveString(key: String, value: String)
     suspend fun loadString(key: String): String?
+
+    /**
+     * Storage that SURVIVES [clearAll], for state that outlives a session.
+     *
+     * Logout wipes the app's whole defaults domain, which is right for anything
+     * naming the user. It is wrong for the settings that make the app look the
+     * way they left it — those are kept per account id and restored when the
+     * same person signs back in on the same device, and they are not identity:
+     * "three rows per platform, board first" says nothing about who anybody is.
+     *
+     * The screensaver's settings already did this by hand; this is the same
+     * mechanism, declared once. See [com.stationly.core.repository.UserSettings].
+     */
+    suspend fun saveDurable(key: String, value: String)
+    suspend fun loadDurable(key: String): String?
+
+    /**
+     * Drop one durable key.
+     *
+     * The counterpart [clearAll] deliberately cannot provide: durable storage
+     * survives a session wipe by design, so the ONE case that must still be able
+     * to erase it — an account being deleted — needs an explicit way to say so.
+     * Without this, settings namespaced to a uid that no longer exists would sit
+     * on the device forever.
+     */
+    suspend fun removeDurable(key: String)
 }
 
 expect object Platform {

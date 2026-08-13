@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import WidgetKit
+import composeApp
 
 /// Answers one question Kotlin cannot ask for itself: **has the user actually
 /// placed a Stationly widget?**
@@ -35,18 +36,104 @@ enum HomeStateProbe {
         // this is only ever the availability compiler's requirement.
         guard #available(iOS 14.0, *) else { return }
         WidgetCenter.shared.getCurrentConfigurations { result in
-            let installed: Bool
+            let configurations: [WidgetInfo]
             switch result {
-            case .success(let configurations):
-                installed = !configurations.isEmpty
+            case .success(let found):
+                configurations = found
             case .failure:
                 // Probe failed (the extension can be momentarily unavailable).
                 // Leave whatever the last known answer was rather than
-                // asserting "no widget" and nagging someone who has one.
+                // asserting "no widget" and nagging someone who has one — and
+                // report NOTHING to the activity trail, or a transient failure
+                // would be recorded as the user removing every widget at once.
                 return
             }
             UserDefaults(suiteName: AppGroupID.value)?
-                .set(installed ? "true" : "false", forKey: widgetInstalledKey)
+                .set(configurations.isEmpty ? "false" : "true", forKey: widgetInstalledKey)
+
+            // The same snapshot, handed to KMP so it can derive add/remove by
+            // diffing against the previous one, and so each BOARD knows whether
+            // it is on the home screen. This probe is the only source WidgetKit
+            // offers — there is no placement callback — so it does double duty.
+            // See `ActivityBridge.widgetsObserved`.
+            let descriptors = describe(configurations)
+            ActivityBridge.shared.widgetsObserved(descriptors: descriptors)
         }
+    }
+
+    /// Turn the host's answer into `family|stationId` descriptors.
+    ///
+    /// ## Why the station comes from the WIDGET and not from here
+    /// `WidgetInfo` carries the family but not the station: the station lives in
+    /// an AppIntent configuration whose type is compiled into the widget target,
+    /// and `WidgetInfo.configuration` is an `INIntent`, so it is not reachable
+    /// even in principle. Making it reachable would mean compiling
+    /// `StationConfiguration` — and with it `AppGroupStorage` and the roundel
+    /// artwork — into the app target as well.
+    ///
+    /// So the widget writes its own station down on every timeline build, and
+    /// this reconciles those stamps against the one thing only the host knows:
+    /// how many widgets are actually placed, and at what sizes.
+    ///
+    /// ## The reconciliation, and what it can and cannot get right
+    /// The host's list is authoritative on COUNT and on FAMILIES; the stamps are
+    /// authoritative on STATION. Matching them by family and taking the most
+    /// recent stamp per slot is exact whenever the placed widgets show distinct
+    /// stations — the normal case, since one widget is one station. Two widgets
+    /// of the same size on the same station are indistinguishable from one, and
+    /// nothing available can tell them apart.
+    ///
+    /// A widget that has just been added has no stamp until its first timeline
+    /// build, seconds later; it is reported with an empty station until then,
+    /// which counts toward the total but attaches to no board. That is the
+    /// honest answer rather than a guess at which board it might be.
+    private static func describe(_ configurations: [WidgetInfo]) -> [String] {
+        var unclaimed = readPlacements().sorted { $0.at > $1.at }
+        var descriptors: [String] = []
+        for info in configurations {
+            let family = String(describing: info.family)
+            if let index = unclaimed.firstIndex(where: { $0.family == family }) {
+                let claimed = unclaimed.remove(at: index)
+                descriptors.append("\(family)|\(claimed.station)")
+            } else {
+                descriptors.append("\(family)|")
+            }
+        }
+        // Whatever is left over describes widgets that are no longer placed —
+        // the removals this probe exists to notice. Dropping them is what keeps
+        // a stale stamp from claiming a board is on the home screen for days
+        // after the user took it off.
+        if !unclaimed.isEmpty {
+            let stale = Set(unclaimed.map { "\($0.station)|\($0.family)" })
+            writePlacements(readPlacements().filter { !stale.contains("\($0.station)|\($0.family)") })
+        }
+        return descriptors
+    }
+
+    /// One placed widget as the EXTENSION recorded it — mirrors
+    /// `AppGroupStorage.WidgetPlacementStamp`, which lives in the widget target
+    /// and is not visible here. Kept minimal so the two cannot drift in any way
+    /// that matters: the field names are the wire format.
+    private struct Placement: Codable {
+        let station: String
+        let family: String
+        let at: TimeInterval
+    }
+
+    /// Keep this literal in lockstep with `AppGroupKeys.placements`.
+    private static let placementsKey = "widget_placements"
+
+    private static func readPlacements() -> [Placement] {
+        guard let raw = UserDefaults(suiteName: AppGroupID.value)?.string(forKey: placementsKey),
+              let data = raw.data(using: .utf8),
+              let stamps = try? JSONDecoder().decode([Placement].self, from: data)
+        else { return [] }
+        return stamps
+    }
+
+    private static func writePlacements(_ stamps: [Placement]) {
+        guard let encoded = try? JSONEncoder().encode(stamps),
+              let raw = String(data: encoded, encoding: .utf8) else { return }
+        UserDefaults(suiteName: AppGroupID.value)?.set(raw, forKey: placementsKey)
     }
 }

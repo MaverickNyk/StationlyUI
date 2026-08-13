@@ -80,7 +80,7 @@ object LineNameStore {
      * Hydrate from disk. Idempotent, and safe to call from every screen entry.
      *
      * The flag is set AFTER the read for the same reason
-     * `StationPrefsRepository.ensureLoaded` sets its own late: two callers can
+     * `UserSettings.ensureLoaded` sets its own late: two callers can
      * enter in one frame, and flagging first would let the second return while
      * the first was still reading — handing it an empty map as though the
      * backend had never answered.

@@ -241,6 +241,23 @@ enum DevicePushCoordinator {
             // drift on what "the cloud is the truth" means.
             let pushUid = envelope?["uid"] as? String
             if UserSyncBridge.shared.isAccountDeleted(reason: reason) {
+                // ── The uid check has to happen HERE ──
+                //
+                // `UserSyncBridge.handle` performs it for every other reason,
+                // but this branch returns before reaching it — so the one push
+                // that can END A SESSION was the only one acting without
+                // checking who it was for. A device token outlives a session, so
+                // a "deleted" push can land on a phone that has since signed in
+                // as somebody else, and acting on it would sign out a user whose
+                // account is perfectly fine.
+                //
+                // A push with no uid is still honoured: older senders omit it,
+                // and refusing those would leave real deletions unapplied.
+                let currentUid = UserSyncBridge.shared.currentUidOrNull()
+                if let pushUid, let currentUid, pushUid != currentUid {
+                    PushTraceSwift.log("user.sync deleted → DROPPED (for \(pushUid), signed in as \(currentUid))")
+                    return false
+                }
                 // Forcing a sign-out touches the keychain, the Firebase session
                 // and the UI — none of which shared code owns, and a
                 // half-applied logout is worse than a late one. Android routes

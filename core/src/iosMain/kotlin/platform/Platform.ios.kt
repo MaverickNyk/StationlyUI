@@ -12,7 +12,8 @@ import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.FormatDeparturesUseCase
 import com.stationly.core.usecase.ProcessPredictionsUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
-import com.stationly.core.util.BoardDisplayPrefs
+import com.stationly.core.model.user.BoardConfig
+import com.stationly.core.repository.UserSettings
 import com.stationly.core.util.LineNameStore
 import com.stationly.core.util.LineShortNames
 import com.stationly.core.util.LineStatusRanker
@@ -339,7 +340,7 @@ class IosWidgetManager : WidgetManager {
         // for no benefit.
         val nowMs = (NSDate().timeIntervalSince1970 * 1000).toLong()
         val boards = byStation.map { (id, selections) ->
-            buildBoard(id, selections, prefs[id] ?: BoardDisplayPrefs(), nowMs)
+            buildBoard(id, selections, prefs[id] ?: BoardConfig(), nowMs)
         }
         val directory = byStation.map { (id, selections) ->
             WidgetStationRef(
@@ -454,7 +455,7 @@ class IosWidgetManager : WidgetManager {
     private fun buildBoard(
         stationId: String,
         boards: List<UserSelection>,
-        prefs: BoardDisplayPrefs,
+        prefs: BoardConfig,
         /** Shared across every board in this write — see the call site. */
         nowMs: Long,
     ): WidgetBoard {
@@ -581,46 +582,31 @@ class IosWidgetManager : WidgetManager {
     }
 
     /**
-     * Every station's board arrangement, by grouping id.
+     * Every board's arrangement, by board id.
      *
-     * ## Why the widget can read these at last
-     * The extension cannot: `StationPrefsRepository` writes to the app's own
-     * NSUserDefaults suite and the widget lives in the App Group, so "the widget
-     * cannot see BoardDisplayPrefs" has been an open item since the settings
-     * screen landed. It was only ever true of the EXTENSION. This runs in the
-     * app, on the same defaults the settings screen writes — so now that the
-     * board is grouped here, the preferences apply here too, and nothing has to
-     * cross the process boundary except the finished blocks.
+     * ## Why the widget can read these at all
+     * The extension cannot read them for itself — the settings are in the app's
+     * own NSUserDefaults suite and the widget lives in the App Group — so "the
+     * widget cannot see the board arrangement" was an open item from the day the
+     * settings screen landed. It was only ever true of the EXTENSION. This runs
+     * in the app, on the same store the settings screen writes, so the
+     * arrangement is applied here and nothing crosses the process boundary
+     * except the finished blocks.
      *
-     * Decoded through a core-local shape rather than `StationPrefs` itself,
-     * which lives in `composeApp` and is therefore not visible from `core`. Only
-     * the `board` field is read; `ignoreUnknownKeys` skips the rest of the
-     * record, so the app layer can add per-station preferences without this
-     * needing to know.
+     * Read through [UserSettings], which owns the storage key and the type. Both
+     * used to be duplicated in this file, because the store lived in `composeApp`
+     * where core cannot see it — copies that failed SILENTLY when they drifted,
+     * since a renamed key or field reads as absent and the widget just reverts
+     * to a default arrangement with nothing logged anywhere.
      *
-     * A read failure is an empty map, i.e. defaults everywhere — a widget
-     * arranged as the board was before it had settings, which is exactly the
-     * right fallback and never an empty board.
+     * An unread store is defaults everywhere — a widget arranged as the board
+     * was before it had settings, which is the right fallback and never an empty
+     * board.
      */
-    private suspend fun boardPrefs(): Map<String, BoardDisplayPrefs> = runCatching {
-        Platform.storageManager.loadString(STATION_PREFS_KEY)
-            ?.let { json.decodeFromString(MapSerializer(String.serializer(), StoredStationPrefs.serializer()), it) }
-            ?.mapValues { (_, prefs) -> prefs.board }
-    }.getOrNull().orEmpty()
-
-    /**
-     * The `StationPrefsRepository` storage key, duplicated here because the
-     * repository is in `composeApp` and core cannot see it.
-     *
-     * The one direction this can break is silent: rename it there and this reads
-     * nothing, and the widget quietly reverts to default arrangement with no
-     * error anywhere. `StationPrefsRepository.KEY` carries a note pointing back.
-     */
-    private val STATION_PREFS_KEY = "station_prefs_v1"
-
-    /** Just the `board` field of `composeApp`'s `StationPrefs` — see [boardPrefs]. */
-    @Serializable
-    private data class StoredStationPrefs(val board: BoardDisplayPrefs = BoardDisplayPrefs())
+    private suspend fun boardPrefs(): Map<String, BoardConfig> {
+        UserSettings.ensureLoaded()
+        return UserSettings.configs.value
+    }
 
     /**
      * The station ids currently holding `widget_board_*` keys, read back out of
@@ -974,6 +960,30 @@ class IosStorageManager : StorageManager {
 
     override suspend fun loadString(key: String): String? = withContext(Dispatchers.IO) {
         defaults.stringForKey(key)
+    }
+
+    /**
+     * The APP-GROUP suite, which `clearAll` does not touch — it removes the
+     * app's own persistent domain, and the group is a separate one. The same
+     * place `DeviceIdentity` and the screensaver's settings already live, and
+     * for the same reason.
+     */
+    private val durable = NSUserDefaults(suiteName = APP_GROUP_ID)
+
+    override suspend fun saveDurable(key: String, value: String) = withContext(Dispatchers.IO) {
+        durable.setObject(value, forKey = key)
+        durable.synchronize()
+        Unit
+    }
+
+    override suspend fun loadDurable(key: String): String? = withContext(Dispatchers.IO) {
+        durable.stringForKey(key)
+    }
+
+    override suspend fun removeDurable(key: String) = withContext(Dispatchers.IO) {
+        durable.removeObjectForKey(key)
+        durable.synchronize()
+        Unit
     }
 
     // dictionaryRepresentation().keys is Set<Any?> — filterIsInstance avoids the broken List cast

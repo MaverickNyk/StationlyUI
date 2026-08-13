@@ -77,21 +77,61 @@ object DreamSettings {
     private const val KEY_STATION_ID  = "station_id"  // optional override
     private const val KEY_EVER_STARTED = "ever_started"
 
+    /**
+     * Called after every SYNCED write, so the change reaches the backend.
+     *
+     * A callback rather than a direct call because the sync layer needs an API
+     * client, and this object is read by the dream host on a background thread
+     * with no dependency on the network stack. `UserStateSync` sets it at
+     * startup, alongside the equivalent hook on `UserSettings`.
+     *
+     * Suppressed while [applyingRemote] — otherwise adopting settings pushed
+     * from another device would immediately push them straight back.
+     */
+    var onChanged: (() -> Unit)? = null
+
+    private var applyingRemote = false
+
+    /**
+     * Every synced write goes through here.
+     *
+     * One funnel rather than a notify at each setter, because the failure mode
+     * of the alternative is invisible: a setting added later writes the value,
+     * the screen shows it, and it silently never leaves the device. Adding a
+     * setting here cannot forget to sync.
+     */
+    private fun write(key: String, value: String?) {
+        DreamPrefsBackend.set(key, value)
+        if (!applyingRemote) onChanged?.invoke()
+    }
+
+    /**
+     * Apply settings that arrived from the cloud without echoing them back.
+     *
+     * See `UserSettings.applyRemotePreferences` for the same reasoning: a remote
+     * apply that looks like a local change starts a ping-pong between two
+     * devices each re-sending what the other just sent.
+     */
+    fun applyRemote(block: () -> Unit) {
+        applyingRemote = true
+        try { block() } finally { applyingRemote = false }
+    }
+
     fun getLayout(): DreamLayout = DreamLayout.fromStored(DreamPrefsBackend.get(KEY_LAYOUT))
-    fun setLayout(layout: DreamLayout) = DreamPrefsBackend.set(KEY_LAYOUT, layout.storedAs)
+    fun setLayout(layout: DreamLayout) = write(KEY_LAYOUT, layout.storedAs)
 
     fun getTheme(): DreamTheme = DreamTheme.fromStored(DreamPrefsBackend.get(KEY_THEME))
-    fun setTheme(theme: DreamTheme) = DreamPrefsBackend.set(KEY_THEME, theme.storedAs)
+    fun setTheme(theme: DreamTheme) = write(KEY_THEME, theme.storedAs)
 
     fun getClockStyle(): ClockStyle = ClockStyle.fromStored(DreamPrefsBackend.get(KEY_CLOCK_STYLE))
-    fun setClockStyle(style: ClockStyle) = DreamPrefsBackend.set(KEY_CLOCK_STYLE, style.storedAs)
+    fun setClockStyle(style: ClockStyle) = write(KEY_CLOCK_STYLE, style.storedAs)
 
     /**
      * Optional override telling the dream WHICH of the user's saved stations
      * to display. Null → use the first selection on the home screen.
      */
     fun getStationId(): String? = DreamPrefsBackend.get(KEY_STATION_ID)?.ifBlank { null }
-    fun setStationId(stationId: String?) = DreamPrefsBackend.set(KEY_STATION_ID, stationId)
+    fun setStationId(stationId: String?) = write(KEY_STATION_ID, stationId)
 
     /**
      * Has the user ever actually run the screensaver?
@@ -105,5 +145,15 @@ object DreamSettings {
      * has done that job.
      */
     fun hasEverStarted(): Boolean = DreamPrefsBackend.get(KEY_EVER_STARTED) == "true"
+
+    /**
+     * Deliberately NOT routed through [write], and NOT synced.
+     *
+     * The others are preferences; this is a fact about this DEVICE. It drives a
+     * first-run hint telling the user the screensaver exists, and someone who
+     * has run the dream on their tablet has still never seen it on the phone
+     * they just set up — restoring it would hide the hint from exactly the
+     * person it is for.
+     */
     fun markStarted() = DreamPrefsBackend.set(KEY_EVER_STARTED, "true")
 }

@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.stationly.app.platform.DeviceIdentity
 import com.stationly.app.ui.login.PlatformAuthProvider
+import com.stationly.core.activity.ActivityEvents
+import com.stationly.core.activity.ActivityLog
 import com.stationly.core.model.sdui.SyncProfileRequest
 import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
@@ -192,6 +194,31 @@ class ProfileViewModel(
                 // slow backend can't strand the user "half signed out".
                 val uid = storageManager.loadString("firebase_user_uid")
                 if (uid != null) {
+                    // ── Flush pending state BEFORE anything tears down ──
+                    //
+                    // Settings and board changes are debounced by a couple of
+                    // seconds, and signing out immediately after changing one is
+                    // an ordinary thing to do. Without this the change is lost:
+                    // `cleanupAll()` below wipes the local copy, so the next
+                    // login restores the state as it was BEFORE the edit and the
+                    // user's last action is silently undone.
+                    //
+                    // Capped like the other teardown calls — a slow backend must
+                    // not strand the user "half signed out".
+                    try {
+                        kotlinx.coroutines.withTimeoutOrNull(3000) {
+                            com.stationly.app.sync.UserStateSync.flushNow()
+                        }
+                    } catch (_: Exception) {}
+
+                    // Recorded before the sign-out, while the queue still stamps
+                    // events with this uid — the whole reason the activity table
+                    // survives `clearAllData`. Awaited for the same reason: a
+                    // detached write would race the wipe.
+                    runCatching {
+                        ActivityLog.recordBlocking(ActivityEvents.AUTH_LOGGED_OUT)
+                    }
+
                     // a) /user/logout → backend endSession: decrements this
                     //    station's subscription count and flips loggedIn=false.
                     //    Without it the Syncer keeps polling TfL for a user who
@@ -220,6 +247,11 @@ class ProfileViewModel(
                 // Forget the cached (token, uid) pair so the NEXT user on this
                 // device re-registers instead of being skipped as "unchanged".
                 com.stationly.app.util.FcmTokenRegistrar.clearCache()
+                // Same reasoning for the settings stores: they are process-wide
+                // objects, so `cleanupAll()` wiping the DISK is invisible to a
+                // repository that has already loaded. Without this the next user
+                // to sign in on this device inherits this one's arrangement.
+                com.stationly.app.sync.UserStateSync.resetForNewSession()
                 _uiState.value = _uiState.value.copy(isSigningOut = false, signOutSuccess = true)
                 onSuccess()
             } catch (e: Exception) {
@@ -239,6 +271,9 @@ class ProfileViewModel(
                     _uiState.value = _uiState.value.copy(isDeletingAccount = false, error = "Not authenticated")
                     return@launch
                 }
+                runCatching {
+                    ActivityLog.recordBlocking(ActivityEvents.AUTH_ACCOUNT_DELETED)
+                }
                 // Drop this device's token BEFORE the account goes: deleting the
                 // Firestore user doc does NOT delete its `fcm_tokens`
                 // subcollection (Firestore keeps subcollections when a parent
@@ -257,6 +292,15 @@ class ProfileViewModel(
                 authProvider.signOut()
                 stationLifecycleUseCase.cleanupAll()
                 com.stationly.app.util.FcmTokenRegistrar.clearCache()
+                // The teardown `signOut()` does, plus the disk. This was missing
+                // entirely, and each half of it mattered: a debounced push queued
+                // by the deleted account could still fire, the settings stores are
+                // process-wide objects so the next user to sign in on this device
+                // inherited the deleted user's arrangement, and their per-uid rows
+                // in durable storage — which `cleanupAll()` deliberately cannot
+                // reach — would have sat on the device forever with no account
+                // left to claim them.
+                com.stationly.app.sync.UserStateSync.forgetAccount(uid)
                 _uiState.value = _uiState.value.copy(isDeletingAccount = false, deleteAccountSuccess = true)
                 onSuccess()
             } catch (e: Exception) {

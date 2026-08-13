@@ -332,5 +332,61 @@ data class UserProfileResponse(
     val displayName: String,
     val photoURL: String? = null,
     val address: String? = null,
-    val stations: List<SubscribedStation>
+    /**
+     * LEGACY board list — what Android reads and writes.
+     *
+     * iOS must NOT reconcile against this: Android replaces it wholesale on
+     * every board setup, so a shared account's iOS boards are not in it. Use
+     * [boards]. See [com.stationly.core.model.user.Board] for the full account
+     * of why the two lists exist.
+     */
+    val stations: List<SubscribedStation>,
+    /**
+     * The real board list — what iOS reads and writes.
+     *
+     * The backend guarantees this is present on read, deriving it from
+     * [stations] for an account that has only ever used Android, so a user's
+     * first iOS login restores the board they already had. Defaulted here as
+     * well, because a backend that predates the field simply omits it and an
+     * older response must not fail to decode.
+     */
+    val boards: List<com.stationly.core.model.user.Board> = emptyList(),
+    /** LWW guard for [boards] — the device clock of the last accepted write. */
+    val boardsUpdatedAt: Long = 0L,
+)
+
+/** Body of `POST /user/sync/boards`. */
+@Serializable
+data class SyncBoardsRequest(
+    val boards: List<com.stationly.core.model.user.Board>,
+    /** Device clock, epoch millis. The server drops a write older than stored. */
+    val updatedAt: Long,
+    /**
+     * Permission to replace a stored board list with an EMPTY one.
+     *
+     * The endpoint is a full replacement, so `boards: []` is indistinguishable
+     * from "delete everything this account has" — and both platforms have a
+     * window where their local list is legitimately empty but not authoritative
+     * (the login path wipes local SQL before restoring from the cloud). Without
+     * an explicit signal the server has to guess, and guessing wrong once costs
+     * the user every board on every device.
+     *
+     * Defaults to false, so a client that has never heard of this field cannot
+     * clear an account by omission. Ignored entirely when [boards] is non-empty.
+     */
+    val allowEmpty: Boolean = false,
+)
+
+/**
+ * Response to either sync-write.
+ *
+ * [applied] false with a 200 is the normal, expected outcome of a stale write,
+ * NOT an error: the server is telling the client its copy is behind. A client
+ * that treats it as a failure would retry the same stale payload forever.
+ */
+@Serializable
+data class SyncStateResponse(
+    val success: Boolean = false,
+    val applied: Boolean = true,
+    val reason: String? = null,
 )

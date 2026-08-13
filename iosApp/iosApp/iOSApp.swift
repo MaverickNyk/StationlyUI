@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import FirebaseCore
 import GoogleSignIn
 import composeApp
@@ -38,6 +39,21 @@ struct StationlyApp: App {
                 // it on the way out matters: this is the moment we know the app
                 // is about to stop being the thing keeping the widget fresh.
                 BackgroundRefreshScheduler.schedule()
+                // Queue tonight's activity upload, for the same reason: this is
+                // when we know the app has stopped being able to do it itself.
+                ActivityUploadScheduler.schedule()
+
+                // Record the session end and flush any debounced settings or
+                // board changes. Inside a background-task assertion because
+                // both touch SQLite and the network, and iOS will otherwise
+                // suspend the process the moment this callback returns — losing
+                // exactly the write of a user who changed a setting and
+                // immediately swiped away.
+                let task = UIApplication.shared.beginBackgroundTask(withName: "stationly.background-flush")
+                Task { @MainActor in
+                    _ = try? await ActivityBridge.shared.appBackgrounded()
+                    if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
+                }
             }
         }
     }

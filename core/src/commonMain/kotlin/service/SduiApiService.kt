@@ -1,5 +1,7 @@
 package com.stationly.core.service
 
+import com.stationly.core.activity.ActivityBatchRequest
+import com.stationly.core.activity.ActivityUploadOutcome
 import com.stationly.core.model.refresh.RefreshPolicy
 import com.stationly.core.model.sdui.*
 import com.stationly.core.platform.Platform
@@ -66,10 +68,48 @@ interface SduiApiService {
 
     // User Sync & Firestore
     suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse
+    /**
+     * LEGACY board list — Android's write path. iOS uses [syncBoards].
+     *
+     * A full replace of `users/{uid}.stations`. Calling it from iOS would put
+     * both platforms back on one array and reintroduce the cross-platform wipe
+     * that splitting the lists exists to fix.
+     */
     suspend fun syncStations(uid: String, stations: List<SubscribedStation>): Boolean
+    /**
+     * v2 board list. Full replace, guarded by [SyncBoardsRequest.updatedAt].
+     *
+     * A 200 with `applied = false` means the server declined the write and the
+     * caller should re-read rather than retry — either it holds a NEWER list
+     * (`reason = "stale"`), or the write would have emptied a non-empty list
+     * without [allowEmpty] (`reason = "empty_rejected"`).
+     *
+     * The endpoint is platform-neutral by design: Android writes the legacy
+     * `stations` array today and moves to this one unchanged when it adopts the
+     * board model.
+     */
+    suspend fun syncBoards(
+        boards: List<com.stationly.core.model.user.Board>,
+        updatedAt: Long,
+        allowEmpty: Boolean = false,
+    ): SyncStateResponse
     suspend fun getUserProfile(uid: String): UserProfileResponse
     suspend fun logOut(uid: String, deviceId: String? = null): Boolean
     suspend fun deleteAccount(uid: String): Boolean
+
+    /**
+     * Upload a batch of queued activity events.
+     *
+     * Called on a schedule, never per action — see
+     * [com.stationly.core.activity.ActivityLog]. Idempotent server-side, so a
+     * batch whose response was lost is safe to resend.
+     *
+     * Returns the OUTCOME rather than a boolean because the caller's decision
+     * is three-way, not two: a batch the server rejected as malformed must be
+     * discarded, and one that failed transiently must be kept. Collapsing those
+     * to "not ok" either loses events or retries a poisoned batch forever.
+     */
+    suspend fun uploadActivity(request: ActivityBatchRequest): ActivityUploadOutcome
 
     /**
      * Register / unregister this device's FCM token under the user's
@@ -185,6 +225,37 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
             setBody(SyncStationsRequest(uid, stations))
         }
         return response.status == HttpStatusCode.OK
+    }
+
+    override suspend fun syncBoards(
+        boards: List<com.stationly.core.model.user.Board>,
+        updatedAt: Long,
+        allowEmpty: Boolean,
+    ): SyncStateResponse {
+        // No uid in the body: the server takes it from the validated bearer
+        // token. This endpoint REPLACES a list the user cannot afford to lose,
+        // so a self-asserted uid is not something it should ever accept.
+        val response = client.post("$baseUrl/user/sync/boards") {
+            contentType(ContentType.Application.Json)
+            setBody(SyncBoardsRequest(boards, updatedAt, allowEmpty))
+        }
+        return if (response.status == HttpStatusCode.OK) response.body()
+        else SyncStateResponse(success = false, applied = false, reason = "http_${response.status.value}")
+    }
+
+    override suspend fun uploadActivity(request: ActivityBatchRequest): ActivityUploadOutcome {
+        val response = client.post("$baseUrl/user/activity/batch") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+        return when (response.status.value) {
+            200 -> ActivityUploadOutcome.Accepted
+            // 400 is the only status that means "this exact payload is wrong".
+            // 401 will pass once the token refreshes and 429 once the window
+            // rolls, so both keep the batch — and 5xx obviously does.
+            400 -> ActivityUploadOutcome.Rejected
+            else -> ActivityUploadOutcome.Retry
+        }
     }
 
     override suspend fun getUserProfile(uid: String): UserProfileResponse {

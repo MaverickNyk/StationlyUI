@@ -3,7 +3,9 @@ package com.stationly.app.ui.login
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.stationly.app.platform.DeviceIdentity
-import com.stationly.core.model.UserSelection
+import com.stationly.app.sync.UserStateSync
+import com.stationly.core.activity.ActivityEvents
+import com.stationly.core.activity.ActivityLog
 import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
@@ -26,8 +28,10 @@ class LoginViewModel(
     private val userSyncRepository = UserSyncRepository(
         NetworkModule.sduiApi, Platform.sqlStorage, Platform.storageManager
     )
+    /** Named, so the login path can re-seed the shared cache — see below. */
+    private val selectionRepository = SelectionRepository(Platform.storageManager, Platform.sqlStorage)
     private val stationLifecycleUseCase = StationLifecycleUseCase(
-        selectionRepository = SelectionRepository(Platform.storageManager, Platform.sqlStorage),
+        selectionRepository = selectionRepository,
         departureRepository = DepartureRepository(
             NetworkModule.tflApi,
             Platform.storageManager,
@@ -42,6 +46,30 @@ class LoginViewModel(
 
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
+
+    init {
+        // Tell the user WHY they are looking at a sign-in screen.
+        //
+        // An account deleted on another device signs this one out on its own,
+        // which without this is indistinguishable from being mysteriously logged
+        // out — the single most alarming thing an app can do silently. The flag
+        // is raised during the teardown and lives in DURABLE storage, because the
+        // teardown wipes the app's own defaults.
+        //
+        // Read once and cleared immediately: it explains this sign-in, not every
+        // future one.
+        viewModelScope.launch {
+            val flag = UserStateSync.ACCOUNT_REMOVED_FLAG
+            val removed = runCatching { Platform.storageManager.loadDurable(flag) }.getOrNull()
+            if (removed == "1") {
+                runCatching { Platform.storageManager.removeDurable(flag) }
+                _uiState.value = _uiState.value.copy(
+                    accountRemovedNotice =
+                        "Your account was deleted on another device, so you've been signed out here."
+                )
+            }
+        }
+    }
 
     fun loadLayout(screenType: String) {
         // If layout already loaded for same screen type, just reset form state
@@ -235,14 +263,27 @@ class LoginViewModel(
     }
 
     /**
-     * Post-auth backend session sync — the iOS counterpart of Android
-     * `LoginViewModel.syncUserAndSyncData`:
+     * Post-auth restore — everything the user had, before the loader clears.
+     *
+     * The promise this keeps is that signing in on a phone you have never used
+     * lands you in the app you left: your boards with their filters, your home
+     * layout and order, your per-station settings. So all of it is AWAITED
+     * here, in the order the home screen needs it:
+     *
      *  1. `/user/sync/profile` registers this device's session (deviceId +
-     *     deviceInfo) and creates/updates the user record, returning the
-     *     user's saved stations, which are restored into SQLite.
-     *  2. The primary station is fully set up (predictions fetch + FCM topic
-     *     subscribe + widget push).
-     *  3. This device's FCM token is registered under the just-signed-in uid
+     *     deviceInfo) and creates/updates the user record. It also wipes local
+     *     SQL and cache, which is safe only because we are about to repopulate
+     *     from the cloud.
+     *  2. Settings are applied FIRST. `UserSettings` gates the home
+     *     screen on its `loaded` flag, and a board that arrives while settings
+     *     are still at their defaults renders expanded and then collapses a
+     *     frame later — which reads as a glitch, and throws away a full board
+     *     build.
+     *  3. Every board is set up from the v2 list, filters included. Not just
+     *     the first: the one-board restore was Android's constraint, and
+     *     restoring one of a user's five is indistinguishable from having lost
+     *     the other four.
+     *  4. This device's push token is registered under the just-signed-in uid
      *     so user-targeted pushes (incl. cross-device force-logout) arrive.
      *
      * Unlike Android we must NOT run `stationLifecycleUseCase.cleanupAll()`
@@ -258,7 +299,7 @@ class LoginViewModel(
         try {
             val uid = authProvider.currentUserUid()
                 ?: throw IllegalStateException("No uid after sign-in")
-            val stations = userSyncRepository.syncUserAndGetSavedStations(
+            userSyncRepository.syncUserAndGetSavedStations(
                 uid         = uid,
                 email       = authProvider.currentUserEmail() ?: "",
                 displayName = authProvider.currentUserDisplayName(),
@@ -268,20 +309,35 @@ class LoginViewModel(
                 deviceInfo  = DeviceIdentity.deviceInfo()
             )
 
-            stations.firstOrNull()?.let { primary ->
-                stationLifecycleUseCase.setupStation(
-                    UserSelection(
-                        mode           = primary.mode,
-                        line           = primary.line,
-                        station        = primary.id,
-                        stationName    = primary.name,
-                        direction      = primary.direction,
-                        destinations   = emptyList(),
-                        destinationIds = emptyList()
-                    ),
-                    isFirstTime = true
-                )
-            }
+            // Re-seed the in-memory selection cache from disk BEFORE restoring.
+            //
+            // `syncUserAndGetSavedStations` wipes SQLite and repopulates it
+            // directly, without going through the repository — so the shared
+            // cache still holds whatever the PREVIOUS session left in it. iOS
+            // deliberately does not call `cleanupAll()` here (it would wipe the
+            // identity keys Swift just wrote), and `cleanupAll` is what would
+            // otherwise have cleared it.
+            //
+            // Without this, signing in as somebody else shows the previous user's
+            // boards until something happens to rebuild the screen.
+            runCatching { selectionRepository.initialize() }
+
+            // Drop anything held for a previous session BEFORE restoring. The
+            // settings stores are process-wide objects that survive a logout,
+            // so signing in as somebody else without this leaves the previous
+            // user's layout and order in memory — and the new user's first
+            // settings change would then upload that arrangement to THEIR
+            // account.
+            UserStateSync.resetForNewSession()
+
+            // A second read, and worth it. `syncProfile` returns the profile as
+            // it was BEFORE this device's session was registered, and more to
+            // the point it is the legacy-shaped response — the v2 board list and
+            // the settings blob are what this login needs, and this is the call
+            // that is guaranteed to carry them.
+            val profile = UserStateSync.repository.fetch(uid)
+
+            UserStateSync.restoreBoards(profile, stationLifecycleUseCase)
 
             // Best-effort — a failed token registration shouldn't block login;
             // it is retried on the next foreground.
@@ -292,8 +348,13 @@ class LoginViewModel(
             // then re-POSTed the identical token seconds later on EVERY login.
             com.stationly.app.util.FcmTokenRegistrar.ensureRegistered(uid = uid)
 
+            ActivityLog.record(ActivityEvents.AUTH_LOGGED_IN, "provider", provider)
             return true
         } catch (e: Exception) {
+            ActivityLog.record(
+                ActivityEvents.SYNC_FAILED,
+                mapOf("stage" to "login", "reason" to (e.message ?: "unknown")),
+            )
             // ROLLBACK: Firebase auth succeeded but the backend sync didn't.
             // Proceeding would leave a session with no server record (broken
             // widget/sync/FCM topics) — sign back out and let the user retry.

@@ -1,6 +1,8 @@
 package com.stationly.core.util
 
 import com.stationly.core.model.PredictionDisplay
+import com.stationly.core.model.user.BoardConfig
+import com.stationly.core.model.user.BoardPin
 
 /**
  * One block of the board — a platform (rail) or a pole (bus) — as it exists
@@ -45,7 +47,7 @@ object MultiLineBoardProcessor {
     /**
      * TWO SEPARATE LIMITS, and conflating them is the easy mistake here.
      *
-     * [BoardDisplayPrefs.rowCap] is a CEILING, applied per platform: you only
+     * [BoardConfig.rowCap] is a CEILING, applied per platform: you only
      * ever need the next few trains from the platform you are standing on, and a
      * platform with twelve queued departures would otherwise push every other
      * platform off the board. It is the one of the two the USER sets.
@@ -382,7 +384,7 @@ object MultiLineBoardProcessor {
     }
 
     /**
-     * The order the blocks appear in, which is the ONLY level [BoardDisplayPrefs]
+     * The order the blocks appear in, which is the ONLY level [BoardConfig]
      * is allowed to touch besides the depth of each one.
      *
      * Three keys, and the sequence of them is the design:
@@ -401,10 +403,10 @@ object MultiLineBoardProcessor {
      *     number. And the soonest train that has not ALREADY LEFT — see
      *     [soonestArrival].
      *
-     * There is no user-chosen sort in here any more, and [BoardDisplayPrefs]
+     * There is no user-chosen sort in here any more, and [BoardConfig]
      * carries the argument for why not.
      */
-    private fun groupOrder(isBus: Boolean, prefs: BoardDisplayPrefs, nowMs: Long?): Comparator<Block> =
+    private fun groupOrder(isBus: Boolean, prefs: BoardConfig, nowMs: Long?): Comparator<Block> =
         unassignedLast(isBus)
             .thenBy { if (isPinned(it, isBus, prefs.pin)) 0 else 1 }
             .thenBy { block -> soonestArrival(block, nowMs) }
@@ -525,13 +527,13 @@ object MultiLineBoardProcessor {
      * platform, nothing pinned.
      *
      * @param isBus buses group by stop and never show a direction suffix.
-     * @param prefs this station's arrangement — see [BoardDisplayPrefs] for why
+     * @param prefs this station's arrangement — see [BoardConfig] for why
      *   nothing in it can change the GROUPING, only the order and the depth.
      */
     fun buildRows(
         feeds: List<Feed>,
         isBus: Boolean,
-        prefs: BoardDisplayPrefs = BoardDisplayPrefs(),
+        prefs: BoardConfig = BoardConfig(),
     ): List<Row> = rowsFrom(buildGroups(feeds, isBus, prefs))
 
     /**
@@ -705,15 +707,15 @@ object MultiLineBoardProcessor {
      * consumer cannot quietly diverge from it.
      *
      * @param isBus buses group by stop and never show a direction suffix.
-     * @param prefs this station's arrangement — see [BoardDisplayPrefs] for why
+     * @param prefs this station's arrangement — see [BoardConfig] for why
      *   nothing in it can change the GROUPING, only the order and the depth.
      */
     fun buildGroups(
         feeds: List<Feed>,
         isBus: Boolean,
-        prefs: BoardDisplayPrefs = BoardDisplayPrefs(),
+        prefs: BoardConfig = BoardConfig(),
         /**
-         * Departures kept per block, overriding [BoardDisplayPrefs.rowCap].
+         * Departures kept per block, overriding [BoardConfig.rowCap].
          *
          * For the screen the cap IS the display depth and the preference is the
          * right answer. The iOS widget is the exception: it re-derives its ETA
@@ -929,7 +931,7 @@ object MultiLineBoardProcessor {
      * from. It still leads, so the platform the user named is the first line
      * their eye lands on.
      *
-     * [BoardDisplayPrefs.rowsPerPlatform] deliberately does NOT apply — a leg IS
+     * [BoardConfig.rowsPerPlatform] deliberately does NOT apply — a leg IS
      * one departure, so there is no depth here to bound. That is worth knowing
      * when reading the settings screen: of the two board settings, only the pin
      * has any effect until the station is opened, which is why the depth slider
@@ -938,7 +940,7 @@ object MultiLineBoardProcessor {
     fun collapsedLegs(
         feeds: List<Feed>,
         isBus: Boolean,
-        prefs: BoardDisplayPrefs = BoardDisplayPrefs(),
+        prefs: BoardConfig = BoardConfig(),
     ): List<Leg> {
         val all = feeds.withFeeds()
         if (all.isEmpty()) return emptyList()

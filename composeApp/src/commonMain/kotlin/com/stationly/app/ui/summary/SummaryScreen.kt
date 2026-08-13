@@ -100,9 +100,9 @@ import com.stationly.app.ui.summary.components.StationExploreSection
 import com.stationly.app.ui.theme.DisplayFamily
 import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.app.ui.theme.TflAmber
-import com.stationly.app.ui.util.HomeLayout
-import com.stationly.app.ui.util.StationPrefs
-import com.stationly.app.ui.util.StationPrefsRepository
+import com.stationly.core.model.user.BoardConfig
+import com.stationly.core.model.user.HomeLayout
+import com.stationly.core.repository.UserSettings
 import com.stationly.app.platform.HapticType
 import com.stationly.app.platform.performHaptic
 import com.stationly.core.model.UserSelection
@@ -138,11 +138,10 @@ fun SummaryScreen(
     val showWidgetPromo by viewModel.showWidgetPromo.collectAsStateWithLifecycle()
     val showDreamPromo by viewModel.showDreamPromo.collectAsStateWithLifecycle()
     val showNotificationDeniedBanner by viewModel.showNotificationDeniedBanner.collectAsStateWithLifecycle()
-    val stationPrefs by viewModel.stationPrefs.collectAsStateWithLifecycle()
+    val boardConfigs by viewModel.boardConfigs.collectAsStateWithLifecycle()
     // Tells "the user has no preferences" apart from "we have not read them
     // yet" — the two are the same empty map, and they must not render the same.
     val prefsLoaded by viewModel.prefsLoaded.collectAsStateWithLifecycle()
-    val stationOrder by viewModel.stationOrder.collectAsStateWithLifecycle()
     val homeLayout by viewModel.homeLayout.collectAsStateWithLifecycle()
 
     // First authenticated screen — the one place Android asks too. Re-check the
@@ -280,8 +279,12 @@ fun SummaryScreen(
                       // order at all once every station's settings screen offered
                       // the pin: four pinned stations are four stations in
                       // insertion order wearing a badge.
-                      val stationIds = remember(currentSelections, stationOrder) {
-                          StationPrefsRepository.orderedIds(
+                      // Ordered by each board's own `position`, which is why
+                      // `boardConfigs` is the only thing this has to watch: a
+                      // drag in home settings and a rows-per-platform change
+                      // arrive on the same emission.
+                      val stationIds = remember(currentSelections, boardConfigs) {
+                          UserSettings.ordered(
                               currentSelections.map { it.groupingId }.distinct()
                           )
                       }
@@ -355,13 +358,13 @@ fun SummaryScreen(
                           //
                           // Read through the defaults, never off the map: rows
                           // equal to the defaults are pruned on write, so a
-                          // station with default preferences is ABSENT from it,
-                          // and `stationPrefs[it]?.startExpanded == true` would
-                          // read the new default as false for exactly the
-                          // stations that have never been configured.
+                          // board with default configuration is ABSENT from it,
+                          // and `boardConfigs[it]?.expanded == true` would read
+                          // the new default as false for exactly the boards that
+                          // have never been configured.
                           expandedIdsState == null ->
                               stationIds.filter {
-                                  (stationPrefs[it] ?: StationPrefs()).startExpanded
+                                  (boardConfigs[it] ?: BoardConfig()).expanded
                               }.toSet()
                           // A station can be deleted while it is open, leaving an
                           // id that matches no card — which would then be counted
@@ -598,7 +601,7 @@ fun SummaryScreen(
                                         )
                                     }
                                     val primary = groupSelections.first()
-                                    val prefs = stationPrefs[stationId] ?: StationPrefs()
+                                    val config = boardConfigs[stationId] ?: BoardConfig()
 
                                     StationBoard(
                                         expanded = stationId in expandedIds,
@@ -609,9 +612,9 @@ fun SummaryScreen(
                                                     else (expandedIds + stationId).toList()
                                             }
                                         } else null,
-                                        startsExpanded = prefs.startExpanded && !isCarousel,
-                                        showHero = !prefs.hideHero,
-                                        boardPrefs = prefs.board,
+                                        startsExpanded = config.expanded && !isCarousel,
+                                        showHero = config.view.showsHero,
+                                        boardPrefs = config,
                                         onOpenSettings = {
                                             onOpenStationSettings(stationId, primary.mode, primary.stationName)
                                         },

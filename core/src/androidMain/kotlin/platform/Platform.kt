@@ -158,6 +158,24 @@ class AndroidStorageManager(
     override suspend fun loadString(key: String): String? {
         return prefs.getString(key, null)
     }
+
+    /**
+     * A SEPARATE prefs file, so the logout wipe of the session store misses it.
+     * The direct mirror of iOS keeping these in the App Group suite.
+     */
+    private val durablePrefs by lazy {
+        context.getSharedPreferences("stationly_durable_prefs", android.content.Context.MODE_PRIVATE)
+    }
+
+    override suspend fun saveDurable(key: String, value: String) {
+        durablePrefs.edit().putString(key, value).apply()
+    }
+
+    override suspend fun loadDurable(key: String): String? = durablePrefs.getString(key, null)
+
+    override suspend fun removeDurable(key: String) {
+        durablePrefs.edit().remove(key).apply()
+    }
 }
 
 // Android Platform implementation

@@ -42,7 +42,7 @@ import com.stationly.app.platform.ModeIconStore
 import com.stationly.app.ui.common.ReorderBox
 import com.stationly.app.ui.common.SettingsCard
 import com.stationly.app.ui.summary.components.lineColorForTheme
-import com.stationly.app.ui.util.HomeLayout
+import com.stationly.core.model.user.HomeLayout
 import com.stationly.app.ui.theme.isDarkTheme
 import com.stationly.core.util.LineShortNames
 
