@@ -24,6 +24,36 @@ enum WidgetTheme {
     static let textSecondary = Color(white: 0.65)
     static let textMuted     = Color(white: 0.40)
 
+    // MARK: - Type
+    //
+    // ONE typeface for the whole board, and this is the only place it is named.
+    //
+    // The board used to mix three faces without meaning to: SF Pro for names and
+    // headers, SF **Mono** wherever a number appeared (the ETA, the "2/4" page
+    // marker, the wall clock) and SF Pro **italic** for the "ago" timer. Each of
+    // those was a locally sensible decision — mono for digits, italic for a
+    // secondary note — and together they read as a panel assembled from parts.
+    // A departure board is signage: every glyph on it comes off the same
+    // machine, and the hierarchy is carried by SIZE and WEIGHT alone.
+    //
+    // SF Pro is the face, matching Android's board (`widget_departure_row.xml`
+    // and friends set no `fontFamily` — see docs/BOARD_DOTMATRIX_FONT.md for the
+    // DotGothic16 experiment that was tried on iOS and reverted for exactly this
+    // parity reason).
+    //
+    // **Not even tabular figures.** `monospacedDigit()` was applied for a while
+    // at the three call sites that tick (clock, "ago", ETA), on the reasoning
+    // that a per-second number needs a fixed advance or its column twitches.
+    // Sound in isolation, and wrong here: the in-app board sets NO digit
+    // modifier on any of the three, tabular figures are visibly wider and more
+    // evenly spaced, and the comparison a user actually makes is between this
+    // widget and the app's own board seconds later. Two clocks that do not look
+    // like one product is a worse defect than a digit that shifts a point.
+    // If the jitter ever needs fixing it is a defect on BOTH surfaces.
+    static func font(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight)
+    }
+
     // MARK: - Status colours
     // (No per-severity tinting: the line-status strip is board-amber like every
     // other cell — severity is carried by the bold weight, not colour.)

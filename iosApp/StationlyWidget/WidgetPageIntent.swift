@@ -191,7 +191,6 @@ enum WidgetBoardPage {
 /// three more taps forward, and nothing on screen told you that. Two arrows say
 /// which way each tap goes, and the page marker beside them says where you are —
 /// which is the whole position story now that the ring has no ends to dim.
-@available(iOS 17.0, *)
 struct MovePlatformPageIntent: AppIntent {
     static var title: LocalizedStringResource = "Show another platform"
     /// Widget-internal plumbing — keep it out of Shortcuts/Spotlight.
@@ -260,7 +259,6 @@ struct MovePlatformPageIntent: AppIntent {
 /// Carries the station id for the same reason paging does: with several widgets
 /// on screen, refreshing "the widget" would refresh whichever board the legacy
 /// keys happen to hold rather than the one under the finger.
-@available(iOS 17.0, *)
 struct RefreshBoardIntent: AppIntent {
     static var title: LocalizedStringResource = "Refresh departures"
     static var isDiscoverable: Bool = false

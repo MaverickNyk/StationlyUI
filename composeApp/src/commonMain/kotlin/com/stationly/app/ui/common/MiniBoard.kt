@@ -18,7 +18,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -193,10 +192,13 @@ fun MiniBoardClock(time: String = "08:42", ago: String = "30s ago") {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 3.dp, vertical = 1.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Same face as everything else on the board it depicts. This is a
+        // MOCKUP of the real panel, shown in settings so the user can see what a
+        // toggle does; a typeface it does not use makes it a picture of a
+        // different product. The real board carries one face — see `BoardFooter`.
         Text(
             time,
             color = MiniBoardPalette.Amber,
-            fontFamily = FontFamily.Monospace,
             fontSize = 9.sp,
             fontWeight = FontWeight.Bold,
         )

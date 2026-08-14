@@ -1357,6 +1357,87 @@ Group verified by hand at each step.
 
 ---
 
+## 6i. Session 2026-08-14: widget breathing room, one face, one ladder
+
+Owner feedback on the shipped widget, four items. Full reasoning and the exact
+numbers live in **`IOS_WIDGET_DESIGN.md` §6.3**; this is the index entry.
+
+1. **Breathing room is INSIDE the cells** (`BoardMetrics.rowPad`, 10/14/16); the
+   panel runs edge to edge. ⚠️ A margin AROUND the panel (`boardInset` +
+   `ContainerRelativeShape`) was built first, shipped to device, and **reversed
+   on the owner's correction** — *"the dot matrix board should be covering the
+   widget space end to end."* Don't rebuild it; §6.3 says why at length.
+2. **One typeface, named in exactly one place**: `WidgetTheme.font(_:_:)`. The
+   board had drifted onto three faces without deciding to — SF Pro, SF **Mono**
+   on every number (ETA, "2/4" marker, wall clock), SF Pro **italic** on the
+   "ago". `monospacedDigit()` went the same way in the second pass: the in-app
+   board sets no digit modifier, and tabular figures made the widget's clock
+   visibly a different object from the app's.
+3. **The size ladder**: station is **exactly one step over the platform header**
+   (15/14 medium, 17/16 large), then rows, status, "ago". A first pass pushed the
+   station to 14/17/20 and the owner cut it back. One genuine inversion fixed on
+   the way: on **small the platform header was smaller than the departures** (10
+   against 11). The station name now **truncates rather than shrinks**, and on
+   small it also takes the left-hand balancing column (`centresStationName`).
+4. **The small family's footer drops the wall clock**, centres the "ago" at a
+   width that can't clip it, and is **pinned** to a short height
+   (`footerFlexible`) so the surplus goes to the departure rows — lowering its
+   floor alone did nearly nothing, because every cell shares surplus equally.
+5. **The footer clock is deliberately off the ladder** on medium/large: it sits
+   at the station's size, bold, matching `Board.kt`'s 19sp-against-15sp footer.
+   Setting it to row size made the footer read as a continuation of the last
+   departure — *"the clock row is matching with the row above it, like there is
+   no gap in between"*. There is a gap; the board is one `VStack(spacing: 2)`
+   with no exception at the footer. What had gone was the distinction.
+
+The in-app board moved with it, because a user sees both within seconds:
+`Board.kt`'s `BoardFooter` no longer italicises its "ago" — a **deliberate
+divergence** from `widget_departure_board.xml`, which sets `textStyle="italic"`
+there — and `MiniBoardClock` lost its `FontFamily.Monospace` (it is a mockup of
+this board; a face the real one doesn't use makes it a picture of another
+product).
+
+### Gates
+
+`:composeApp:assembleComposeAppDebugXCFramework` +
+`:composeApp:assembleIosArm64MainResources` green, `xcodebuild` **BUILD
+SUCCEEDED** with no new warnings, `:core:testDebugUnitTest` up-to-date (no
+`:core` changes), `:composeApp:compileKotlinIosArm64` and
+`:composeApp:compileDebugKotlinAndroid` green. Installed and launched on the
+iPhone 11 after each round, with the §3.4 archive loop run every time. Final
+run: **29 × `Reload success`, zero `Unable to unarchive collection`, zero
+`Reload failure`** across all three families (large 13 / medium 15 / small 16)
+and four boards — `910GTOTCTRD`, `940GZZLUKSX`, and a bus hub `490G00008805`,
+which is the one that exercises the bus affinity split.
+
+Note the grep for `crash|fatal|terminat` fires on RunningBoard's routine
+`terminationResistance:None` lines for the extension — that is normal chatter,
+not a crash. Tighten the pattern if it gets in the way.
+
+### Review pass
+
+A strict review of the view layer followed the feedback rounds —
+**`SESSION_2026-08-14_WIDGET_REVIEW.md`**. Five defects (a cropped maker mark
+from a height floor that forgot its own padding; an unreachable `else` branch
+drawing the non-Button arrow the design doc forbids; `Date()` read from inside a
+view body; a silently-wrong alignment mapping; a slice indexed as an array),
+seven archive-path optimisations, and the discovery that **this extension
+deploys to iOS 26, not 17** — every `@available(iOS 17.0, *)` in it was dead.
+
+### Not verified
+
+**The pixels.** `idevicescreenshot` still fails on this device
+(`Could not start screenshotr service`), and a home-screen widget cannot be
+captured programmatically anyway, so every claim above about how it LOOKS is an
+inference from the layout code — which is exactly how round one shipped a margin
+that had to be reversed. Two rounds of feedback have gone through this loop; a
+third would be cheaper with a photo. Still open for the owner's eyes: whether
+`rowPad` at 14/16 is enough text inset on the wide families, whether the
+medium/large clock at station size now reads as its own row, and how much of a
+long station name survives on small.
+
+---
+
 ## 7. Which doc to open
 
 | Doc | Reach for it when |

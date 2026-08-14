@@ -70,6 +70,11 @@ Problem: the board floated inside a black frame — default iOS 17 content
 margins (§2.4) + an internal `.padding(5)` + rounded per-cell corners made it
 read as "a board within the widget".
 
+> **Confirmed 2026-08-14 (§6.3):** an outer margin around the panel was tried
+> and **removed** — the board covers the widget end to end, and the corner-zone
+> insets below remain the only thing keeping content clear of the mask.
+> Breathing room is `BoardMetrics.rowPad`, inside the cells.
+
 Fix:
 - `.contentMarginsDisabled()` on the `WidgetConfiguration`
   (`StationlyWidget.swift`) — content extends to the physical widget edges.
@@ -90,6 +95,12 @@ Height behaviour is unchanged: every cell is height-flexible
 share-out, so the column always fills the canvas exactly.
 
 ### 3.2 Live HH:MM:SS footer clock (ticks every second)
+
+> **Amended 2026-08-14 (§6.3):** the small family no longer draws this at all —
+> the phone's status bar already says the time. On medium and large it is plain
+> bold system type with **no** digit modifier, matching the in-app board's clock
+> exactly (it was SF Mono, then briefly SF Pro tabular; both looked like a
+> different product beside the app's board).
 
 `LiveClock` (`WidgetViews.swift`): a `.timer`-style `Text` anchored at **local
 midnight** — `Text(Calendar.current.startOfDay(for: entryDate), style: .timer)`.
@@ -606,6 +617,164 @@ moving rather than a cut:
 
 Transitions WidgetKit does not support are ignored rather than failing, so the
 worst case here is the cut we had before.
+
+## 6.3 Breathing room, one face, one ladder (2026-08-14)
+
+Four pieces of owner feedback on the shipped widget, and three of the four are
+the same observation from different angles: the board had accumulated local
+decisions that were each defensible and did not add up to one object.
+
+### Breathing room is INSIDE the cells — the panel still runs edge to edge
+
+⚠️ **This was got wrong once, corrected on device the same day, and the wrong
+version is the tempting one.** The first reading of "more breathing room from the
+edges" put a margin AROUND the panel: a `BoardMetrics.boardInset` of 5–6pt plus a
+`.clipShape(ContainerRelativeShape())` so the panel's corners ran concentric with
+the widget's. It was archive-safe and it looked deliberate, and it was still
+wrong. Owner's correction:
+
+> *"by breathing room I mean the breathing room for the text, the layout and the
+> design — the dot matrix board should be covering the widget space end to end."*
+
+A panel with a border round it stops being the widget and becomes a card inside
+it, which is precisely what §3.1 removed. **Do not reintroduce an outer margin.**
+The `boardInset` field and the clip are gone; there is a comment at the foot of
+`BoardWidgetView.board` holding that ground.
+
+What actually needed room was the text, which sat on a flat 10pt inset at every
+family — comfortable on a 2×2, mean on a 360pt-wide board where a destination had
+340pt of cell and used all of it. So:
+
+- **`BoardMetrics.rowPad`** — 10 / 14 / 16 — is the content inset of every
+  mid-board cell: departures, the status strip, the empty and message cells, a
+  non-pageable platform header, and the skeleton's equivalents. Small keeps 10; it
+  has a third of the width and the destination needs every point.
+- The header and footer keep their own deeper pads (`headerPad` / `footerPad`),
+  because those two cells sit where the widget's corner mask intrudes — that
+  reasoning from §3.1 is load-bearing again now the panel is full-bleed.
+- **The footer-shed threshold measures `geo.size.height`, the FULL canvas**, and
+  the `GeometryReader` sits outside everything — unchanged, and the thing to
+  check first if any of this is ever retuned.
+
+### One typeface: `WidgetTheme.font`
+
+The board was mixing three faces without ever deciding to. SF Pro for names and
+headers; **SF Mono** wherever a number appeared (the ETA, the "2/4" page marker,
+the wall clock); **SF Pro italic** for the "ago" timer. Each was locally sensible
+— mono for digits, italic for a secondary note — and together they read as a
+panel assembled from parts. A departure board is signage: one machine cuts every
+glyph, and the hierarchy is carried by size and weight alone.
+
+`WidgetTheme.font(_:_:)` is now the only place the face is named, and every
+`Text` and SF Symbol in the extension goes through it. `grep '\.font(\.system'`
+over `iosApp/StationlyWidget/` should return nothing.
+
+**Not even tabular figures.** `monospacedDigit()` was applied for a while at the
+three call sites that tick (`LiveClock`, `LiveAgo`, the ETA), on the reasoning
+that a per-second number needs a fixed advance or its column twitches. Sound in
+isolation, wrong here — the in-app board sets no digit modifier on any of the
+three, tabular figures are visibly wider and more evenly spaced, and the
+comparison a user actually makes is between this widget and the app's own board
+seconds later. Two clocks that don't look like one product is a worse defect than
+a digit that shifts a point. If the jitter ever needs fixing, it needs fixing on
+**both** surfaces.
+
+The in-app board matches: `Board.kt`'s `BoardFooter` no longer italicises its
+"ago", which is a **deliberate divergence from Android** — `widget_departure_board.xml`
+sets `textStyle="italic"` on that element. The two surfaces are seen within
+seconds of each other and have to agree; the board-wide rule wins over the
+per-element parity. `MiniBoardClock` lost its `FontFamily.Monospace` for the same
+reason: it is a mockup OF this board shown in settings, and a face the real one
+does not use makes it a picture of a different product.
+
+### The size ladder: station one step over platform, and the clock off it
+
+| | was | is | why |
+|---|---|---|---|
+| platform header (small) | 10 | 12 | **smaller than the departures at 11** — the ladder was inverted on the one family with the least room to spare, so the 2×2 board had no visible hierarchy at all |
+| platform header | 13/15 | 14/16 | raised toward the station rather than the station being raised away |
+| station | 12.5/16/19 | 13/15/17 | **exactly one step above the platform header.** Owner: *"make sure the station font is not too big, it should just be 1 size bigger than the platform rows, that's it."* A first pass took it the other way (14/17/20) and it read as a title bar rather than as the top rung of a board |
+| footer clock | 12/15/18 | —/15/17 | see below |
+
+Departure rows are unchanged throughout at 11 / 12.5 / 14.5; everything moved
+around them. The ETA lost its half-point bump and its mono face — same size as
+the destination beside it, and **bold is what makes it the number you scan for**.
+
+**The footer clock is deliberately NOT on that ladder.** It sits at the
+station's size, bold, which puts it far above the departure row immediately
+above it — and that is the whole job. Folding it into the "everything else" band
+at row size was tried and produced the next piece of feedback:
+
+> *"In the mid rectangular widget the clock row is matching with the row above
+> it, like there is no gap in between."*
+
+There is a gap — the board is one `VStack(spacing: 2)` with no exception at the
+footer, checked. What had gone was the *distinction*: same face, same size, same
+lit surface, so two cells read as one and a 2pt bezel line between them stopped
+registering. The in-app board never had this problem because it never made that
+mistake — `BoardFooter` in `Board.kt` runs its clock at **19sp bold against 15sp
+rows**, on its own lit chip. A widget footer quieter than the app's is the same
+board disagreeing with itself. It stops at the station's size and does not
+outrank it.
+
+### The station name truncates; it never shrinks
+
+`minimumScaleFactor(0.65)` is gone from `DotMatrixHeader`. It made the board's
+loudest line the only one whose size varied with its content — "Bank" at full
+height, "Highbury & Islington" at two thirds of it — so the widget appeared to
+use a different type scale per station. A station name is the one string on the
+board the user already knows (they chose it), so the tail is the cheapest thing
+on the panel to lose. Owner's words: *"the station name should be the biggest
+even though it is cut short with …"*.
+
+**On small the name takes the left-hand space too** (`BoardMetrics.centresStationName`,
+false only there). The header reserves an empty column matching the refresh
+button opposite so the name stays optically centred — 22pt of slot plus 8pt of
+spacing, about a quarter of a 2×2 header, held empty to centre a name that had
+already been cut to three characters. Centring is not worth a quarter of the row
+it centres. Small drops the reservation and reads from the left edge, the roundel
+anchoring it; medium and large keep it, because there the name has width to spare
+and an off-centre title on a wide board looks like a mistake.
+
+### The small family's footer drops the wall clock
+
+A 2×2 footer is ~145pt wide once the maker mark and both insets are out of it,
+and three elements in that space is not a layout, it is a queue. The wall clock
+is the one of the three that is **redundant on this device** — the phone's own
+status bar is a centimetre above the widget and says the same thing — so it comes
+out and the "ago" timer takes the middle. That one has no other source: it is
+the only thing on the panel saying whether these departures are seconds or
+minutes old, which is the question a glance at a departure board is asking.
+
+`BoardMetrics.showsClock` carries it (false on small only). The trailing column
+is still reserved and holds nothing, because that is what keeps the "ago"
+optically centred against the maker mark opposite. `SkeletonBoardView` draws the
+same two bars, since it is what is on screen immediately before the real footer.
+
+Two follow-ups from seeing it on device:
+
+- **Centred, it gets a wide frame** (`LiveAgo.maxWidth`, `ago * 9` instead of the
+  three-column footer's 72pt) so a two-digit-minute reading — "12:07 ago" — shows
+  in full. This is the one place on the board with width going spare; nothing
+  here should be clipped.
+- **`BoardMetrics.footerMinHeight`** replaces the flat `clock + 12`: a footer
+  with no wall clock in it has no business reserving a clock's worth of height,
+  so on small it is sized to the taller of its two remaining tenants
+  (`max(ago, logo) + 7` ≈ 18pt against 23).
+- **And it is PINNED there** (`footerFlexible`), which is the half that actually
+  does the work. Lowering the floor alone looks like it should hand the
+  departure rows their space back and very nearly doesn't: every cell is
+  `maxHeight: .infinity` at equal priority (§3.6), so surplus is split **equally**
+  — returning 5pt to a pool of six cells buys each row less than a point, and the
+  footer grows straight back into most of what it gave up. Pinned, the whole
+  surplus goes to the cells above. It stays a constant per family, so this does
+  not reintroduce the reflow §6.2 removed.
+
+Medium and large keep all three columns — they have the width, and there the
+clock is part of the concourse-board lockup rather than a passenger competing
+for it.
+
+---
 
 ## 7. The App Group is a hand-kept contract (2026-08-08)
 

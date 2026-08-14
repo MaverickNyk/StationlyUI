@@ -2057,8 +2057,17 @@ private fun BoardFooter(lastUpdated: Long) {
             Text(clock, color = BoardAmber, fontSize = 19.sp, fontWeight = FontWeight.Bold)
         }
         // X ago (right)
+        //
+        // UPRIGHT, where Android's `widget_departure_board.xml` sets
+        // `textStyle="italic"` on the same element. One deliberate divergence,
+        // and it is the board-wide rule rather than a decision about this label:
+        // every glyph on a signage panel comes off the same machine, so the
+        // panel carries ONE face in one style and lets size and weight do the
+        // ranking. This was the only slanted text on it — see the same change on
+        // the widget's `LiveAgo`, which the two surfaces have to agree on since
+        // a user sees them within seconds of each other.
         Text(
-            ago, color = BoardAmber, fontSize = 12.sp, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+            ago, color = BoardAmber, fontSize = 12.sp,
             modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp)
         )
     }

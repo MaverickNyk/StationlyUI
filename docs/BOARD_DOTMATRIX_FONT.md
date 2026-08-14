@@ -8,6 +8,14 @@
 > `UIAppFonts`, and the `Board.kt`/`WidgetViews.swift` font wiring are all gone.
 > This doc is kept only as a record of how to source/subset/wire a board font **if
 > the idea is ever revisited for BOTH platforms**. Everything below is historical.
+>
+> **The live rule (2026-08-14):** one face across the whole board and widget, and
+> it is the system face. The widget names it in exactly one place —
+> `WidgetTheme.font(_:_:)` — and the in-app board sets no `fontFamily` at all.
+> No `design: .monospaced`, no `.italic()`; `monospacedDigit()` on ticking
+> numbers only, which is the same face with tabular figures. See
+> `IOS_WIDGET_DESIGN.md` §6.3. §5 below is superseded: do NOT wire a custom font
+> into the widget.
 
 **Added:** Session 8 (2026-06-14), branch `ios-parity`. **Reverted:** Session 9.
 **Goal:** make the departure board read like a real London platform dot-matrix
