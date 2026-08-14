@@ -331,8 +331,29 @@ class IosWidgetManager : WidgetManager {
         // fallback names into the App Group. See LineNameStore.
         LineNameStore.ensureLoaded()
 
-        val byStation = all.groupBy { it.groupingId }
+        // Loaded FIRST, because it is what brings [UserSettings] into memory and
+        // the ordering just below reads that same store. Arranging the directory
+        // before the store was loaded would see every board UNPOSITIONED, tie on
+        // the sort key, and silently fall back to insertion order — which is
+        // precisely the bug the ordering exists to fix.
         val prefs = boardPrefs()
+
+        // ── The directory is in the HOME SCREEN's order, not insertion order ──
+        //
+        // `groupBy` preserves first-encounter order, so this listed stations in
+        // the order they were ADDED. The home screen has never agreed with that:
+        // it sorts by each board's own `position` via [UserSettings.ordered],
+        // which is what `SummaryScreen` uses. Dragging a station to the top of
+        // the list therefore moved it on the home screen and nowhere else.
+        //
+        // Three surfaces read "first" off this list and every one of them means
+        // the user's first: the configuration picker, the gallery's
+        // `recommendations()`, and the station a newly added widget defaults to
+        // (`StationEntityQuery.defaultResult`). They can no longer disagree with
+        // the arrangement the user can actually see.
+        val grouped = all.groupBy { it.groupingId }
+        val byStation = UserSettings.ordered(grouped.keys.toList())
+            .mapNotNull { id -> grouped[id]?.let { id to it } }
         // ONE clock for the whole write, not one per station. Every board here
         // is produced by the same pass and its block ordering is judged against
         // "has this train already left" — reading the clock per station would
@@ -396,13 +417,24 @@ class IosWidgetManager : WidgetManager {
                 if (putIfChanged(d, AppGroupKeys.WIDGET_BOARD_PREFIX + board.id, it)) changed = true
             }
         }
-        if (forgetStations(d, previousIds - byStation.keys)) changed = true
+        // `grouped`, not `byStation`: the arrangement above turned the latter
+        // into an ordered list, and this only needs the SET of ids that survive.
+        if (forgetStations(d, previousIds - grouped.keys)) changed = true
 
         // ── The primary, in the legacy single-board keys ──
         //
-        // Still written, and not merely for compatibility: an unconfigured
-        // widget (one added before this build, or one whose station has since
-        // been deleted) resolves to the primary, and these are what it reads.
+        // Still written, for one case: a widget added before the configuration
+        // existed, which has no station id to resolve and reads these keys
+        // directly.
+        //
+        // It is no longer where a DELETED station's widget lands. That used to
+        // fall through to here — a silent jump to whichever board happened to be
+        // primary, through a path that can be staler than the per-station keys —
+        // and it now repoints through `AppGroupStorage.unclaimedStation()`
+        // instead. These keys are the last resort, not the general fallback.
+        //
+        // "Primary" now means the FIRST BOARD ON THE HOME SCREEN, since `boards`
+        // follows the user's arrangement. It used to mean the oldest.
         if (writeLegacy(d, boards.first())) changed = true
 
         // ONE signal for the whole pass, and only when a value moved. Swift's

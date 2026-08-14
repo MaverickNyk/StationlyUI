@@ -1438,6 +1438,47 @@ long station name survives on small.
 
 ---
 
+## 6j. Session 2026-08-14 (second): widget configuration + tap-to-station
+
+Four asks, all about a widget knowing which station it is for. Full defect log:
+**`SESSION_2026-08-14_WIDGET_CONFIG.md`**. Feature reasoning:
+`IOS_WIDGET_DESIGN.md` §9.
+
+1. **A new widget takes the next station.** `defaultResult()` →
+   `AppGroupStorage.unclaimedStation()` — the first station no placed widget is
+   showing, rotating when all are taken. A pure read of the placement stamps, so
+   it is idempotent; a cursor cannot work, because `defaultResult()` is consulted
+   on gallery previews and editor visits, not once per widget.
+2. **A deleted station's widget repoints** rather than falling through to the
+   legacy flat keys. Never cleared — the configured id survives sign-out, so
+   signing back in restores every widget by itself, and a clear is irreversible.
+3. **The picker follows the home screen's order.** It was insertion order; the
+   home screen sorts by `position`. Three surfaces read "first" off it.
+4. **Tapping a widget opens that station** — `widgetURL` → `BoardFocus` →
+   carousel page turn or list expand-and-scroll.
+
+### Two traps found here, both worth remembering
+
+⚠️ **`idevicesyslog` returns NOTHING on this iPhone.** Measured: 8 seconds, two
+lines, neither ours. **The §3.4 archive-loop protocol in `IOS_WIDGET_DESIGN.md`
+cannot be used on this device any more** — it was the tool every previous widget
+session verified with. Pull the App Group plist instead and read
+`widget_refresh_trace` (extension) and `push_trace` (app + Kotlin); both rings
+already existed. `xcrun devicectl device process launch --payload-url
+"stationly://home?station=<id>"` fires a deep link without touching the phone.
+
+⚠️ **Build STAGING, always** — see §8, and read the configuration names there
+before improvising. There is no plain `Debug`; passing one builds the app target
+as *Debug Production* while the SPM packages land in `Debug-iphoneos`, and it
+fails with a misleading `unable to resolve module dependency: 'FirebaseAuth'`.
+Reaching for `-configuration "Debug Production"` to fix that compiles, installs
+over the staging app (same bundle id), and silently repoints it at
+`api.stationly.co.uk`. It also cost the AppIntents registration: the picker
+reported *"unknown extension process"* until the phone was rebooted, with the
+metadata verified present and no crash logs.
+
+---
+
 ## 7. Which doc to open
 
 | Doc | Reach for it when |
@@ -1455,6 +1496,16 @@ long station name survives on small.
 ---
 
 ## 8. Build + deploy (device, staging)
+
+⚠️ **STAGING ONLY, and name both the scheme and the configuration.** The four
+configurations are `Debug Staging`, `Debug Production`, `Release Staging`,
+`Release Production` — **there is no plain `Debug`**. Passing one does not fail
+cleanly: xcodebuild builds the app as *Debug Production* while the SPM packages
+land in `Debug-iphoneos`, and dies with `unable to resolve module dependency:
+'FirebaseAuth'`. "Fixing" that with `-configuration "Debug Production"` installs
+over the staging app — same bundle id — and repoints it at `api.stationly.co.uk`,
+where the account and its boards do not exist. Confirm which is installed by
+reading `widget_api_base_url` out of the App Group plist.
 
 ⚠️ **You must rebuild the XCFramework after any Kotlin edit.** Xcode links a
 prebuilt artifact, so editing Kotlin and running only `xcodebuild` silently

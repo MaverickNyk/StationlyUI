@@ -231,12 +231,22 @@ struct StationEntityQuery: EntityStringQuery {
         AppGroupStorage.shared.readStations()
     }
 
-    /// What an unconfigured widget shows: the first station, which is the same
-    /// one the app treats as primary. A widget dropped on the home screen must
-    /// say something immediately — an empty board with "choose a station" would
-    /// make the user open an editor to see anything at all.
+    /// What a newly added widget shows.
+    ///
+    /// A widget dropped on the home screen must say something immediately — an
+    /// empty board reading "choose a station" would make the user open an editor
+    /// to see anything at all.
+    ///
+    /// It used to be `.first` unconditionally, which meant a user with three
+    /// stations who added three widgets got three copies of the same board and
+    /// had to go into Edit Widget twice to fix it. Now it is the first station
+    /// nothing is already showing, so widgets fill the list in the order the
+    /// user arranged it and a fourth wraps around. `unclaimedStation()` carries
+    /// the reasoning, including why this is a pure read — it matters here, since
+    /// the system calls this whenever the parameter is unresolved and not once
+    /// per widget.
     func defaultResult() async -> StationEntity? {
-        AppGroupStorage.shared.readStations().first
+        AppGroupStorage.shared.unclaimedStation()
     }
 }
 
@@ -247,9 +257,21 @@ struct StationEntityQuery: EntityStringQuery {
 /// second copy of those knobs in the widget editor would be a second answer to
 /// the same question with no rule for which wins.
 struct SelectStationIntent: WidgetConfigurationIntent {
-    static var title: LocalizedStringResource = "Select Station"
-    static var description = IntentDescription("Choose which of your stations this widget shows.")
+    static var title: LocalizedStringResource = "Choose Station"
+    /// Shown under the picker in Edit Widget, and it is the one place to answer
+    /// the question the sheet raises by having exactly one row: *is this all I
+    /// can set?* It is — everything else about the board is the station's own
+    /// setting in the app, and saying so here stops someone hunting for depth
+    /// and ordering controls that were deliberately not put in two places.
+    ///
+    /// One string literal on one line, and it has to be: `IntentDescription`
+    /// takes a `LocalizedStringResource`, which is built from a literal at
+    /// COMPILE time so the string can be extracted for localisation. A `+`
+    /// concatenation is an ordinary `String` and does not match the initialiser.
+    static var description = IntentDescription("Pick the station this board shows. How deep each platform goes, and which platform leads, come from that station's settings in Stationly.")
 
+    /// "Station" and not "Board": the row's VALUE is a station name, and a
+    /// label that disagrees with the thing next to it makes the user read both.
     @Parameter(title: "Station")
     var station: StationEntity?
 

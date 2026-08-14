@@ -41,7 +41,18 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         let data = context.isPreview
             ? WidgetData.placeholder
             : AppGroupStorage.shared.readWidgetData(stationId: configuration.station?.id)
-        return DepartureEntry(date: Date(), widgetData: data)
+        return DepartureEntry(
+            date: Date(),
+            widgetData: data,
+            // No link from the GALLERY preview — its board is invented, so a tap
+            // would deep-link to a station the user may not even track. A real
+            // snapshot is a live board and gets the same link a timeline entry
+            // would.
+            render: BoardRenderState(
+                deepLink: context.isPreview
+                    ? nil
+                    : StationlyDeepLink.board(stationId: data.stationId))
+        )
     }
 
     // Called when WidgetKit needs a fresh set of entries to display.
@@ -72,6 +83,16 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         // target — and `Board.widget` is the only per-board fact the app has no
         // other source for. Written before the fetch below, so a widget whose
         // refresh fails is still counted as placed.
+        //
+        // ── The CONFIGURED station, not the rendered one ──
+        //
+        // These two differ for exactly one widget: one whose station has been
+        // deleted and which `readWidgetData` has repointed. Stamping the
+        // configured id keeps that widget from claiming the station it borrowed
+        // — if it claimed it, the next build would find it taken and repoint
+        // somewhere else, and the board would walk down the user's station list
+        // a few minutes at a time. The `?? data.stationId` arm is for a widget
+        // with no configuration at all, which is showing what it stamps.
         AppGroupStorage.shared.notePlacement(
             station: configuration.station?.id ?? data.stationId,
             family: String(describing: context.family)
@@ -169,7 +190,11 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
             isPageMove: movedAt > max(refreshedAt, data.lastUpdated.timeIntervalSince1970),
             moveForward: WidgetBoardPage.lastMoveWasForward(data.stationId),
             refreshFailed: AppGroupDefaults.shared?
-                .bool(forKey: AppGroupKeys.refreshFailed(data.stationId)) ?? false
+                .bool(forKey: AppGroupKeys.refreshFailed(data.stationId)) ?? false,
+            // Built from the station actually being RENDERED, which for a widget
+            // whose station was deleted is the repointed one rather than
+            // `configuration.station`. Once per timeline, not once per entry.
+            deepLink: StationlyDeepLink.board(stationId: data.stationId)
         )
 
         let interactionAt = max(movedAt, refreshedAt)
@@ -436,8 +461,20 @@ struct StationlyDepartureBoardWidget: Widget {
         ) { entry in
             DepartureBoardEntryView(entry: entry)
         }
-        .configurationDisplayName("Stationly Departures")
-        .description("Live TfL departures. Add one per station.")
+        // ── What the gallery and the editor call this ──
+        //
+        // "Station Boards", plural, because the unit a user adds is ONE board
+        // and the expected shape is several of them. A singular name invites
+        // the reading this widget spent a release being wrong about: that one
+        // widget covers everything you track.
+        //
+        // The description is the only sentence between someone in the gallery
+        // and a board on their home screen, so it says what to DO ("choose one
+        // of your stations") rather than what the product is. "Live TfL
+        // departures" described a category; nobody adding this doubts it shows
+        // departures.
+        .configurationDisplayName("Station Boards")
+        .description("Choose one of your stations to show live departures. Add a board for each station you follow.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         // The black dot-matrix panel IS the product identity — keep it under
         // the amber text everywhere (StandBy, lock screen contexts) instead of

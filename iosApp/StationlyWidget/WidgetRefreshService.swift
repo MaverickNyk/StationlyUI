@@ -414,7 +414,11 @@ enum WidgetRefreshService {
         for id in ids {
             // Resolved through the same reader the RENDERER uses, so a refresh
             // can never target a board other than the one on screen — including
-            // its fallback to the legacy keys for a station since deleted.
+            // the REPOINT it applies for a station since deleted. That shared
+            // resolution is why this invariant survived repointing replacing the
+            // old legacy-key fallback: both live in `readWidgetData`, and
+            // `seen` then collapses two widgets repointed to the same station
+            // into one fetch.
             let board = AppGroupStorage.shared.readWidgetData(stationId: id)
             guard seen.insert(board.stationId).inserted else { continue }
             let feeds = board.feeds.isEmpty ? legacyFeed(d).map { [$0] } ?? [] : board.feeds

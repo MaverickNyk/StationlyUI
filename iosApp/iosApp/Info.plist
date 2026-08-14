@@ -35,6 +35,16 @@
 				<string>com.googleusercontent.apps.48865967804-g7alcuuk9ld0m7e3vugcc4jnscfl54qg</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.stationly.mobile.deeplink</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>stationly</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>

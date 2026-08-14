@@ -25,12 +25,35 @@ struct DepartureBoardEntryView: View {
     /// every family gets.
     var body: some View {
         let metrics = BoardMetrics.forFamily(family)
-        if entry.isSkeleton {
-            SkeletonBoardView(metrics: metrics)
-        } else {
-            BoardWidgetView(data: entry.widgetData, clock: entry.date,
-                            metrics: metrics, render: entry.render)
+        Group {
+            if entry.isSkeleton {
+                SkeletonBoardView(metrics: metrics)
+            } else {
+                BoardWidgetView(data: entry.widgetData, clock: entry.date,
+                                metrics: metrics, render: entry.render)
+            }
         }
+        // ── Where a tap on the board goes ──
+        //
+        // Every widget used to open the app to whatever it was last showing, so
+        // a home screen with three stations on it had three buttons that did the
+        // same thing. This carries the station and the app pages or scrolls to
+        // it.
+        //
+        // It does not fight the buttons: the pager arrows and the refresh
+        // control are `Button(intent:)` and keep their own hit regions,
+        // `widgetURL` claims everything else. That is the same rule §6 of the
+        // design doc records from device testing — only now the leftover pixels
+        // lead somewhere specific rather than merely opening the app.
+        //
+        // Resolved when the TIMELINE was built, never here — see
+        // `BoardRenderState.deepLink`. It is deliberately the RENDERED station
+        // rather than the configured one: a widget whose station was deleted is
+        // showing a replacement, and tapping it must open what is on screen. The
+        // configured id would deep-link to a station the user no longer has,
+        // which the app drops — leaving the one widget most in need of attention
+        // as the only one that does nothing.
+        .widgetURL(entry.render.deepLink)
     }
 }
 

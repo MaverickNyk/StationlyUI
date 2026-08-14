@@ -121,6 +121,19 @@ targets:
           - CFBundleTypeRole: Editor
             CFBundleURLSchemes:
               - com.googleusercontent.apps.48865967804-g7alcuuk9ld0m7e3vugcc4jnscfl54qg
+          # Our own scheme. Without it iOS has no handler for `stationly://` and
+          # the URL is simply dropped — which is why the note in AppDelegate
+          # about password-reset links reads as an instruction rather than a
+          # description: `handleFirebaseActionURL` has never been reachable.
+          #
+          # The widget needs it now. A board tap opens
+          # `stationly://home?station=<groupingId>` so the app can go to the
+          # station that was tapped rather than to wherever it was last left;
+          # see `DepartureBoardEntryView.boardURL` and `BoardFocus`.
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: com.stationly.mobile.deeplink
+            CFBundleURLSchemes:
+              - stationly
     entitlements:
       path: iosApp/iosApp.entitlements
       properties:

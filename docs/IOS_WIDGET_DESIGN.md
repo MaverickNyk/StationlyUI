@@ -840,3 +840,112 @@ it. The home-screen snapshot can lag a reinstall — remove/re-add the widget or
 wait for the next timeline reload if it looks stale.)
 
 Full procedure, signing and Xcode-26 gotchas: `IOS_BUILD_AND_HANDOFF.md` §0/§3.
+
+---
+
+## 9. Which station a widget shows, and where a tap goes (2026-08-14)
+
+Four questions a widget has to answer about its own identity. Defect log and
+verification: `SESSION_2026-08-14_WIDGET_CONFIG.md`.
+
+### 9.1 A new widget takes the next station, not always the first
+
+`StationEntityQuery.defaultResult()` → `AppGroupStorage.unclaimedStation()`:
+
+> the first station in the user's order that no placed widget is already
+> showing; when every station is spoken for, a rotation.
+
+Three stations and three widgets is one each, in the order arranged on the home
+screen; a fourth wraps to the first.
+
+**It is a pure read, and that is the design.** The obvious version — a cursor in
+the App Group, advanced per new widget — cannot be made correct, because
+`defaultResult()` is not called once per widget. The system consults it whenever
+the parameter is unresolved, which includes gallery previews and every trip into
+the editor, so a cursor advances on calls that added no widget, drifts, and has
+no repair path: **nothing can rewrite a placed widget's configuration.**
+
+Deriving from the placement stamps (§7) instead makes it idempotent — ten asks,
+one answer — and self-healing: remove the widget showing the second station and
+the next one added takes that station back.
+
+A short-lived reservation was considered, to close §9.5, and rejected: it cannot
+tell "the same widget asking twice" from "a second widget asking", so it would
+break exactly that idempotency.
+
+### 9.2 The directory is in the HOME SCREEN's order
+
+It was `groupBy` insertion order, and the home screen has never agreed — it sorts
+by each board's `position` via `UserSettings.ordered`. Dragging a station to the
+top moved it on the home screen and nowhere else, while the picker, the gallery's
+`recommendations()` and the default above all kept saying "oldest".
+
+⚠️ `boardPrefs()` must run **before** the arrangement: it is what loads
+`UserSettings`, and sorting against an unloaded store sees every board
+`UNPOSITIONED`, ties, and silently falls back to insertion order.
+
+### 9.3 A deleted station's widget REPOINTS; it is never cleared
+
+`readWidgetData(stationId:)` used to fall through to the legacy flat keys — a
+silent jump to whichever board was primary, through a path that can be staler
+than the per-station keys. It now repoints via `unclaimedStation(anchor:)`.
+
+**Repoint rather than clear, because the configured id survives.** Sign out and
+the directory is wiped, every widget shows its empty state, and signing back in
+restores each one to its own station with no action from the user. Re-add a
+deleted station and its widget returns by itself. A widget that had been
+"cleared" would stay cleared **permanently** — there is no API to undo it.
+
+Two rules keep a repointed widget still:
+
+- **`anchor`** — in the rotation branch the answer would otherwise depend on how
+  many stamps are live, and that number moves as the app prunes them. A board
+  that changed station because an unrelated stamp expired is the failure this
+  design exists to prevent. FNV-1a, not `hashValue`: Swift seeds String hashing
+  per process, so `hashValue` picks a new station on every extension launch.
+- **The stamp records the CONFIGURED station**, not the rendered one. Otherwise a
+  repointed widget claims the station it borrowed, the next build finds it taken,
+  and the board walks down the station list a few minutes at a time.
+
+A widget with **no** configuration uses `.first` instead — it stamps what it
+renders, so the claim rule would make it walk for the same reason.
+
+### 9.4 "No stations at all" is ONE state
+
+⚠️ **Deleting your last board runs the same `wipe()` that signing out does**
+(`refreshAllBoards`, `all.isEmpty()`), so the App Group is byte-identical in both
+cases. A design that showed a *sign-in* panel for the empty directory would tell
+a signed-in user with no boards to sign in.
+
+The widget cannot break the tie: the uid is in the app's **standard** defaults,
+not the App Group, and an extension cannot read those. One empty state — "Open
+the app to add a station" — is true either way and is what ships.
+
+### 9.5 The window that cannot be closed
+
+A widget claims its station on its **first timeline build**, a second or two after
+being added. Two widgets added inside that window take the same station. A
+provider is handed no widget identity, so nothing can distinguish them. One Edit
+Widget fixes it.
+
+### 9.6 A tap opens the app on THAT station
+
+`.widgetURL(entry.render.deepLink)` → `stationly://home?station=<groupingId>` →
+`ContentView.onOpenURL` → `BoardFocus` → `SummaryScreen` pages the carousel or
+expands-and-scrolls the list.
+
+- The URL is built **once per timeline**, in `BoardRenderState` (§ the archiving
+  rule) — never in `body`, where it would be a percent-encode and a URL parse per
+  entry, per widget, inside the archive pass.
+- It carries the **rendered** station, so a repointed widget opens what is on
+  screen rather than a station the user no longer has.
+- It does not fight the arrows or refresh: `Button(intent:)` keeps its own hit
+  region, `widgetURL` claims the rest — §6's rule, now leading somewhere.
+- `BoardFocus` is a singleton flow, **not** a `MainViewController` parameter: the
+  app is normally already running, and the Compose host reads its constructor
+  arguments once in `makeUIViewController`.
+- ⚠️ The `stationly` scheme had **never been registered** (`project.yml`). The
+  note in `AppDelegate` about password-reset links is an instruction nobody
+  followed, so `handleFirebaseActionURL` has never been reachable. Those links now
+  arrive and are logged as `deeplink unhandled` — still not handled, because
+  `deepLinkOobCode` only reaches Compose through `makeUIViewController`.

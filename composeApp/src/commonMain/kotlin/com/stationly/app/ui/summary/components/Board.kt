@@ -294,6 +294,16 @@ fun StationBoard(
     stationName: String,
     mode: String,
     sections: List<BoardSection>,
+    /**
+     * Applied to the card's own root.
+     *
+     * Exists so a caller can attach something POSITIONAL without wrapping the
+     * card in a box that would change how it sits: `SummaryScreen` hangs a
+     * `BringIntoViewRequester` here to scroll a station into view when its
+     * widget is tapped. The default is identity, so every existing call site
+     * lays out exactly as before.
+     */
+    modifier: Modifier = Modifier,
     homeConfig: Map<String, String> = emptyMap(),
     isOnline: Boolean = true,
     /**
@@ -598,7 +608,7 @@ fun StationBoard(
     ) { open -> if (open) 1f else 0.62f }
 
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             // Centred once the window is wider than the board is allowed to be,
             // so a tablet gets margin rather than a stretched row.

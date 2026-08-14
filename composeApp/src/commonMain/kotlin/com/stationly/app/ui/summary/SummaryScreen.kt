@@ -1,4 +1,10 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(
+    ExperimentalMaterial3Api::class,
+    // BringIntoViewRequester, for scrolling a station into view when its widget
+    // is tapped. Same API LoginScreen already uses to lift a field above the
+    // keyboard.
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+)
 package com.stationly.app.ui.summary
 
 import androidx.compose.animation.AnimatedContent
@@ -35,6 +41,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.border
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bedtime
@@ -393,6 +401,66 @@ fun SummaryScreen(
                       // charged for a row of dots it will not draw.
                       val isCarousel = homeLayout == HomeLayout.CAROUSEL && stationIds.size > 1
 
+                      // ── A widget was tapped: go to that station ──
+                      //
+                      // [BoardFocus] holds the request until somewhere can act on
+                      // it, which matters on a COLD START: the URL is delivered
+                      // while the boards are still coming out of SQLite, so the
+                      // first pass through here has an empty [stationIds] and
+                      // must leave the request alone rather than drop it. Keyed
+                      // on the station list as well as the request for exactly
+                      // that reason — the retry is the list arriving.
+                      //
+                      // Mirrored into local state before being consumed. The
+                      // global has to be cleared promptly (a request left
+                      // standing would re-fire on the next recomposition that
+                      // changes the list), but the carousel needs to still see it
+                      // on the frame after — so the local copy is what drives the
+                      // layouts and it is never cleared, only replaced.
+                      val requested by BoardFocus.target.collectAsStateWithLifecycle()
+                      var focus by remember { mutableStateOf<BoardFocus.Target?>(null) }
+                      val focusRequester = remember { BringIntoViewRequester() }
+                      // Resolution only — this half knows nothing about which
+                      // layout is on screen, so it cannot go stale when that
+                      // changes.
+                      LaunchedEffect(requested, stationIds) {
+                          val wanted = requested ?: return@LaunchedEffect
+                          if (stationIds.isEmpty()) return@LaunchedEffect
+                          // The list has loaded, so this request has had its
+                          // answer whether or not the station is in it. A widget
+                          // pinned to a station since deleted lands here, and
+                          // dropping it silently is right: the app simply opens.
+                          BoardFocus.consume(wanted)
+                          if (wanted.stationId in stationIds) focus = wanted
+                      }
+
+                      // The LIST's response: open the station and scroll to it.
+                      // The carousel's is a page turn and lives in
+                      // [StationCarousel], which is handed `focus` directly.
+                      //
+                      // A SEPARATE effect from the resolution above, for two
+                      // reasons. `isCarousel` is a KEY here rather than something
+                      // captured, so switching layout re-evaluates instead of
+                      // running against a stale answer. And the requester is
+                      // attached by the composition that setting `focus`
+                      // triggers, so a `bringIntoView` called from the effect
+                      // that sets it would run against a requester bound to no
+                      // node at all and do nothing.
+                      //
+                      // Expanding before scrolling is safe even though the
+                      // expansion animates: a card grows DOWNWARDS, so the top
+                      // edge being scrolled to is already where it will end up.
+                      LaunchedEffect(focus, isCarousel) {
+                          val wanted = focus ?: return@LaunchedEffect
+                          if (isCarousel) return@LaunchedEffect
+                          // Open it, and leave everything the user had open
+                          // alone. Collapsing the others would make a widget tap
+                          // quietly rearrange the home screen, which is a bigger
+                          // edit than the one that was asked for.
+                          expandedIdsState = (expandedIds + wanted.stationId).toList()
+                          runCatching { focusRequester.bringIntoView() }
+                      }
+
                       // How many leg rows the collapsed cards will draw between
                       // them — one per platform (rail) or pole (bus), since the
                       // collapsed card no longer stops at two.
@@ -604,6 +672,16 @@ fun SummaryScreen(
                                     val config = boardConfigs[stationId] ?: BoardConfig()
 
                                     StationBoard(
+                                        // Hung on the ONE card a widget tap is
+                                        // asking for, and only in the list — the
+                                        // carousel turns a page instead. Identity
+                                        // everywhere else, so nothing about the
+                                        // layout changes for the other cards.
+                                        modifier = if (!isCarousel && focus?.stationId == stationId) {
+                                            Modifier.bringIntoViewRequester(focusRequester)
+                                        } else {
+                                            Modifier
+                                        },
                                         expanded = stationId in expandedIds,
                                         onToggleExpanded = if (collapsible) {
                                             {
@@ -655,6 +733,7 @@ fun SummaryScreen(
                                     StationCarousel(
                                         stationGroups = stationGroups,
                                         pageHeight = primaryBoardMaxHeight,
+                                        focus = focus,
                                     ) { stationId, groupSelections ->
                                         stationCard(stationId, groupSelections, false, primaryBoardMaxHeight)
                                     }

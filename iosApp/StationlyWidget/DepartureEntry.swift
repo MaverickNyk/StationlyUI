@@ -1,4 +1,25 @@
+import Foundation
 import WidgetKit
+
+/// The `stationly://` link a board tap opens.
+///
+/// One builder, because the app parses the other end of it
+/// (`ContentView.onOpenURL`) and two string formats obliged to agree is one too
+/// many. `home` rather than `board` matches the shape Android's notifications
+/// already use, so both platforms share one deep-link vocabulary.
+///
+/// Percent-encoded defensively — TfL grouping ids are alphanumeric today
+/// (`940GZZLUKSX`, `490G00008805`), and a naptan that ever isn't would
+/// otherwise produce a URL that silently fails to parse.
+enum StationlyDeepLink {
+    static func board(stationId: String) -> URL? {
+        guard !stationId.isEmpty,
+              let escaped = stationId.addingPercentEncoding(
+                  withAllowedCharacters: .urlQueryAllowed)
+        else { return nil }
+        return URL(string: "stationly://home?station=\(escaped)")
+    }
+}
 
 /// TimelineEntry that carries a full snapshot of departure board data for a
 /// single point in time. WidgetKit calls getTimeline() to request a batch of
@@ -42,6 +63,19 @@ struct BoardRenderState {
     /// Whether this station's last refresh failed, so the header can offer a
     /// retry.
     var refreshFailed: Bool = false
+
+    /// Where tapping the board goes — see [StationlyDeepLink].
+    ///
+    /// Here rather than built in the view for the reason this whole type exists:
+    /// `body` runs once per ENTRY during WidgetKit's archiving pass, so building
+    /// it there meant a percent-encode and a `URL` parse ~20 times per timeline
+    /// per widget, to produce the identical URL every time. The station is the
+    /// same for every entry in a batch, so the URL is too.
+    ///
+    /// Optional because two entries legitimately have no station to link to: the
+    /// skeleton placeholder, and the gallery preview. Both fall back to
+    /// `widgetURL`'s default, which opens the app.
+    var deepLink: URL? = nil
 }
 
 struct DepartureEntry: TimelineEntry {

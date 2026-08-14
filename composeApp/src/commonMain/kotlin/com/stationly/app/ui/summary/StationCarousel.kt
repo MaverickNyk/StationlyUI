@@ -59,9 +59,39 @@ internal val PAGER_DOTS_BLOCK = 22.dp
 internal fun StationCarousel(
     stationGroups: List<Pair<String, List<UserSelection>>>,
     pageHeight: Dp,
+    /**
+     * A station to turn to, raised from outside the UI — a widget tap. Null
+     * whenever nothing is asking.
+     *
+     * Taken as the whole [BoardFocus.Target] rather than as an index, so the
+     * page arithmetic stays with the list it indexes, and so a repeat request
+     * for the station already showing still re-runs: the nonce makes the two
+     * requests unequal, which is the entire reason it exists.
+     */
+    focus: BoardFocus.Target? = null,
     page: @Composable (String, List<UserSelection>) -> Unit,
 ) {
     val pagerState = rememberPagerState { stationGroups.size }
+
+    // ── Turn to the station that was asked for ──
+    //
+    // Animated rather than snapped. The user tapped a widget and is looking at
+    // the app arriving; a page that slides says the app went somewhere, where an
+    // instant jump is indistinguishable from having been there all along. It is
+    // also what makes the settled-page haptic below fire, which is the same
+    // acknowledgement a swipe gets.
+    //
+    // Keyed on [focus] ALONE, deliberately. Adding `stationGroups` would re-run
+    // this whenever the board list changed for any unrelated reason — adding a
+    // station, a sync landing — and scroll the carousel back to a request the
+    // user dealt with minutes ago.
+    LaunchedEffect(focus) {
+        val wanted = focus ?: return@LaunchedEffect
+        val index = stationGroups.indexOfFirst { it.first == wanted.stationId }
+        if (index >= 0 && index != pagerState.currentPage) {
+            pagerState.animateScrollToPage(index)
+        }
+    }
 
     // A tick as each page lands, not while it is moving. This is the same
     // acknowledgement iOS gives at the end of a paged scroll, and it is most of

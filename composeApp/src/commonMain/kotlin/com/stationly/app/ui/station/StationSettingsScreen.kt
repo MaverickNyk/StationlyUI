@@ -117,6 +117,13 @@ fun StationSettingsScreen(
     // teardown is computed from.
     val isDeleting by viewModel.isDeleting.collectAsStateWithLifecycle()
     val homeLayout by UserSettings.layout.collectAsStateWithLifecycle()
+    // Whether a home-screen widget is showing this station, so the delete
+    // confirmation can say what deleting it does to that widget. Absent means
+    // not placed: the probe replaces this map wholesale and is never allowed to
+    // report a FAILED look as an empty one, so a missing entry is an answer
+    // rather than an unknown. See [WidgetPlacement].
+    val widgets by UserSettings.widgets.collectAsStateWithLifecycle()
+    val onHomeScreen = widgets[stationId]?.placed == true
     val platforms by viewModel.platforms.collectAsStateWithLifecycle()
     val stops by viewModel.stops.collectAsStateWithLifecycle()
     // Defaulted ONCE, here, so every control below reads the same thing the home
@@ -340,10 +347,32 @@ fun StationSettingsScreen(
     if (confirmDelete) {
         ConfirmDialog(
             title = "Delete $stationName?",
-            body = if (boards.size == 1) {
-                "Its board leaves your home screen. You can add it back any time."
-            } else {
-                "All ${boards.size} boards leave your home screen. You can add them back any time."
+            // ── Warned BEFORE, not reported after ──
+            //
+            // A widget pinned to this station cannot be cleared: its station
+            // lives in an AppIntent configuration that nothing on this side can
+            // rewrite. It repoints itself to another station instead
+            // (`AppGroupStorage.unclaimedStation`), which is recoverable and
+            // visible — the station name is the largest thing on the panel — but
+            // it is not something to discover by glancing at the home screen.
+            //
+            // Deliberately does NOT name the replacement. The widget resolves
+            // that at its next timeline build, from placement stamps that can
+            // move in between, so any name promised here could be the wrong one
+            // — and predicting it would mean a second copy of the rule living in
+            // Kotlin, free to drift from the Swift one that actually decides.
+            body = buildString {
+                append(
+                    if (boards.size == 1) {
+                        "Its board leaves your home screen. You can add it back any time."
+                    } else {
+                        "All ${boards.size} boards leave your home screen. You can add them back any time."
+                    },
+                )
+                if (onHomeScreen) {
+                    append("\n\nA widget is showing this station. It will switch to another one — ")
+                    append("long-press it to choose which.")
+                }
             },
             confirmLabel = "Delete",
             onConfirm = { confirmDelete = false; viewModel.deleteStation() },

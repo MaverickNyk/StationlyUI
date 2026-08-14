@@ -908,22 +908,166 @@ class AppGroupStorage {
 
     private static let maxPlacementStamps = 24
 
-    /// The board for one configured station.
+    // MARK: - Which station a widget takes when its own answer is missing
+
+    /// How long a placement stamp goes on speaking for a station after it last
+    /// moved.
     ///
-    /// Falls back to the legacy single-station keys when the id is unknown —
-    /// which covers a widget added before multi-station shipped (no
-    /// configuration at all) and one whose station has since been deleted. The
-    /// primary board is a better answer than an empty one in both cases: the
-    /// user still gets a working widget and can re-point it whenever they
-    /// notice.
+    /// A stamp is refreshed on every timeline build, so one that has stopped
+    /// moving belongs to a widget that has stopped being asked for timelines —
+    /// i.e. one that was removed. The bound has to clear the longest gap a LIVE
+    /// widget can have between builds, and that is not a small number: the
+    /// overnight tiers taper to hours (a measured build scheduled its successor
+    /// 395 minutes out), and a widget that has spent its daily reload budget can
+    /// go longer still with nothing wrong with it.
+    ///
+    /// 36 hours clears both with room, and is short enough that a widget removed
+    /// on a phone whose owner never opens the app stops holding its station
+    /// within a day and a half. It is a backstop and not the mechanism: the app
+    /// reconciles stamps against the host's real placement list on every
+    /// foreground (`HomeStateProbe.describe`), which is exact and normally gets
+    /// there first.
+    private static let claimTTL: TimeInterval = 36 * 3600
+
+    /// The station a widget should take when its own configuration cannot say.
+    ///
+    /// Two callers ask the same question: a widget being ADDED
+    /// (`StationEntityQuery.defaultResult`) and a widget whose configured
+    /// station has since been DELETED (`readWidgetData(stationId:)`).
+    ///
+    /// ## The rule
+    /// The first station in the user's own order that no placed widget is
+    /// already showing; when every station is spoken for, a rotation. So three
+    /// stations and three widgets means one each, in the order the user
+    /// arranged them on the home screen, and a fourth widget wraps to the first.
+    ///
+    /// ## Why it is a pure READ
+    /// The obvious implementation is a cursor in the App Group that advances per
+    /// new widget, and it cannot be made correct. `defaultResult()` is not
+    /// called once per widget — the system consults it whenever the parameter is
+    /// unresolved, which includes gallery previews and every trip into the
+    /// editor — so a cursor advances on calls that added no widget, drifts, and
+    /// has no repair path, because nothing can rewrite a placed widget's
+    /// configuration afterwards.
+    ///
+    /// Deriving the answer from the placement stamps makes it idempotent
+    /// instead: asking ten times gives the same answer ten times. It also
+    /// self-heals — remove the widget showing the second station and the next
+    /// widget added takes that station back rather than duplicating the first.
+    ///
+    /// ## [anchor] is what stops a repointed widget from wandering
+    /// In the rotation branch the answer would otherwise depend on how many
+    /// stamps happen to be live, and that number MOVES — the app prunes stamps
+    /// for widgets that have gone. A board that silently changed station because
+    /// a stamp elsewhere expired is the one failure this whole design is meant
+    /// to avoid, so a caller that has an id to be consistent about passes it and
+    /// gets an answer derived from that id alone. A widget being added has no
+    /// such id and does not need one: its answer is resolved once and stored.
+    ///
+    /// ## The window it cannot close
+    /// A widget claims its station on its FIRST TIMELINE BUILD, a second or two
+    /// after being added. Two widgets added inside that window see the same
+    /// claims and take the same station. Nothing available fixes it — a provider
+    /// is handed no widget identity, so "the same widget asking twice" and "a
+    /// second widget asking" are indistinguishable, which is also why a
+    /// short-lived reservation was considered and rejected: it would break
+    /// exactly the idempotency above. The fallout is one Edit Widget away.
+    func unclaimedStation(anchor: String? = nil, now: Date = Date()) -> StationEntity? {
+        let stations = readStations()
+        guard !stations.isEmpty else { return nil }
+
+        let live = readPlacementStamps().filter {
+            now.timeIntervalSince1970 - $0.at < Self.claimTTL
+        }
+        let claimed = Set(live.map(\.station))
+        if let free = stations.first(where: { !claimed.contains($0.id) }) { return free }
+
+        // Every station already has a widget.
+        if let anchor, !anchor.isEmpty {
+            return stations[Self.stableIndex(anchor, count: stations.count)]
+        }
+        return stations[live.count % stations.count]
+    }
+
+    /// A stable index into a list of [count], derived from [key].
+    ///
+    /// FNV-1a rather than `hashValue`, because Swift seeds String hashing per
+    /// PROCESS: `hashValue` would pick a different station every time the
+    /// extension is relaunched, which is the precise failure [anchor] exists to
+    /// prevent. This is not a security hash and does not need to be a good one —
+    /// it needs to be the same one tomorrow.
+    private static func stableIndex(_ key: String, count: Int) -> Int {
+        var hash: UInt32 = 2_166_136_261
+        for byte in key.utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
+        return Int(hash % UInt32(count))
+    }
+
+    /// The board for one configured station, and what to do when there isn't one.
+    ///
+    /// ## A configuration that cannot be honoured is REPOINTED, never blanked
+    /// The station id lives in an AppIntent configuration, and nothing — not
+    /// this extension, not the app — can rewrite a placed widget's
+    /// configuration. So a widget whose station was deleted can only be helped
+    /// at render time, and it has to be helped every time.
+    ///
+    /// Repointing rather than clearing is deliberate, and the reason is
+    /// recoverability: the configured id SURVIVES. Sign out and the directory is
+    /// wiped, every widget goes to its empty state, and signing back in restores
+    /// each one to its own station with no action from the user. A widget that
+    /// had been "cleared" would stay cleared, permanently, because there is no
+    /// API to un-clear it. The visible risk of repointing — reading the wrong
+    /// station's trains — is carried by the largest, boldest element on the
+    /// panel being the station name.
+    ///
+    /// This used to fall through to the LEGACY single-station keys instead,
+    /// which were written for whichever board happened to be primary: a silent
+    /// jump to an arbitrary station, through an older path that can be
+    /// arbitrarily stale. Those keys are now the last resort only.
     func readWidgetData(stationId: String?) -> WidgetData {
+        if let board = storedBoard(stationId) { return widgetData(from: board) }
+
+        let replacement: StationEntity?
+        if let stationId, !stationId.isEmpty {
+            // Named a station the user no longer tracks — deleted in the app.
+            // Anchored on the id it asked for, so this widget's answer is the
+            // same on every build. See `unclaimedStation(anchor:)`.
+            replacement = unclaimedStation(anchor: stationId)
+        } else {
+            // Named nothing at all: a widget added before the configuration
+            // existed, or one whose default the system never resolved.
+            //
+            // Deliberately NOT the claim rule. A widget with no configuration
+            // stamps whatever it renders, so it would claim its own answer and
+            // the next build would skip past it to the following station — a
+            // board that changes station every few minutes. The first station is
+            // stable, and distributing across stations is `defaultResult()`'s
+            // job, which runs once per widget and is stored.
+            replacement = readStations().first
+        }
+        if let replacement, let board = storedBoard(replacement.id) {
+            return widgetData(from: board)
+        }
+
+        // Nothing to point at: signed out, or the last board was deleted. Both
+        // wipe the legacy keys too, so this renders `EmptyWidgetView` — "Open
+        // the app to add a station", which is true either way. It is also still
+        // the right answer for a pre-multi-station widget, whose board only ever
+        // lived in those keys.
+        return readWidgetData()
+    }
+
+    /// One station's stored board, or nil if it is not there to be read.
+    private func storedBoard(_ stationId: String?) -> StoredBoard? {
         guard let stationId, !stationId.isEmpty,
               let raw = defaults?.string(forKey: AppGroupKeys.board(stationId)),
               let data = raw.data(using: .utf8),
               let board = try? JSONDecoder().decode(StoredBoard.self, from: data),
               !board.stationName.isEmpty
-        else { return readWidgetData() }
+        else { return nil }
+        return board
+    }
 
+    private func widgetData(from board: StoredBoard) -> WidgetData {
         let lineDisplay = board.lineDisplay?.isEmpty == false
             ? board.lineDisplay! : board.lineName.capitalized
         let lastUpdated = board.lastUpdated > 0
