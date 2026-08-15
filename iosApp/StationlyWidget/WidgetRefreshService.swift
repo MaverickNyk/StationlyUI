@@ -184,6 +184,19 @@ enum WidgetRefreshService {
     static func refresh(stationId configuredStation: String = "") async -> RefreshOutcome {
         guard let d = defaults else { return .unavailable }
 
+        // ── A signed-out account fetches nothing ──
+        //
+        // Enforced here as well as at the timeline, because this is the door
+        // every other caller comes through — the refresh BUTTON and the
+        // WidgetKit push handler reach it without passing the provider's check.
+        // The station ids it would fan out over live in AppIntent
+        // configurations that a sign-out cannot touch, so without this a tap on
+        // a signed-out widget refills it. See `AppGroupKeys.signedOut`.
+        if AppGroupStorage.shared.isSignedOut {
+            trace("refresh skipped — signed out")
+            return .unavailable
+        }
+
         // Wall-clock budget for the tap, broken into its three parts. A widget
         // has no profiler and no console, so "the refresh feels slow" is
         // otherwise unanswerable — and the parts have very different fixes:

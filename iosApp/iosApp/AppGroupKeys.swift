@@ -58,6 +58,19 @@ enum AppGroupKeys {
     /// `RefreshScheduleStore.isAppForeground`.
     static let appForegroundHeartbeat = "widget_app_foreground_heartbeat"
 
+    /// The account signed out — the extension must neither render a board nor
+    /// fetch one. See the extension's own `AppGroupKeys.signedOut` for what it
+    /// does with it, and KMP's `WIDGET_SIGNED_OUT` for why data alone could not
+    /// carry this.
+    ///
+    /// Both edges are written HERE, in `AuthBridge`, because this is the only
+    /// side that knows whether there is a session: raised in `logout()` (the
+    /// last step of every teardown, so no ordering can lose it) and lowered in
+    /// `persistUserIdentity`, which runs only when Firebase has produced a user.
+    /// KMP raises it too, from `clearWidgetData` — belt and braces on the same
+    /// value.
+    static let widgetSignedOut = "widget_signed_out"
+
     // MARK: - App-local
 
     /// Stable per-install id — the key of the backend device registry.

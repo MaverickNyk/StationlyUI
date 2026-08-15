@@ -253,9 +253,26 @@ enum DevicePushCoordinator {
                 //
                 // A push with no uid is still honoured: older senders omit it,
                 // and refusing those would leave real deletions unapplied.
+                //
+                // ── An UNREADABLE local uid drops it too ──
+                //
+                // This used to require BOTH sides to resolve (`if let pushUid,
+                // let currentUid`), so a missing `firebase_user_uid` did not
+                // fail the check — it skipped it, and a push minted for
+                // somebody else's account signed this one out. That is not a
+                // hypothetical state: the identity keys were being wiped on
+                // ordinary cold launches by the auth-listener race (see
+                // `AuthBridge.settleAuthState`), which left this guard disarmed
+                // on exactly the push that can end a session.
+                //
+                // Refusing costs a real deletion nothing. `refreshTokenIfNeeded`
+                // asks Google directly on every foreground and ends the session
+                // on `.userNotFound` — authoritative, and no more than one
+                // foreground later.
                 let currentUid = UserSyncBridge.shared.currentUidOrNull()
-                if let pushUid, let currentUid, pushUid != currentUid {
-                    PushTraceSwift.log("user.sync deleted → DROPPED (for \(pushUid), signed in as \(currentUid))")
+                if let pushUid, pushUid != currentUid {
+                    PushTraceSwift.log(
+                        "user.sync deleted → DROPPED (for \(pushUid), signed in as \(currentUid ?? "<unknown>"))")
                     return false
                 }
                 // Forcing a sign-out touches the keychain, the Firebase session

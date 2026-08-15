@@ -9,10 +9,24 @@ private let deepLinkLog = Logger(subsystem: "com.stationly.mobile", category: "d
 
 struct ContentView: View {
     @AppStorage("app_theme") private var appTheme: String = "system"
-    @State private var isLoggedIn: Bool = (FirebaseApp.app() != nil) ? (Auth.auth().currentUser != nil) : false
+    /// `AuthBridge.hasSession` rather than `Auth.auth().currentUser != nil`.
+    ///
+    /// Both answer "is there a session", and they disagree in one situation that
+    /// costs the user their app: Firebase could not read the Keychain at launch
+    /// — a device launched locked, or an iOS prewarm — so `currentUser` is nil
+    /// and stays nil until `protectedDataDidBecomeAvailable` lets it try again.
+    /// This value is read ONCE, into `startLoggedIn`, and `AppNavigation` turns
+    /// it into a start destination that never changes for the life of the host.
+    /// So a nil here is not a moment of uncertainty, it is the login screen for
+    /// the whole session.
+    ///
+    /// The stored token behind `hasSession` cannot say that wrongly: it is
+    /// removed only by `clearUserInfo`, which now runs only on a sign-out we
+    /// asked for.
+    @State private var isLoggedIn: Bool = AuthBridge.shared.hasSession
     @State private var deepLinkOobCode: String? = nil
-    /// Bumped on every logged-in → logged-out transition, to force a fresh
-    /// Compose host. See the `.id` on the body.
+    /// Bumped when the session ENDS, and when one arrives under a login screen
+    /// we should never have shown. See the `.id` on the body.
     @State private var signedOutGeneration: Int = 0
 
     private var colorScheme: ColorScheme? {
@@ -36,25 +50,43 @@ struct ContentView: View {
             //
             // ── The counter ALONE, never `isLoggedIn` ──
             //
-            // This must be stable across a sign-IN. An earlier version read
-            // `isLoggedIn ? "session" : "signed-out-\(n)"`, which changes on BOTH
-            // transitions — so signing in tore down and rebuilt the whole Compose
-            // host mid-login. That threw away the login flow's own navigation,
-            // re-ran the tree against state the loader had just finished
-            // populating, and crashed outright once there was more than one board
-            // to rebuild.
+            // This must be stable across a sign-IN THE LOGIN FLOW PERFORMED. An
+            // earlier version read `isLoggedIn ? "session" : "signed-out-\(n)"`,
+            // which changes on BOTH transitions — so signing in tore down and
+            // rebuilt the whole Compose host mid-login. That threw away the login
+            // flow's own navigation, re-ran the tree against state the loader had
+            // just finished populating, and crashed outright once there was more
+            // than one board to rebuild.
             //
-            // The counter only moves on logout, so login leaves the id untouched
-            // and Compose keeps handling that direction itself — which it always
-            // did correctly.
+            // A RESTORE is the opposite case and needs the opposite treatment —
+            // see the guard below.
             .id(signedOutGeneration)
             .ignoresSafeArea()
             .preferredColorScheme(colorScheme)
             .onReceive(NotificationCenter.default.publisher(for: .authStateDidChange)) { _ in
-                let nowLoggedIn = (FirebaseApp.app() != nil) ? (Auth.auth().currentUser != nil) : false
+                let nowLoggedIn = AuthBridge.shared.hasSession
                 // Bump BEFORE flipping the flag, so the rebuilt host is a fresh
                 // instance rather than one SwiftUI can match to the old id.
-                if isLoggedIn && !nowLoggedIn { signedOutGeneration += 1 }
+                if isLoggedIn && !nowLoggedIn {
+                    signedOutGeneration += 1
+                } else if !isLoggedIn && nowLoggedIn && !AuthBridge.shared.isHandlingAuthCommand {
+                    // ── A session arrived under a login screen nobody chose ──
+                    //
+                    // Compose reads `startLoggedIn` once, in
+                    // `makeUIViewController`, and `updateUIViewController` is a
+                    // no-op — so a host that booted signed-out stays signed-out
+                    // however the session resolves afterwards. Without this, a
+                    // Firebase restore that lands a moment late leaves the user
+                    // looking at a sign-in form with their own valid session
+                    // behind it, and the only way out is to sign in again.
+                    //
+                    // `isHandlingAuthCommand` is what keeps this off the login
+                    // flow's own path: that sign-in comes from a KMP command, and
+                    // Compose is already navigating itself out of the login
+                    // screen. This branch is for the sign-in nobody asked for —
+                    // a keychain restore, or protected data becoming readable.
+                    signedOutGeneration += 1
+                }
                 isLoggedIn = nowLoggedIn
             }
             .onReceive(NotificationCenter.default.publisher(for: .passwordResetLink)) { notification in

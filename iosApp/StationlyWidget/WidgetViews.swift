@@ -1419,7 +1419,7 @@ struct BoardWidgetView: View {
     var body: some View {
         Group {
             if data.isEmpty {
-                EmptyWidgetView(size: metrics.size)
+                EmptyWidgetView(size: metrics.size, signedOut: data.isSignedOut)
             } else {
                 board
             }
@@ -1832,6 +1832,11 @@ enum WidgetSize { case small, medium, large }
 
 struct EmptyWidgetView: View {
     let size: WidgetSize
+    /// Empty because the account signed out, rather than because no station has
+    /// been chosen. Only the second line changes — telling someone to add a
+    /// station they already have reads as the widget being broken, and it is
+    /// also the one instruction that would not work.
+    var signedOut: Bool = false
 
     var body: some View {
         VStack(spacing: 10) {
@@ -1840,7 +1845,8 @@ struct EmptyWidgetView: View {
                 Text("Stationly")
                     .font(WidgetTheme.font(13, .bold))
                     .foregroundColor(WidgetTheme.textPrimary)
-                Text("Open the app to add a station")
+                Text(signedOut ? "Sign in to see your board"
+                               : "Open the app to add a station")
                     .font(WidgetTheme.font(11))
                     .foregroundColor(WidgetTheme.textMuted)
                     .multilineTextAlignment(.center)

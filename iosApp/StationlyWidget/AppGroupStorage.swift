@@ -348,6 +348,15 @@ struct WidgetData {
     /// however high the setting goes. See `BoardMetrics.rows(for:)`.
     var rowCap: Int = 3
 
+    /// Why this board is empty: the account signed out, rather than no station
+    /// having been chosen.
+    ///
+    /// Only the copy differs — "Sign in to see your board" instead of "Open the
+    /// app to add a station" — but telling a user to add a station they already
+    /// have is the kind of wrong answer that reads as the widget being broken.
+    /// Defaulted so every existing construction site keeps its meaning.
+    var isSignedOut: Bool = false
+
     // A `departures` property that flattened every block used to live here, and
     // it is deliberately gone: the render path only ever asked it three
     // questions — is it empty, give me the first few, how many — and answering
@@ -647,6 +656,29 @@ struct WidgetData {
         )
     }
 
+    /// Shown when the account signed out — see `AppGroupKeys.signedOut`.
+    ///
+    /// `lastUpdated` is NOW rather than the epoch on purpose: the timeline
+    /// provider fetches whatever it holds if it is older than
+    /// `staleAfterSeconds`, and a signed-out board dated 1970 would send every
+    /// build straight down the path this state exists to stop. Belt and braces
+    /// — the provider checks the flag first — but a board that describes itself
+    /// honestly cannot be misread by a future caller that forgets to.
+    static var signedOut: WidgetData {
+        var data = WidgetData(
+            stationName: "",
+            lineName: "",
+            direction: "",
+            mode: "",
+            departures: [],
+            status: "",
+            lastUpdated: Date(),
+            isEmpty: true
+        )
+        data.isSignedOut = true
+        return data
+    }
+
     // MARK: Tick layer (Android consistency contract)
     //
     // Swift mirror of android ui/util/PredictionTicker.tickPredictions +
@@ -719,6 +751,10 @@ struct WidgetData {
         // copy, so dropping them here would leave the rendered board with no
         // idea which station it is — and its paging and refresh buttons acting
         // on whatever the legacy keys happened to hold.
+        //
+        // `isSignedOut` is not listed because it cannot reach here: that board
+        // has no groups, so the guard above returns `self` with the flag intact.
+        // Anything that gives a signed-out board blocks must carry it here too.
         return WidgetData(
             stationName: stationName, lineName: lineName, lineDisplay: lineDisplay,
             direction: direction, mode: mode, groups: tickedGroups, status: status,
@@ -834,6 +870,14 @@ class AppGroupStorage {
     /// Shared — see `AppGroupDefaults`. Read on every timeline build and every
     /// render, in a process launched fresh for each.
     private var defaults: UserDefaults? { AppGroupDefaults.shared }
+
+    /// Whether the account signed out — see `AppGroupKeys.signedOut`.
+    ///
+    /// Checked before rendering AND before fetching. Both matter: the render is
+    /// what a signed-out user must not see, and the fetch is what would put it
+    /// back. Absent means signed in, which is the right default — a widget on a
+    /// device that has never signed out has no flag to read.
+    var isSignedOut: Bool { defaults?.bool(forKey: AppGroupKeys.signedOut) ?? false }
 
     // MARK: - Multi-station
 
@@ -1024,6 +1068,14 @@ class AppGroupStorage {
     /// jump to an arbitrary station, through an older path that can be
     /// arbitrarily stale. Those keys are now the last resort only.
     func readWidgetData(stationId: String?) -> WidgetData {
+        // FIRST, ahead of every fallback below. The repoint chain exists to find
+        // a widget *something* to show when its own station has gone, and after
+        // a sign-out that is precisely the wrong instinct — it would hand the
+        // board of whoever signs in next to a widget the previous user left
+        // behind. One read, on the hottest path this file has, and it is the
+        // only question that can be answered before any of the others matter.
+        if isSignedOut { return .signedOut }
+
         if let board = storedBoard(stationId) { return widgetData(from: board) }
 
         let replacement: StationEntity?

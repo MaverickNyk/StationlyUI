@@ -54,6 +54,25 @@ enum AppGroupKeys {
     static let stations      = "widget_stations"
     static func board(_ stationId: String) -> String { "widget_board_\(stationId)" }
 
+    /// The account signed OUT — do not render a board, and do not go and get one.
+    ///
+    /// This extension can refill itself: `DepartureBoardProvider.timeline`
+    /// fetches whenever what it holds is older than `staleAfterSeconds`, over
+    /// REST authenticated by [apiKey] rather than by any user token, for a
+    /// station named in an AppIntent configuration the app cannot reach. So a
+    /// sign-out that only deletes App Group data is a sign-out this process
+    /// undoes a couple of minutes later — which is how a signed-out account
+    /// went on showing a live departure board, against the guarantee in
+    /// `docs/USER_STATE_AND_ACTIVITY.md` ("Logout resets the widget").
+    ///
+    /// Distinct from "no stations" because that already means something else:
+    /// a signed-in user who deleted their last board wipes to the same empty
+    /// App Group and must keep the refresh path they have.
+    ///
+    /// Written by KMP's `IosWidgetManager.clearWidgetData`; cleared by the first
+    /// board write made while somebody is signed in.
+    static let signedOut     = "widget_signed_out"
+
     /// Which stations are actually ON the home screen, written BY the widget.
     ///
     /// The only direction this information can travel. WidgetKit tells the app

@@ -6,6 +6,7 @@ import Security
 import FirebaseCore
 import FirebaseAuth
 import GoogleSignIn
+import WidgetKit
 // The KMP framework. Needed for `UserSyncBridge.tearDownDeletedAccount()` —
 // signing out of a DELETED account has to tear down the Kotlin-owned state
 // (SQLite boards, widget, topics, per-account settings) as well as the Firebase
@@ -39,6 +40,68 @@ class AuthBridge {
     // would silently die the moment the local variable went out of scope.
     private var appleCoordinator: AppleSignInCoordinator?
 
+    /// Whether a sign-out THIS APP asked for is in progress.
+    ///
+    /// The one fact the auth-state listener cannot work out for itself — see
+    /// `settleAuthState`. Set by every deliberate teardown (`logout`, the
+    /// `signOut` command, account deletion, a confirmed gone session); cleared
+    /// the moment it is honoured or a user appears.
+    private var expectingSignOut = false
+
+    private var commandInFlight = false
+    /// When a KMP-issued auth command last started or finished.
+    private var authCommandTouchedAt: Date = .distantPast
+
+    /// Whether the Compose login flow is driving auth right now — or was, just
+    /// now.
+    ///
+    /// Read by `ContentView` to tell a session Firebase RESTORED from one the
+    /// Compose login flow just performed. The two need opposite treatment: a
+    /// restore under a login screen has to rebuild the Compose host, while
+    /// rebuilding mid-login throws away the flow's own navigation.
+    ///
+    /// The trailing window is not slack, it is the ordering. `storeUserInfo`
+    /// fires the auth-state listener, whose notification reaches SwiftUI on a
+    /// LATER main-queue turn than `markDone()` — so a plain in-flight boolean is
+    /// already false by the time the sign-in is observed, and the guard would
+    /// miss the only case it exists for.
+    var isHandlingAuthCommand: Bool {
+        commandInFlight || Date().timeIntervalSince(authCommandTouchedAt) < 10
+    }
+
+    /// Whether this device holds a session.
+    ///
+    /// `Auth.currentUser` is authoritative and is believed — it reads through
+    /// `kAuthGlobalWorkQueue.sync`, so unlike the listener's argument it waits
+    /// for the Keychain restore instead of racing it.
+    ///
+    /// ## The one case it is wrong about, and how we know we are in it
+    /// Firebase cannot read the Keychain before the device's first unlock, or
+    /// during an iOS prewarm launch. It gives up, registers for
+    /// `protectedDataDidBecomeAvailable` and retries later — so `currentUser` is
+    /// nil for a live account, and stays nil for as long as the phone stays
+    /// locked. That is not a moment of uncertainty this app can wait out:
+    /// `startLoggedIn` is read ONCE, and `AppNavigation` turns it into a start
+    /// destination fixed for the life of the Compose host.
+    ///
+    /// `isProtectedDataAvailable` is the same condition Firebase itself tests
+    /// (see the `keychainError` branch of `Auth.protectedDataInitialization`),
+    /// so it identifies exactly that case and nothing else.
+    ///
+    /// ## Why the stored token is NOT a general fallback
+    /// Because it outlives the thing it stands for. Trusting it whenever
+    /// `currentUser` was nil produced a device that looked signed in, rendered
+    /// a "?" avatar and a "User" name, and could not repair itself —
+    /// `refreshTokenIfNeeded` returns early with no `currentUser`, so nothing
+    /// would ever fetch the identity it was missing. A signed-out app that says
+    /// so is strictly better than a signed-in one that cannot say who.
+    var hasSession: Bool {
+        if FirebaseApp.app() == nil { return false }
+        if Auth.auth().currentUser != nil { return true }
+        guard !UIApplication.shared.isProtectedDataAvailable else { return false }
+        return UserDefaults.standard.string(forKey: "firebase_auth_token")?.isEmpty == false
+    }
+
     // MARK: - KMP wiring
 
     func wireToKMP() {
@@ -55,23 +118,118 @@ class AuthBridge {
 
         // Refresh token whenever Firebase auth state changes (only if Firebase is configured)
         guard FirebaseApp.app() != nil else { return }
-        Auth.auth().addStateDidChangeListener { [weak self] _, user in
-            guard let self else { return }
-            if let user {
-                // Persist identity SYNCHRONOUSLY, before the async token fetch.
-                // Firebase restores sessions from the keychain — which survives
-                // an app delete/reinstall while NSUserDefaults does not — so
-                // without this re-write the app launched "logged in" but with
-                // every identity key missing: the home avatar showed "?" and
-                // the profile "User" / "Stationly" / "Since Recently" until
-                // the next explicit sign-in.
-                self.persistUserIdentity(user)
-                Task { await self.refreshTokenIfNeeded() }
-            } else {
-                self.clearUserInfo()
-            }
-            NotificationCenter.default.post(name: .authStateDidChange, object: nil)
+        // The listener's own `user` argument is deliberately DISCARDED — see
+        // `settleAuthState` for why it cannot be trusted at launch.
+        Auth.auth().addStateDidChangeListener { [weak self] _, _ in
+            self?.settleAuthState()
         }
+    }
+
+    /// Decide what a Firebase auth-state change actually means, and act on it.
+    ///
+    /// ## Why the listener's `user` argument is thrown away
+    /// Because it is read without synchronisation and can be `nil` on a session
+    /// that is perfectly alive. FirebaseAuth loads the Keychain user
+    /// ASYNCHRONOUSLY (`Auth.protectedDataInitialization` → `kAuthGlobalWorkQueue.async`),
+    /// while the listener's first invocation is `DispatchQueue.main.async { listener(self, self._currentUser) }`
+    /// — the raw ivar, off the main queue, with no barrier between the two. At a
+    /// cold launch those race, and the listener loses often enough to matter.
+    ///
+    /// `Auth.currentUser` is the same value read through `kAuthGlobalWorkQueue.sync`,
+    /// so it BLOCKS until the restore has landed and cannot report a session
+    /// that exists as absent. Safe to call from here: every invocation path runs
+    /// on the main queue (the initial `main.async` above, and a notification
+    /// observer registered with `queue: .main`), never on Firebase's work queue.
+    ///
+    /// ## What that nil used to cost
+    /// `clearUserInfo()`, unconditionally — which deletes the token and all
+    /// eight identity keys. Measured on device: a healthy account came back
+    /// from a launch holding a token issued minutes earlier and NOT ONE identity
+    /// key, because the wipe landed between `persistUserIdentity` and the token
+    /// write inside an in-flight `refreshTokenIfNeeded`. With `firebase_user_uid`
+    /// gone, KMP falls back to its `anon` namespace (`UserSettings.NO_USER`) and
+    /// the user's boards, layout and per-account settings all resolve to a
+    /// stranger's — the app "logging itself out" roughly an hour after last use,
+    /// which is how long iOS takes to evict it and force the next cold launch.
+    ///
+    /// ## Only a sign-out we asked for may clear
+    /// The failure directions are not symmetric. Holding stale identity for one
+    /// more launch is invisible; discarding a live one takes the user's account
+    /// away in front of them. So a `nil` we did not ask for is treated as "not
+    /// restored yet" and changed nothing — Firebase fires again the moment it
+    /// resolves, including after `protectedDataDidBecomeAvailable` on a device
+    /// that was locked when we launched.
+    ///
+    /// Genuine endings all set [expectingSignOut] first: `logout()`, the KMP
+    /// `signOut` command, account deletion, and the confirmed-gone branch of
+    /// `refreshTokenIfNeeded`.
+    private func settleAuthState() {
+        if let user = Auth.auth().currentUser {
+            expectingSignOut = false
+            // Persist identity SYNCHRONOUSLY, before the async token fetch.
+            // Firebase restores sessions from the keychain — which survives
+            // an app delete/reinstall while NSUserDefaults does not — so
+            // without this re-write the app launched "logged in" but with
+            // every identity key missing: the home avatar showed "?" and
+            // the profile "User" / "Stationly" / "Since Recently" until
+            // the next explicit sign-in.
+            persistUserIdentity(user)
+            Task { await self.refreshTokenIfNeeded() }
+        } else if expectingSignOut {
+            expectingSignOut = false
+            clearUserInfo()
+        } else {
+            // ── A nil nobody asked for ──
+            //
+            // Traced rather than silent: this branch is the whole fix, and a
+            // launch that hits it must be distinguishable from one that never
+            // saw a nil.
+            PushTraceSwift.log("auth nil we didn't ask for — session kept")
+            print("[AuthBridge] Unrequested nil auth state — credentials kept")
+
+            // Credentials are NOT deleted here, and the distinction is the
+            // point. `currentUser` reading nil through the barrier is good
+            // evidence there is no session — but it is not proof, because a
+            // Keychain read can fail for reasons that have nothing to do with
+            // whether an account exists. Measured during this session: a process
+            // launched by `devicectl` cannot read the Keychain at all, so
+            // Firebase reported no user seconds after a successful sign-in on a
+            // device that was, in fact, signed in.
+            //
+            // So the two consequences are split by how much it costs to be
+            // wrong:
+            //
+            //  - Blanking the WIDGET is cheap and self-reversing — the next
+            //    `persistUserIdentity` lowers the flag again — and it is the
+            //    only way a sign-out Firebase performed ITSELF
+            //    (`User.signOutIfTokenIsInvalid`, which never reaches our
+            //    `logout()`) can reach the home screen. Worth acting on the
+            //    weaker signal.
+            //  - Deleting the token and identity is not reversible by anything
+            //    short of the user signing in again, so it needs the strong
+            //    signal below.
+            if UIApplication.shared.isProtectedDataAvailable {
+                setWidgetSignedOut(true)
+                WidgetCenter.shared.reloadAllTimelines()
+            }
+            discardTornIdentity()
+        }
+        // Posted on EVERY branch, including the one that changed nothing.
+        //
+        // `ContentView` re-reads `hasSession` here, and that answer is not the
+        // same as "did this method act". A sign-out Firebase performs on its own
+        // — `User.signOutIfTokenIsInvalid`, on a revoked or deleted account —
+        // arrives as exactly this unrequested nil, and it is a REAL ending that
+        // the UI has to be told about. Returning early instead left the app on
+        // the home screen of an account that no longer existed, which is the
+        // "credentials gone, interface unchanged" failure the `.id` rebuild was
+        // added for in the first place.
+        //
+        // The listener cannot tell that apart from a Keychain that could not be
+        // read, and it does not have to: `hasSession` distinguishes them by
+        // `isProtectedDataAvailable`, so the unreadable case re-reports `true`
+        // from the stored token and nothing moves.
+        NotificationCenter.default.post(name: .authStateDidChange, object: nil)
     }
 
     // MARK: - Command dispatch
@@ -89,6 +247,12 @@ class AuthBridge {
 
         let parts = command.components(separatedBy: "|")
         guard let verb = parts.first else { return }
+
+        // Raised for the whole life of the command, lowered in `markDone()`.
+        // Its only reader is `ContentView`, which must not rebuild the Compose
+        // host for a sign-in the Compose login flow is in the middle of doing.
+        commandInFlight = true
+        authCommandTouchedAt = Date()
 
         Task {
             switch verb {
@@ -187,6 +351,8 @@ class AuthBridge {
     }
 
     private func markDone() {
+        commandInFlight = false
+        authCommandTouchedAt = Date()
         UserDefaults.standard.set("1", forKey: "auth_command_done")
         UserDefaults.standard.synchronize()
     }
@@ -339,10 +505,89 @@ class AuthBridge {
     // MARK: - Sign-out
 
     func logout() async {
+        // BEFORE the Firebase call, because that call is what makes the listener
+        // fire with nil — and `settleAuthState` will not clear anything unless
+        // this says the ending is ours. Every deliberate teardown reaches
+        // Firebase through here, so this one line covers all of them.
+        expectingSignOut = true
         try? Auth.auth().signOut()
         GIDSignIn.sharedInstance.signOut()
         clearUserInfo()
+        // ── Tell the WIDGET, which is a different process ──
+        //
+        // It holds its own copy of the board and can refill it without us: its
+        // timeline fetches over REST with the API key, for a station named in an
+        // AppIntent configuration nothing here can erase. So deleting data is a
+        // sign-out it undoes within a couple of minutes — see
+        // `AppGroupKeys.widgetSignedOut`.
+        //
+        // Raised HERE as well as in KMP's `clearWidgetData` because this is the
+        // last step of every teardown, whichever order the two halves run in:
+        // `ProfileViewModel.signOut` calls this BEFORE `cleanupAll()`, while
+        // `signOutForAccountDeletion` calls it AFTER. One of those would
+        // otherwise leave the flag lowered by whatever ran last.
+        setWidgetSignedOut(true)
+        // And reload, so the boards go blank now rather than whenever WidgetKit
+        // next gets round to them. Free: reloads requested while the app is
+        // foreground are exempt from the timeline budget.
+        WidgetCenter.shared.reloadAllTimelines()
         NotificationCenter.default.post(name: .authStateDidChange, object: nil)
+    }
+
+    /// Throw away a token that has no identity beside it.
+    ///
+    /// ## Only this direction, and the asymmetry is the whole correctness
+    /// A TOKEN WITH NO UID cannot be produced by any correct ordering. Both
+    /// paths that write a token write the identity first or alongside it —
+    /// `storeUserInfo` sets the token and then calls [persistUserIdentity], and
+    /// `refreshTokenIfNeeded` calls [persistUserIdentity] before it even asks
+    /// for one — while [clearUserInfo] removes all nine together. So this shape
+    /// is debris, and it is exactly the debris the pre-fix build left behind:
+    /// `clearUserInfo` landing inside an in-flight `refreshTokenIfNeeded`, whose
+    /// token write then resurrected the one key it had just removed.
+    ///
+    /// **A UID WITH NO TOKEN is NOT checked, because it is ordinary.**
+    /// [persistUserIdentity] writes the uid and does *not* write a token —
+    /// `settleAuthState` calls it synchronously and only then hops to
+    /// `refreshTokenIfNeeded` for the token. Any moment between those two, and
+    /// any refresh that fails offline, leaves a perfectly healthy session in
+    /// precisely that shape. Treating the mismatch symmetrically would delete
+    /// the credentials of a signed-in user for being briefly half-written,
+    /// which is the failure this whole method exists to avoid.
+    ///
+    /// Safe to act on the weak signal for the one direction that remains, since
+    /// a healthy session can never look like it. And worth acting on, because
+    /// the torn state is silently sticky: `IosPlatformAuthProvider.isLoggedIn()`
+    /// answers from the token alone, so KMP treats the device as signed in while
+    /// every identity read comes back nil — the profile renders a skeleton that
+    /// resolves to "?" and "User", and `StationlyAuth` attaches a dead bearer to
+    /// every `/user/*` call.
+    private func discardTornIdentity() {
+        let ud = UserDefaults.standard
+        guard ud.string(forKey: "firebase_auth_token")?.isEmpty == false,
+              ud.string(forKey: "firebase_user_uid")?.isEmpty != false
+        else { return }
+        PushTraceSwift.log("token with no identity — discarded")
+        print("[AuthBridge] Discarding orphaned token (no uid beside it)")
+        clearUserInfo()
+    }
+
+    /// The App Group half of "is anyone signed in", for the widget extension.
+    ///
+    /// A separate suite from everything else this class writes: the extension
+    /// cannot see `UserDefaults.standard`, which is where the token and the
+    /// identity keys live.
+    private func setWidgetSignedOut(_ signedOut: Bool) {
+        guard let group = UserDefaults(suiteName: AppGroupID.value) else { return }
+        if signedOut {
+            group.set(true, forKey: AppGroupKeys.widgetSignedOut)
+        } else {
+            // Removed rather than set to false, so "absent" stays the single
+            // meaning of signed-in — a device that has never signed out has no
+            // flag either, and the extension must read both the same way.
+            group.removeObject(forKey: AppGroupKeys.widgetSignedOut)
+        }
+        group.synchronize()
     }
 
     /// Sign out because the account was deleted somewhere else.
@@ -413,6 +658,27 @@ class AuthBridge {
         persistUserIdentity(user)
         do {
             let token = try await user.getIDToken(forcingRefresh: true)
+            // ── The session may have ended while this was in flight ──
+            //
+            // This is a network round trip, and a sign-out landing inside it
+            // finds the token already fetched and about to be written — so the
+            // write resurrects a key `clearUserInfo()` has just removed, and
+            // leaves the exact torn state measured on device: a valid token with
+            // no uid, no email and no provider beside it. Nothing repairs that,
+            // because every reader of the identity is looking at keys that are
+            // gone while every check for "is there a session" sees a token that
+            // is there.
+            //
+            // The activity log dated it to the second: the last event stamped
+            // with a uid at 15:24:53, and the token this wrote issued at
+            // 15:24:54 — with no `auth.logged_out` anywhere in the table.
+            //
+            // Re-checked rather than captured up front: what matters is the
+            // state NOW, after the await, not when the refresh started.
+            guard !expectingSignOut, Auth.auth().currentUser != nil else {
+                print("[AuthBridge] Token arrived after sign-out — dropped")
+                return
+            }
             UserDefaults.standard.set(token, forKey: "firebase_auth_token")
             UserDefaults.standard.synchronize()
         } catch {
@@ -461,6 +727,14 @@ class AuthBridge {
     /// refresh — the keys must survive reinstalls that wipe NSUserDefaults
     /// but not the Firebase keychain session.
     private func persistUserIdentity(_ user: FirebaseAuth.User) {
+        // Somebody is signed in — Firebase produced an actual user, which is the
+        // only evidence that counts. Lowered here rather than on a board write:
+        // this runs on sign-in, on every keychain restore and on every token
+        // refresh, so it cannot be missed by a user who signs back in with no
+        // boards saved, and it cannot be triggered by a stray write from a
+        // request still in flight when the session ended.
+        setWidgetSignedOut(false)
+
         let ud = UserDefaults.standard
         ud.set(user.email,                    forKey: "firebase_user_email")
         ud.set(user.displayName,              forKey: "firebase_user_display_name")

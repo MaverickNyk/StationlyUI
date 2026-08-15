@@ -117,7 +117,17 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         // roughly one round trip (~150ms measured) and only on builds that are
         // actually stale — an app-driven reload writes the board first, so its
         // data is seconds old and this is skipped.
-        if Date().timeIntervalSince(data.lastUpdated) > Self.staleAfterSeconds {
+        //
+        // ── Never for a signed-out account ──
+        //
+        // This fetch authenticates with the API key, not the user's token, and
+        // its station comes from a configuration the app cannot erase — so on
+        // its own it would repopulate a board a sign-out had just cleared, and
+        // go on doing it every couple of minutes. `readWidgetData` already
+        // returns the signed-out board above; this stops the network call that
+        // would have replaced it. See `AppGroupKeys.signedOut`.
+        if !data.isSignedOut,
+           Date().timeIntervalSince(data.lastUpdated) > Self.staleAfterSeconds {
             let outcome = await Self.refreshBounded(stationId: data.stationId)
             if outcome == .refreshed {
                 // Re-read: the refresh wrote the App Group, and the whole point

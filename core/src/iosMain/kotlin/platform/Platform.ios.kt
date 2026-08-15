@@ -123,6 +123,40 @@ object AppGroupKeys {
     const val WIDGET_STATIONS         = "widget_stations"
     const val WIDGET_BOARD_PREFIX     = "widget_board_"
 
+    /**
+     * Whether the account signed OUT, as opposed to simply having no boards.
+     *
+     * ## Why the wipe is not enough on its own
+     * The extension is a separate process that can refill itself. Its timeline
+     * build fetches whenever what it holds is more than two minutes old
+     * (`DepartureBoardProvider.staleAfterSeconds`), over REST authenticated by
+     * the API KEY rather than the user's token — and the station it fetches for
+     * lives in an AppIntent configuration that nothing on this side can reach or
+     * erase. So a sign-out that only deletes data is a sign-out the widget can
+     * undo, and the boards come back a couple of minutes later looking exactly
+     * as they did.
+     *
+     * ## Why it is not just "no stations"
+     * Because that already means something else. `refreshAllBoards` wipes to the
+     * same empty state when the user deletes their last board, and that user is
+     * still signed in and must keep the refresh path they have. The two are only
+     * distinguishable if the sign-out says so.
+     *
+     * ## Both edges belong to Swift
+     * Raised by [IosWidgetManager.clearWidgetData] (reached only from
+     * `StationLifecycleUseCase.cleanupAll`) **and** by `AuthBridge.logout()`,
+     * which is the last step of every teardown — so no ordering between the two
+     * halves of a sign-out can lose it. Lowered by `AuthBridge.persistUserIdentity`,
+     * which runs only when Firebase has produced an actual user.
+     *
+     * It is NOT lowered on a board write, which was the first attempt and is
+     * wrong in both directions: a `reconcileBoards` or live-stream frame still
+     * in flight at sign-out can write a board with nobody signed in, and a user
+     * who signs back in with nothing saved never reaches a board write at all
+     * — leaving their widget telling them to sign in while they are signed in.
+     */
+    const val WIDGET_SIGNED_OUT       = "widget_signed_out"
+
     // Written by the EXTENSION (which platform the medium board is showing for
     // a station, and which way it last moved), declared here because their
     // LIFETIME is the station's: KMP is the only side with an event for "this
@@ -268,8 +302,17 @@ class IosWidgetManager : WidgetManager {
 
     override suspend fun showWaitingState(station: String, line: String) = refreshAllBoards()
 
+    /**
+     * The session ended — leave nothing for the widget to show, and say so.
+     *
+     * The flag is the half that makes this stick. Reached only from
+     * `StationLifecycleUseCase.cleanupAll` (sign-out, account deletion, forced
+     * logout), never from the ordinary "last board deleted" path, which is why
+     * it can mean what it says. See [AppGroupKeys.WIDGET_SIGNED_OUT].
+     */
     override suspend fun clearWidgetData() = withContext(Dispatchers.IO) {
         val d = appGroupDefaults ?: return@withContext
+        d.setBool(true, forKey = AppGroupKeys.WIDGET_SIGNED_OUT)
         wipe(d)
     }
 
@@ -299,6 +342,15 @@ class IosWidgetManager : WidgetManager {
      */
     private suspend fun refreshAllBoards() = withContext(Dispatchers.IO) {
         val d = appGroupDefaults ?: return@withContext
+
+        // NOTE: [AppGroupKeys.WIDGET_SIGNED_OUT] is deliberately NOT touched
+        // here, in either direction. Both edges belong to Swift `AuthBridge`,
+        // which is the only side that knows whether there is a session — see
+        // the key's own doc. Lowering it on a board write was tried and is
+        // wrong twice over: a stray `reconcileBoards` or live-stream frame
+        // still in flight at sign-out can produce a board with nobody signed
+        // in, and a user who signs back in with no boards saved never reaches a
+        // board write at all.
         val all = Platform.sqlStorage.getAllSelections()
         if (all.isEmpty()) {
             // Nothing left to show (last board deleted / logged out): wipe to

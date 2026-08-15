@@ -252,6 +252,49 @@ repopulates every station's App Group entry and the widget finds its board again
 > the only case it covers is a widget whose station did NOT come back as a board,
 > and there is nothing to show for such a widget anyway. Deleted.
 
+#### …and the wipe alone stopped being enough (2026-08-15)
+
+The paragraph above was true when the widget could only be *given* data. It
+stopped being true when the extension learned to go and get its own:
+`DepartureBoardProvider.timeline` now fetches whenever what it holds is older
+than `staleAfterSeconds` (120 s), over the same REST path the refresh button
+uses — authenticated by `widget_api_key`, **not** by the user's token — for a
+station named in an AppIntent configuration that nothing on the app side can
+read or erase.
+
+So the wipe held for about two minutes. Then the board came back, fully live,
+for an account that had signed out. Reported from device, and it is the exact
+failure this section's first paragraph forbids.
+
+Deleting data cannot fix this, because the widget can always re-derive it. The
+sign-out has to be **stated**, in the one place both processes can see:
+
+- `widget_signed_out`, **raised** by `AuthBridge.logout()` and by
+  `IosWidgetManager.clearWidgetData` (reached only from `cleanupAll()`), and
+  **lowered** by `AuthBridge.persistUserIdentity`.
+- The extension checks it in `AppGroupStorage.readWidgetData` (renders
+  `WidgetData.signedOut` — "Sign in to see your board"), in the timeline's
+  staleness branch, and in `WidgetRefreshService.refresh` (the door the refresh
+  button and the WidgetKit push handler come through).
+- It is **not** the same as "no stations". A signed-in user who deletes their
+  last board wipes to the same empty App Group and must keep the refresh path
+  they have — so `refreshAllBoards`'s own `wipe()` never raises it.
+
+The relight above is unchanged and still needs nothing stored — but the flag is
+**not** lowered on it. Both edges belong to `AuthBridge`, the only side that
+knows whether there is a session:
+
+- raised in `logout()` as well as in `clearWidgetData`, because the two halves of
+  a sign-out run in opposite orders (`ProfileViewModel.signOut` signs out of
+  Firebase *before* `cleanupAll()`; `signOutForAccountDeletion` *after*), so
+  either alone can be undone by whatever ran last;
+- lowered in `persistUserIdentity`, which runs on sign-in, on every keychain
+  restore and on every token refresh. A board write cannot stand in for it in
+  either direction: a request still in flight at sign-out can produce one with
+  nobody signed in, and a user who signs back in with **no boards saved** never
+  reaches one — which would leave their widget telling them to sign in while
+  they are signed in.
+
 ### Account deletion is not logout
 Everything device-local is kept per uid *because the same person is coming back*.
 A deleted account has no same person, so `UserStateSync.forgetAccount(uid)`
