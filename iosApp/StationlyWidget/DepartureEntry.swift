@@ -1,7 +1,7 @@
 import Foundation
 import WidgetKit
 
-/// The `stationly://` link a board tap opens.
+/// The deep link a board tap opens.
 ///
 /// One builder, because the app parses the other end of it
 /// (`ContentView.onOpenURL`) and two string formats obliged to agree is one too
@@ -11,13 +11,34 @@ import WidgetKit
 /// Percent-encoded defensively — TfL grouping ids are alphanumeric today
 /// (`940GZZLUKSX`, `490G00008805`), and a naptan that ever isn't would
 /// otherwise produce a URL that silently fails to parse.
+///
+/// ## Why the scheme is not a literal
+/// `stationly` in production, `stationly-staging` in staging. Since the split
+/// the two apps can be installed at the same time, and when two apps claim one
+/// URL scheme iOS picks between them arbitrarily — a tap on the staging widget
+/// could open the production app. The value comes from the `StationlyUrlScheme`
+/// Info.plist key, which `project.yml` writes into both targets' plists from
+/// the same `STATIONLY_URL_SCHEME` build setting that populates
+/// `CFBundleURLSchemes`, so the scheme the widget emits and the scheme the app
+/// registers cannot drift apart.
 enum StationlyDeepLink {
+
+    /// Read from the EXTENSION's bundle — `Bundle.main` in an app extension is
+    /// the extension, not the containing app.
+    private static let scheme: String = {
+        guard let s = Bundle.main.object(forInfoDictionaryKey: "StationlyUrlScheme") as? String,
+              !s.isEmpty else {
+            fatalError("StationlyUrlScheme missing from the widget Info.plist — check STATIONLY_URL_SCHEME in Config/*.xcconfig")
+        }
+        return s
+    }()
+
     static func board(stationId: String) -> URL? {
         guard !stationId.isEmpty,
               let escaped = stationId.addingPercentEncoding(
                   withAllowedCharacters: .urlQueryAllowed)
         else { return nil }
-        return URL(string: "stationly://home?station=\(escaped)")
+        return URL(string: "\(scheme)://home?station=\(escaped)")
     }
 }
 

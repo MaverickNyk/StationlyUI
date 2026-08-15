@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>CLIENT_ID</key>
-	<string>48865967804-g7alcuuk9ld0m7e3vugcc4jnscfl54qg.apps.googleusercontent.com</string>
+	<string>48865967804-4fn7sigv0dabkv8onghcj1k595ne8hlc.apps.googleusercontent.com</string>
 	<key>REVERSED_CLIENT_ID</key>
-	<string>com.googleusercontent.apps.48865967804-g7alcuuk9ld0m7e3vugcc4jnscfl54qg</string>
+	<string>com.googleusercontent.apps.48865967804-4fn7sigv0dabkv8onghcj1k595ne8hlc</string>
 	<key>ANDROID_CLIENT_ID</key>
 	<string>48865967804-qb1d78f03ctng0orrt14tksf9dj12nd7.apps.googleusercontent.com</string>
 	<key>API_KEY</key>
@@ -15,7 +15,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.stationly.mobile</string>
+	<string>com.stationly.mobile.staging</string>
 	<key>PROJECT_ID</key>
 	<string>mindthetimefcm</string>
 	<key>STORAGE_BUCKET</key>
@@ -31,7 +31,7 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:48865967804:ios:1fad13257473a6a79e5ab9</string>
+	<string>1:48865967804:ios:40d34a719e55daba9e5ab9</string>
 	<key>DATABASE_URL</key>
 	<string>https://mindthetimefcm-default-rtdb.europe-west1.firebasedatabase.app</string>
 </dict>

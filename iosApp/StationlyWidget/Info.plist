@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Stationly</string>
+	<string>$(STATIONLY_DISPLAY_NAME)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -25,5 +25,9 @@
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.widgetkit-extension</string>
 	</dict>
+	<key>StationlyAppGroup</key>
+	<string>$(STATIONLY_APP_GROUP)</string>
+	<key>StationlyUrlScheme</key>
+	<string>$(STATIONLY_URL_SCHEME)</string>
 </dict>
 </plist>

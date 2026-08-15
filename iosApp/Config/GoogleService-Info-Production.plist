@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ⚠️  PLACEHOLDER — this is NOT a real Firebase configuration.
+
+  Production has no Firebase iOS app registered yet. Before this file existed,
+  the repo held a single GoogleService-Info.plist belonging to the *staging*
+  project (mindthetimefcm), and the production build configurations used it —
+  so a production build would have authenticated against staging and handed a
+  staging ID token to the production backend.
+
+  This stub exists so that failure is loud instead of silent. It deliberately
+  omits GOOGLE_APP_ID, which is exactly the key
+  `AppDelegate.configureFirebaseIfAvailable()` tests for; with it missing the
+  app logs "GoogleService-Info.plist missing or placeholder — Firebase not
+  configured" and skips `FirebaseApp.configure()`. A production build therefore
+  still launches and runs, but cannot sign in — which is the correct behaviour
+  for a build that has no credentials of its own.
+
+  ── To replace it ──
+  1. Firebase console → project `stationly-prod` → add iOS app, bundle id
+     `com.stationly.mobile`.
+  2. Download the generated GoogleService-Info.plist and commit it OVER this
+     file, keeping the filename.
+  3. Copy its REVERSED_CLIENT_ID into GOOGLE_REVERSED_CLIENT_ID in
+     Config/Production.xcconfig — that is a separate value and it will not be
+     picked up from here.
+
+  See docs/IOS_ENV_SPLIT_AND_TESTFLIGHT.md §6 for the full owner checklist.
+-->
+<plist version="1.0">
+<dict>
+	<key>BUNDLE_ID</key>
+	<string>com.stationly.mobile</string>
+	<key>PROJECT_ID</key>
+	<string>stationly-prod</string>
+	<key>PLACEHOLDER</key>
+	<true/>
+</dict>
+</plist>

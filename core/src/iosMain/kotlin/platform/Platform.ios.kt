@@ -47,21 +47,37 @@ private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
  * The App Group shared by the app, the widget extension and all Kotlin/Native
  * code — the single Kotlin-side source of truth.
  *
- * `composeApp/iosMain` reads it from here rather than re-declaring it: it was
- * previously copied into four files, and the 2026-07-25 rename from
- * `group.com.stationly.mobile` had to find every one. A missed copy does not
- * fail the build — it silently opens an empty suite, which is indistinguishable
- * from "the data was never written".
+ * `composeApp/iosMain` reads it from here rather than re-declaring it.
  *
- * Swift cannot import this, so both targets keep their own `AppGroupID.swift`;
- * those two plus the `application-groups` entitlements in `project.yml` are
- * the remaining copies that must move together.
+ * ## Why this reads the Info.plist rather than holding a literal
+ * It used to be the constant `group.com.stationly.shared`, copied into four
+ * compilation units (here, both `AppGroupID.swift` files, and the
+ * `application-groups` entitlements), and the 2026-07-25 rename from
+ * `group.com.stationly.mobile` had to find every one. A missed copy does not
+ * fail the build — it silently opens an empty suite, which is
+ * indistinguishable from "the data was never written".
+ *
+ * Since the staging/production split the value also has to DIFFER per build:
+ * the two apps have different bundle ids, install side by side, and would
+ * otherwise share one container. So all four now resolve the same
+ * `StationlyAppGroup` Info.plist key, expanded at build time from
+ * `STATIONLY_APP_GROUP` in `Config/Staging.xcconfig` / `Config/Production.xcconfig`.
+ *
+ * Necessarily a `val` and no longer a `const val` — the value is not known
+ * until the bundle is read. Downstream `private const val APP_GROUP_ID`
+ * declarations had to widen for the same reason.
  */
 object IosAppGroup {
-    const val ID = "group.com.stationly.shared"
+    val ID: String by lazy {
+        val id = NSBundle.mainBundle.objectForInfoDictionaryKey("StationlyAppGroup") as? String
+        require(!id.isNullOrEmpty()) {
+            "StationlyAppGroup missing from Info.plist — check STATIONLY_APP_GROUP in Config/*.xcconfig"
+        }
+        id
+    }
 }
 
-private const val APP_GROUP_ID = IosAppGroup.ID
+private val APP_GROUP_ID: String get() = IosAppGroup.ID
 
 // ── All NSUserDefaults keys used across KMP and Swift ──
 object AppGroupKeys {
@@ -1079,7 +1095,75 @@ class IosStorageManager : StorageManager {
 // Platform singleton
 // ─────────────────────────────────────────────────────────
 
-private const val IOS_API_KEY = "f7d6c5b4-3a2b-1c0d-e9f8-a7b6c5d4e3f2"
+/**
+ * The backend API key for the environment this build targets.
+ *
+ * Was a single hardcoded constant shared by staging AND production — the only
+ * platform where that was true, since Android has read per-flavor keys out of
+ * `local.properties` since it shipped. It now comes from the `StationlyApiKey`
+ * Info.plist key, expanded from `STATIONLY_API_KEY`: committed in
+ * `Config/Staging.xcconfig` (that value has been in this repo's git history
+ * since the iOS app existed, so there is nothing left to protect) and supplied
+ * for production by the git-ignored `Config/Secrets.xcconfig`.
+ *
+ * A production build with no secrets file gets an obviously-invalid
+ * placeholder and is rejected by the backend, which is the right outcome for a
+ * build holding no production credential.
+ *
+ * This is about keeping production credentials out of git, NOT about secrecy
+ * on device: a key inside a shipped iOS binary is extractable whichever route
+ * it travels there.
+ */
+private val IOS_API_KEY: String by lazy {
+    val key = NSBundle.mainBundle.objectForInfoDictionaryKey("StationlyApiKey") as? String
+    // Trapped, not defaulted to "". An empty key is not a runtime condition —
+    // it means STATIONLY_API_KEY did not reach the Info.plist — and the
+    // symptom it produces is every backend call failing authentication with
+    // nothing on the device explaining why. Same reasoning as IosAppGroup.
+    require(!key.isNullOrEmpty()) {
+        "StationlyApiKey missing from Info.plist — check STATIONLY_API_KEY in Config/*.xcconfig"
+    }
+    key
+}
+
+/**
+ * Which environment this build targets, from the `StationlyEnvironment`
+ * Info.plist key.
+ *
+ * ## Why this traps instead of defaulting
+ * It used to read:
+ *
+ * ```
+ * return if (env == "staging") AppEnvironment.STAGING else AppEnvironment.PRODUCTION
+ * ```
+ *
+ * which made PRODUCTION the outcome of every failure — a missing key, an empty
+ * expansion, an xcconfig that did not apply, a typo. `AppConfig` turns that
+ * directly into `api.stationly.co.uk` and the production web origin, so a
+ * *staging* build with one broken plist key would have talked to the
+ * production backend, silently, with a staging Firebase identity.
+ *
+ * Of the four things this split expands into the Info.plist, this was the only
+ * reader that degraded quietly rather than trapping — `IosAppGroup.ID`,
+ * `AppGroupID.value` and `DepartureEntry.scheme` all refuse to start. An
+ * unreadable environment is a build misconfiguration, and the safe response to
+ * a build that cannot say which backend it is for is to not run at all.
+ *
+ * Both values are matched explicitly, so a *third* value (a typo like
+ * "Staging", or some future "preprod") is an error rather than quietly
+ * becoming production.
+ */
+private val IOS_ENVIRONMENT: AppEnvironment by lazy {
+    when (val env = NSBundle.mainBundle.objectForInfoDictionaryKey("StationlyEnvironment") as? String) {
+        "staging"    -> AppEnvironment.STAGING
+        "production" -> AppEnvironment.PRODUCTION
+        else -> throw IllegalStateException(
+            "StationlyEnvironment is '${env ?: "<missing>"}', expected 'staging' or 'production' — " +
+                "check STATIONLY_ENVIRONMENT in Config/*.xcconfig. Refusing to guess: the old code " +
+                "defaulted to production here, which pointed staging builds at the production backend."
+        )
+    }
+}
 
 actual object Platform {
     private var _sqlStorage: SqlStorage? = null
@@ -1093,10 +1177,7 @@ actual object Platform {
 
     actual fun getPlatformName(): String = "iOS"
     actual fun getApiKey(): String       = IOS_API_KEY
-    actual fun getEnvironment(): AppEnvironment {
-        val env = NSBundle.mainBundle.objectForInfoDictionaryKey("StationlyEnvironment") as? String
-        return if (env == "staging") AppEnvironment.STAGING else AppEnvironment.PRODUCTION
-    }
+    actual fun getEnvironment(): AppEnvironment = IOS_ENVIRONMENT
     actual fun getBaseUrl(): String = com.stationly.core.config.AppConfig.apiBaseUrl
 
     actual suspend fun getAuthToken(): String? = withContext(Dispatchers.IO) {

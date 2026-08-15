@@ -4,15 +4,15 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.stationly.mobile.widgetrefresh</string>
-		<string>com.stationly.mobile.activityupload</string>
+		<string>$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).widgetrefresh</string>
+		<string>$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).activityupload</string>
 	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Stationly</string>
+	<string>$(STATIONLY_DISPLAY_NAME)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -20,7 +20,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Stationly</string>
+	<string>$(STATIONLY_DISPLAY_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -32,17 +32,17 @@
 			<string>Editor</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.googleusercontent.apps.48865967804-g7alcuuk9ld0m7e3vugcc4jnscfl54qg</string>
+				<string>$(GOOGLE_REVERSED_CLIENT_ID)</string>
 			</array>
 		</dict>
 		<dict>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.stationly.mobile.deeplink</string>
+			<string>$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).deeplink</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>stationly</string>
+				<string>$(STATIONLY_URL_SCHEME)</string>
 			</array>
 		</dict>
 	</array>
@@ -50,10 +50,18 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>FirebaseAppDelegateProxyEnabled</key>
 	<false/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Stationly uses your location to show nearby stops.</string>
+	<key>StationlyApiKey</key>
+	<string>$(STATIONLY_API_KEY)</string>
+	<key>StationlyAppGroup</key>
+	<string>$(STATIONLY_APP_GROUP)</string>
 	<key>StationlyEnvironment</key>
 	<string>$(STATIONLY_ENVIRONMENT)</string>
+	<key>StationlyUrlScheme</key>
+	<string>$(STATIONLY_URL_SCHEME)</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -74,5 +82,19 @@
 		<key>UIImageRespectsSafeAreaInsets</key>
 		<false/>
 	</dict>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
 </dict>
 </plist>

@@ -1,3 +1,24 @@
+# ══════════════════════════════════════════════════════════════════════════
+#  THIS FILE GENERATES FIVE COMMITTED FILES. DO NOT HAND-EDIT THEM.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# `iosApp/xcodegen.sh` regenerates all of these from this file. Each is checked
+# into git — which makes them look like source, and they are not:
+#
+#   iosApp.xcodeproj/project.pbxproj        ← the project
+#   iosApp/Info.plist                       ← from the iosApp target's info.properties
+#   StationlyWidget/Info.plist              ← from the widget target's info.properties
+#   iosApp/iosApp.entitlements              ← from the iosApp target's entitlements.properties
+#   StationlyWidget/StationlyWidget.entitlements  ← likewise
+#
+# An edit made directly to any of them survives until the next build and is
+# then silently overwritten — every script here runs xcodegen before building.
+# The evidence is in the history: a hand-written comment block explaining the
+# WidgetKit push entitlement lived in StationlyWidget.entitlements and vanished
+# the first time that target's entitlements moved into this file.
+#
+# To change one of them, change the corresponding block below.
+
 name: iosApp
 options:
   bundleIdPrefix: com.stationly
@@ -13,6 +34,42 @@ configs:
   Debug Production: debug
   Release Staging: release
   Release Production: release
+
+# ── The environment split lives in Config/*.xcconfig, not here ──
+#
+# Four configurations, two independent axes:
+#   environment (staging | production) → Config/Staging|Production.xcconfig
+#   build type  (debug   | release)    → the `settings.configs` blocks below
+#
+# Everything that differs between staging and production — bundle id, display
+# name, App Group, URL scheme, Firebase project, app icon, API key — is a
+# variable defined once per environment in those two files and merely
+# *referenced* here as $(NAME). Adding a new per-environment value means
+# touching the two xcconfigs, not this file.
+#
+# ⚠️ PRECEDENCE: a setting written into a target's `settings:` block BEATS the
+# xcconfig. So none of the variables defined in Config/*.xcconfig may also be
+# assigned below — only referenced. STATIONLY_ENVIRONMENT in particular used to
+# be assigned here and had to be removed, or the xcconfig value would never
+# have taken effect.
+#
+# Build-type-only settings (APS_ENVIRONMENT) deliberately stay in the
+# `settings.configs` blocks: they track debug/release, not staging/production.
+configFiles:
+  Debug Staging: Config/Staging.xcconfig
+  Release Staging: Config/Staging.xcconfig
+  Debug Production: Config/Production.xcconfig
+  Release Production: Config/Production.xcconfig
+
+# Project-level, so both targets inherit. These track the DEBUG/RELEASE axis,
+# which is why they live here and not in the environment xcconfigs — those are
+# selected per environment and would have to repeat every value twice.
+settings:
+  configs:
+    Release Staging:
+      STATIONLY_KOTLIN_BUILD: release
+    Release Production:
+      STATIONLY_KOTLIN_BUILD: release
 
 packages:
   Firebase:
@@ -33,6 +90,12 @@ targets:
       - path: iosApp
         excludes:
           - "**/*.entitlements"
+      # Both Firebase plists live in Config/ and are NOT compiled into the
+      # bundle from here — the pre-build script below copies exactly one of
+      # them in, renamed to the GoogleService-Info.plist that
+      # `AppDelegate.configureFirebaseIfAvailable()` looks for. Listing them as
+      # sources instead would ship BOTH environments' credentials in every
+      # build and leave the filename ambiguous.
     info:
       path: iosApp/Info.plist
       properties:
@@ -40,8 +103,11 @@ targets:
         # permission dialogs, app switcher). Target/product stay "iosApp" so
         # the documented build/deploy pipeline (iosApp.app paths, schemes)
         # doesn't churn — branding lives here, not in PRODUCT_NAME.
-        CFBundleDisplayName: Stationly
-        CFBundleName: Stationly
+        # Per-environment since the split: "Stationly Staging" vs "Stationly".
+        # With both apps installable side by side, the label is the only thing
+        # telling a tester which one they are looking at.
+        CFBundleDisplayName: $(STATIONLY_DISPLAY_NAME)
+        CFBundleName: $(STATIONLY_DISPLAY_NAME)
         # Wired through from the build settings. Without these the generated
         # plist carries a hardcoded "1" forever, whatever CURRENT_PROJECT_VERSION
         # says — which silently broke the widget's build-change ledger reset
@@ -50,6 +116,19 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CADisableMinimumFrameDurationOnPhone: true
+        # Export compliance, answered in the binary so App Store Connect stops
+        # asking. Without it EVERY upload sits in "Missing Compliance" until a
+        # human clicks through the questionnaire in the ASC web UI — which is
+        # fine for one manual submission and fatal for an automated TestFlight
+        # pipeline, because the build is simply not distributable until then.
+        #
+        # `false` is correct here: the app's only cryptography is HTTPS (via
+        # the OS) plus Firebase's use of the same, and both are exempt under
+        # the standard note-4/(d) exemption. If a bespoke crypto implementation
+        # is ever added — encrypting user data at rest with our own scheme, say
+        # — this must flip to true and a CCATS/self-classification report
+        # becomes necessary.
+        ITSAppUsesNonExemptEncryption: false
         # ── Firebase must NOT swizzle the app delegate ──
         #
         # Absent, this defaults to YES and FirebaseAuth proxies the APNs
@@ -67,6 +146,32 @@ targets:
         FirebaseAppDelegateProxyEnabled: false
         NSLocationWhenInUseUsageDescription: "Stationly uses your location to show nearby stops."
         StationlyEnvironment: $(STATIONLY_ENVIRONMENT)
+        # ── The three keys below are how per-environment config reaches code ──
+        #
+        # Neither Kotlin/Native nor the Swift targets can read an xcconfig, and
+        # they cannot import constants from each other either. The Info.plist is
+        # the one channel all of them share, so every value that must be both
+        # build-time-selected and readable at runtime is expanded into it here.
+        #
+        # The App Group container. Previously the literal
+        # `group.com.stationly.shared` was copied into FOUR compilation units
+        # (iosApp/AppGroupID.swift, StationlyWidget/AppGroupID.swift,
+        # IosAppGroup.ID in core/iosMain, plus the entitlements) with a comment
+        # in each begging the next person to keep them in lockstep — a missed
+        # copy does not fail the build, it silently opens an EMPTY suite, which
+        # is indistinguishable from "the data was never written". All four now
+        # read this key, so the value has exactly one definition per
+        # environment and the class of bug is gone rather than documented.
+        StationlyAppGroup: $(STATIONLY_APP_GROUP)
+        # Bare scheme name — `stationly` or `stationly-staging`. The widget
+        # builds `<scheme>://home?station=…` from this rather than a hardcoded
+        # literal; two installed apps claiming one scheme lets iOS route a
+        # staging widget tap to the production app, arbitrarily.
+        StationlyUrlScheme: $(STATIONLY_URL_SCHEME)
+        # The backend API key, replacing the single hardcoded IOS_API_KEY in
+        # Platform.ios.kt that both environments used to share. Android has had
+        # per-flavor keys from local.properties since it shipped.
+        StationlyApiKey: $(STATIONLY_API_KEY)
         # Two background modes, doing two different jobs:
         #
         # `remote-notification` — silent pushes (content-available:1). Without
@@ -96,9 +201,50 @@ targets:
         # BackgroundRefreshScheduler.taskIdentifier and
         # ActivityUploadScheduler.taskIdentifier by hand — a mismatch is a
         # launch-time crash, not a warning.
+        #
+        # Derived from the bundle id rather than hardcoded, so staging gets
+        # `com.stationly.mobile.staging.widgetrefresh` while production keeps
+        # exactly the identifiers it already had. Apple expects a BGTask id to
+        # be prefixed by the app's bundle id, which is why the environment
+        # suffix goes in the MIDDLE — appending `.staging` to the end would
+        # have produced `com.stationly.mobile.widgetrefresh.staging`, no longer
+        # a prefix match for the staging bundle id.
         BGTaskSchedulerPermittedIdentifiers:
-          - com.stationly.mobile.widgetrefresh
-          - com.stationly.mobile.activityupload
+          - $(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).widgetrefresh
+          - $(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).activityupload
+        # ── Orientations: required, and all four are correct here ──
+        #
+        # Absent, App Store Connect REJECTS the upload outright — not a warning,
+        # a hard validation failure at transfer time:
+        #
+        #   90474: "Invalid bundle. No orientations were specified in the
+        #   com.stationly.mobile.staging bundle. To support iPad multitasking,
+        #   specify the … UISupportedInterfaceOrientations Info.plist key."
+        #
+        # It fires because TARGETED_DEVICE_FAMILY is "1,2" (iPhone AND iPad) —
+        # Xcode's default, never a deliberate choice here — and an iPad app must
+        # declare its orientations so the system can size it for Split View.
+        #
+        # All four rather than portrait-only, because the app genuinely rotates:
+        # Dream mode branches on it (`DreamHost.isLandscape`, a 30:70 landscape
+        # split, and a 56sp clock floor specifically to keep phone landscape
+        # readable). Android declares no screenOrientation either, so free
+        # rotation is also the parity behaviour. Locking to portrait would be a
+        # silent product regression dressed up as a build fix.
+        #
+        # UIInterfaceOrientationPortraitUpsideDown is included because Apple's
+        # own remediation text lists it; Face ID iPhones ignore it regardless,
+        # so it costs nothing and only affects iPad.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        "UISupportedInterfaceOrientations~ipad":
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         # Branded launch screen, matching Android's Theme.Stationly.Splash: the
@@ -118,9 +264,16 @@ targets:
           UIImageName: LaunchLogo
           UIImageRespectsSafeAreaInsets: false
         CFBundleURLTypes:
+          # Google Sign-In's redirect scheme. This is the REVERSED_CLIENT_ID of
+          # the Firebase project in use, so it MUST move with the plist chosen
+          # by the pre-build script — it was hardcoded to staging's, which
+          # would have silently mis-routed the production sign-in redirect.
+          # A wrong value here fails in the most confusing way available: the
+          # browser sheet opens, the user authenticates, control returns, and
+          # nothing whatsoever happens.
           - CFBundleTypeRole: Editor
             CFBundleURLSchemes:
-              - com.googleusercontent.apps.48865967804-g7alcuuk9ld0m7e3vugcc4jnscfl54qg
+              - $(GOOGLE_REVERSED_CLIENT_ID)
           # Our own scheme. Without it iOS has no handler for `stationly://` and
           # the URL is simply dropped — which is why the note in AppDelegate
           # about password-reset links reads as an instruction rather than a
@@ -131,14 +284,14 @@ targets:
           # station that was tapped rather than to wherever it was last left;
           # see `DepartureBoardEntryView.boardURL` and `BoardFocus`.
           - CFBundleTypeRole: Editor
-            CFBundleURLName: com.stationly.mobile.deeplink
+            CFBundleURLName: $(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).deeplink
             CFBundleURLSchemes:
-              - stationly
+              - $(STATIONLY_URL_SCHEME)
     entitlements:
       path: iosApp/iosApp.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.stationly.shared
+          - $(STATIONLY_APP_GROUP)
         # Silent FCM data pushes (the station / line-status topic updates that
         # keep the widget alive between app opens) need this — without it the
         # app never gets an APNs token and modern firebase-ios-sdk has no
@@ -165,30 +318,40 @@ targets:
         com.apple.developer.applesignin: [Default]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.stationly.mobile
-        MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "4"
+        # `com.stationly.mobile` in production, `com.stationly.mobile.staging`
+        # in staging. The distinct id is what makes the whole split possible:
+        # App Store Connect keys the app record — and therefore the TestFlight
+        # tracks, the push certificates and Sign in with Apple — off the bundle
+        # id, so one shared id would mean staging builds and production builds
+        # competing for the same "latest build" slot in front of the same
+        # testers. It is also what lets both apps sit on one phone at once.
+        PRODUCT_BUNDLE_IDENTIFIER: $(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX)
+        # Tinted variant in staging so the two icons are distinguishable at a
+        # glance, not only by their labels.
+        ASSETCATALOG_COMPILER_APPICON_NAME: $(STATIONLY_APPICON_NAME)
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         CODE_SIGN_ENTITLEMENTS: iosApp/iosApp.entitlements
         FRAMEWORK_SEARCH_PATHS: $(inherited)
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 7T7D5LLYSL
-        STATIONLY_ENVIRONMENT: production
+        # NOTE: STATIONLY_ENVIRONMENT is deliberately NOT set here. It now
+        # comes from Config/Staging.xcconfig / Config/Production.xcconfig, and
+        # a value in this block would override the xcconfig and pin every
+        # configuration to one environment — which is precisely the bug that
+        # made `Release Production` silently unusable before the split.
+        #
         # Expanded into the aps-environment entitlement above. Release builds
         # MUST be `production` — Apple's sandbox and production APNs gateways
         # issue different device tokens, and a mismatch fails silently.
+        #
+        # This tracks the DEBUG/RELEASE axis, not staging/production, which is
+        # why it stays here rather than moving into the environment xcconfigs.
         APS_ENVIRONMENT: development
       configs:
-        Debug Staging:
-          STATIONLY_ENVIRONMENT: staging
         Release Staging:
-          STATIONLY_ENVIRONMENT: staging
           APS_ENVIRONMENT: production
-        Debug Production:
-          STATIONLY_ENVIRONMENT: production
         Release Production:
-          STATIONLY_ENVIRONMENT: production
           APS_ENVIRONMENT: production
     dependencies:
       # FirebaseAuth only. FirebaseMessaging was removed: iOS talks to APNs
@@ -198,7 +361,22 @@ targets:
         product: FirebaseAuth
       - package: GoogleSignIn
         product: GoogleSignIn
-      - framework: ../composeApp/build/XCFrameworks/debug/composeApp.xcframework
+      # ⚠️ Note the path: `current`, not `debug`.
+      #
+      # This was hardcoded to `debug`, which meant a Release archive linked the
+      # DEBUG Kotlin binary — unoptimised, and built from a different Gradle
+      # variant than the one being shipped. Nothing about that build fails or
+      # warns; it produces a green archive containing the wrong framework, and
+      # would have been discovered, if at all, as mysterious slowness in
+      # TestFlight.
+      #
+      # XcodeGen writes this path into a file reference, and Xcode does not
+      # expand build settings there — so `$(STATIONLY_KOTLIN_BUILD)` cannot go
+      # in the path itself. Instead `current` is a SYMLINK that the "Select
+      # Kotlin XCFramework" build phase repoints, per configuration, before
+      # anything links against it. That keeps GUI builds correct too, rather
+      # than only the ones that go through the scripts.
+      - framework: ../composeApp/build/XCFrameworks/current/composeApp.xcframework
         embed: true
       - target: StationlyWidget
         embed: true
@@ -208,6 +386,142 @@ targets:
     # (the Session-3 crash). The runtime resolves
     # <bundle>/compose-resources/composeResources/com.stationly.app.resources/…
     # which is exactly the layout assembleIos*MainResources produces.
+    # Selects the Firebase configuration for the environment being built.
+    #
+    # This runs BEFORE the build (preBuildScripts) because the copied file must
+    # exist in the bundle before code signing seals it.
+    #
+    # Why a script rather than two files in `sources:`: `FirebaseApp.configure()`
+    # looks for a resource literally named "GoogleService-Info.plist" and has no
+    # per-configuration awareness. Listing both plists as sources would ship
+    # both environments' credentials in every build under their own names, and
+    # neither would be the name Firebase looks for.
+    preBuildScripts:
+      # Repoints composeApp/build/XCFrameworks/current at debug or release.
+      #
+      # Must be the FIRST phase: the link and embed steps resolve through this
+      # symlink, so it has to be correct before either runs.
+      #
+      # Deliberately does NOT build the framework. Invoking Gradle from inside
+      # an Xcode build phase would put an ~8-minute step on every incremental
+      # compile; the runbook and `scripts/ios-*.sh` assemble it beforehand.
+      # This phase only SELECTS, and fails loudly when the needed variant is
+      # absent rather than silently linking whatever was there last.
+      - name: Select Kotlin XCFramework
+        shell: /bin/bash
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          XCF_DIR="${SRCROOT}/../composeApp/build/XCFrameworks"
+          WANT="${STATIONLY_KOTLIN_BUILD}"
+          # A Release configuration must never link the debug framework. This
+          # cannot happen through the intended path — project.yml sets
+          # STATIONLY_KOTLIN_BUILD=release for both Release configs — but that
+          # assignment LOOKS like a duplicate of the one in Base.xcconfig and is
+          # exactly the kind of thing a tidy-up deletes. It is not a duplicate:
+          # Base.xcconfig is a PROJECT-level xcconfig and project-level
+          # `settings:` beat it, which is what makes the override work at all.
+          #
+          # Delete it and every archive silently ships unoptimised debug Kotlin
+          # built from a different Gradle variant, with a green build and no
+          # warning. Failing here makes that a thirty-second fix instead of a
+          # TestFlight mystery.
+          case "${CONFIGURATION}" in
+            Release*)
+              if [ "${WANT}" != "release" ]; then
+                echo "error: ${CONFIGURATION} would link the '${WANT}' Kotlin framework."
+                echo "  STATIONLY_KOTLIN_BUILD must be 'release' for any Release configuration."
+                echo "  Check project.yml still sets it under settings.configs for Release Staging"
+                echo "  and Release Production — that override BEATS Base.xcconfig by design."
+                exit 1
+              fi ;;
+          esac
+          if [ ! -d "${XCF_DIR}/${WANT}/composeApp.xcframework" ]; then
+            echo "error: ${WANT} XCFramework missing. Run: ./gradlew :composeApp:assembleComposeApp$(echo ${WANT} | tr '[:lower:]' '[:upper:]' | cut -c1)$(echo ${WANT} | cut -c2-)XCFramework"
+            exit 1
+          fi
+          # -n so an existing symlink is replaced rather than followed (which
+          # would nest the new link INSIDE the old target's directory).
+          #
+          # NOTE this symlink is shared mutable state across concurrent builds:
+          # two xcodebuild invocations on different configurations (two Xcode
+          # windows, or a script running alongside the GUI) race here, and the
+          # loser links whatever the winner selected. Builds are sequential in
+          # practice and the archive verification in scripts/ios-testflight.sh
+          # asserts the outcome, so this is recorded rather than solved — the
+          # real fix needs per-configuration framework paths, which XcodeGen
+          # cannot express (Xcode does not expand build settings inside a file
+          # reference, which is why this is a symlink in the first place).
+          ln -sfn "${WANT}" "${XCF_DIR}/current"
+          echo "Kotlin XCFramework: ${WANT}"
+      # ── The accidental-production guard ───────────────────────────────────
+      #
+      # Dev builds are meant to be staging, always. But `xcuserdata/` is
+      # git-ignored, so a fresh clone or a new machine has NO stored scheme
+      # selection and Xcode picks the first scheme alphabetically — and
+      # "iosApp Production" sorts before "iosApp Staging". The first ⌘R on a
+      # new checkout therefore builds Debug Production: production bundle id,
+      # production backend, production display name, production icon.
+      #
+      # Two consequences, and the second is the expensive one:
+      #   • it talks to api.stationly.co.uk from a dev machine;
+      #   • it carries the SAME bundle id as the real App Store app, so
+      #     installing it OVERWRITES a real production install on that device.
+      #
+      # Today the placeholder Firebase config is an accidental safety net. It
+      # disappears the moment production Firebase is configured, so the guard
+      # is here rather than relying on it.
+      #
+      # Deliberate production debugging is still one command away — the error
+      # says which. Release Production is only WARNED about, not blocked:
+      # archiving is already an explicit act, scripts/ios-testflight.sh
+      # hard-refuses production separately, and blocking it would put a wall in
+      # front of the legitimate path the day production goes live.
+      - name: Guard Accidental Production Build
+        shell: /bin/bash
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          [ "${STATIONLY_ENVIRONMENT}" = "production" ] || exit 0
+          if [ "${CONFIGURATION}" = "Debug Production" ]; then
+            if [ ! -f "${SRCROOT}/Config/.allow-debug-production" ]; then
+              echo "error: refusing to build Debug Production."
+              echo ""
+              echo "  Dev builds are staging. You are probably here because Xcode defaulted to"
+              echo "  the 'iosApp Production' scheme — it sorts first alphabetically and the"
+              echo "  scheme selection is not committed. Switch to 'iosApp Staging'."
+              echo ""
+              echo "  This build would point at api.stationly.co.uk AND share a bundle id with"
+              echo "  the App Store app, so installing it replaces a real production install."
+              echo ""
+              echo "  If you genuinely need it:  touch iosApp/Config/.allow-debug-production"
+              exit 1
+            fi
+            echo "warning: Debug Production build — opted in via Config/.allow-debug-production. This app talks to the PRODUCTION backend."
+          else
+            echo "warning: building ${CONFIGURATION} — this targets the PRODUCTION backend and App Store record."
+          fi
+      - name: Select Firebase Config
+        shell: /bin/bash
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          SRC="${SRCROOT}/Config/${STATIONLY_FIREBASE_PLIST}.plist"
+          DST="${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GoogleService-Info.plist"
+          if [ ! -f "${SRC}" ]; then
+            echo "error: Firebase config not found at ${SRC} (STATIONLY_FIREBASE_PLIST=${STATIONLY_FIREBASE_PLIST})"
+            exit 1
+          fi
+          # A stub carries no GOOGLE_APP_ID — the same key
+          # AppDelegate.configureFirebaseIfAvailable() checks before calling
+          # FirebaseApp.configure(). Warn at BUILD time too, so nobody has to
+          # discover it by watching a device log after install.
+          if ! /usr/libexec/PlistBuddy -c "Print :GOOGLE_APP_ID" "${SRC}" >/dev/null 2>&1; then
+            echo "warning: ${STATIONLY_FIREBASE_PLIST}.plist is a PLACEHOLDER (no GOOGLE_APP_ID) — Firebase will not configure and sign-in will be unavailable. See docs/IOS_ENV_SPLIT_AND_TESTFLIGHT.md §6."
+          fi
+          mkdir -p "$(dirname "${DST}")"
+          cp "${SRC}" "${DST}"
+          echo "Firebase config: ${STATIONLY_FIREBASE_PLIST}.plist (${STATIONLY_ENVIRONMENT})"
     postBuildScripts:
       - name: Copy Compose Resources
         shell: /bin/bash
@@ -263,7 +577,18 @@ targets:
       properties:
         # Widget-gallery header title (the per-widget name/description are set
         # in StationlyWidget.swift via configurationDisplayName/description).
-        CFBundleDisplayName: Stationly
+        CFBundleDisplayName: $(STATIONLY_DISPLAY_NAME)
+        # The extension gets its OWN copies of these two, because
+        # `Bundle.main` inside an app extension is the EXTENSION's bundle, not
+        # the containing app's — the widget cannot read the app's Info.plist.
+        # Both must therefore be present here as well, and must resolve to the
+        # same values (they do: one xcconfig feeds both targets).
+        #
+        # The App Group is the entire contract between the app and the widget;
+        # a mismatch between these two bundles means the widget opens an empty
+        # suite and renders its "no data" state forever.
+        StationlyAppGroup: $(STATIONLY_APP_GROUP)
+        StationlyUrlScheme: $(STATIONLY_URL_SCHEME)
         # Same treatment as the app target, and for the same reason: XcodeGen
         # writes a hardcoded "1" into a generated plist unless the properties are
         # named explicitly. The app target says so in its own comment; this
@@ -289,18 +614,24 @@ targets:
         # this target's settings, config for config.
         aps-environment: $(APS_ENVIRONMENT)
         com.apple.security.application-groups:
-          - group.com.stationly.shared
+          - $(STATIONLY_APP_GROUP)
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.stationly.mobile.StationlyWidget
-        MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "4"
+        # Must remain `<app bundle id>.<something>` — iOS requires an
+        # extension's identifier to be prefixed by its containing app's, so
+        # this composes from the SAME base + suffix the app target uses rather
+        # than being written out. Referencing $(PRODUCT_BUNDLE_IDENTIFIER)
+        # would not work: that setting resolves to this target's own value.
+        PRODUCT_BUNDLE_IDENTIFIER: $(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).StationlyWidget
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "26.0"
         CODE_SIGN_ENTITLEMENTS: StationlyWidget/StationlyWidget.entitlements
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 7T7D5LLYSL
-        STATIONLY_ENVIRONMENT: production
+        # STATIONLY_ENVIRONMENT deliberately not set — see the note in the app
+        # target. It comes from the environment xcconfig, which applies to
+        # every target in the project.
+        #
         # The extension carries its OWN aps-environment now, because WidgetKit
         # push (iOS 26+) issues the token to the EXTENSION rather than the app.
         # Must track the app target's value config-for-config: the two binaries
@@ -308,15 +639,9 @@ targets:
         # mismatch shows up only as pushes that are accepted and never arrive.
         APS_ENVIRONMENT: development
       configs:
-        Debug Staging:
-          STATIONLY_ENVIRONMENT: staging
         Release Staging:
-          STATIONLY_ENVIRONMENT: staging
           APS_ENVIRONMENT: production
-        Debug Production:
-          STATIONLY_ENVIRONMENT: production
         Release Production:
-          STATIONLY_ENVIRONMENT: production
           APS_ENVIRONMENT: production
 
 # Explicit shared schemes — required because the 4 custom config names above

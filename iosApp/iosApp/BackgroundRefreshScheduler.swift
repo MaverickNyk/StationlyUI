@@ -32,7 +32,15 @@ enum BackgroundRefreshScheduler {
 
     /// Must match `BGTaskSchedulerPermittedIdentifiers` in project.yml exactly.
     /// A mismatch is an exception at `register`, i.e. a launch-time crash.
-    static let taskIdentifier = "com.stationly.mobile.widgetrefresh"
+    ///
+    /// Derived from the bundle id rather than hardcoded, because that entry in
+    /// project.yml is now itself derived
+    /// (`$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).widgetrefresh`) so
+    /// that staging and production register distinct identifiers. Composing it
+    /// the same way here is what keeps the two in step by construction — a
+    /// literal would have had to be edited in lockstep with a build setting,
+    /// and getting that wrong crashes the app on launch.
+    static let taskIdentifier = BGTaskIdentifier.make("widgetrefresh")
 
     /// Used when the policy cannot be read (first launch, before KMP has
     /// published). Deliberately the slow end: guessing high would spend the

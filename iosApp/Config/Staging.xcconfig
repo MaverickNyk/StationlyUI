@@ -1,0 +1,66 @@
+// Stationly iOS — STAGING environment.
+//
+// Applied to the `Debug Staging` and `Release Staging` configurations. This is
+// the environment that is real today: every value below is live and verified.
+// Production.xcconfig is its placeholder-filled mirror.
+
+#include "Base.xcconfig"
+
+// Read at runtime by `Platform.getEnvironment()` (core/iosMain) via the
+// `StationlyEnvironment` Info.plist key, which is what selects
+// AppConfig.STAGING_API_URL / STAGING_WEB_URL. This one string used to be the
+// ONLY difference between the two environments.
+STATIONLY_ENVIRONMENT = staging
+
+// Appended to STATIONLY_BUNDLE_BASE. A distinct bundle id is what lets the
+// staging and production apps be installed side by side, and — more
+// importantly — what lets them have separate App Store Connect records, and
+// therefore separate TestFlight tracks. With one shared id, a staging build
+// would occupy the same "latest build" slot the production testers are served.
+STATIONLY_BUNDLE_SUFFIX = .staging
+
+// Home screen / app switcher / Settings. Matches Android's staging flavor,
+// which sets app_name to "Stationly Staging" for exactly this reason: with two
+// near-identical icons on one phone, the label is the only thing telling a
+// tester which app they just filed a bug against.
+STATIONLY_DISPLAY_NAME = Stationly Staging
+
+// Separate container, because the two apps CAN now be installed together and
+// the App Group is where every piece of widget state lives (boards, refresh
+// ledger, device identity, auth token). Sharing one would have staging boards
+// appearing in the production widget.
+//
+// Production deliberately keeps `group.com.stationly.shared` — see the note
+// there — so only staging moves, and no existing install is orphaned.
+STATIONLY_APP_GROUP = group.com.stationly.staging
+
+// Bare scheme name; the `://` is added by whoever builds the URL. A board tap
+// in the widget opens `<scheme>://home?station=…`, so without a per-environment
+// scheme a tap in the staging widget could be handed to the production app —
+// iOS picks arbitrarily between two apps claiming one scheme.
+STATIONLY_URL_SCHEME = stationly-staging
+
+// Tinted variant of the production icon, so the two are distinguishable on the
+// home screen at a glance rather than only by label.
+STATIONLY_APPICON_NAME = AppIconStaging
+
+// Which of the two committed Firebase plists the pre-build script copies into
+// the app bundle as `GoogleService-Info.plist`. Project: mindthetimefcm.
+STATIONLY_FIREBASE_PLIST = GoogleService-Info-Staging
+
+// The Google Sign-In redirect scheme. It belongs to the OAuth client Firebase
+// mints per REGISTERED APP — not per project — so it moves whenever the plist
+// above is replaced. This is the REVERSED_CLIENT_ID out of
+// GoogleService-Info-Staging.plist and must be copied across verbatim with it.
+// A wrong value here fails silently and confusingly: the sign-in browser sheet
+// opens, the user authenticates, and then nothing at all happens on return.
+//
+// Updated 2026-08-15 when the staging app was re-registered under the split
+// bundle id (…-g7alcuuk9… → …-4fn7sigv0…); see the header note on the plist.
+GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.48865967804-4fn7sigv0dabkv8onghcj1k595ne8hlc
+
+// Backend API key. Staging's is committed because it has been in this repo's
+// git history (hardcoded in Platform.ios.kt) since the iOS app existed, so
+// there is nothing left to protect. Production's is NOT — it comes from the
+// git-ignored Secrets.xcconfig.
+STATIONLY_API_KEY = f7d6c5b4-3a2b-1c0d-e9f8-a7b6c5d4e3f2

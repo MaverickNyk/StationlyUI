@@ -100,7 +100,10 @@ actual fun openAppNotificationSettings() {
 actual fun appVersionName(): String =
     NSBundle.mainBundle.objectForInfoDictionaryKey("CFBundleShortVersionString") as? String ?: "0"
 
-private const val APP_GROUP_ID = IosAppGroup.ID
+// `val`, not `const val`: since the staging/production split the App Group
+// identifier is read from the Info.plist at runtime (see `IosAppGroup`), so it
+// is not a compile-time constant any more.
+private val APP_GROUP_ID: String get() = IosAppGroup.ID
 
 /** Written by Swift `HomeStateProbe`; keep the literal in lockstep with it. */
 private const val KEY_WIDGET_INSTALLED = "home_widget_installed"

@@ -19,10 +19,23 @@ enum AppGroupDefaults {
 /// The App Group both binaries share, in one place for the **widget
 /// extension** target.
 ///
-/// A deliberate duplicate of `iosApp/AppGroupID.swift`: the extension is a
-/// separate compilation unit and cannot import the app's declaration. See
-/// that file for the full lockstep list — a mismatch here doesn't fail the
-/// build, it silently gives the widget an empty suite (blank board).
+/// Still a separate declaration from `iosApp/AppGroupID.swift` — the extension
+/// is its own compilation unit and cannot import the app's — but no longer a
+/// duplicated *value*. Both read the `StationlyAppGroup` Info.plist key, which
+/// `project.yml` expands into BOTH targets' plists from the one
+/// `STATIONLY_APP_GROUP` build setting per environment. Two files, one source
+/// of truth; the old hazard was that the two files held two independent
+/// literals and a mismatch gave the widget an empty suite (blank board)
+/// without failing the build.
+///
+/// `Bundle.main` here is the EXTENSION's bundle, not the containing app's,
+/// which is exactly why the key has to be present in both plists.
 enum AppGroupID {
-    static let value = "group.com.stationly.shared"
+    static let value: String = {
+        guard let id = Bundle.main.object(forInfoDictionaryKey: "StationlyAppGroup") as? String,
+              !id.isEmpty else {
+            fatalError("StationlyAppGroup missing from the widget Info.plist — check STATIONLY_APP_GROUP in Config/*.xcconfig")
+        }
+        return id
+    }()
 }

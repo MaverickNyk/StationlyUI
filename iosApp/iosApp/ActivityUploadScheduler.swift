@@ -28,7 +28,8 @@ enum ActivityUploadScheduler {
 
     /// Must match `BGTaskSchedulerPermittedIdentifiers` in project.yml exactly.
     /// A mismatch is an exception at `register`, i.e. a launch-time crash.
-    static let taskIdentifier = "com.stationly.mobile.activityupload"
+    /// Composed from the bundle id — see `BGTaskIdentifier` for why.
+    static let taskIdentifier = BGTaskIdentifier.make("activityupload")
 
     /// Registered from `didFinishLaunchingWithOptions`. **Must** happen before
     /// the app finishes launching — `BGTaskScheduler` refuses registrations

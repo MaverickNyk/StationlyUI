@@ -24,7 +24,10 @@ import platform.Foundation.stringWithContentsOfFile
 import platform.Foundation.writeToFile
 import platform.posix.memcpy
 
-private const val APP_GROUP_ID = IosAppGroup.ID
+// `val`, not `const val`: since the staging/production split the App Group
+// identifier is read from the Info.plist at runtime (see `IosAppGroup`), so it
+// is not a compile-time constant any more.
+private val APP_GROUP_ID: String get() = IosAppGroup.ID
 private const val DIR          = "mode_icons"
 private const val TINTS_FILE   = "tints.json"
 private const val VERSION_FILE = "version.txt"

@@ -1,0 +1,82 @@
+// Stationly iOS — PRODUCTION environment.
+//
+// Applied to the `Debug Production` and `Release Production` configurations.
+//
+// ══════════════════════════════════════════════════════════════════════════
+//  ⚠️  PLACEHOLDER FILE — production is NOT yet buildable end to end.
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Three values below are placeholders awaiting owner-side console work (see
+// docs/IOS_ENV_SPLIT_AND_TESTFLIGHT.md §6). Everything else is real.
+//
+// What was wrong before this file existed: `Debug/Release Production` set
+// STATIONLY_ENVIRONMENT=production — pointing the app at api.stationly.co.uk —
+// while there was only ONE GoogleService-Info.plist in the repo, belonging to
+// the *staging* Firebase project `mindthetimefcm`. A production build would
+// therefore have minted a staging uid and handed a staging ID token to the
+// production backend. It was never caught because no production build has ever
+// been run. The placeholders below make that failure LOUD (the app refuses to
+// configure Firebase and logs why) instead of silent.
+//
+// ── To finish production, in order ──
+//  1. Firebase console → project `stationly-prod` → add an iOS app with bundle
+//     id `com.stationly.mobile`. Enable the Google and Apple sign-in providers
+//     under Authentication → Sign-in method. Upload the APNs `.p8` auth key
+//     for team 7T7D5LLYSL under Cloud Messaging.
+//  2. Download its GoogleService-Info.plist and commit it over
+//     `iosApp/Config/GoogleService-Info-Production.plist` (which is currently a
+//     stub with no GOOGLE_APP_ID).
+//  3. Copy REVERSED_CLIENT_ID out of that plist into
+//     GOOGLE_REVERSED_CLIENT_ID below.
+//  4. Put the production backend API key into the git-ignored
+//     iosApp/Config/Secrets.xcconfig (see Secrets.example.xcconfig).
+//  5. Apple Developer → register App ID `com.stationly.mobile` with the App
+//     Groups, Push Notifications and Sign in with Apple capabilities, and
+//     create the App Group `group.com.stationly.shared`.
+//
+// Until step 2 lands, a production build still COMPILES and RUNS — it just has
+// no Firebase, so sign-in is unavailable. That is intentional: a production
+// build that half-works against staging credentials is far more dangerous than
+// one that plainly cannot sign in.
+
+#include "Base.xcconfig"
+
+STATIONLY_ENVIRONMENT = production
+
+// Empty — production keeps the plain bundle id `com.stationly.mobile`. This is
+// the id already registered with Apple and the one any future App Store
+// release must carry, so staging is the side that moves.
+STATIONLY_BUNDLE_SUFFIX =
+
+STATIONLY_DISPLAY_NAME = Stationly
+
+// Unchanged from the pre-split value on purpose. Existing installs (the test
+// device, any TestFlight build that ships first) already have widget state,
+// device identity and the auth token in this container; renaming it would
+// orphan all of that and silently present as "signed out, no boards". Staging
+// is the environment that got a new group.
+STATIONLY_APP_GROUP = group.com.stationly.shared
+
+// Bare scheme name — the `://` is added by the caller. `//` would start an
+// xcconfig comment.
+STATIONLY_URL_SCHEME = stationly
+
+STATIONLY_APPICON_NAME = AppIcon
+
+// ⚠️ PLACEHOLDER — the file this names is a stub with no GOOGLE_APP_ID, which
+// `AppDelegate.configureFirebaseIfAvailable()` detects and refuses. Replace
+// per step 2 above.
+STATIONLY_FIREBASE_PLIST = GoogleService-Info-Production
+
+// ⚠️ PLACEHOLDER — must be the REVERSED_CLIENT_ID from the production plist.
+// Left as an obviously-fake value rather than copying staging's: a staging
+// scheme in a production build would silently route the Google sign-in
+// redirect to a client that does not belong to this Firebase project.
+GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.PRODUCTION-CLIENT-ID-NOT-YET-CONFIGURED
+
+// ⚠️ PLACEHOLDER until Secrets.xcconfig exists. That file (git-ignored,
+// `#include?`d by Base.xcconfig) defines STATIONLY_API_KEY_PRODUCTION; the
+// `:default=` fallback below applies only when it is absent, so a fresh clone
+// still builds. Requests then carry a bogus key and are rejected by the
+// backend — the correct outcome for a build holding no production credential.
+STATIONLY_API_KEY = $(STATIONLY_API_KEY_PRODUCTION:default=PRODUCTION-API-KEY-NOT-CONFIGURED)
