@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Export options for the STAGING TestFlight upload (`xcodebuild -exportArchive`).
+
+  NOTE: this file and exportOptions-Production.plist are currently IDENTICAL in
+  content, and that is correct rather than an oversight worth "fixing" by
+  merging them. With signingStyle `automatic`, xcodebuild resolves the
+  distribution certificate and provisioning profile from the ARCHIVE's own
+  bundle id — so the environment separation is already carried by the archive
+  and needs no expression here. Two files exist because the export options are
+  a per-environment concern that may well diverge (a different team, an
+  ad-hoc distribution for one side, different symbol upload settings), and
+  discovering that later is easier than untangling one shared file then.
+
+  `app-store-connect` is the right method even though this build will never be
+  sold: TestFlight distribution goes through App Store Connect, and only an
+  App Store-signed archive is accepted there. `ad-hoc` would produce an .ipa
+  installable on registered devices only, which is the thing TestFlight exists
+  to avoid.
+
+  `destination: upload` hands the archive straight to ASC. Set it to `export`
+  to get an .ipa on disk instead — useful for inspecting what would be sent,
+  and what `scripts/ios-testflight.sh --dry-run` does.
+
+  Signing is automatic and matches the dev workflow, so no provisioning
+  profile is named here. If this ever moves to a CI runner without the team's
+  signing identity in its keychain, switch to manual signing and add
+  `provisioningProfiles` keyed by bundle id — for BOTH the app and the widget
+  extension, since each is signed separately.
+-->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>destination</key>
+	<string>upload</string>
+	<key>teamID</key>
+	<string>7T7D5LLYSL</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<!-- Symbols are what turn a TestFlight crash report into readable frames.
+	     Worth uploading always; they are stripped from the delivered app. -->
+	<key>uploadSymbols</key>
+	<true/>
+	<!-- Bitcode has been dead since Xcode 14; leaving it on only produces a
+	     deprecation warning on every export. -->
+	<key>uploadBitcode</key>
+	<false/>
+	<!-- Do NOT let Xcode invent a build number when one collides. Silent
+	     renumbering hides the real error — that the build number was not
+	     bumped — and makes the uploaded build hard to correlate with a commit. -->
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+</dict>
+</plist>

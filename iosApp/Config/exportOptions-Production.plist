@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Export options for the PRODUCTION TestFlight upload.
+
+  ⚠️ NOT USABLE YET. Production still carries a placeholder Firebase
+  configuration (see Config/Production.xcconfig), so an uploaded build could
+  not sign in. `scripts/ios-testflight.sh` refuses `--env production` for that
+  reason; this file exists so the pipeline is symmetrical and needs no new
+  plumbing on the day production is ready.
+
+  Identical to the staging options today. It is a SEPARATE file rather than a
+  shared one because the two will diverge: production is the record that ships
+  to the App Store, so it is the one that will eventually need manual signing
+  with a named distribution profile, and possibly a phased-release or
+  TestFlight-group default that staging must never inherit.
+
+  See docs/IOS_ENV_SPLIT_AND_TESTFLIGHT.md §4 and §6.
+-->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>destination</key>
+	<string>upload</string>
+	<key>teamID</key>
+	<string>7T7D5LLYSL</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>uploadBitcode</key>
+	<false/>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+</dict>
+</plist>
