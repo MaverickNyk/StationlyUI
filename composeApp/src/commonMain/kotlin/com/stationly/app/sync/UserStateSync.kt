@@ -205,9 +205,20 @@ object UserStateSync {
         UserSettings.ensureLoaded()
 
         // Oldest first, so the restored home screen is in the order the user
-        // built it. `config.position` overrides this wherever they have actually
-        // dragged something; this is what the boards they never reordered fall
-        // back to.
+        // built it.
+        //
+        // `config.sortKey` is in the comparator for symmetry with `buildBoards`,
+        // where it IS live — but on THIS path it can never decide anything.
+        // `Board.config` is `@Transient`, so every board deserialised from the
+        // profile carries a default `BoardConfig`, every `sortKey` is
+        // `Int.MAX_VALUE`, and the sort falls entirely to `addedAt`. (An earlier
+        // version of this comment claimed position overrode it here. It cannot:
+        // drag order is device-local and does not travel — see
+        // USER_STATE_AND_ACTIVITY.md §2b.)
+        //
+        // Which is correct rather than merely harmless: this ordering only
+        // decides SETUP order. The home screen renders from `UserSettings`,
+        // which does hold the positions on a device that has them.
         //
         // Set up per (line, direction): that is the level a topic subscription
         // and a prediction table live at, so one station with four lines is four

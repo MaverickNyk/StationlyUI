@@ -42,6 +42,25 @@ import kotlinx.serialization.json.Json
  * recoverable in seconds by the user and invisible to everyone else, which is
  * the opposite of a lost board.
  *
+ * ## …and so does a REINSTALL, which is the case that actually happens
+ * "New device" undersells it. On iOS the durable store is the App Group suite,
+ * and iOS destroys that container with the last app in the group — so deleting
+ * and reinstalling the app resets every one of these, on the same phone, for
+ * the same person. (`DeviceIdentityStore` exists for the same reason, one level
+ * down.)
+ *
+ * It does not look like the other cases from the user's side. Firebase's session
+ * is in the Keychain and outlives the app, so a reinstall comes back silently
+ * signed in, restores every board from the cloud, and shows them arranged as
+ * though they had never been touched. Nobody signed out; the app forgot. And
+ * reinstalling is ordinary — storage pressure, troubleshooting — which makes
+ * this the common way an arrangement is lost, rather than the new-phone case
+ * the paragraph above imagines.
+ *
+ * Reviewed and deliberately left as-is on 2026-08-15. What syncing it would
+ * actually cost — a debounced blob rather than the per-touch write this class
+ * was right to refuse — is in `USER_STATE_AND_ACTIVITY.md` §2b.
+ *
  * Nothing kept here identifies anybody. "Three rows per platform, board first"
  * is not personal data, which is what makes it safe to leave behind at logout.
  * The one exception is an account being DELETED rather than signed out, which

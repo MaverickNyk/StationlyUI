@@ -182,9 +182,34 @@ defaults (iOS: the App Group suite; Android: a separate prefs file). So:
   arrangement they left.
 - Sign in as **somebody else** → their own settings, never the previous user's.
 - Sign in on a **new device** → defaults.
+- **Delete and reinstall the app** → defaults. iOS destroys the App Group
+  container with the last app in the group (see `DeviceIdentityStore`), and it
+  is the App Group that holds `board_configs_v2::<uid>` and `home_layout_v2::<uid>`.
+
+That last case is the one worth knowing about, because it does not look like any
+of the others from the user's side. The Firebase session lives in the Keychain
+and **outlives the app**, so a reinstall comes back silently signed in, restores
+every board correctly from the cloud, and presents them arranged as though the
+user had never touched them. Nobody signed out; the app simply forgot. Reinstalls
+are ordinary — storage pressure, troubleshooting — so this is the common way the
+arrangement is lost, not the new-phone case.
+
+Accepted, not overlooked. See "What does NOT cross devices" below for the
+decision and what it would cost to change.
 
 Nothing kept there identifies anybody. "Three rows per platform, board first" is
 not personal data, which is what makes it safe to leave behind.
+
+#### The exception: screensaver settings are not per-account
+`DreamSettings` keys (`layout`, `theme`, `clock_style`, `station_id`) are **flat
+— no uid namespace**. They therefore cannot be kept per account, and the only
+way to stop the next user inheriting them is to destroy them:
+`UserStateSync.clearDreamSettings()` resets all four to defaults on every logout.
+
+So the promise above does not hold for this one store. The same person signing
+back in on the same device gets their board arrangement and a **reset
+screensaver**. `dream_ever_started` is deliberately kept — it is a fact about the
+device, not the account.
 
 `UserSettings.reset()` drops the in-memory copy and re-reads for whoever is
 signed in now. The in-memory drop is not optional: the store is a process-wide
@@ -302,6 +327,56 @@ removes those rows outright via `StorageManager.removeDurable` — the one thing
 `clearAll()` deliberately cannot reach. It also cancels any push the deleted
 account had queued and drops the in-memory copy, without which the next user to
 sign in on that device inherits the deleted user's arrangement.
+
+## 2b. What does NOT cross devices
+
+**Read this before promising anything about a new device.** The account carries
+what the user TRACKS. How it LOOKS is this device's business, and does not
+travel — not to a new phone, not to a second device, and not across a reinstall
+of the same app.
+
+| Signing in elsewhere restores | |
+|---|---|
+| Stations, lines, directions | ✅ |
+| Destination / via filters | ✅ |
+| Station names, bus pole naptans | ✅ |
+| Profile name, email, photo | ✅ |
+| Expanded / collapsed | ❌ default |
+| View mode | ❌ default |
+| Rows per platform | ❌ default |
+| Pinned platform | ❌ default |
+| Drag order | ❌ falls back to `addedAt` |
+| Home layout (list / carousel) | ❌ default |
+| Screensaver settings | ❌ default |
+| Theme (light / dark / system) | ❌ default |
+
+The mechanism is `@Transient` on `Board.config` and `Board.widget`, which keeps
+them out of the wire payload as well as the local board list. **There is no
+preferences endpoint** — the whole user-sync surface is `syncProfile`,
+`syncStations`, `syncBoards`, `getUserProfile`, `logOut`, `deleteAccount`,
+`registerFcmToken`, `unregisterFcmToken`.
+
+### Why, and what changing it would cost
+
+Appearance is the highest-frequency and lowest-value state in the app. Syncing it
+as originally written put a backend write behind every tap of a toggle and every
+detent of a slider — on the one document every login reads. That is the right
+thing to have refused.
+
+It is worth being precise that this reasoning does **not** rule out syncing
+appearance at all; it rules out syncing it *per touch*. A single `preferences`
+blob pushed through the debounce boards already use (`BoardPushGate`, 2.5 s,
+coalesced, and gated on an actual change so an unchanged app sends nothing)
+would cost roughly what a board edit costs, which is rare. The pieces exist:
+`UserSettings` has the serialiser, `DreamSettings.applyRemote` already suppresses
+the echo a remote apply would otherwise push straight back, and `restoreBoards`
+is where it would be applied.
+
+**Reviewed and deliberately declined on 2026-08-15.** The behaviour stands; this
+section exists so the promise matches it. If that decision is revisited, the
+audit in `SESSION_AUDIT_2026-08-15_SESSION_STATE.md` §4 has the full shape.
+
+---
 
 ## 3. Login restore
 

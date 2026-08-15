@@ -78,27 +78,47 @@ object DreamSettings {
     private const val KEY_EVER_STARTED = "ever_started"
 
     /**
-     * Called after every SYNCED write, so the change reaches the backend.
+     * Notification that a setting changed. **Nothing subscribes to it today.**
      *
-     * A callback rather than a direct call because the sync layer needs an API
-     * client, and this object is read by the dream host on a background thread
-     * with no dependency on the network stack. `UserStateSync` sets it at
-     * startup, alongside the equivalent hook on `UserSettings`.
+     * ## What this comment used to claim, and why it was wrong
+     * It said the hook was "called after every SYNCED write, so the change
+     * reaches the backend", and that "`UserStateSync` sets it at startup,
+     * alongside the equivalent hook on `UserSettings`". None of that is true:
+     * `UserStateSync.start()` is `= Unit`, there is no `onChanged` on
+     * `UserSettings`, and there is no preferences endpoint to reach —
+     * `syncProfile`, `syncStations`, `syncBoards`, `getUserProfile`, `logOut`,
+     * `deleteAccount` and the two FCM calls are the entire user-sync surface.
      *
-     * Suppressed while [applyingRemote] — otherwise adopting settings pushed
-     * from another device would immediately push them straight back.
+     * Screensaver settings are device-local and go nowhere. See
+     * `USER_STATE_AND_ACTIVITY.md` §2b, which now states that plainly, and the
+     * 2026-08-15 audit for the decision to keep it that way.
+     *
+     * The hook is left in place because it is the correct seam if that is ever
+     * revisited — a callback rather than a direct call, because the sync layer
+     * needs an API client and this object is read by the dream host on a
+     * background thread with no dependency on the network stack. Delete it
+     * rather than let it accumulate more false documentation if the answer
+     * stays no.
+     *
+     * [applyingRemote] suppression is likewise pre-wiring: adopting a setting
+     * pushed from elsewhere must not push it straight back. Today its only live
+     * use is `UserStateSync.clearDreamSettings`, which resets the four keys at
+     * logout without treating the reset as a user edit.
      */
     var onChanged: (() -> Unit)? = null
 
     private var applyingRemote = false
 
     /**
-     * Every synced write goes through here.
+     * Every write goes through here.
      *
      * One funnel rather than a notify at each setter, because the failure mode
      * of the alternative is invisible: a setting added later writes the value,
-     * the screen shows it, and it silently never leaves the device. Adding a
-     * setting here cannot forget to sync.
+     * the screen shows it, and nothing downstream ever hears about it. Adding a
+     * setting here cannot forget to notify.
+     *
+     * ("Every SYNCED write" is what this said, and nothing here is synced — see
+     * [onChanged].)
      */
     private fun write(key: String, value: String?) {
         DreamPrefsBackend.set(key, value)
@@ -106,11 +126,16 @@ object DreamSettings {
     }
 
     /**
-     * Apply settings that arrived from the cloud without echoing them back.
+     * Apply a change that is NOT a user edit, without notifying [onChanged].
      *
-     * See `UserSettings.applyRemotePreferences` for the same reasoning: a remote
-     * apply that looks like a local change starts a ping-pong between two
-     * devices each re-sending what the other just sent.
+     * Its one live caller is `UserStateSync.clearDreamSettings`, which resets
+     * these four keys at logout — a teardown, not something the user did.
+     *
+     * (This used to cite `UserSettings.applyRemotePreferences` as precedent for
+     * suppressing a cloud-originated echo. No such function exists, and nothing
+     * arrives from the cloud — see [onChanged]. The suppression is still the
+     * right shape for that seam if preferences are ever synced, which is why it
+     * stays.)
      */
     fun applyRemote(block: () -> Unit) {
         applyingRemote = true
