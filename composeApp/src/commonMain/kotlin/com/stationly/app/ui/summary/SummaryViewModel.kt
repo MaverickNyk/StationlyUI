@@ -303,12 +303,23 @@ class SummaryViewModel(
                 // freshness instead of resetting on every periodic SQL re-read
                 // below, which would otherwise make a live stream look exactly
                 // like 30s polling from the UI's point of view.
+                //
+                // An empty board is a SYNCED board, not an unsynced one. The
+                // old first branch was `dbPreds.isEmpty() -> 0L`, which short-
+                // circuited before the lookup below and froze the "X ago" timer
+                // on any stop with no upcoming departures — a quiet bus stop at
+                // midday read "we last heard from the backend when the last bus
+                // was due", which is the opposite of the truth. SyncStatusEntity
+                // is upserted on EVERY sync regardless of row count (see the
+                // table comment in StationlyDatabase.sq) precisely so the timer
+                // can say when we last CHECKED. 0L now means only what it says:
+                // this stop has never synced, so there is no age to show.
                 val predsTimestamp = when {
-                    dbPreds.isEmpty() -> 0L
                     Platform.getPlatformName() == "iOS" ->
                         Platform.sqlStorage.getLastUpdatedTimestamp(
                             selection.station, selection.line, selection.direction
-                        ) ?: now
+                        ) ?: if (dbPreds.isEmpty()) 0L else now
+                    dbPreds.isEmpty() -> 0L
                     else -> now
                 }
 
