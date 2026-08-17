@@ -19,6 +19,7 @@ object RefreshPolicyDefaults {
     const val TIER_DAY = "P2"
     const val TIER_NIGHT = "P3"
     const val TIER_WEEKEND = "P4"
+    const val TIER_PREDAWN = "P5"
 
     /**
      * Weekday peaks. Fifteen minutes is the tightest cadence worth asking for:
@@ -51,7 +52,12 @@ object RefreshPolicyDefaults {
         denseMinutes = 15,
         sparseStepMinutes = 5,
         horizonMinutes = 60,
-        backgroundTaskMinutes = 60,
+        // Was 60, i.e. slower than the display cadence it feeds, so an off-peak
+        // board could be asked to redraw at 45 minutes with data already an hour
+        // old. The background wake draws on a SEPARATE budget from the widget
+        // timeline, so matching it to [intervalMinutes] costs no reloads — it
+        // just means every redraw has something new to show.
+        backgroundTaskMinutes = 45,
     )
 
     /**
@@ -99,19 +105,54 @@ object RefreshPolicyDefaults {
         backgroundTaskMinutes = 0,
     )
 
+    /**
+     * The quiet hour before anyone looks.
+     *
+     * ## The problem this fixes
+     * [NIGHT] asks for 180 minutes AND switches the background wake off, so
+     * nothing whatsoever refreshed between 23:00 and 06:30. A commuter's first
+     * glance of the day landed on a board whose data could be three hours old:
+     * the highest-value moment on the clock, served by the stalest data of the
+     * day.
+     *
+     * ## Why the two numbers point opposite ways
+     * [intervalMinutes] is 90 — about ONE timeline reload across the whole band
+     * — because reloads are the metered resource and nobody is watching a screen
+     * at 05:20. [backgroundTaskMinutes] is 20, which is dense, but that layer
+     * draws on a **separate budget** and only fetches DATA. So the phone brings
+     * the board up to date in the dark while spending almost none of the
+     * widget's quota, and 06:30 opens on numbers that are minutes old.
+     *
+     * The battery trade is three or four fetches in the ninety minutes before an
+     * alarm goes off, against none at all between 23:00 and 05:00.
+     */
+    private val PREDAWN = RefreshTier(
+        id = TIER_PREDAWN,
+        label = "Pre-dawn",
+        intervalMinutes = 90,
+        denseMinutes = 10,
+        sparseStepMinutes = 15,
+        horizonMinutes = 60,
+        backgroundTaskMinutes = 20,
+    )
+
     private val WEEKDAYS = listOf("MON", "TUE", "WED", "THU", "FRI")
     private val WEEKEND_DAYS = listOf("SAT", "SUN")
 
     val POLICY = RefreshPolicy(
         version = 1,
         timezone = "Europe/London",
-        tiers = listOf(RUSH, DAY, NIGHT, WEEKEND),
+        tiers = listOf(RUSH, DAY, NIGHT, WEEKEND, PREDAWN),
         windows = listOf(
             // Priority ascending so the peaks win any overlap with the bands
             // laid under them. Nothing here actually overlaps today; the
             // ordering is what keeps a hand-edited backend policy predictable.
-            RefreshWindow(days = emptyList(), from = "23:00", to = "06:30",
+            RefreshWindow(days = emptyList(), from = "23:00", to = "05:00",
                 tierId = TIER_NIGHT, priority = 0),
+            // Butts against both neighbours exactly, so the day stays covered
+            // end to end and nothing falls through to [defaultTierId].
+            RefreshWindow(days = emptyList(), from = "05:00", to = "06:30",
+                tierId = TIER_PREDAWN, priority = 0),
             RefreshWindow(days = WEEKDAYS, from = "09:30", to = "16:00",
                 tierId = TIER_DAY, priority = 1),
             RefreshWindow(days = WEEKDAYS, from = "19:30", to = "23:00",

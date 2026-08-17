@@ -132,11 +132,32 @@ enum RefreshScheduleStore {
     /// arrival is ordinary. Anything earlier than this had another cause.
     private static let scheduleGrace: TimeInterval = 60
 
-    /// Record what we just asked WidgetKit for, so the NEXT build can tell
-    /// whether it was the schedule firing or something else.
-    static func recordScheduledNext(_ date: Date) {
+    /// The rolling window the ledger measures.
+    private static let dayInterval: TimeInterval = 24 * 60 * 60
+
+    /// How far past its own requested build a ledger entry may fall before it
+    /// stops voting for the maximum.
+    ///
+    /// Six hours is well beyond anything the schedule can legitimately ask for
+    /// — the policy ceiling is 120 minutes, and even a `.after` that WidgetKit
+    /// declines for an hour is nowhere near this — so an entry past it has not
+    /// merely been delayed. Generous on purpose: the cost of waiting too long
+    /// is a stale vote, the cost of being too eager is discarding a live
+    /// widget's tally, and only one of those two under-counts the budget.
+    private static let ghostAfter: TimeInterval = 6 * 60 * 60
+
+    /// The same test, shortened for an entry the app's probe also failed to
+    /// find. Two independent signals agreeing is worth four hours of patience,
+    /// but not the whole margin: `.after` has been measured arriving an hour
+    /// late on a fifteen-minute ask, so a widget an hour overdue is ordinary
+    /// and only one several hours overdue means anything.
+    private static let observationGrace: TimeInterval = 2 * 60 * 60
+
+    /// Record what we just asked WidgetKit for, so the NEXT build of THIS widget
+    /// can tell whether it was the schedule firing or something else.
+    static func recordScheduledNext(_ date: Date, ledgerId: String) {
         guard let d = defaults else { return }
-        d.set(date.timeIntervalSince1970, forKey: AppGroupKeys.nextScheduledAt)
+        d.set(date.timeIntervalSince1970, forKey: AppGroupKeys.nextScheduledAt(ledgerId))
     }
 
     /// Whether the app is on screen right now — which decides whether this
@@ -183,56 +204,267 @@ enum RefreshScheduleStore {
     ///
     /// The window still ROLLS on an uncharged build, so a widget first touched
     /// after a day away still starts a fresh 24 hours.
+    ///
+    /// ## Counted PER WIDGET
+    /// Apple's ~40–70 builds a day is an allowance per widget, so a device-wide
+    /// tally compares the wrong number against it — two widgets doing exactly
+    /// what they should would read as one widget in trouble. Each widget keeps
+    /// its own count and its own `.after` marker; [publishMirror] then hands KMP
+    /// the worst of them, which is the one at risk of being throttled. See
+    /// `AppGroupKeys.nextScheduledAt(_:)` for the ordering bug the shared marker
+    /// caused before this.
     @discardableResult
-    static func recordReload(at date: Date = Date()) -> Int {
+    static func recordReload(ledgerId: String, at date: Date = Date()) -> Int {
         guard let d = defaults else { return 0 }
         let now = date.timeIntervalSince1970
-        let start = d.double(forKey: AppGroupKeys.budgetWindowStart)
 
-        // A build arriving materially earlier than we asked for was not the
-        // schedule firing. The grace absorbs ordinary system jitter around the
-        // requested time; anything earlier than that had another cause.
-        let scheduledFor = d.double(forKey: AppGroupKeys.nextScheduledAt)
-        let isExternallyTriggered = scheduledFor > 0 && now < scheduledFor - scheduleGrace
+        // Enumerated ONCE and threaded through. The three helpers below each
+        // need the full set, and each used to fetch it for itself — three scans
+        // of the suite on the timeline path, which is the one path in this
+        // target where instrumentation must never cost more than what it
+        // measures.
+        var ids = ledgerIds(d)
+        if syncGeneration(d, ids: ids) { ids = [] }
+        reap(d, at: now, ids: &ids)
+        ids.insert(ledgerId)
 
-        if isAppForeground(at: date) || isExternallyTriggered {
-            guard start <= 0 || now - start >= 24 * 60 * 60 else {
-                return d.integer(forKey: AppGroupKeys.budgetCount)
-            }
-            d.set(now, forKey: AppGroupKeys.budgetWindowStart)
-            d.set(0, forKey: AppGroupKeys.budgetCount)
-            return 0
-        }
+        let countKey = AppGroupKeys.budgetCount(ledgerId)
+        let startKey = AppGroupKeys.budgetWindowStart(ledgerId)
+        let start = d.double(forKey: startKey)
+
+        // A build arriving materially earlier than THIS widget asked for was not
+        // its schedule firing. The grace absorbs ordinary system jitter around
+        // the requested time; anything earlier than that had another cause.
+        //
+        // Both exemptions decided in ONE place. They were two branches that each
+        // re-derived the window arithmetic below, which is how the free path
+        // came to skip [publishMirror] entirely — so a reap that had just
+        // removed a deleted widget did not reach the governor until some later
+        // build happened to be a charged one.
+        let scheduledFor = d.double(forKey: AppGroupKeys.nextScheduledAt(ledgerId))
+        let externallyTriggered = scheduledFor > 0 && now < scheduledFor - scheduleGrace
+        let charged = !(isAppForeground(at: date) || externallyTriggered)
 
         // Roll the window as a block rather than sliding it. A true sliding
         // window needs every timestamp retained, and the extra precision buys
         // nothing when the ceiling it feeds is already set conservatively.
-        if start <= 0 || now - start >= 24 * 60 * 60 {
-            d.set(now, forKey: AppGroupKeys.budgetWindowStart)
-            d.set(1, forKey: AppGroupKeys.budgetCount)
-            return 1
+        //
+        // The window still ROLLS on an uncharged build, so a widget first
+        // touched after a day away still starts a fresh 24 hours.
+        let spent: Int
+        if start <= 0 || now - start >= dayInterval {
+            d.set(now, forKey: startKey)
+            spent = charged ? 1 : 0
+            d.set(spent, forKey: countKey)
+        } else if charged {
+            spent = d.integer(forKey: countKey) + 1
+            d.set(spent, forKey: countKey)
+        } else {
+            spent = d.integer(forKey: countKey)
         }
-        let next = d.integer(forKey: AppGroupKeys.budgetCount) + 1
-        d.set(next, forKey: AppGroupKeys.budgetCount)
-        recordScheduledBuild(at: date, spent: next)
-        return next
+
+        publishMirror(d, at: now, ids: ids)
+        // Logged in EVERY charged case, including the first build of a fresh
+        // window. The log is read by the gaps between its lines, so a metered
+        // build that wrote no line would manufacture exactly the silence
+        // somebody is looking for an explanation of.
+        if charged { recordScheduledBuild(at: date, spent: spent, ledgerId: ledgerId) }
+        return spent
     }
+
+    // MARK: - Per-widget ledger plumbing
+
+    /// Every widget that currently holds a ledger entry, derived from the suite.
+    ///
+    /// Both prefixes are scanned because the two keys are written at different
+    /// moments: the count during [recordReload], the marker only once the
+    /// provider has decided what to ask for next. A widget that has so far had
+    /// nothing but free builds has a marker and no count, and it must still be
+    /// reapable or its marker outlives it forever.
+    private static func ledgerIds(_ d: UserDefaults) -> Set<String> {
+        var ids = Set<String>()
+        for key in d.dictionaryRepresentation().keys {
+            if key.hasPrefix(AppGroupKeys.budgetCountPrefix) {
+                ids.insert(String(key.dropFirst(AppGroupKeys.budgetCountPrefix.count)))
+            } else if key.hasPrefix(AppGroupKeys.nextScheduledAtPrefix) {
+                ids.insert(String(key.dropFirst(AppGroupKeys.nextScheduledAtPrefix.count)))
+            }
+        }
+        return ids
+    }
+
+    /// Delete every trace of the widgets that have stopped building.
+    ///
+    /// ## Why this is time-based, and cannot be an event
+    /// **iOS never tells anyone a widget was removed.** There is no deletion
+    /// callback in WidgetKit, the extension is not run to be informed, and
+    /// `getCurrentConfigurations` returns an empty list when called from inside
+    /// `timeline(for:in:)`. A removed widget simply stops asking for timelines.
+    /// Its silence is the only notification there is, so this reads that
+    /// silence.
+    ///
+    /// Two ways to be gone. A window older than the day the ledger measures is
+    /// finished by definition. Otherwise the `.after` marker is the test,
+    /// because it is rewritten on EVERY build: a widget that has missed the
+    /// build it asked for by [ghostAfter] is not late, it is deleted, resized
+    /// (a resize is a new family, so a new entry) or repointed at another
+    /// station.
+    ///
+    /// Left alone, those entries do real harm rather than merely accumulating:
+    /// [publishMirror] reports the maximum, so a deleted widget that had spent
+    /// forty reloads goes on claiming forty, and the governor throttles the
+    /// widgets the user kept to protect one that no longer exists. Measured on
+    /// device before this: three placed widgets, seven ledger entries.
+    private static func reap(_ d: UserDefaults, at now: TimeInterval, ids: inout Set<String>) {
+        guard !ids.isEmpty else { return }
+        // What the APP saw the last time it could ask properly, and when.
+        // Absent on a device whose app has never run since this shipped, which
+        // is why the silence rule is kept rather than replaced.
+        let observedAt = d.double(forKey: AppGroupKeys.observedWidgetsAt)
+        let observationUsable = observedAt > 0 && now - observedAt < dayInterval
+        let observed: Set<String> = observationUsable
+            ? Set(d.stringArray(forKey: AppGroupKeys.observedWidgets) ?? [])
+            : []
+
+        let dead = ids.filter { id in
+            let start = d.double(forKey: AppGroupKeys.budgetWindowStart(id))
+            if start > 0, now - start >= dayInterval { return true }
+
+            let marker = d.double(forKey: AppGroupKeys.nextScheduledAt(id))
+            let overdue = marker > 0 ? now - marker : 0
+
+            // ── The probe may only ACCELERATE a verdict, never reach one ──
+            //
+            // An entry still building on schedule is kept however the probe
+            // answers. That asymmetry is the safety property: a widget iOS is
+            // still building is a widget Apple is still METERING, so deleting
+            // its tally would under-report the budget — and the entry would
+            // re-register at one on its next build, resetting itself again and
+            // again. Under-reporting is the direction that ends in a silently
+            // throttled widget, which is the failure this ledger exists to
+            // prevent.
+            //
+            // It is not known whether `getCurrentConfigurations` enumerates
+            // every record iOS builds for (Smart Stack members, configurations
+            // resurrected from its AppIntents cache). Requiring the entry to
+            // have gone quiet first means that question cannot cost anything.
+            //
+            // Skipped for `none#…`: an unconfigured build records itself under
+            // that id, `notePlacement` refuses to stamp an empty station, and
+            // the probe reports an unmatched widget as `family|` with no
+            // station — so such an entry can never match a descriptor and would
+            // always look dead.
+            if observationUsable, overdue > observationGrace, !id.hasPrefix("none#"),
+               let hash = id.firstIndex(of: "#") {
+                let station = String(id[id.startIndex..<hash])
+                let family = String(id[id.index(after: hash)...])
+                if !observed.contains("\(family)|\(station)") { return true }
+            }
+
+            return overdue > ghostAfter
+        }
+        guard !dead.isEmpty else { return }
+        dead.forEach { forget($0, in: d) }
+        ids.subtract(dead)
+    }
+
+    /// Drop every trace of one ledger entry.
+    private static func forget(_ ledgerId: String, in d: UserDefaults) {
+        d.removeObject(forKey: AppGroupKeys.budgetCount(ledgerId))
+        d.removeObject(forKey: AppGroupKeys.budgetWindowStart(ledgerId))
+        d.removeObject(forKey: AppGroupKeys.nextScheduledAt(ledgerId))
+    }
+
+    /// Summarise the per-widget ledger into the two keys KMP reads.
+    ///
+    /// The MAXIMUM rather than the total or the mean, because the ceiling being
+    /// modelled is per widget: what matters is how close the most-spent widget
+    /// is to being throttled, not how much the device has spent in aggregate.
+    ///
+    /// Widgets the user removed are not filtered here — [reap] has already
+    /// deleted them by the time this runs, on every build. That matters more
+    /// than it sounds: one ghost left behind would throttle every widget still
+    /// on the screen for the rest of its window.
+    private static func publishMirror(_ d: UserDefaults, at now: TimeInterval, ids: Set<String>) {
+        var worstCount = 0
+        var worstStart = 0.0
+        for id in ids {
+            let start = d.double(forKey: AppGroupKeys.budgetWindowStart(id))
+            guard start > 0, now - start < dayInterval else { continue }
+            let count = d.integer(forKey: AppGroupKeys.budgetCount(id))
+            // Ties break toward the LATER window, whose count KMP is less likely
+            // to discard as already rolled. Erring toward believing the spend
+            // protects the budget; the policy's own interval ceiling is what
+            // stops that caution turning into the old 627-minute blackout.
+            if count > worstCount || (count == worstCount && start > worstStart) {
+                worstCount = count
+                worstStart = start
+            }
+        }
+        // No live entry at all — every widget removed, or every window lapsed.
+        // The mirror must be CLEARED rather than left: a stale high count with
+        // nothing left to justify it would go on degrading the next widget the
+        // user places, for a full day, on the strength of spend by widgets that
+        // no longer exist.
+        let start = worstStart > 0 ? worstStart : now
+        let count = worstStart > 0 ? worstCount : 0
+
+        // Compared before writing, the same discipline as KMP's `putIfChanged`:
+        // this runs on every build and the values move rarely, so an
+        // unconditional write would wake `cfprefsd` for nothing most of the time.
+        if d.integer(forKey: AppGroupKeys.budgetCount) != count {
+            d.set(count, forKey: AppGroupKeys.budgetCount)
+        }
+        if d.double(forKey: AppGroupKeys.budgetWindowStart) != start {
+            d.set(start, forKey: AppGroupKeys.budgetWindowStart)
+        }
+    }
+
+    /// Drop the whole per-widget ledger when the installed build changes, and
+    /// report whether it did.
+    ///
+    /// KMP zeroes the mirror for this reason already (`resetLedgerOnNewBuild`),
+    /// but it cannot see the per-widget entries behind it — so without this the
+    /// very next [publishMirror] would restore the count it had just cleared,
+    /// carrying a tally from a binary that may have counted differently.
+    private static func syncGeneration(_ d: UserDefaults, ids: Set<String>) -> Bool {
+        // Unconditional, and deliberately not folded into the generation check
+        // below: the roster was replaced by derivation WITHOUT a version bump,
+        // so a device carrying the old key would otherwise keep it until the
+        // next app update. One existence test per build to leave nothing behind.
+        if d.object(forKey: AppGroupKeys.legacyBudgetRoster) != nil {
+            d.removeObject(forKey: AppGroupKeys.legacyBudgetRoster)
+        }
+
+        let build = d.string(forKey: AppGroupKeys.budgetBuild) ?? ""
+        guard !build.isEmpty,
+              d.string(forKey: AppGroupKeys.budgetGeneration) != build else { return false }
+        ids.forEach { forget($0, in: d) }
+        d.set(build, forKey: AppGroupKeys.budgetGeneration)
+        return true
+    }
+
+    // MARK: - Traces
 
     /// Append one line per METERED build — see `AppGroupKeys.scheduledBuildLog`.
     ///
     /// The chatty `refreshTrace` holds 20 entries and rolls in minutes during
     /// active use, which made "the widget did not refresh for two hours"
     /// impossible to investigate after the fact. This log records only builds
-    /// that actually cost quota, so at ~42/day it spans more than a day and the
-    /// GAPS BETWEEN LINES are the answer.
+    /// that actually cost quota, so it spans more than a day and the GAPS
+    /// BETWEEN LINES are the answer.
     ///
     /// Deliberately terse: a timestamp and the cadence in force, nothing that
     /// would make it roll faster than the question it exists to answer.
-    private static func recordScheduledBuild(at date: Date, spent: Int) {
+    private static func recordScheduledBuild(at date: Date, spent: Int, ledgerId: String) {
         guard let d = defaults else { return }
         let cadence = self.cadence(at: date)
         var log = d.stringArray(forKey: AppGroupKeys.scheduledBuildLog) ?? []
-        log.append("\(Int(date.timeIntervalSince1970)) \(cadence.tierId) ask=\(cadence.intervalMinutes)m n=\(spent)")
+        // The ledger id is on every line because with two widgets the gaps in
+        // this log are only meaningful per widget: interleaved lines from a
+        // station that refreshes and one that does not would otherwise read as
+        // one healthy widget.
+        log.append("\(Int(date.timeIntervalSince1970)) \(cadence.tierId) ask=\(cadence.intervalMinutes)m n=\(spent) id=\(ledgerId)")
         if log.count > 60 { log = Array(log.suffix(60)) }
         d.set(log, forKey: AppGroupKeys.scheduledBuildLog)
     }

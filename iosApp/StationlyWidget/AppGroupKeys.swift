@@ -121,19 +121,108 @@ enum AppGroupKeys {
     /// under-report badly and the budget governor would never engage until the
     /// widget had already been throttled. KMP reads these to decide how hard to
     /// economise; see `RefreshBudgetStore` on the Kotlin side.
+    ///
+    /// ## These two are a MIRROR now, not the ledger itself
+    /// Apple budgets per widget (~40–70 builds a day each), so with two widgets
+    /// on the home screen a single shared tally answers the wrong question: it
+    /// reports the device's total spend against a ceiling that is per widget.
+    /// The real ledger is [budgetCount(_:)] per widget, and these hold the
+    /// MAXIMUM across them — the widget closest to being throttled, which is the
+    /// one the governor has to protect. KMP's side of the contract is unchanged:
+    /// it still reads exactly these two keys and still resets them on a build
+    /// change.
     static let budgetWindowStart = "widget_budget_window_start"
     static let budgetCount       = "widget_budget_count"
 
-    /// When we last told WidgetKit to come back (`.after(next)`).
+    /// The per-widget ledger the two keys above summarise.
+    ///
+    /// Keyed by station and family (the same pair `placements` stamps) because
+    /// WidgetKit hands the provider no instance identity of its own — the
+    /// configuration and `context.family` are the whole of what it knows. Two
+    /// widgets showing the same station at the same size therefore share a
+    /// ledger entry and count as one; that is the same granularity the
+    /// placement stamps already accept, and the failure is a modest over-count
+    /// on a rare configuration rather than the ordering-dependent one below.
+    /// Prefixes, so the set of ledger entries can be DERIVED by scanning the
+    /// suite rather than stored alongside it.
+    ///
+    /// There used to be a `widget_budget_roster` array holding the ids. It was a
+    /// shared blob that both processes read-modify-wrote, which is precisely the
+    /// pattern the two counters above deliberately avoid, and for the same
+    /// reason: `UserDefaults` has no atomic append, so two widgets registering
+    /// in the same burst could silently drop one of them — and with it that
+    /// widget's whole spend. Derivation cannot race, because every widget writes
+    /// only keys bearing its own id.
+    ///
+    /// A device that ran a build from 2026-08-17 may still hold the old
+    /// `widget_budget_roster` key. It is inert and `syncGeneration` clears it.
+    static let budgetCountPrefix       = "widget_budget_count_"
+    static let budgetWindowStartPrefix = "widget_budget_start_"
+    static let nextScheduledAtPrefix   = "widget_next_scheduled_at_"
+
+    static func budgetCount(_ ledgerId: String) -> String { budgetCountPrefix + ledgerId }
+    static func budgetWindowStart(_ ledgerId: String) -> String { budgetWindowStartPrefix + ledgerId }
+
+    /// Written by a build before 2026-08-17's refactor; read by nothing now.
+    static let legacyBudgetRoster = "widget_budget_roster"
+
+    /// The app build the per-widget ledger was counted under.
+    ///
+    /// KMP zeroes the mirror on a build change (`resetLedgerOnNewBuild`) and
+    /// cannot reach the per-widget entries, which would then restore the old
+    /// count the moment the mirror was recomputed. Stamping the generation here
+    /// lets the first build after an update notice and wipe the whole roster.
+    ///
+    /// Compared against [budgetBuild], which KMP writes — see below.
+    static let budgetGeneration  = "widget_budget_generation"
+
+    /// When we last told WidgetKit to come back (`.after(next)`), per widget.
     ///
     /// Used to tell a SCHEDULED rebuild from an externally-triggered one. A
     /// build arriving well before this time was caused by a push or an
     /// app-side reload — both of which Apple meters on their own budgets — so
     /// charging it against the timeline quota over-counts. That over-counting
     /// is what drove the governor to a 627-minute interval on a real device.
-    static let nextScheduledAt   = "widget_next_scheduled_at"
+    ///
+    /// ## Why this had to become per widget
+    /// It was one shared key, and with more than one widget it made metering
+    /// depend on the order WidgetKit happened to invoke the providers in. A
+    /// scheduled burst across three widgets charged ONE: the first build moved
+    /// the marker a full interval into the future, and the two that followed
+    /// milliseconds later read that new marker, concluded they had arrived far
+    /// too early to be the schedule firing, and recorded themselves free. Once
+    /// widgets drift out of lockstep it gets worse rather than better — whichever
+    /// one lands just after the marker pays for all of them, and there are
+    /// orderings where the widget that WAS on schedule is the one excused.
+    static func nextScheduledAt(_ ledgerId: String) -> String {
+        nextScheduledAtPrefix + ledgerId
+    }
 
     // MARK: - Written by the app, read here
+
+    /// The installed app build, stamped by KMP's `resetLedgerOnNewBuild`.
+    ///
+    /// Read here only to notice that it has changed, which is the signal to
+    /// discard the per-widget ledger — see [budgetGeneration]. KMP owns the
+    /// value; nothing in this target ever writes it.
+    static let budgetBuild       = "widget_budget_build"
+
+    /// Which widgets are ACTUALLY placed, as `family|stationId` descriptors,
+    /// and when the app last looked.
+    ///
+    /// The answer to the one question this process cannot ask. WidgetKit has no
+    /// deletion callback, and `getCurrentConfigurations` returns an EMPTY list
+    /// when called from inside `timeline(for:in:)` — so from here a removed
+    /// widget is indistinguishable from one that simply has not been asked for
+    /// a timeline yet. The app can ask properly, and `HomeStateProbe` reconciles
+    /// the host's authoritative count and families against [placements] to
+    /// recover the stations. Published on every foreground.
+    ///
+    /// The timestamp is load-bearing, not diagnostic: a widget added after the
+    /// observation must not be reaped for being missing from a list that
+    /// predates it. See `RefreshScheduleStore.reap`.
+    static let observedWidgets   = "widget_observed"
+    static let observedWidgetsAt = "widget_observed_at"
 
     /// Heartbeat proving the APP is in the foreground right now.
     ///

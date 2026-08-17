@@ -73,14 +73,50 @@ class RefreshPolicyEvaluatorTest {
     }
 
     @Test
-    fun weekendBandButtsAgainstNightWithNoGap() {
-        // 06:29 is still night, 06:31 is already the weekend band. The half-hour
-        // hole that used to sit here fell through to the default tier, so a
-        // weekend morning briefly ran at a cadence unrelated to either side.
+    fun theOvernightBandsButtAgainstTheirNeighboursWithNoGap() {
+        // Every boundary from the small hours to the first daytime tier, with no
+        // hole anywhere. A hole here does not fail loudly: it falls through to
+        // `defaultTierId`, so a stretch of the morning silently runs at a cadence
+        // unrelated to either side of it, which is what this exists to catch.
+        //
+        // Night now ends at 05:00 rather than 06:30, with P5 covering the gap —
+        // see `RefreshPolicyDefaults.PREDAWN` for why the pre-dawn hour earns a
+        // tier of its own.
         assertEquals(RefreshPolicyDefaults.TIER_NIGHT,
+            RefreshPolicyEvaluator.decide(policy, saturday(4, 59)).tierId)
+        assertEquals(RefreshPolicyDefaults.TIER_PREDAWN,
+            RefreshPolicyEvaluator.decide(policy, saturday(5, 1)).tierId)
+        assertEquals(RefreshPolicyDefaults.TIER_PREDAWN,
             RefreshPolicyEvaluator.decide(policy, saturday(6, 29)).tierId)
         assertEquals(RefreshPolicyDefaults.TIER_WEEKEND,
             RefreshPolicyEvaluator.decide(policy, saturday(6, 31)).tierId)
+        // The same seam on a weekday hands over to the rush tier instead.
+        assertEquals(RefreshPolicyDefaults.TIER_PREDAWN,
+            RefreshPolicyEvaluator.decide(policy, monday(6, 29)).tierId)
+        assertEquals(RefreshPolicyDefaults.TIER_RUSH,
+            RefreshPolicyEvaluator.decide(policy, monday(6, 31)).tierId)
+    }
+
+    @Test
+    fun theQuietHourBeforeTheRushRefreshesDataWithoutSpendingReloads() {
+        // The point of P5, and the two numbers that make it worth having. The
+        // failure it replaces: P3 asked 180 minutes AND disabled the background
+        // wake, so nothing at all refreshed between 23:00 and 06:30 and the
+        // commuter's first glance got the stalest board of the day.
+        //
+        // Asserted as a RELATIONSHIP rather than as literals, so tuning either
+        // number keeps the property: the background wake (separate budget, data
+        // only) must be far denser than the timeline reload (metered).
+        val predawn = RefreshPolicyEvaluator.decide(policy, monday(5, 30))
+        val night = RefreshPolicyEvaluator.decide(policy, monday(2, 0))
+
+        assertEquals(RefreshPolicyDefaults.TIER_PREDAWN, predawn.tierId)
+        assertTrue(predawn.backgroundTaskMinutes in 1..30,
+            "pre-dawn must actually fetch data, unlike the night band it split off")
+        assertEquals(0, night.backgroundTaskMinutes,
+            "the deep night must still cost no battery at all")
+        assertTrue(predawn.backgroundTaskMinutes * 2 < predawn.intervalMinutes,
+            "the cheap layer must be the dense one, or this spends metered reloads")
     }
 
     @Test

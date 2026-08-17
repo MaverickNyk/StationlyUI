@@ -58,6 +58,7 @@ enum HomeStateProbe {
             // See `ActivityBridge.widgetsObserved`.
             let descriptors = describe(configurations)
             ActivityBridge.shared.widgetsObserved(descriptors: descriptors)
+            publishObserved(descriptors, raw: configurations)
         }
     }
 
@@ -109,6 +110,52 @@ enum HomeStateProbe {
         }
         return descriptors
     }
+
+    /// Hand the widget extension the one fact only this side can learn: which
+    /// widgets are ACTUALLY on the home screen right now.
+    ///
+    /// ## Why the extension needs it
+    /// `RefreshScheduleStore` keeps a refresh ledger per widget, and nothing in
+    /// WidgetKit tells that process a widget was removed — there is no deletion
+    /// callback, and `getCurrentConfigurations` returns an empty list when
+    /// called from inside `timeline(for:in:)`. A removed widget simply stops
+    /// asking for timelines, so on its own the extension can only infer death
+    /// from silence, which takes hours to be safe about.
+    ///
+    /// This is the same reconciliation [describe] already performs for the
+    /// activity trail, published so the ledger can use it too: entries with no
+    /// matching placed widget are reaped the next time the app is opened
+    /// instead of waiting out a timeout.
+    ///
+    /// Stamped with the observation time because the answer expires. A widget
+    /// added after this was written must not be reaped for being absent from a
+    /// list that predates it, so the extension compares the two timestamps.
+    private static func publishObserved(_ descriptors: [String], raw: [WidgetInfo]) {
+        guard let d = UserDefaults(suiteName: AppGroupID.value) else { return }
+        d.set(descriptors, forKey: observedKey)
+        // The host's answer with NOTHING inferred from it.
+        //
+        // [describe] above attaches a station to each widget by matching
+        // placement stamps by family, because `WidgetInfo` carries no station.
+        // That inference is fine for the activity trail, which only needs to
+        // know which boards are on screen, and misleading for the question
+        // "how many widgets does this person actually have" — a question it
+        // was read as answering once, wrongly. The `kind` is included because
+        // nothing else records whether these are all even the same widget.
+        d.set(raw.map { "\($0.kind)|\(String(describing: $0.family))" }, forKey: observedRawKey)
+        d.set(Date().timeIntervalSince1970, forKey: observedAtKey)
+        // Same reason as the foreground heartbeat: cfprefsd can hold the write
+        // in this process's cache, and the reader is a different process
+        // launched fresh. Without this the extension reads the previous answer.
+        d.synchronize()
+    }
+
+    /// Keep these two literals in lockstep with the widget target's
+    /// `AppGroupKeys.observedWidgets` / `observedWidgetsAt`.
+    private static let observedKey = "widget_observed"
+    private static let observedAtKey = "widget_observed_at"
+    /// Diagnostic only, and read by nothing — see [publishObserved].
+    private static let observedRawKey = "widget_observed_raw"
 
     /// One placed widget as the EXTENSION recorded it — mirrors
     /// `AppGroupStorage.WidgetPlacementStamp`, which lives in the widget target

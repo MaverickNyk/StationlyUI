@@ -118,10 +118,25 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         //
         // Empty for every empty state, and `notePlacement` drops those: a widget
         // with nothing on it is not showing a station and must not hold one.
-        AppGroupStorage.shared.notePlacement(
-            station: data.stationId,
-            family: String(describing: context.family)
-        )
+        //
+        // ── Never for a PREVIEW ──
+        //
+        // WidgetKit builds this provider for the gallery and the edit sheet as
+        // well as for the home screen, and a preview is not a placement. Stamped
+        // anyway it would enter `widget_placements`, where `HomeStateProbe`
+        // matches stamps to real widgets BY FAMILY and takes the most recent —
+        // so a browse through the gallery could hand a genuinely placed widget
+        // the station of one merely looked at. The ledger below is skipped for
+        // the same build, because Apple does not meter a preview against the
+        // widget's refresh budget and counting it would invent spend.
+        //
+        // Not the cause of anything observed so far: on this device every
+        // timeline build has been a real one (`preview` has yet to appear in
+        // the trace). This closes the hole rather than fixing a known fault.
+        let family = String(describing: context.family)
+        if !context.isPreview {
+            AppGroupStorage.shared.notePlacement(station: data.stationId, family: family)
+        }
 
         // ── Fetch when what we hold is stale ──
         //
@@ -246,11 +261,26 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         // Kotlin side see what this process has actually spent — the app is not
         // running for most of these, so nothing else can count them.
         let cadence = RefreshScheduleStore.cadence(at: now)
+        // ── This widget's own name in the ledger ──
+        //
+        // Apple's ~40–70 builds a day is an allowance PER WIDGET, so the tally
+        // has to be kept per widget or it compares the device's total against
+        // one widget's ceiling. WidgetKit hands the provider no instance
+        // identity, so the station and family are it — the same pair
+        // `notePlacement` stamps above, deliberately, so the two cannot
+        // disagree about what counts as one widget.
+        let ledgerId = Self.ledgerId(station: data.stationId, family: family)
         // Read before recording: `recordReload` uses the same answer to decide
         // whether this build costs anything, and the trace has to be able to
         // explain a count that did not move.
         let isFree = RefreshScheduleStore.isAppForeground(at: now)
-        let spent = RefreshScheduleStore.recordReload(at: now)
+        // A preview costs the widget's refresh budget nothing, and its ledger id
+        // collides with the real widget of the same station and size — so
+        // recording it would both invent spend and move that widget's `.after`
+        // marker, which is what the metering reads to tell a scheduled build
+        // from an externally triggered one. See `notePlacement` above.
+        let spent = context.isPreview
+            ? 0 : RefreshScheduleStore.recordReload(ledgerId: ledgerId, at: now)
         let horizon = Self.horizonMinutes(for: data, from: now, cadence: cadence)
 
         // ── Dense near, sparse far ──
@@ -333,11 +363,23 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         // policy's answer, which is the one thing the daily budget is actually
         // spent on. The interval is already governed and floored on the Kotlin
         // side, so it is used as given.
-        let nextRefresh = now.addingTimeInterval(TimeInterval(cadence.intervalMinutes * 60))
-        // Remembered so the NEXT build can tell whether it was this schedule
-        // firing or an external trigger (push / app reload), which Apple meters
-        // separately and which must not be charged here.
-        RefreshScheduleStore.recordScheduledNext(nextRefresh)
+        //
+        // ── The interval is the POLICY's to set, not this process's ──
+        //
+        // Used exactly as given. The schedule is served by the backend so that
+        // iOS, Android and web can all be driven from one document, and a
+        // client that quietly stretched its own cadence would make that
+        // document a suggestion. When a cadence needs to change it changes
+        // there, for every client at once.
+        let interval = cadence.intervalMinutes
+        let nextRefresh = now.addingTimeInterval(TimeInterval(interval * 60))
+        // Remembered so the NEXT build of THIS widget can tell whether it was
+        // its own schedule firing or an external trigger (push / app reload),
+        // which Apple meters separately and which must not be charged here.
+        // Not from a preview: that would move a real widget's marker.
+        if !context.isPreview {
+            RefreshScheduleStore.recordScheduledNext(nextRefresh, ledgerId: ledgerId)
+        }
 
         let ageHours = RefreshScheduleStore.scheduleAgeHours(at: now)
         let boostNote = cadence.boostActive ? " boost" : ""
@@ -363,9 +405,15 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
             "timeline \(cause) cfg=\(configuration.station?.id ?? "nil") " +
             "shown=\(data.stationId.isEmpty ? "none" : data.stationId) state=\(data.stateName) " +
             "read=\(readMs)ms tick=\(tickMs)ms entries=\(entries.count) " +
-            "tier=\(cadence.tierId)\(boostNote)\(staleNote) next=\(cadence.intervalMinutes)m " +
-            "spent=\(spent)\(isFree ? " FREE" : "") schedAge=\(ageHours)h")
-        providerLog.notice("timeline \(String(describing: context.family), privacy: .public) state=\(data.stateName, privacy: .public) entries=\(entries.count) (\(cause, privacy: .public)) read=\(readMs)ms tick=\(tickMs)ms tier=\(cadence.tierId, privacy: .public) next=\(cadence.intervalMinutes)m spent=\(spent)")
+            // `preview` separates a widget on the home screen from one being
+            // rendered for the gallery or the editor. Worth a word on the line
+            // because they are indistinguishable in every other field, and a
+            // ledger that counted previews would report more widgets than the
+            // user has placed.
+            "\(context.isPreview ? "preview " : "")" +
+            "tier=\(cadence.tierId)\(boostNote)\(staleNote) next=\(interval)m" +
+            " spent=\(spent)\(isFree ? " FREE" : "") id=\(ledgerId) schedAge=\(ageHours)h")
+        providerLog.notice("timeline \(family, privacy: .public) state=\(data.stateName, privacy: .public) entries=\(entries.count) (\(cause, privacy: .public)) read=\(readMs)ms tick=\(tickMs)ms tier=\(cadence.tierId, privacy: .public) next=\(interval)m spent=\(spent)")
         return Timeline(entries: entries, policy: .after(nextRefresh))
     }
 
@@ -484,6 +532,23 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
     /// scheduled reload and every push does). Departures move on roughly a
     /// minute, so anything older than this is worth a round trip.
     static let staleAfterSeconds: TimeInterval = 120
+
+    /// This widget's name in the refresh ledger.
+    ///
+    /// WidgetKit gives a provider no instance identity — the configuration and
+    /// `context.family` are the whole of what it knows about which widget it is
+    /// building for — so this pair IS the identity, exactly as it is for
+    /// `notePlacement`. Two widgets on the same station at the same size share
+    /// an entry and are counted as one; the alternative is no per-widget
+    /// accounting at all, and that pairing is already the granularity the
+    /// placement stamps accept.
+    ///
+    /// The rendered station rather than the configured one, for the same reason
+    /// `notePlacement` uses it: a station whose grouping id moved keeps one
+    /// continuous ledger instead of silently opening a second.
+    static func ledgerId(station: String, family: String) -> String {
+        "\(station.isEmpty ? "none" : station)#\(family)"
+    }
 
     /// The preconfigured variants of this widget — one per station, in the
     /// user's own home-screen order.
