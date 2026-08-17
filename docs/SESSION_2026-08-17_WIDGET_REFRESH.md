@@ -305,17 +305,94 @@ Swift halves are reasoned rather than measured.
 
 ## 7. What to do next
 
-1. **WidgetKit push on a cadence.** The only lever with real headroom. Already
-   live on the test device with a registered token, drawing on a budget separate
-   from the timeline quota, and unlike `BGAppRefreshTask` it both fetches and
-   repaints. Today it fires only on disruption transitions. Backend work, which
-   suits the SDUI direction.
-2. **Settle per-widget vs per-app** (§1). Everything in the budget model depends
+### 7.1 WidgetKit push on a cadence — the only lever with real headroom
+
+Working again since §2.9, registered on the test device, drawing on a budget
+separate from the 40–70, and unlike `BGAppRefreshTask` it both fetches **and**
+repaints. Today it fires only on disruption transitions.
+
+**Why this is the answer to "why isn't peak actually 15 minutes".** The tier
+already asks for 15. `.after` is a floor, not a timer, and measured across both
+peaks on a real device that 15-minute ask was delivered at:
+
+```
+07:25 → 07:55  +30      16:58 → 17:28  +30
+07:55 → 08:59  +63      17:28 → 17:59  +30
+08:59 → 09:24  +25      17:59 → 18:59  +60
+```
+
+Averaging ~43 minutes for a 15-minute request. Lowering `intervalMinutes` cannot
+help; the system is already declining the current one. There is no API for a
+clock-driven redraw, deliberately. Push is the only mechanism that bypasses it.
+
+**Do NOT push every minute.** Four separate reasons, and the project has already
+reached this conclusion once — `Station_*` / `LineStatus_*` FCM topics are
+Android-only precisely because "per-minute pushes would exhaust the iOS quota":
+
+1. **Widget pushes are metered too.** A separate allowance from the timeline
+   quota is not an unlimited one, and its throttling behaviour is barely
+   documented. Overspending it plausibly ends worse than the status quo.
+2. **Silent pushes are best-effort by contract.** Apple rate-limits them and
+   states they may be delayed or dropped. 1,440/device/day is the shape that
+   triggers exactly that.
+3. **Battery.** Every push wakes the extension, calls the API and re-renders the
+   board. 1,440 wakes a day is visible in Settings, and iOS responds by
+   throttling the app further.
+4. **Fan-out cost.** Pushes are per device. A thousand users is 1.4M pushes/day,
+   each triggering a backend fetch.
+
+**And it buys almost nothing.** Rows already re-derive locally every minute at
+zero cost (`ticked(at:)`), so a per-minute push would spend the whole budget
+redrawing numbers the widget can compute itself. What ages between refreshes is
+the prediction *set*, which does not move on a one-minute scale.
+
+**Sizing:**
+
+| Cadence | Pushes / device / day | |
+|---|---|---|
+| Every 1 min | 1,440 | not viable |
+| Every 15 min, **peak only** | 26 | start here |
+| Every 15 min, 06:30–23:00 | 66 | only if 26 lands cleanly |
+
+Peak-only at 15 minutes delivers the originally intended rush-hour cadence for 26
+pushes, none of which touch the timeline quota. That is a plausible ask; 1,440 is
+not.
+
+**Shape of the work:** a cadence field on the tier so the schedule stays the
+single SDUI source and Android/web inherit it, plus scheduling in
+`devicePushService`. Ship peak-only, measure how many of the 26 actually land,
+then decide whether to extend. If they are throttled, fall back to 30 minutes at
+peak and you are still ahead of today's ~43-minute average.
+### 7.2 Everything else
+
+1. **Settle per-widget vs per-app** (§1). Everything in the budget model depends
    on it.
-3. **Start incrementing `RefreshPolicy.version` at launch.** Held at 1 while
+2. **Start incrementing `RefreshPolicy.version` at launch.** Held at 1 while
    pre-launch because no client is in the field to be stale. Once real devices
    hold cached copies, that field is what lets a `policy.update` push say "you
    are stale" without carrying the document.
-4. **`policy.update` belongs in `staging_deploy.sh`.** Editing the schedule does
-   not reach devices by itself; the 12 h TTL is only checked on app foreground.
-   Considered and deferred on 2026-08-10, still true.
+3. **`policy.update` belongs in `staging_deploy.sh`.** Editing the schedule does
+   not reach devices by itself; the 12 h TTL is only checked on app foreground,
+   and `forcePolicyRefresh()` is reachable ONLY from that push. Deferred on
+   2026-08-10; it has now cost real time twice, including tonight, where the
+   deploy was inert until the push was sent by hand.
+
+---
+
+## 8. What the widget actually does now, unaided
+
+For anyone asking "how often does it refresh on its own", with no app launch and
+no refresh tap:
+
+| | Frequency | Notes |
+|---|---|---|
+| **Screen redraws** | **6–11/day** | Measured. Gaps of 25–250 min, once 627. |
+| Background data fetches | tier cadence (15/45/30/20 min) | Separate budget. Refreshes DATA, **cannot repaint**. |
+| Disruption pushes | unpredictable | Fetch *and* repaint. Dead 2026-08-15 → 08-17, see §2.9. |
+
+**The display never looks frozen**, because rows re-derive every minute locally
+for free. What ages between redraws is the prediction set, not the countdown.
+
+Tonight's work did not raise the 6–11. Nothing on the device can; see §7.1. What
+it changed is *when* freshness lands — the pre-dawn band means the ~06:30 redraw
+shows minutes-old data instead of hours-old.
