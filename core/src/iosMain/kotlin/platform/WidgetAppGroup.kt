@@ -212,3 +212,61 @@ data class WidgetBoard(
     @Transient
     val predictions: List<PredictionDisplay> = emptyList(),
 )
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The "nothing to show, and here is why" table
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One resolved message: a bold title and zero or more detail lines.
+ *
+ * Mirrors `BoardFallbackCopy` in `core/util/BoardFallback.kt`, which is where
+ * the wording comes from. This exists as a separate type only because that one
+ * is not `@Serializable` and does not need to be — it is read in-process by the
+ * Compose boards, where nothing crosses a process boundary.
+ */
+@Serializable
+data class WidgetFallbackCopy(
+    val title: String,
+    val detail: List<String> = emptyList(),
+)
+
+/**
+ * Every message an empty board can print, plus the thresholds that select
+ * between them. Written by `IosWidgetManager.publishFallbackCopy`, read by
+ * `BoardFallbackTable` in the widget target.
+ *
+ * ## Why the whole table travels rather than the answer
+ * WidgetKit builds an hour of timeline entries in one pass, and which message
+ * is correct MOVES inside that hour: a board becomes "Live updates paused" six
+ * minutes after its payload, and "Service ended for tonight" at midnight. A
+ * finished string chosen at write time would be frozen onto entries that appear
+ * long after it stopped being true.
+ *
+ * So KMP supplies the words and the boundaries; the extension owns the clock and
+ * picks the row. Same division as `WidgetGroup.headerVariants`, for the same
+ * reason.
+ *
+ * ## Keys are enum NAMES
+ * [BoardFallbackKind.name], so `OFFLINE`, `LATE_NIGHT` and so on. Deliberately
+ * not ordinals: a kind inserted in the middle would silently re-map every
+ * message on a device whose widget had not been rebuilt.
+ */
+@Serializable
+data class WidgetFallbackTable(
+    val copy: Map<String, WidgetFallbackCopy> = emptyMap(),
+    /** Minutes of age past which a board is "Live updates paused". */
+    val signalLostMin: Long = 6,
+    /**
+     * The closed-network windows, as MINUTES PAST LOCAL MIDNIGHT.
+     *
+     * Not "HH:mm" and not a `LocalTime`: Swift has no `LocalTime`, and a string
+     * would have to be re-parsed on the far side with its own idea of what
+     * malformed means. An integer is the one shape both halves already agree
+     * about, and the parsing stays on the Kotlin side next to the SDUI keys it
+     * comes from.
+     */
+    val lateNightStartMin: Int = 0,
+    val lateNightEndMin: Int = 270,
+    val earlyMorningEndMin: Int = 360,
+)

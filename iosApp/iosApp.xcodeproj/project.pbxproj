@@ -15,6 +15,7 @@
 		307C2654CD5972A25FB7FD87 /* iOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668CECA83ACC03A83C85A623 /* iOSApp.swift */; };
 		38BC8C0A2A20C409AD35F500 /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17F56BCEA93D417E080182A7 /* AppGroupStorage.swift */; };
 		3A939B1447CB25EBEE98671B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 258D481022F14E09267EE7BD /* Assets.xcassets */; };
+		4386425835E3A61DCAF722E3 /* BoardFallback.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE4B4A042B8485348641764 /* BoardFallback.swift */; };
 		445C052442747365B7CB2124 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */; };
 		490B0ECE2B0FE3124A257528 /* ActivityUploadScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C1AD1EB4407F8EA35E2F158 /* ActivityUploadScheduler.swift */; };
 		4F51E6F943E79B5999B8A52B /* composeApp.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 118F41A10A55B84CE576769B /* composeApp.xcframework */; };
@@ -104,6 +105,7 @@
 		96749FEEFB87671930DBEF31 /* AppGroupID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupID.swift; sourceTree = "<group>"; };
 		97E45A83D0043D7E5591F183 /* AppGroupID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupID.swift; sourceTree = "<group>"; };
 		9DD084811CFD2DD3C10F78DB /* StationResolution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationResolution.swift; sourceTree = "<group>"; };
+		9DE4B4A042B8485348641764 /* BoardFallback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardFallback.swift; sourceTree = "<group>"; };
 		C117AD187833E2513BD2F553 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C357B6723C45127EC27E81E4 /* Staging.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Staging.xcconfig; sourceTree = "<group>"; };
 		C6D2DD7FE2E0BF5DB2A96B4B /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -195,6 +197,7 @@
 				71BBE9EECA29F7BC9A109C5B /* AppGroupKeys.swift */,
 				17F56BCEA93D417E080182A7 /* AppGroupStorage.swift */,
 				258D481022F14E09267EE7BD /* Assets.xcassets */,
+				9DE4B4A042B8485348641764 /* BoardFallback.swift */,
 				5BA8E3A8CB73FA587D96BD12 /* DepartureEntry.swift */,
 				E6E60D8AB263A747C2061338 /* Info.plist */,
 				F97E3E0613AAD3D9909D9DBD /* PrivacyInfo.xcprivacy */,
@@ -441,6 +444,7 @@
 				EEAED07AD42E134D78BBE3AD /* AppGroupID.swift in Sources */,
 				9F3A175D3B8A470544BB8BE2 /* AppGroupKeys.swift in Sources */,
 				38BC8C0A2A20C409AD35F500 /* AppGroupStorage.swift in Sources */,
+				4386425835E3A61DCAF722E3 /* BoardFallback.swift in Sources */,
 				15004BFF21C3E1734FA5E510 /* DepartureEntry.swift in Sources */,
 				99B49945DB0F17F7094153A9 /* RefreshScheduleStore.swift in Sources */,
 				CFE992350AE1D45C71A414A2 /* StationConfiguration.swift in Sources */,

@@ -118,4 +118,21 @@ struct DepartureEntry: TimelineEntry {
     /// between the tap and the intent returning, so a skeleton asked for there
     /// would only appear AFTER the real board was already on screen.
     var isSkeleton: Bool = false
+
+    /// What a board with no departures says, and whether its "ago" timer should
+    /// still colour itself by age. Nil when the board HAS departures.
+    ///
+    /// ## The one thing on this entry that is genuinely per-entry
+    /// Everything else in `BoardRenderState` is identical across a batch, which
+    /// is exactly why it was hoisted out of the views. This is the opposite
+    /// case: the answer MOVES inside a single timeline. A board becomes "Live
+    /// updates paused" six minutes after its payload lands, and "Service ended
+    /// for tonight" at midnight, both on entries archived long before either
+    /// moment.
+    ///
+    /// So it is resolved per entry in the provider, where each entry's own date
+    /// is already in hand, rather than in `body` — which would put the App Group
+    /// read and a `Calendar` lookup back on the archiving path, per entry, per
+    /// widget, for a table that only needs reading once per build.
+    var fallback: BoardFallbackResult? = nil
 }

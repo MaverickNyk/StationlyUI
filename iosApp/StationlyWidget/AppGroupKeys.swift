@@ -219,6 +219,17 @@ enum AppGroupKeys {
     static func refreshFailed(_ stationId: String) -> String {
         stationId.isEmpty ? "widget_refresh_failed" : "widget_refresh_failed_\(stationId)"
     }
+    /// Every "nothing to show, and here is why" message the board can print,
+    /// plus the thresholds that choose between them.
+    ///
+    /// Written by `IosWidgetManager.publishFallbackCopy` from
+    /// `BoardFallbackDefaults` and the cached SDUI overrides, so the widget and
+    /// the home board say the same thing about the same station. The extension
+    /// picks the row — it owns the render clock, and which row is correct moves
+    /// inside a single timeline — but never writes the words. See
+    /// `BoardFallbackTable`, and `docs/IOS_WIDGET_DESIGN.md` §6.5.
+    static let boardFallback     = "widget_board_fallback"
+
     /// Bounded ring buffer of refresh breadcrumbs; an extension has no console.
     ///
     /// Deliberately short (20 entries) because it is chatty — every render, tap

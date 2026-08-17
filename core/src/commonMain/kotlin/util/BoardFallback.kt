@@ -1,6 +1,5 @@
-package com.stationly.app.ui.util
+package com.stationly.core.util
 
-import com.stationly.core.util.inTimeWindow
 import kotlinx.datetime.LocalTime
 
 /**
@@ -24,6 +23,37 @@ import kotlinx.datetime.LocalTime
  * (`board.fallback.*` keys) with baked-in defaults, kept in lockstep with the
  * Android file. Detection is client-side because it depends on real-time signals
  * (connectivity, FCM age, current London time).
+ *
+ * ## ⚠️ Android has NOT taken the 2026-08-17 ordering fix
+ * `android/.../ui/util/BoardFallbackState.kt` still tests SIGNAL_LOST above the
+ * closed-network windows, so an Android board whose app has been shut all night
+ * still says "Live updates paused · Last refresh 5h ago" at 04:00 where this one
+ * now says "Service ended for tonight". See the block comment on that branch
+ * below for why the new order is the right one.
+ *
+ * Left divergent deliberately rather than silently: the fix was found on the iOS
+ * widget, this work is iOS-only, and an unannounced edit to the Android board's
+ * empty state is not something to slip into it. **The change is a straight port
+ * of the branch below** — move the SIGNAL_LOST test underneath the time windows,
+ * nothing else moves.
+ *
+ * ## Why this lives in `core` and not next to the board that draws it
+ * It was `composeApp/.../ui/util/BoardFallback.kt`, which was right while the
+ * only reader was a Compose surface. The **iOS widget extension** is now a
+ * reader too, and it cannot link this module at all — it reads the App Group and
+ * nothing else (`docs/IOS_WIDGET_DESIGN.md` §7). So `IosWidgetManager` resolves
+ * every kind here and publishes the finished table for the widget to render, and
+ * that write path lives in `core`.
+ *
+ * The alternative was a second copy of these strings in Swift, and the widget
+ * had already paid for exactly that: it showed one hardcoded "No departures
+ * right now" for every one of these situations, so at 02:00 the home board said
+ * "Service ended for tonight" and the widget for the same station disagreed.
+ *
+ * `TimeWindow.kt` moved here ahead of it for the same reason, and there is now a
+ * rule worth stating: **the wording is decided here, once.** A surface may
+ * decide WHICH kind applies — that needs a clock, a network state and a render
+ * time, which only the surface has — but never what it says.
  */
 
 enum class BoardFallbackKind {
@@ -102,14 +132,6 @@ fun computeBoardFallbackState(
     if (hasPredictions) return null
     if (!isOnline) return BoardFallbackState(BoardFallbackKind.OFFLINE)
 
-    // SIGNAL_LOST only when we actually KNOW how old the last sync is. When
-    // `lastUpdatedMs == 0` (never synced) we can't honestly say "Last refresh
-    // N min ago" — fall through to disrupted / time-window detection.
-    if (lastUpdatedMs > 0L) {
-        val ageMin = ((nowMs - lastUpdatedMs) / 60_000L).coerceAtLeast(0L)
-        if (ageMin >= signalLostMin) return BoardFallbackState(BoardFallbackKind.SIGNAL_LOST, ageMin)
-    }
-
     // Status-aware empty board: a non-good-service status is almost certainly
     // WHY there are no predictions — surface the real reason. Wins over the
     // time-of-day buckets (an all-day closure is more specific than "ended").
@@ -123,13 +145,49 @@ fun computeBoardFallbackState(
         )
     }
 
-    return when {
-        inTimeWindow(londonTime, lateNightStart, lateNightEnd) ->
-            BoardFallbackState(BoardFallbackKind.LATE_NIGHT)
-        inTimeWindow(londonTime, lateNightEnd, earlyMorningEnd) ->
-            BoardFallbackState(BoardFallbackKind.EARLY_MORNING)
-        else -> BoardFallbackState(BoardFallbackKind.NO_UPCOMING)
+    // ── ⚠️ The closed-network windows come BEFORE staleness, and that ordering
+    //    is a bug fix (2026-08-17), reported off the widget ──
+    //
+    // SIGNAL_LOST used to be tested here, above these two, and it made the
+    // board blame itself for behaving correctly. After the last train there is
+    // nothing to fetch, so nothing fetches: the app is closed, the stream has
+    // nothing to push, and the widget's own schedule backs off overnight by
+    // design. Five hours later the last sync is five hours old — which is TRUE,
+    // and reported as "Live updates paused · Last refresh 5h ago", which reads
+    // as a broken widget.
+    //
+    // Owner's report, and it is the clearest statement of the rule:
+    //
+    //     "when the service ended for night the text also says the widget
+    //      hasn't updated since last update ... but the fact is we did check
+    //      with the backend so our update is recent but the trains are not
+    //      there"
+    //
+    // The timer itself is honest and stays as it is — it measures the last
+    // CHECK, not the last train (`SqlStorage.saveSyncTimestamp` stamps every
+    // sync including a 0-row one, and the widget's REST path writes `now`
+    // unconditionally in `writeBack`). What was wrong is that a gap with a
+    // known, correct cause was being described as a fault.
+    //
+    // So: while the network is closed, how recently we looked is not the story.
+    // Outside these windows nothing changes — a stale board at 14:00 still says
+    // "Live updates paused", because then it genuinely is one.
+    val closed = when {
+        inTimeWindow(londonTime, lateNightStart, lateNightEnd) -> BoardFallbackKind.LATE_NIGHT
+        inTimeWindow(londonTime, lateNightEnd, earlyMorningEnd) -> BoardFallbackKind.EARLY_MORNING
+        else -> null
     }
+    if (closed != null) return BoardFallbackState(closed)
+
+    // SIGNAL_LOST only when we actually KNOW how old the last sync is. When
+    // `lastUpdatedMs == 0` (never synced) we can't honestly say "Last refresh
+    // N min ago" — fall through to NO_UPCOMING.
+    if (lastUpdatedMs > 0L) {
+        val ageMin = ((nowMs - lastUpdatedMs) / 60_000L).coerceAtLeast(0L)
+        if (ageMin >= signalLostMin) return BoardFallbackState(BoardFallbackKind.SIGNAL_LOST, ageMin)
+    }
+
+    return BoardFallbackState(BoardFallbackKind.NO_UPCOMING)
 }
 
 /** Resolved fallback copy: a bold title + 0..n normal-weight detail lines. */
@@ -140,7 +198,26 @@ data class BoardFallbackCopy(val title: String, val detailLines: List<String>)
  * DISRUPTED title = the live TfL severity (the "what"); detail points at the
  * fuller reason carried by the disruption banner + status strip.
  */
-fun resolveBoardFallbackCopy(state: BoardFallbackState, strings: Map<String, String>): BoardFallbackCopy {
+fun resolveBoardFallbackCopy(
+    state: BoardFallbackState,
+    strings: Map<String, String>,
+    /**
+     * Whether to substitute `{age}` in the detail with [BoardFallbackState.ageMinutes].
+     *
+     * ## ⚠️ Pass `false` when resolving a TABLE rather than a live state
+     * The iOS widget publisher resolves every kind ahead of time, with no age to
+     * put in, so `ageMinutes` is 0 and substituting yields `formatAge(0)` —
+     * turning "Last refresh {age} ago" into **"Last refresh just now ago"** and
+     * destroying the placeholder permanently. The renderer on the far side then
+     * finds no `{age}`, substitutes nothing, and shows that sentence at every
+     * age forever.
+     *
+     * Silent, and only visible in a state that needs a stale board to reproduce.
+     * Found in review before it shipped; do not remove the parameter without
+     * re-reading `IosWidgetManager.publishFallbackCopy`.
+     */
+    substituteAge: Boolean = true,
+): BoardFallbackCopy {
     if (state.kind == BoardFallbackKind.DISRUPTED) {
         val title = state.statusSeverity?.takeIf { it.isNotBlank() }
             ?: strings["board.fallback.disrupted.title"]
@@ -177,7 +254,8 @@ fun resolveBoardFallbackCopy(state: BoardFallbackState, strings: Map<String, Str
         BoardFallbackKind.DISRUPTED -> error("handled above")
     }
     val title = strings[titleKey] ?: titleDefault
-    val detail = (strings[detailKey] ?: detailDefault).replace("{age}", formatAge(state.ageMinutes))
+    val raw = strings[detailKey] ?: detailDefault
+    val detail = if (substituteAge) raw.replace("{age}", formatAge(state.ageMinutes)) else raw
     return BoardFallbackCopy(title, detail.splitLines())
 }
 

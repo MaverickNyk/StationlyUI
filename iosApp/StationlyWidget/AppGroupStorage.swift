@@ -1020,6 +1020,25 @@ class AppGroupStorage {
         return refs.map { StationEntity(id: $0.id, name: $0.name, mode: $0.mode, lines: $0.lines) }
     }
 
+    /// The published "nothing to show, and here is why" table.
+    ///
+    /// Falls back to the baked-in defaults when the app has not written it yet —
+    /// a fresh install whose first board write has not run, or a widget added
+    /// before the app was ever opened. See `BoardFallbackTable.fallbackDefaults`.
+    ///
+    /// Read ONCE per timeline build, never per entry: the table changes only
+    /// when the backend copy does, while the row selected from it changes every
+    /// minute. Reading it per entry would put a `UserDefaults` lookup and a JSON
+    /// decode inside WidgetKit's archiving pass ~20 times per widget to produce
+    /// the identical table every time.
+    func readFallbackTable() -> BoardFallbackTable {
+        guard let raw = defaults?.string(forKey: AppGroupKeys.boardFallback),
+              let data = raw.data(using: .utf8),
+              let table = try? JSONDecoder().decode(BoardFallbackTable.self, from: data)
+        else { return BoardFallbackTable() }
+        return table
+    }
+
     // MARK: - Widget placement
 
     /// One placed widget, as the extension itself sees it.

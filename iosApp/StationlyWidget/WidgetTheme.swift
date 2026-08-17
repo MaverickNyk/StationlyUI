@@ -11,18 +11,39 @@ enum WidgetTheme {
     /// Dimmed amber for secondary amber text / inactive elements
     static let amberDim      = Color(red: 0.720, green: 0.560, blue: 0.100)
 
-    /// Pure black card / widget background
+    /// Pure black card / widget background, and the colour of the 2pt gaps
+    /// between cells, which is what reads as the panel's bezel.
     static let background    = Color.black
-    /// Slightly lifted surface (header panels)
-    static let surface       = Color(white: 0.07)
-    /// Row background — just enough lift to separate rows
+    /// Every lit cell on the board. There is ONE surface: a `surface` at 0.07
+    /// sat here for "header panels" and was never used, because §3.1 settled
+    /// that the header and footer are cells like any other.
     static let rowSurface    = Color(white: 0.10)
 
     // MARK: - Text
-
-    static let textPrimary   = Color.white
-    static let textSecondary = Color(white: 0.65)
-    static let textMuted     = Color(white: 0.40)
+    //
+    // There is no text palette, and that is the point.
+    //
+    // A white/grey set lived here — `textPrimary` (white), `textSecondary`
+    // (0.65), `textMuted` (0.40) — and it was used in exactly four places, all
+    // of them STATIC TEXT: the "no departures" cell and the three lines of the
+    // empty state. So every word this board wrote itself was the only text on
+    // the panel that wasn't board-amber, while every word it got from TfL was.
+    // The grey was also close to unreadable where it landed: 0.40 white on the
+    // 0.10 row surface is about 3:1, against amber's 11:1, at 11pt.
+    //
+    // Text on this board is [amber]. The hierarchy is size and weight, per the
+    // note under `font` — a second colour would be a second voice, and the one
+    // thing a signage panel does not have is two voices. [amberDim] is not a
+    // quieter amber for that purpose either; it means SPENT (a departed row),
+    // which an instruction the user is meant to act on is not.
+    //
+    // `stationlyRed` (the maker mark draws its own colours) and
+    // `etaColor(eta:isDue:)` went with them. The latter is worth naming because
+    // it was a trap rather than merely dead: it returned amber / white / grey by
+    // parsed minutes, which is a DIFFERENT colour policy from the one the board
+    // actually applies in `DotMatrixRow` (red when due, amber when live,
+    // amberDim once departed). Two rules for one thing, with the unused one
+    // looking authoritative because it sat in the theme.
 
     // MARK: - Type
     //
@@ -58,9 +79,6 @@ enum WidgetTheme {
     // (No per-severity tinting: the line-status strip is board-amber like every
     // other cell — severity is carried by the bold weight, not colour.)
 
-    /// Stationly brand red (#E32017) — the footer maker mark.
-    static let stationlyRed  = Color(red: 0.890, green: 0.125, blue: 0.090)
-
     // MARK: - Mode roundel tints (mirror the in-app board's modeRoundelColor)
 
     static func modeColor(_ mode: String) -> Color {
@@ -71,23 +89,5 @@ enum WidgetTheme {
         case "tram":                         return Color(red: 0.518, green: 0.722, blue: 0.090) // #84B817
         default:                             return Color(red: 0.863, green: 0.141, blue: 0.122) // #DC241F tube/bus
         }
-    }
-
-    // MARK: - Dynamic helpers
-
-    /// Colour to display next to an ETA value:
-    /// - Due / ≤2 min → amber (urgent)
-    /// - ≤5 min       → white (near)
-    /// - otherwise    → secondary grey
-    static func etaColor(eta: String, isDue: Bool) -> Color {
-        if isDue { return amber }
-        // Strip " min" suffix and parse integer minutes
-        let digits = eta.replacingOccurrences(of: " min", with: "")
-            .trimmingCharacters(in: .whitespaces)
-        if let mins = Int(digits) {
-            if mins <= 2 { return amber }
-            if mins <= 5 { return textPrimary }
-        }
-        return textSecondary
     }
 }

@@ -37,11 +37,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.stationly.app.platform.ModeIconStore
-import com.stationly.app.ui.util.BOARD_FALLBACK_ROW_COUNT
-import com.stationly.app.ui.util.computeBoardFallbackState
+import com.stationly.core.util.BOARD_FALLBACK_ROW_COUNT
+import com.stationly.core.util.computeBoardFallbackState
 import com.stationly.app.ui.util.rememberMinuteTick
 import com.stationly.app.ui.util.rememberTickedPredictions
-import com.stationly.app.ui.util.resolveBoardFallbackCopy
+import com.stationly.core.util.resolveBoardFallbackCopy
 import com.stationly.core.util.GlobalBoardProcessor
 import com.stationly.core.util.LegacyRow
 import com.stationly.core.util.StaleColor

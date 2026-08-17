@@ -777,6 +777,386 @@ for it.
 
 ---
 
+## 6.4 One ink, and the words the board writes itself (2026-08-17)
+
+§6.3 settled that the board has **one typeface** and carries hierarchy by size
+and weight. This is the same argument finished, because one thing had been left
+outside it: every word the board writes *about itself*.
+
+### The finding, in one line
+
+**Every piece of static text on this widget was the only text on the panel that
+was not board-amber.**
+
+Four call sites, and it was exactly the four:
+
+| where | on | was | contrast |
+|---|---|---|---|
+| the "no departures" cell | row surface (0.10) | `textMuted` (0.40 grey) | ~3.0 : 1 |
+| empty-state title | black | `textPrimary` (white) | ~21 : 1 |
+| empty-state message | black | `textMuted` | ~3.7 : 1 |
+| empty-state small message | black | `textMuted` | ~3.7 : 1 |
+
+For comparison on the same surfaces: amber is ~11.3 : 1 on a row and ~13.5 : 1
+on black. So everything the board got from TfL — station, platform, destination,
+ETA, status — was amber, and everything the board said in its own voice was a
+grey the panel used nowhere else, at roughly a third of the contrast, at 11pt.
+The one line a widget shows when it has nothing else to show was the hardest
+line on it to read, and it fell below the 4.5 : 1 that body text is normally
+held to.
+
+The greys were never a decision. `textPrimary` / `textSecondary` / `textMuted`
+are a generic app palette that arrived with the first version of the theme and
+were only ever reached by static text, because static text was the only thing
+written after the board's own amber rule existed.
+
+**The rule now**: text on this board is `amber`. `amberDim` is not "quieter
+amber" for this purpose — it means SPENT (a departed row), which an instruction
+the user is meant to act on is not. Hierarchy is size and weight, per §6.3.
+
+Deleted with them: `WidgetTheme.surface` (a second cell colour, unused since
+§3.1 made header and footer ordinary cells), `stationlyRed`, and
+`etaColor(eta:isDue:)`. The last is worth naming because it was a **trap rather
+than merely dead**: it returned amber / white / grey by parsed minutes, which is
+a *different colour policy* from the one `DotMatrixRow` actually applies (red
+when due, amber when live, amberDim once departed). Two rules for one thing,
+with the unused one looking authoritative because it sat in the theme.
+
+### ⚠️ The line: a board needs a station, an empty state does not have one
+
+The board layout was extended to the four `EmptyReason` states — a lit header
+cell with the maker mark where the roundel goes, over a message block — and it
+was **reverted the same day** on the owner's correction:
+
+> The board layout is for a widget that HAS a station. It can be empty — nothing
+> has arrived, every train has gone, nothing is coming — and it is still that
+> station's board. A widget with no station behind it is not a board with
+> nothing on it; it is not a board.
+
+The reasoning is exact, and it is the difference between an empty *board* and an
+empty *widget*:
+
+| the widget has | shows | why |
+|---|---|---|
+| a configured, tracked station | **the board**, with `BoardMessageCell` in a row | it is that station's board; the departures are just not there |
+| no station behind it | **a centred mark and a sentence** | there is nothing to draw a board *of* |
+
+A lit header cell reads as *a departure board for somewhere*. Three of the four
+empty states have no somewhere, so the panel was reporting on a station it did
+not have. **Do not re-extend the board layout to these states.**
+
+`.removed` sits on the no-station side, and it is the interesting one: there IS
+a name, but the station is gone from the user's list, so there is no board to
+draw and the ask is identical to `.needsStation` — pick one. The name goes in
+the title, where it does the one job it can still do: say WHICH widget needs
+attention.
+
+```
+┌───────────────────────────────┐
+│                               │
+│              ▣                │  StationlyMark, m.icon × 2 (28/36/44)
+│                               │
+│     Highbury & Islington      │  m.station bold, amber, truncates
+│   Not in your stations. Touch │  m.row, amber, wraps to 4 lines
+│   and hold, then tap Edit     │
+│            Widget             │
+│                               │
+└───────────────────────────────┘  plain black, no cells, no lattice
+```
+
+### What did change in the empty state, and stays changed
+
+The layout is the original. The paint is not:
+
+1. **Amber, not white and grey.** These four sentences were the entire set of
+   non-amber text on the widget, and the grey ran at about 3:1.
+2. **Type from `BoardMetrics`.** It was a hardcoded 13pt title and 11pt body on
+   *every* family, so a 4×4 got the same small print as a 2×2 on more than twice
+   the canvas. Now `m.station` / `m.row`, the ladder the board already uses.
+3. **The mark scales**, at twice the mode roundel (28/36/44), instead of a flat
+   40pt that crowded a 2×2 and looked lost on a 4×4.
+4. **Small gets a title.** It drew `shortMessage` alone, so a widget whose
+   station had been deleted could say "Station removed" and never *which*.
+
+Title truncates, message wraps, and the split is not arbitrary: a station name
+is a string the user already knows, so its tail is the cheapest thing on the
+panel to lose (the same argument `DotMatrixHeader` makes). The message is a
+sentence they have *not* seen, and truncating it loses the instruction.
+
+### One copy table, every family
+
+The small family had a second table of four shorter strings, and drew *only*
+those — no title. Two tables is two places to change a sentence and one of them
+gets missed, and the short set had already become the *worse* copy: "Choose a
+station" as the entire message, on the family least likely to be understood
+without the gesture. Every family carries both lines now, and small wraps the
+message instead of substituting a different one.
+
+| state | title (amber bold, `m.station`) | message (amber, `m.row`) |
+|---|---|---|
+| `signedOut` | Signed out | Open Stationly to sign in |
+| `noStations` | No stations yet | Open Stationly to add one |
+| `needsStation` | Choose a station | Touch and hold, then tap Edit Widget |
+| `removed` | *the station's name* | Not in your stations. Touch and hold, then tap Edit Widget |
+
+Three of the four titles used to be the literal word "Stationly". A user reading
+a panel headed with the app's own name, over an instruction, under the app's own
+logo, learns nothing from the heading — it is the one line with room to say what
+state this is, spent on a fact the icon already carried.
+
+Both configuration messages name the whole gesture: touch and hold, THEN tap
+Edit Widget. The touch-and-hold alone only opens the jiggle menu, and a user who
+has never configured a widget has no reason to know a second step exists.
+"Touch and hold" rather than "long press", and "Edit Widget" exactly as the menu
+spells it, because those are the words on the phone.
+
+### "No departures right now" was a claim nobody had checked
+
+A board the app has never written (`StationResolver.waiting`) carries an epoch
+timestamp and no rows. That is **not** "the platform is quiet" — it is "nothing
+has arrived yet", and the widget was announcing the first while meaning the
+second. The distinction already existed one layer down: `WidgetData.stateName`
+has called them `waiting` and `quiet` since the resolver landed. It just never
+reached the glass.
+
+| `hasTimestamp` | says |
+|---|---|
+| `false` | Connecting |
+| `true` | Nothing departing right now |
+
+**The words are the app's, not the widget's.** Both are transcribed from
+`BoardFallbackDefaults` in commonMain — the copy table the home board and the
+Android board already share.
+
+### ⚠️ The debt this leaves, and its shape
+
+`BoardFallback.kt` is a **seven-state machine with real detection**: offline,
+signal lost (with a formatted age), disrupted (titled with the live TfL
+severity), late night, early morning, nothing upcoming, connecting. It is
+SDUI-driven from the backend `homeConfig` and kept in lockstep with Android.
+
+The widget reaches **two of the seven, by hand**, because this extension does
+not link the KMP framework — it reads the App Group and nothing else. So at
+02:00 the home board says "Service ended for tonight / Back in the morning" and
+the widget for the same station says "Nothing departing right now". Same
+station, same moment, two answers.
+
+Transcribing beats inventing in the meantime, and the fix has a known shape —
+**the same one `headerVariants` already uses**: KMP resolves the copy, writes it
+to the App Group, and the widget only renders it. It never assembles the string
+itself, exactly as it never assembles a platform header. That needs one new App
+Group key and a write alongside the board payload; it is not started.
+
+---
+
+## 6.5 The board says why it is empty, in the app's own words (2026-08-17)
+
+§6.4 made the widget's static text *look* like the board. This makes it *say the
+same thing the app says*, which turned out to be the larger half.
+
+### The gap
+
+`core/util/BoardFallback.kt` is a **seven-state machine with real detection**,
+SDUI-driven and shared with Android. The widget reached one of the seven, with a
+hardcoded string:
+
+| the app said | the widget said |
+|---|---|
+| Offline · Catching up when you're back | No departures right now |
+| Live updates paused · Last refresh 12 min ago | No departures right now |
+| *Severe delays* · No departures expected here | No departures right now |
+| Service ended for tonight · Back in the morning | No departures right now |
+| Service starting soon · First departures incoming | No departures right now |
+| Nothing departing right now · Watching for the next one | No departures right now |
+
+Same station, same second, two answers. At 02:00 the home board explained the
+network was closed and the widget beside it implied the trains had simply
+stopped coming.
+
+### The division: KMP owns the words, the widget owns the clock
+
+The whole table is published to the App Group (`widget_board_fallback`) by
+`IosWidgetManager.publishFallbackCopy`, and the extension picks a row from it.
+
+**The split is forced, not stylistic.** WidgetKit builds an hour of entries in
+one pass and the correct row *moves inside that hour*: a board becomes "Live
+updates paused" six minutes after its payload lands, and "Service ended for
+tonight" at midnight, both on entries archived long before either moment. A
+finished string resolved app-side would be frozen onto every one of them. So the
+choice happens per entry in `getTimeline`, where each entry's own date is already
+in hand, and lands on `DepartureEntry.fallback`.
+
+It is exactly the `headerVariants` arrangement: core decides the wording, the
+extension decides which one fits, and the extension never writes a sentence.
+
+`BoardFallback.kt` moved from `composeApp` to `core` for this, following
+`TimeWindow.kt`. **Rule: the wording is decided in `core`, once.** A surface may
+decide which kind applies, because that needs a clock and a render time only the
+surface has. It never decides what it says.
+
+### SDUI reaches the widget too
+
+Read from the cache `HomeConfigCache` keeps in shared storage, not from the
+network — this runs on a board write and must not depend on a fetch. That also
+answers the `GOOD_SERVICE` TODO's complaint for one caller: remote config *is*
+reachable from the write path, through the cache rather than the API.
+
+Thresholds travel with the copy. A table whose wording is backend-driven while
+its boundaries are hardcoded would drift the moment either moved. They cross as
+**minutes past local midnight**, not `"HH:mm"` — Swift has no `LocalTime`, and an
+integer is the one shape both halves already agree about. Parsing is core's own
+`parseHHmmOrNull`, the same function `Board.kt` reaches for these very keys.
+
+### ⚠️ The table holds TEMPLATES, not resolved states
+
+`publishFallbackCopy` passes `substituteAge = false`. SIGNAL_LOST's detail is
+`"Last refresh {age} ago"` and the age is not known until an entry renders.
+
+Resolving it app-side uses `BoardFallbackState(kind)`'s default age of zero, so
+`formatAge(0)` bakes in **"Last refresh just now ago"** and deletes the
+placeholder the renderer needs. The widget then finds no `{age}`, substitutes
+nothing, and shows that sentence at every age forever. Silent, permanent, and it
+needs a stale board to reproduce.
+
+Anything that resolves a copy *table* rather than a live state must pass `false`.
+
+### What the widget decides for itself
+
+- **DISRUPTED** takes the **table's** generic title, not the live severity. The
+  app titles it with the severity, which is right for the home board; here the
+  status strip sits directly beneath and always renders on an empty board, so it
+  printed the severity twice in adjacent cells ("Severe Delays" over "No
+  departures expected here" over "Severe Delays : signal failure"). Generic title
+  plus the strip's specific one is strictly more information in the same space,
+  and it is what `BoardMessageCell` already documents.
+- **CONNECTING** has no Compose equivalent. `StationResolver.waiting` dates a
+  board to the epoch when the app has never written one, and Kotlin treats
+  `lastUpdatedMs == 0` as "cannot say how old" and falls through. Here it is a
+  state: a widget can be placed on a station the app has not got to yet, and
+  "Connecting" is what is actually happening. It sits above everything, because
+  nothing below can be true of a board nobody has fetched.
+- **OFFLINE is deliberately not detected.** It needs reachability, which an
+  extension cannot get cheaply, and the one available signal
+  (`lastRefreshFailed`) only moves when the user taps refresh. SIGNAL_LOST says
+  the part the user can act on ("this is old") without claiming a cause we cannot
+  verify. The copy is still published so the day reachability exists, nothing
+  else changes.
+
+### ⚠️ The ordering fix: a closed network is not a fault
+
+Reported off the device:
+
+> "when the service ended for night the text also says the widget hasn't updated
+> since last update ... but the fact is we did check with the backend so our
+> update is recent but the trains are not there"
+
+SIGNAL_LOST was tested **above** the time windows. After the last train nothing
+fetches, because there is nothing to fetch: the app is shut, the stream has
+nothing to push, and the widget's own schedule tapers overnight by design. Five
+hours later the last sync is five hours old — *which is true* — and it was being
+reported as "Live updates paused · Last refresh 5h ago", i.e. the board blaming
+itself for behaving correctly.
+
+The timer was never the bug and is not touched. It already measures the last
+**check**, not the last train: `SqlStorage.saveSyncTimestamp` stamps every sync
+including a zero-row one, and the extension's REST path writes `now`
+unconditionally in `writeBack`. What was wrong is that a gap with a known,
+correct cause was described as a failure.
+
+Two changes, both narrow:
+
+1. **`computeBoardFallbackState` tests the closed-network windows before
+   SIGNAL_LOST.** Outside 00:00–06:00 nothing changes; a stale board at 14:00
+   still says "Live updates paused", because then it genuinely is one. DISRUPTED
+   keeps its place above the windows (an all-day closure is more specific than
+   "ended for tonight").
+2. **The freshness colour ladder is suppressed during those windows**
+   (`BoardFallbackResult.freshnessMatters` → `LiveAgo.staleColor`). The reading
+   stays, because it is true and it is the only thing on the panel saying how old
+   this is. It just stops being drawn in alarm red. The colour answers "can I
+   trust these times?", and in a closed window there are no times to distrust.
+
+**⚠️ Android has not taken change 1.** `android/.../BoardFallbackState.kt` still
+has the old order, so an Android board whose app has been shut all night still
+says "Live updates paused" at 04:00. Left divergent deliberately — the fix was
+found on the iOS widget and this work is iOS-only — and it is a straight port:
+move the SIGNAL_LOST test under the time windows, nothing else moves.
+
+### Two cells, not one line
+
+The message takes the title cell **and** the dark cell under it, so the copy
+arrives as the pair the app writes it as:
+
+```
+┌───────────────────────────────┐
+│ ▣  Highbury & Islington       │  station header
+├───────────────────────────────┤
+│   Service ended for tonight   │  bold — the title cell
+├───────────────────────────────┤
+│      Back in the morning      │  regular — was a dark cell
+├───────────────────────────────┤
+│                               │  status strip, or dark
+├───────────────────────────────┤
+│                               │  dark — the platform header, moved down
+└───────────────────────────────┘
+```
+
+The cell count does not change: the detail lands in a cell that was already
+there holding a place for a train that is not coming. §6.2 is intact.
+
+Weight, not colour, separates them — both are board amber, per §6.4. That
+matches `BoardFallbackRows` in the app, which is a bold title over
+normal-weight detail.
+
+### ⚠️ The blank cell goes at the BOTTOM, never under the station name
+
+The platform header used to be drawn unconditionally, on §6.2's reasoning that a
+cell which comes and goes takes every other cell's height with it. The count rule
+is right and is kept. Drawing the cell *there* when it had nothing to say was
+not.
+
+With no platform to name, `section.group` is nil, the variants are `[""]`, and it
+rendered **a lit strip with nothing in it, directly under the station name** — so
+an empty board opened with a gap and the message it was meant to introduce
+started one cell late.
+
+> "why are we leaving a line above it ... it's okay to leave the line at the
+> bottom rather than leaving something from top"
+
+Exactly right, and it generalises: **trailing dark cells read as a board with
+room left; a leading one reads as a fault.**
+
+So the cell moves rather than disappearing. No header means one extra dark cell
+at the end, the count is identical, nothing resizes. The two floors differ by
+half a point across all three families (`platform + 8` against `row + 10`), which
+is inside the rounding of an equal-share layout.
+
+Keyed on whether there is a header to write, **not** on `speaks`: a station whose
+platform block exists but has emptied out still has a real name to show, and that
+header is useful precisely then.
+
+### ⚠️ No status means no strip, not "Good Service"
+
+`DotMatrixStatusStrip` read `data.status.isEmpty ? "Good Service" : data.status`,
+so a board with no status record told the user their line was running fine.
+Nothing had checked. Same defect as the old "No departures right now" one cell
+above it — static text asserting an unverified fact — arriving through the one
+place that looked like a formatting nicety rather than a claim.
+
+It showed up worst on the board least able to afford it: a station the app has
+not written yet carries `status: ""`, so a widget that knew nothing announced
+good service on a line it had never asked about.
+
+The **cell stays**, dark, holding its place. Dropping it would change the cell
+count.
+
+The colon-splitting moved to `StatusParts`, shared with the fallback resolver —
+which needs the same split to tell a disrupted line from a healthy one, and two
+implementations of "where does the colon go" is one more than a board should
+have.
+
+---
+
 ## 7. The App Group is a hand-kept contract (2026-08-08)
 
 Nothing checks that the Kotlin and Swift sides agree about the App Group, and

@@ -41,8 +41,9 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         let data = context.isPreview
             ? WidgetData.placeholder
             : AppGroupStorage.shared.readWidgetData(for: configuration.station)
+        let now = Date()
         return DepartureEntry(
-            date: Date(),
+            date: now,
             widgetData: data,
             // No link from the GALLERY preview — its board is invented, so a tap
             // would deep-link to a station the user may not even track. A real
@@ -51,7 +52,23 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
             render: BoardRenderState(
                 deepLink: context.isPreview
                     ? nil
-                    : StationlyDeepLink.board(stationId: data.stationId))
+                    : StationlyDeepLink.board(stationId: data.stationId)),
+            // ── Resolved here too, and it was not ──
+            //
+            // A snapshot is a real render: WidgetKit asks for one whenever it
+            // needs the widget's current appearance without a timeline —
+            // rebuilding home-screen state, the multitasking card, the gallery.
+            // Left nil, `rowCell` had no message to place and fell through to
+            // dark cells, so an EMPTY board appeared here as a station name over
+            // an entirely blank panel. Exactly the "it's just blank" reading the
+            // whole fallback table exists to remove, surviving in the one path
+            // that skipped `timeline(for:in:)`.
+            //
+            // The preview keeps nil deliberately: `WidgetData.placeholder` has
+            // departures, so this resolves to nil for it anyway, and the gallery
+            // must show a working board rather than an empty-state message.
+            fallback: BoardFallbackResolver(data, table: AppGroupStorage.shared.readFallbackTable())
+                .result(hasDepartures: data.hasDepartures, at: now)
         )
     }
 
@@ -262,18 +279,35 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
                                               by: cadence.sparseStepMinutes))
         }
 
-        var entries: [DepartureEntry] = [
-            DepartureEntry(date: now,
-                           widgetData: data.ticked(at: now, keepAtLeast: slotsPerPlatform),
-                           render: render)
-        ]
+        // The copy table, read ONCE for the whole batch. What it says never
+        // changes inside a timeline; which row applies changes constantly, so
+        // the read is hoisted and the choice is not — see `entry(at:)`.
+        // Built ONCE for the batch: the table is read once and the payload's
+        // status is split once, because only the clock and the row count move
+        // between entries. See `BoardFallbackResolver`.
+        let fallback = BoardFallbackResolver(data, table: AppGroupStorage.shared.readFallbackTable())
+
+        /// One entry, with its rows ticked to its own minute and its empty-board
+        /// message chosen on its own clock.
+        ///
+        /// Both have to happen per entry and for the same reason: this batch
+        /// covers up to an hour, so a board that is merely quiet at 23:58 is
+        /// "Service ended for tonight" by 00:02, and a payload that is fresh at
+        /// the first entry is stale by the seventh.
+        func entry(at date: Date) -> DepartureEntry {
+            let ticked = data.ticked(at: date, keepAtLeast: slotsPerPlatform)
+            return DepartureEntry(
+                date: date,
+                widgetData: ticked,
+                render: render,
+                fallback: fallback.result(hasDepartures: ticked.hasDepartures, at: date))
+        }
+
+        var entries: [DepartureEntry] = [entry(at: now)]
         entries.reserveCapacity(offsets.count + 1)
         for offset in offsets {
             if let date = calendar.date(byAdding: .minute, value: offset, to: currentMinute) {
-                entries.append(DepartureEntry(
-                    date: date,
-                    widgetData: data.ticked(at: date, keepAtLeast: slotsPerPlatform),
-                    render: render))
+                entries.append(entry(at: date))
             }
         }
         // Written to the App Group as well as os_log: a widget extension has no

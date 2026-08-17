@@ -102,12 +102,12 @@ import androidx.compose.ui.unit.sp
 import com.stationly.app.ui.common.pressScale
 import com.stationly.app.ui.theme.TflAmber
 import com.stationly.app.ui.theme.isDarkTheme
-import com.stationly.app.ui.util.BOARD_FALLBACK_ROW_COUNT
-import com.stationly.app.ui.util.BoardFallbackDefaults
-import com.stationly.app.ui.util.BoardFallbackState
-import com.stationly.app.ui.util.computeBoardFallbackState
+import com.stationly.core.util.BOARD_FALLBACK_ROW_COUNT
+import com.stationly.core.util.BoardFallbackDefaults
+import com.stationly.core.util.BoardFallbackState
+import com.stationly.core.util.computeBoardFallbackState
 import com.stationly.core.util.parseHHmm
-import com.stationly.app.ui.util.resolveBoardFallbackCopy
+import com.stationly.core.util.resolveBoardFallbackCopy
 import com.stationly.app.ui.util.rememberMinuteTick
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.UserSelection

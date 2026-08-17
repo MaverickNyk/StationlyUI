@@ -14,11 +14,17 @@ import com.stationly.core.usecase.ProcessPredictionsUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.core.model.user.BoardConfig
 import com.stationly.core.repository.UserSettings
+import com.stationly.core.util.BoardFallbackDefaults
+import com.stationly.core.util.BoardFallbackKind
+import com.stationly.core.util.BoardFallbackState
 import com.stationly.core.util.LineNameStore
 import com.stationly.core.util.LineShortNames
 import com.stationly.core.util.LineStatusRanker
 import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.StationlyFormatters
+import com.stationly.core.util.parseHHmm
+import com.stationly.core.util.resolveBoardFallbackCopy
+import kotlinx.datetime.LocalTime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -242,6 +248,20 @@ object AppGroupKeys {
     // timeline without launching us.
     const val WIDGET_PUSH_TOKEN          = "widget_push_token"
 
+    // Every "we have nothing to show you and here is why" message the board can
+    // print, resolved from `BoardFallbackDefaults` + SDUI overrides and handed
+    // over as one table — see [IosWidgetManager.publishFallbackCopy].
+    //
+    // The DIVISION is the point, and it is the same one `headerVariants` uses:
+    // the wording is decided in KMP, the CHOICE is made by the extension at
+    // render time. It has to be, because the answer moves inside a single
+    // timeline — a board goes from fresh to "Live updates paused" six minutes
+    // after the payload lands, and from "Nothing departing right now" to
+    // "Service ended for tonight" at midnight, both of which happen in entries
+    // built an hour earlier. Resolving the finished string here would freeze
+    // whichever one was true when the app last ran.
+    const val WIDGET_BOARD_FALLBACK      = "widget_board_fallback"
+
     // NOTE: the `fcm_topics` / `fcm_subscribe_pending` / `fcm_unsubscribe_pending`
     // / `fcm_token` keys that used to live here are GONE, along with
     // FirebaseMessaging on iOS. They were a ledger written by KMP for a Swift
@@ -290,6 +310,18 @@ object AppGroupKeys {
  * should share one source once config is available here.
  */
 private const val GOOD_SERVICE = "Good Service"
+
+/**
+ * Where `HomeConfigCache` (composeApp) keeps the last synced SDUI string map.
+ *
+ * Duplicated rather than imported: that object lives in `composeApp`, which
+ * `core` does not depend on and must not start depending on for one string. The
+ * KEY is the contract between them, and it is named in both files.
+ *
+ * Read here so the widget's fallback copy can honour SDUI overrides without
+ * putting a network call on a board write — see [IosWidgetManager.publishFallbackCopy].
+ */
+private const val HOME_CONFIG_CACHE_KEY = "home_config_strings_cache"
 
 class IosWidgetManager : WidgetManager {
 
@@ -397,6 +429,13 @@ class IosWidgetManager : WidgetManager {
         // rotated key must not cost a timeline reload.
         putIfChanged(d, AppGroupKeys.WIDGET_API_BASE_URL, AppConfig.apiBaseUrl)
         putIfChanged(d, AppGroupKeys.WIDGET_API_KEY, Platform.getApiKey())
+
+        // Selection-independent for the same reason, and NOT counted as a
+        // change for a second one: this table only alters what an empty board
+        // says, so a copy tweak arriving with no departures attached must not
+        // spend a timeline reload on every placed widget. It lands on the next
+        // one the data earns.
+        publishFallbackCopy(d)
 
         // ── Every station, one key each ──
         //
@@ -860,6 +899,148 @@ class IosWidgetManager : WidgetManager {
         if (putIfChanged(d, AppGroupKeys.WIDGET_LAST_UPDATED, board.lastUpdated.toDouble())) changed = true
         return changed
     }
+
+    /**
+     * Publish every "nothing to show, and here is why" message the board can
+     * print, so the widget renders them instead of inventing its own.
+     *
+     * ## What this fixes
+     * The widget showed ONE hardcoded string — "No departures right now" — for
+     * every situation `BoardFallback` distinguishes. So at 02:00 the home board
+     * said "Service ended for tonight / Back in the morning" and the widget for
+     * the same station, in the same second, said the trains merely happened not
+     * to be running. Same for a line closure, and for data the app had not
+     * managed to refresh in twenty minutes.
+     *
+     * ## Why a TABLE and not the answer
+     * The extension picks the row; this only supplies the words. That split is
+     * forced rather than chosen: WidgetKit builds an hour of entries at once,
+     * and the correct row CHANGES inside that hour — six minutes after a payload
+     * the board is "Live updates paused", and at midnight it becomes "Service
+     * ended for tonight". A finished string written here would freeze whichever
+     * was true when the app last ran, on entries that will be on screen long
+     * after. The widget has the render clock; only it can choose.
+     *
+     * Same division as `headerVariants`, and the same reason.
+     *
+     * ## SDUI
+     * Read from the cache `HomeConfigCache` keeps in shared storage, NOT from
+     * the network — this runs on a board write and must not depend on a fetch.
+     * A cold install with no cache yet publishes the baked-in defaults, which
+     * are the strings the app itself would show in the same state.
+     *
+     * This is also the answer to the [GOOD_SERVICE] TODO for one caller: remote
+     * config IS reachable from this write path, through the cache rather than
+     * the API.
+     */
+    private suspend fun publishFallbackCopy(d: NSUserDefaults) {
+        // ── Memoised on the SDUI blob, because the caller is hot ──
+        //
+        // `refreshAllBoards` runs on every stream frame, several times a minute
+        // per station. `putIfChanged` already spares the write and the reload,
+        // but everything BEFORE it — decoding the config map, resolving seven
+        // kinds, re-encoding the table — ran every time to produce a byte-
+        // identical result, because this table only changes when the backend
+        // copy does.
+        //
+        // The raw string is the cache key: it is what `loadHomeConfigCache`
+        // would decode anyway, so testing it costs one storage read and skips
+        // the rest. `IosWidgetManager` is a singleton (`Platform.widgetManager`),
+        // so the memo survives between frames.
+        //
+        // Races are benign by construction. Two concurrent refreshes can both
+        // miss and both publish; the work is pure and the output identical, so
+        // the worst case is doing it twice — which is what happened on every
+        // call before. No lock, deliberately: one would put contention on the
+        // board-write path to prevent a duplicate no-op.
+        val raw = runCatching { Platform.storageManager.loadString(HOME_CONFIG_CACHE_KEY) }.getOrNull()
+        if (publishedFallbackFor == raw && d.stringForKey(AppGroupKeys.WIDGET_BOARD_FALLBACK) != null) return
+
+        val strings = decodeHomeConfig(raw)
+
+        // Every kind, resolved once.
+        //
+        // ⚠️ `substituteAge = false`. These are TEMPLATES, not resolved states:
+        // SIGNAL_LOST's detail is "Last refresh {age} ago" and the age is not
+        // known until the widget renders an entry. Substituting here would use
+        // `BoardFallbackState(kind)`'s default age of 0, bake in "just now", and
+        // leave the renderer with no placeholder to fill — permanently.
+        //
+        // DISRUPTED resolves with a blank severity on purpose: its title is
+        // normally the live TfL severity, which belongs to a board rather than
+        // to a copy table, so this carries the generic filler.
+        val copy = BoardFallbackKind.entries.associate { kind ->
+            val resolved = resolveBoardFallbackCopy(BoardFallbackState(kind), strings, substituteAge = false)
+            kind.name to WidgetFallbackCopy(resolved.title, resolved.detailLines)
+        }
+
+        val table = WidgetFallbackTable(
+            copy = copy,
+            // Thresholds travel WITH the copy, because the extension applies
+            // them and a table whose wording is SDUI-driven while its
+            // boundaries are hardcoded would drift the moment either moved.
+            // Same keys and same defaults the home board reads in `Board.kt`.
+            signalLostMin = strings["board.fallback.signalLostMin"]?.toLongOrNull()
+                ?: BoardFallbackDefaults.SIGNAL_LOST_MIN,
+            lateNightStartMin = minutesOfDay(strings["board.fallback.lateNightStart"],
+                BoardFallbackDefaults.LATE_NIGHT_START),
+            lateNightEndMin = minutesOfDay(strings["board.fallback.lateNightEnd"],
+                BoardFallbackDefaults.LATE_NIGHT_END),
+            earlyMorningEndMin = minutesOfDay(strings["board.fallback.earlyMorningEnd"],
+                BoardFallbackDefaults.EARLY_MORNING_END),
+        )
+
+        encode(WidgetFallbackTable.serializer(), table)?.let {
+            putIfChanged(d, AppGroupKeys.WIDGET_BOARD_FALLBACK, it)
+            // Only after a successful encode AND write. Set before it, a single
+            // failed encode would memoise the failure and the table would never
+            // be published for the life of the process.
+            publishedFallbackFor = raw
+        }
+    }
+
+    /**
+     * The SDUI blob the currently-published fallback table was built from.
+     *
+     * `Unit`-free sentinel: `null` legitimately means "no cache yet", which is a
+     * real input, so the emptiness of the App Group key is tested alongside it
+     * rather than being inferred from this. See [publishFallbackCopy].
+     */
+    private var publishedFallbackFor: String? = null
+
+    /**
+     * The SDUI string map as of the last successful sync.
+     *
+     * Deliberately the CACHE and not `sduiApi.getHomeConfig()`. This runs
+     * inside a board write, which happens on every stream frame — putting a
+     * network call there would make the widget's copy depend on a fetch that
+     * can fail, hang, or simply not be worth making several times a minute.
+     * `SummaryViewModel.fetchHomeConfig` already keeps the cache current.
+     *
+     * Duplicating the key rather than calling `HomeConfigCache` because that
+     * object lives in `composeApp`, which `core` does not depend on and must
+     * not start depending on for one string. The key is the contract; it is
+     * named in both places and in `docs/IOS_WIDGET_DESIGN.md` §6.5.
+     */
+    private fun decodeHomeConfig(raw: String?): Map<String, String> = runCatching {
+        raw?.let { json.decodeFromString(MapSerializer(String.serializer(), String.serializer()), it) }
+    }.getOrNull() ?: emptyMap()
+
+    /**
+     * "HH:mm" as minutes past midnight, which is what crosses the App Group.
+     *
+     * A `LocalTime` would have to be re-parsed on the far side, and Swift has
+     * no `LocalTime` — an integer is the one shape both halves already agree
+     * about.
+     *
+     * Parsing is `parseHHmmOrNull`, the same function `Board.kt` reaches through
+     * `parseHHmm` for these very keys. It was reimplemented here first, with its
+     * own copy of the 0..23 / 0..59 validation, which is two answers to "is this
+     * a valid time" that would eventually disagree — and disagree silently, in a
+     * window nobody is awake to see.
+     */
+    private fun minutesOfDay(raw: String?, fallback: LocalTime): Int =
+        parseHHmm(raw, fallback).let { it.hour * 60 + it.minute }
 
     /**
      * Write only when the stored value differs.

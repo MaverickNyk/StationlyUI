@@ -30,7 +30,8 @@ struct DepartureBoardEntryView: View {
                 SkeletonBoardView(metrics: metrics)
             } else {
                 BoardWidgetView(data: entry.widgetData, clock: entry.date,
-                                metrics: metrics, render: entry.render)
+                                metrics: metrics, render: entry.render,
+                                fallback: entry.fallback)
             }
         }
         // ── Where a tap on the board goes ──
@@ -244,8 +245,6 @@ struct BoardMetrics {
     let layout: BoardLayout
     /// See [StatusPolicy].
     let statusPolicy: StatusPolicy
-    /// Which empty state this family draws when no station is configured.
-    let size: WidgetSize
     /// Content inset of the corner-zone cells, where the widget's own corner
     /// mask intrudes on the content: header and footer are deeper than the
     /// mid-board rows, and the small family's are shallower than the others'
@@ -394,7 +393,7 @@ struct BoardMetrics {
     static let small = BoardMetrics(
         station: 13, platform: 12, row: 11, status: 9.5,
         clock: 11, ago: 9, icon: 14, logo: 10, maxRows: 3,
-        layout: .paged, statusPolicy: .backfill, size: .small,
+        layout: .paged, statusPolicy: .backfill,
         headerPad: 10, footerPad: 12, refreshSlot: 22, arrowSlot: 24,
         rowPad: 10, centresStationName: false, showsClock: false)
     // Medium's content budget: station + platform + 3 rows + footer is
@@ -406,7 +405,7 @@ struct BoardMetrics {
     static let medium = BoardMetrics(
         station: 15, platform: 14, row: 12.5, status: 10.5,
         clock: 15, ago: 8.5, icon: 18, logo: 18, maxRows: 3,
-        layout: .paged, statusPolicy: .backfill, size: .medium,
+        layout: .paged, statusPolicy: .backfill,
         headerPad: 14, footerPad: 20, refreshSlot: 30, arrowSlot: 37,
         rowPad: 14, centresStationName: true, showsClock: true)
     // Large carries 6 departure rows. The old cap of 10 was never reachable —
@@ -419,7 +418,7 @@ struct BoardMetrics {
     static let large = BoardMetrics(
         station: 17, platform: 16, row: 14.5, status: 12.5,
         clock: 17, ago: 10, icon: 22, logo: 18, maxRows: 6,
-        layout: .split, statusPolicy: .always, size: .large,
+        layout: .split, statusPolicy: .always,
         headerPad: 14, footerPad: 20, refreshSlot: 34, arrowSlot: 39,
         rowPad: 16, centresStationName: true, showsClock: true)
 
@@ -630,6 +629,9 @@ private struct LiveAgo: View {
     /// small, so a two-digit-minute reading ("12:07 ago") has somewhere to go
     /// rather than being clipped in the one place there is room to spare.
     var maxWidth: CGFloat = 72
+    /// Whether the freshness ladder applies — see [staleColor]. False while the
+    /// network is closed, where an ageing reading is correct rather than wrong.
+    var freshnessMatters: Bool = true
     var body: some View {
         Group {
             if data.hasTimestamp {
@@ -673,8 +675,33 @@ private struct LiveAgo: View {
     /// colour fades): amber < 60s, grey < 180s, red beyond — anchored to the
     /// data's true age at THIS entry's date, so the per-minute timeline
     /// entries walk amber → grey → red exactly like Android.
+    ///
+    /// ## ⚠️ Suppressed while the network is closed (2026-08-17)
+    /// After the last train nothing fetches, because there is nothing to fetch:
+    /// the app is shut, the stream has nothing to push, and the widget's own
+    /// schedule tapers overnight by design. So by 04:00 the last check really is
+    /// hours old, this ladder really does reach red, and the footer spends the
+    /// night flagging a fault on a widget that is working perfectly.
+    ///
+    /// Reported exactly that way, off the device:
+    ///
+    ///     "when the service ended for night the text also says the widget
+    ///      hasn't updated since last update ... but the fact is we did check
+    ///      with the backend so our update is recent but the trains are not
+    ///      there"
+    ///
+    /// The READING is kept — it is true, and the one thing on the panel that
+    /// says how old this is — it just stops being drawn as an alarm. The colour
+    /// answers "can I trust these times?", and during a closed window there are
+    /// no times to distrust.
+    ///
+    /// Note the timestamp itself was never the bug and is not touched: it
+    /// measures the last CHECK, not the last train (`SqlStorage.saveSyncTimestamp`
+    /// stamps every sync including a zero-row one, and the extension's own REST
+    /// path writes `now` unconditionally in `writeBack`).
     private var staleColor: Color {
         guard data.hasTimestamp else { return WidgetTheme.amber.opacity(0.85) }
+        guard freshnessMatters else { return WidgetTheme.amber }
         let age = entryDate.timeIntervalSince(data.lastUpdated)
         if age < 60  { return Color(red: 1.000, green: 0.702, blue: 0.000) } // #FFB300 amber
         if age < 180 { return Color(red: 0.533, green: 0.533, blue: 0.533) } // #888888 grey
@@ -1246,21 +1273,44 @@ private func boardAnimation(_ render: BoardRenderState, pageable: Bool) -> Anima
 struct DotMatrixStatusStrip: View {
     let data: WidgetData
     let m: BoardMetrics
-    private var parts: (severity: String, reason: String) {
-        let raw = data.status.isEmpty ? "Good Service" : data.status
-        if let r = raw.range(of: ":") {
-            return (String(raw[..<r.lowerBound]).trimmingCharacters(in: .whitespaces),
-                    String(raw[r.upperBound...]).trimmingCharacters(in: .whitespaces))
-        }
-        return (raw, "")
-    }
     var body: some View {
-        // Resolved ONCE. `parts` is a computed property doing a `range(of:)`,
-        // two slices and two trims, and the body read it three times (severity,
-        // the emptiness test, the interpolation) — so every status strip split
-        // its string three times, per entry, per widget.
-        let parts = self.parts
-        return LitCell(vPad: 2, hPad: m.rowPad) {
+        // Resolved ONCE, and now by `StatusParts` rather than inline — the
+        // fallback resolver needs the same split to tell a disrupted line from
+        // a healthy one, and two implementations of "where does the colon go"
+        // is one more than a board should have. This body used to read a
+        // computed property three times, so every strip split its string three
+        // times, per entry, per widget.
+        let parts = StatusParts(data.status)
+
+        // ── ⚠️ No status means NO STRIP, not "Good Service" ──
+        //
+        // This read `data.status.isEmpty ? "Good Service" : data.status`, so a
+        // board with no status record told the user their line was running
+        // fine. Nothing had checked. It is the same defect as the old "No
+        // departures right now" one cell above it — static text asserting an
+        // unverified fact — and it arrived through the one place that looked
+        // like a formatting nicety rather than a claim.
+        //
+        // It shows up most on exactly the board least able to afford it: a
+        // station the app has not written yet (`StationResolver.waiting`)
+        // carries `status: ""`, so a widget that knew nothing announced good
+        // service on a line it had never asked about.
+        //
+        // The CELL stays, dark and holding its place. Dropping it would change
+        // the cell count, which is what §6.2 exists to prevent — the strip
+        // comes and goes with the departure count already, and every other cell
+        // would resize around it.
+        return Group {
+            if parts.isKnown {
+                strip(parts)
+            } else {
+                EmptyRowCell(m: m)
+            }
+        }
+    }
+
+    private func strip(_ parts: StatusParts) -> some View {
+        LitCell(vPad: 2, hPad: m.rowPad) {
             HStack(spacing: 0) {
                 Text(parts.severity)
                     .font(WidgetTheme.font(m.status, .bold))
@@ -1345,6 +1395,8 @@ struct DotMatrixFooter: View {
     let data: WidgetData
     let clock: Date
     let m: BoardMetrics
+    /// Forwarded to the "ago" timer — see `LiveAgo.staleColor`.
+    var freshnessMatters: Bool = true
     var body: some View {
         // Bottom cell: the corner mask intrudes ~9–12pt at the logo/ago height
         // (iOS 26 corner radii are generous) — 20pt of side breathing keeps the
@@ -1378,7 +1430,7 @@ struct DotMatrixFooter: View {
                 // may take, and both of those are now `BoardMetrics`' answer.
                 LiveAgo(data: data, entryDate: clock, fontSize: m.ago,
                         alignment: m.showsClock ? .trailing : .center,
-                        maxWidth: m.agoWidth)
+                        maxWidth: m.agoWidth, freshnessMatters: freshnessMatters)
                     .frame(maxWidth: m.showsClock ? .infinity : nil,
                            alignment: .trailing)
                 if !m.showsClock {
@@ -1418,11 +1470,15 @@ struct BoardWidgetView: View {
     /// Why this render is happening, resolved when the timeline was built —
     /// never looked up here. See `BoardRenderState`.
     var render: BoardRenderState = BoardRenderState()
+    /// What this board says when it has no departures, chosen on THIS entry's
+    /// clock when the timeline was built. Nil when there are departures to show.
+    /// See `BoardFallbackResolver`.
+    var fallback: BoardFallbackResult? = nil
 
     var body: some View {
         Group {
             if let reason = data.emptyReason {
-                EmptyWidgetView(size: metrics.size, reason: reason)
+                EmptyWidgetView(m: metrics, reason: reason)
             } else {
                 board
             }
@@ -1487,7 +1543,8 @@ struct BoardWidgetView: View {
                     // Pinned on small, flexible elsewhere — see
                     // `BoardMetrics.footerFlexible` for why a floor alone
                     // doesn't hand the departure rows anything.
-                    DotMatrixFooter(data: data, clock: clock, m: metrics)
+                    DotMatrixFooter(data: data, clock: clock, m: metrics,
+                                    freshnessMatters: fallback?.freshnessMatters ?? true)
                         .frame(minHeight: metrics.footerMinHeight,
                                maxHeight: metrics.footerFlexible
                                    ? nil : metrics.footerMinHeight)
@@ -1655,26 +1712,48 @@ struct BoardWidgetView: View {
     @ViewBuilder
     private func platformSection(_ section: SectionRender, slots: Int, cells: Int,
                                  slide: AnyTransition, speaks: Bool) -> some View {
-        // Unconditional, where it used to appear only when there was a header
-        // to put in it. A cell that comes and goes takes every other cell's
-        // height with it, and "which platform am I looking at" is the one
-        // question a board with arrows must always answer — even if the answer
-        // is a blank strip on a station that has no platform labels.
+        // ── ⚠️ The blank goes at the BOTTOM, never under the station name ──
+        //
+        // This was unconditional, on the reasoning that a cell which comes and
+        // goes takes every other cell's height with it (§6.2). The count rule is
+        // right and is kept; drawing the cell HERE when it has nothing to say
+        // was not.
+        //
+        // With no platform to name, `section.group` is nil, the variants are
+        // `[""]`, and this rendered a LIT STRIP WITH NOTHING IN IT between the
+        // station name and the board's message. On an empty board that is the
+        // first thing under the header, so the panel opened with a gap and the
+        // message it was meant to introduce started one cell late. Owner's
+        // words: *"it's okay to leave the line at the bottom rather than leaving
+        // something from top"*, and that is exactly right — trailing dark cells
+        // read as a board with room left, a leading one reads as a fault.
+        //
+        // So the cell MOVES rather than disappearing: no header means one extra
+        // dark cell at the end (see `cellCount`), the count is identical, and
+        // nothing resizes. The floors differ by half a point across the three
+        // families (`platform + 8` against `row + 10`), which is inside the
+        // rounding of an equal-share layout.
+        //
+        // NOT keyed on `speaks`: a station whose platform block exists but has
+        // emptied out still has a real name to show, and that header is useful
+        // precisely then. The test is whether there is anything to write.
         //
         // KMP's own header text — "Northern Platform 1 Westbound", "Bus 39, 34
         // Stop N". Never assembled here: `MultiLineBoardProcessor.headerFor` is
         // the one implementation, and this widget showing a different string
         // from the home board is what that rule exists to prevent.
-        PlatformPagerHeader(
-            variants: section.group?.headerVariants ?? [""],
-            page: section.page,
-            groupCount: section.groups.count,
-            stationId: data.stationId,
-            section: section.token,
-            m: metrics,
-            slide: slide
-        )
-        .frame(minHeight: metrics.platform + 8)
+        if let group = section.group {
+            PlatformPagerHeader(
+                variants: group.headerVariants,
+                page: section.page,
+                groupCount: section.groups.count,
+                stationId: data.stationId,
+                section: section.token,
+                m: metrics,
+                slide: slide
+            )
+            .frame(minHeight: metrics.platform + 8)
+        }
 
         // `group.rows` is RESERVES, so this is where display depth is decided,
         // exactly as the home board decides it in `BoardTicker.tick` — see
@@ -1705,7 +1784,11 @@ struct BoardWidgetView: View {
         // so the 61 pre-rendered per-minute entries — all built from one payload
         // — share it and tick in place. Including the SECTION is what keeps the
         // half nobody touched from re-animating when the other half pages.
-        ForEach(Array(0..<cells), id: \.self) { index in
+        // One MORE cell when this section drew no platform header, so the board
+        // keeps exactly the cell count §6.2 fixes it at. The header did not
+        // vanish; it moved to the bottom and went dark. See the note above it.
+        let cellCount = section.group == nil ? cells + 1 : cells
+        ForEach(Array(0..<cellCount), id: \.self) { index in
             rowCell(index, in: section, rows: rows, speaks: speaks)
                 .frame(minHeight: metrics.row + 10)
                 .id(RowID(section: section.token, page: section.page,
@@ -1732,14 +1815,29 @@ struct BoardWidgetView: View {
             // changes where the slice comes from.
             DotMatrixRow(dep: rows[rows.startIndex + index], m: metrics,
                          showLine: section.group?.mixesLines ?? false)
-        } else if speaks, index == rows.count {
-            BoardMessageCell(text: Self.noDepartures, m: metrics)
+        // The board's message, across TWO cells — the title where the first
+        // train would be, the detail in the dark cell under it.
+        //
+        // Two cells rather than one line, because the app's copy is a pair
+        // ("Service ended for tonight" / "Back in the morning") and the half
+        // that says what happens NEXT is the half that stops an empty board
+        // reading as a broken one. The cell COUNT is untouched: the detail lands
+        // in a place that was already being held for a train that is not
+        // coming, so §6.2's fixed skeleton is intact.
+        //
+        // Both arms require a resolved fallback rather than defaulting to an
+        // empty string. An entry built without one (the gallery snapshot, an
+        // Xcode preview) would otherwise draw a LIT cell with nothing in it,
+        // which is neither a message nor the dark placeholder the board uses
+        // for "no train here" — just a gap.
+        } else if speaks, let fallback, index == rows.count, !fallback.title.isEmpty {
+            BoardMessageCell(text: fallback.title, m: metrics, emphasis: true)
+        } else if speaks, let fallback, index == rows.count + 1, !fallback.detail.isEmpty {
+            BoardMessageCell(text: fallback.detail, m: metrics)
         } else {
             EmptyRowCell(m: metrics)
         }
     }
-
-    private static let noDepartures = "No departures right now"
 
     /// How many departure CELLS each section draws — the number that must not
     /// move with the data.
@@ -1812,14 +1910,29 @@ struct EmptyRowCell: View {
 /// (which is what `NoDeparturesRow` did, at whatever height was left over), so
 /// an empty board is the same board with its rows dark — not a different layout.
 /// The reason, when there is one, is in the status strip directly beneath.
+///
+/// ## It is a departure row in every respect but the words
+/// Same cell, same inset, same face, same size, same amber. It was
+/// `WidgetTheme.textMuted` — a 0.40 grey that appeared nowhere else on the
+/// panel and read at about 3:1 against the row surface, so the one line a board
+/// shows when it has nothing else was also the hardest line on it to read.
+/// Centred rather than left-aligned is the only difference, and that is enough:
+/// it only ever appears when there are no departures to confuse it with.
 struct BoardMessageCell: View {
     let text: String
     let m: BoardMetrics
+    /// Whether this is the TITLE of a two-cell message rather than its detail.
+    ///
+    /// Bold, matching the app's own fallback rows (`BoardFallbackCopy` is a bold
+    /// title over normal-weight detail lines, and `BoardFallbackRows` draws it
+    /// that way). Weight rather than colour, per `WidgetTheme` — both cells are
+    /// board amber, and the one the eye should land on is the heavier one.
+    var emphasis: Bool = false
     var body: some View {
         LitCell(hPad: m.rowPad) {
             Text(text)
-                .font(WidgetTheme.font(m.row))
-                .foregroundColor(WidgetTheme.textMuted)
+                .font(WidgetTheme.font(m.row, emphasis ? .bold : .regular))
+                .foregroundColor(WidgetTheme.amber)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -1828,45 +1941,86 @@ struct BoardMessageCell: View {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MARK: - Empty state (no station configured)
+// MARK: - Empty state (no station behind the widget)
+//
+// ## A centred mark and a sentence, NOT the board
+//
+// The line, and it is the owner's:
+//
+//     The board layout is for a widget that HAS a station. It can be empty —
+//     nothing has arrived, every train has gone, nothing is coming — and it is
+//     still that station's board. A widget with no station behind it is not a
+//     board with nothing on it; it is not a board.
+//
+// So the four `EmptyReason` states get a mark centred over a sentence, and the
+// board's cells, pager, footer and dot lattice stay out of it. Drawing the
+// header cell here was tried and reverted the same day: a lit header with the
+// maker mark where the roundel goes is a *departure board for a station*, and
+// three of these four states have no station to be a board for. It made the
+// panel look like it was reporting on somewhere, when what it needs to say is
+// that it has nowhere to report on yet.
+//
+// `.removed` sits on this side of the line too, and it is the interesting one:
+// there IS a name, but the station is gone from the user's list, so there is no
+// board to draw and the ask is the same as `.needsStation` — pick one. The name
+// goes in the title, where it does the one job it can still do: tell the user
+// WHICH of their widgets needs attention.
+//
+// ## What did change, and stays changed
+// The layout is the original. The paint is not:
+//
+//  - **Amber, not white and grey.** These four sentences were the only text on
+//    the widget that was not board-amber, and the grey ran at about 3:1. See the
+//    note in `WidgetTheme`.
+//  - **Type from `BoardMetrics`.** It was a hardcoded 13pt title and 11pt body on
+//    every family, so a 4×4 got the same small print as a 2×2 on more than twice
+//    the canvas. Now `m.station` / `m.row`, the same ladder the board uses.
+//  - **The mark scales too**, at twice the mode roundel's size, instead of a flat
+//    40pt that crowded a 2×2 and looked lost on a 4×4.
+//  - **One copy table.** Small used to draw a shorter message and NO title, so a
+//    deleted-station widget could say "Station removed" and never which one.
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum WidgetSize { case small, medium, large }
-
 struct EmptyWidgetView: View {
-    let size: WidgetSize
+    /// The family's type scale, so this panel is measured by the same hand as
+    /// the board it stands in for. It used to take a three-case `WidgetSize`
+    /// enum that existed solely to feed this view, and `BoardMetrics` carried a
+    /// `size` field solely to produce it — a whole parallel notion of "how big is
+    /// this widget" running beside the one that does the work.
+    let m: BoardMetrics
     /// Which of the four empty states this is. One value rather than a flag per
     /// state: the copy below is a total switch over it, so a state added later
     /// cannot silently inherit another one's wording. See
     /// `WidgetData.EmptyReason`, which is also where their precedence lives.
     let reason: WidgetData.EmptyReason
 
-    /// The bold line under the mark: WHAT this widget is, in as few words as the
-    /// state allows.
+    /// The header line, where the station name goes on a live board: WHAT this
+    /// state is, in three words or fewer.
     ///
-    /// Two of the four states put something specific here, and both earn it. A
-    /// removed station's own NAME is what tells the user which of their widgets
-    /// needs attention without opening any of them. `.needsStation` gets the
-    /// instruction itself, because that state is the one a user actually meets
-    /// during setup and "Stationly / touch and hold…" buries the ask under a
-    /// brand line that answers no question they have.
+    /// A removed station's own NAME is what tells the user which of their widgets
+    /// needs attention without opening any of them, so it takes the slot it would
+    /// have had anyway. The other three name the state rather than the app: this
+    /// line sits in the station's place, and a user reading a panel headed
+    /// "Stationly" over an instruction learns nothing they could not see from the
+    /// icon. The brand is the mark beside it.
     ///
-    /// The other two keep the app's name. A nameless heading over an instruction
-    /// reads as a rendering fault, and iOS can hand over a configuration with an
-    /// id and no entity around it, so the removed case has to fall back rather
-    /// than draw a blank line.
+    /// The removed case still falls back, because iOS can hand over a
+    /// configuration with an id and no entity around it, and a blank header reads
+    /// as a rendering fault.
     private var title: String {
         switch reason {
-        case .removed(let station): return station.isEmpty ? "Stationly" : station
+        case .removed(let station): return station.isEmpty ? "Station removed" : station
         case .needsStation:         return "Choose a station"
-        case .signedOut, .noStations: return "Stationly"
+        case .signedOut:            return "Signed out"
+        case .noStations:           return "No stations yet"
         }
     }
 
-    /// Plain sentences, no dashes, and nothing that reads as the app's fault.
+    /// What to do about it. Plain sentences, no dashes, nothing that reads as
+    /// the app's fault.
     ///
     /// Every one of these four states is one the user can end, and three of them
-    /// they end with a single tap — so the copy's whole job is to point at that
+    /// they end with a single tap, so the copy's whole job is to point at that
     /// tap. No exclamation marks and no apology: `.needsStation` in particular is
     /// a setup step, not an error, and it can appear on several widgets at once
     /// (adding the first station after a spell with none un-masks every stale
@@ -1879,58 +2033,65 @@ struct EmptyWidgetView: View {
     /// the second step is there. "Touch and hold" rather than "long press", and
     /// "Edit Widget" exactly as the menu spells it, because those are the words
     /// on the phone.
+    ///
+    /// ## One table, every family
+    /// There was a second one for the small family — four shorter strings, and a
+    /// small widget drew ONLY those, with no title at all. Two tables is two
+    /// places to change a sentence and one of them gets missed, and the short set
+    /// had quietly become the worse copy: "Choose a station" as the whole message
+    /// says nothing about how, on the family least likely to be understood
+    /// without it. The header carries the state at every size now, so the small
+    /// panel says the same thing as the large one and simply wraps it.
     private var message: String {
         switch reason {
-        case .signedOut:    return "Sign in to see departures"
-        case .noStations:   return "Open the app to add a station"
+        case .signedOut:    return "Open Stationly to sign in"
+        case .noStations:   return "Open Stationly to add one"
         case .needsStation: return "Touch and hold, then tap Edit Widget"
-        case .removed:      return "Removed from Stationly. Touch and hold, then tap Edit Widget to choose another."
+        case .removed:      return "Not in your stations. Touch and hold, then tap Edit Widget"
         }
     }
 
-    /// The same four states in as few words as a small widget can carry.
+    /// The maker mark, at twice the mode roundel this family draws: 28 / 36 / 44.
     ///
-    /// A small panel used to draw the roundel and NOTHING else, in every empty
-    /// state — so the one widget that needed an instruction was the one that
-    /// gave none, and "it's just blank" was the only reading available. There is
-    /// room for one short line under a 40pt mark; there is not room for the
-    /// gesture, so these name the outcome and let the user find the sheet the
-    /// way they find it for every other widget on the phone.
-    ///
-    /// The removed variant deliberately does NOT carry the station name: at this
-    /// size it would truncate, and a half-station-name is worse than the state
-    /// it was trying to explain.
-    private var shortMessage: String {
-        switch reason {
-        case .signedOut:    return "Sign in"
-        case .noStations:   return "Add a station"
-        case .needsStation: return "Choose a station"
-        case .removed:      return "Station removed"
-        }
-    }
+    /// Derived rather than picked, so it moves with the type around it. A flat
+    /// 40pt sat here for every family, which is a quarter of a 2×2's height
+    /// competing with the sentence under it, and small change on a 4×4.
+    private var markSize: CGFloat { m.icon * 2 }
 
     var body: some View {
-        VStack(spacing: size == .small ? 8 : 10) {
-            StationlyMark(diameter: 40)
-            if size == .small {
-                Text(shortMessage)
-                    .font(WidgetTheme.font(11))
-                    .foregroundColor(WidgetTheme.textMuted)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
-                    .padding(.horizontal, 10)
-            } else {
+        // Centred, and the whole panel is the message. No lit cells, no lattice,
+        // no footer — see the note above for why this is deliberately not the
+        // board.
+        VStack(spacing: m.row * 0.6) {
+            StationlyMark(diameter: markSize)
+
+            VStack(spacing: m.row * 0.35) {
+                // Truncates rather than shrinks, the same rule the board's
+                // station line follows: this is a station NAME in the removed
+                // state, and a name that resizes itself makes the panel look
+                // like it uses a different type scale per station.
                 Text(title)
-                    .font(WidgetTheme.font(13, .bold))
-                    .foregroundColor(WidgetTheme.textPrimary)
+                    .font(WidgetTheme.font(m.station, .bold))
+                    .foregroundColor(WidgetTheme.amber)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+
+                // Wraps rather than truncates, because unlike a station name
+                // this is a sentence the user has NOT seen before — losing its
+                // tail loses the instruction. The floor is only for a canvas
+                // narrower than any that ships.
                 Text(message)
-                    .font(WidgetTheme.font(11))
-                    .foregroundColor(WidgetTheme.textMuted)
+                    .font(WidgetTheme.font(m.row))
+                    .foregroundColor(WidgetTheme.amber)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
+                    .lineLimit(4)
+                    .minimumScaleFactor(0.8)
             }
+            // Room for the sentence to wrap without touching the widget's
+            // corner mask. Scaled off the family's own row inset rather than a
+            // flat 16, which on a 2×2 was taking a fifth of the width from the
+            // one string that needed it most.
+            .padding(.horizontal, m.rowPad)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -2000,4 +2161,36 @@ private let fourPlatformEntry: DepartureEntry = {
 #Preview("Medium — empty", as: .systemMedium) {
     StationlyDepartureBoardWidget()
 } timeline: { emptyEntry }
+
+// ── The empty states, at every family ──
+//
+// There was ONE of these (medium, `.noStations`), which is how the small
+// family's empty panel kept its own layout long after the board stopped having
+// one: the family with the least room was the family nobody was looking at.
+// Four states times three canvases is too many previews to be useful, so these
+// are the ones that can go wrong — the longest copy on the narrowest canvas,
+// and the state that renders a station NAME rather than a fixed string.
+// Built from the SAME factories the resolver returns (`WidgetData.needsStation`
+// and friends), never from a hand-made `WidgetData` — a preview that constructs
+// its own is a preview of a state the app cannot produce.
+private func emptyPreview(_ data: WidgetData) -> DepartureEntry {
+    DepartureEntry(date: Date(), widgetData: data)
+}
+private let removedPreview = WidgetData.removed(station: "Highbury & Islington")
+
+#Preview("Small — choose a station", as: .systemSmall) {
+    StationlyDepartureBoardWidget()
+} timeline: { emptyPreview(.needsStation) }
+
+#Preview("Small — removed", as: .systemSmall) {
+    StationlyDepartureBoardWidget()
+} timeline: { emptyPreview(removedPreview) }
+
+#Preview("Medium — removed", as: .systemMedium) {
+    StationlyDepartureBoardWidget()
+} timeline: { emptyPreview(removedPreview) }
+
+#Preview("Large — signed out", as: .systemLarge) {
+    StationlyDepartureBoardWidget()
+} timeline: { emptyPreview(.signedOut) }
 #endif
