@@ -1,5 +1,19 @@
 # Widget configuration: which station a widget shows, and where a tap goes
 
+> ### ⚠️ SUPERSEDED on 2026-08-17 — read `SESSION_2026-08-17_WIDGET_STATION.md`
+>
+> Points 1 and 2 of the scope below were **reversed**. A widget no longer takes
+> "the next station nothing is showing", and a widget whose station is deleted is
+> no longer repointed at another one — both were auto-assignment, both moved
+> widgets onto stations the user never chose, and both are gone along with
+> `unclaimedStation()`, `StationAssignment.swift` and
+> `WidgetPlacementRegistry.swift`.
+>
+> **Everything in §3.1 arguing that `unclaimedStation()` is sound is wrong.** It
+> is kept unedited because this is a dated record of what that session did and
+> why, and the reasoning it contains is the reasoning that had to be answered.
+> Points 3 and 4 still stand.
+
 _Session 2026-08-14 (second), branch `ios-parity`. Follows
 `SESSION_2026-08-14_WIDGET_REVIEW.md`, which was the typography pass on the same
 extension._

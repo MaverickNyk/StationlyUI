@@ -47,12 +47,15 @@ struct DepartureBoardEntryView: View {
         // lead somewhere specific rather than merely opening the app.
         //
         // Resolved when the TIMELINE was built, never here — see
-        // `BoardRenderState.deepLink`. It is deliberately the RENDERED station
-        // rather than the configured one: a widget whose station was deleted is
-        // showing a replacement, and tapping it must open what is on screen. The
-        // configured id would deep-link to a station the user no longer has,
-        // which the app drops — leaving the one widget most in need of attention
-        // as the only one that does nothing.
+        // `BoardRenderState.deepLink`. It is the RENDERED station, which since
+        // `StationResolver` landed is always the configured one too: a widget
+        // never borrows another station's board, so the two cannot differ.
+        //
+        // A widget in the removed state carries no station id, so
+        // `StationlyDeepLink.board` returns nil and a tap simply opens the app.
+        // That is the right answer for it — the station it names is gone, so
+        // there is nothing to open, and the fix is a touch-and-hold rather than
+        // a tap.
         .widgetURL(entry.render.deepLink)
     }
 }
@@ -1418,8 +1421,8 @@ struct BoardWidgetView: View {
 
     var body: some View {
         Group {
-            if data.isEmpty {
-                EmptyWidgetView(size: metrics.size, signedOut: data.isSignedOut)
+            if let reason = data.emptyReason {
+                EmptyWidgetView(size: metrics.size, reason: reason)
             } else {
                 board
             }
@@ -1832,21 +1835,97 @@ enum WidgetSize { case small, medium, large }
 
 struct EmptyWidgetView: View {
     let size: WidgetSize
-    /// Empty because the account signed out, rather than because no station has
-    /// been chosen. Only the second line changes — telling someone to add a
-    /// station they already have reads as the widget being broken, and it is
-    /// also the one instruction that would not work.
-    var signedOut: Bool = false
+    /// Which of the four empty states this is. One value rather than a flag per
+    /// state: the copy below is a total switch over it, so a state added later
+    /// cannot silently inherit another one's wording. See
+    /// `WidgetData.EmptyReason`, which is also where their precedence lives.
+    let reason: WidgetData.EmptyReason
+
+    /// The bold line under the mark: WHAT this widget is, in as few words as the
+    /// state allows.
+    ///
+    /// Two of the four states put something specific here, and both earn it. A
+    /// removed station's own NAME is what tells the user which of their widgets
+    /// needs attention without opening any of them. `.needsStation` gets the
+    /// instruction itself, because that state is the one a user actually meets
+    /// during setup and "Stationly / touch and hold…" buries the ask under a
+    /// brand line that answers no question they have.
+    ///
+    /// The other two keep the app's name. A nameless heading over an instruction
+    /// reads as a rendering fault, and iOS can hand over a configuration with an
+    /// id and no entity around it, so the removed case has to fall back rather
+    /// than draw a blank line.
+    private var title: String {
+        switch reason {
+        case .removed(let station): return station.isEmpty ? "Stationly" : station
+        case .needsStation:         return "Choose a station"
+        case .signedOut, .noStations: return "Stationly"
+        }
+    }
+
+    /// Plain sentences, no dashes, and nothing that reads as the app's fault.
+    ///
+    /// Every one of these four states is one the user can end, and three of them
+    /// they end with a single tap — so the copy's whole job is to point at that
+    /// tap. No exclamation marks and no apology: `.needsStation` in particular is
+    /// a setup step, not an error, and it can appear on several widgets at once
+    /// (adding the first station after a spell with none un-masks every stale
+    /// configuration at the same moment), which is exactly when alarmed wording
+    /// would read as the widget being broken.
+    ///
+    /// Both configuration lines name the whole gesture — touch and hold, THEN
+    /// tap Edit Widget — because the touch-and-hold alone only opens the jiggle
+    /// menu, and a user who has never configured a widget has no reason to know
+    /// the second step is there. "Touch and hold" rather than "long press", and
+    /// "Edit Widget" exactly as the menu spells it, because those are the words
+    /// on the phone.
+    private var message: String {
+        switch reason {
+        case .signedOut:    return "Sign in to see departures"
+        case .noStations:   return "Open the app to add a station"
+        case .needsStation: return "Touch and hold, then tap Edit Widget"
+        case .removed:      return "Removed from Stationly. Touch and hold, then tap Edit Widget to choose another."
+        }
+    }
+
+    /// The same four states in as few words as a small widget can carry.
+    ///
+    /// A small panel used to draw the roundel and NOTHING else, in every empty
+    /// state — so the one widget that needed an instruction was the one that
+    /// gave none, and "it's just blank" was the only reading available. There is
+    /// room for one short line under a 40pt mark; there is not room for the
+    /// gesture, so these name the outcome and let the user find the sheet the
+    /// way they find it for every other widget on the phone.
+    ///
+    /// The removed variant deliberately does NOT carry the station name: at this
+    /// size it would truncate, and a half-station-name is worse than the state
+    /// it was trying to explain.
+    private var shortMessage: String {
+        switch reason {
+        case .signedOut:    return "Sign in"
+        case .noStations:   return "Add a station"
+        case .needsStation: return "Choose a station"
+        case .removed:      return "Station removed"
+        }
+    }
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: size == .small ? 8 : 10) {
             StationlyMark(diameter: 40)
-            if size != .small {
-                Text("Stationly")
+            if size == .small {
+                Text(shortMessage)
+                    .font(WidgetTheme.font(11))
+                    .foregroundColor(WidgetTheme.textMuted)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                    .padding(.horizontal, 10)
+            } else {
+                Text(title)
                     .font(WidgetTheme.font(13, .bold))
                     .foregroundColor(WidgetTheme.textPrimary)
-                Text(signedOut ? "Sign in to see your board"
-                               : "Open the app to add a station")
+                    .lineLimit(1)
+                Text(message)
                     .font(WidgetTheme.font(11))
                     .foregroundColor(WidgetTheme.textMuted)
                     .multilineTextAlignment(.center)

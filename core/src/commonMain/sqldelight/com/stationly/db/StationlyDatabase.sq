@@ -130,8 +130,23 @@ insertSelection:
 INSERT INTO UserSelectionEntity(mode, line, station, parentStationId, stationName, direction, destinations, destinationIds, filterMode, viaStationId, viaStationName, routeResolvedAt)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
+-- ORDER BY is load-bearing, not tidiness.
+--
+-- Boards a user has never dragged all tie at `BoardConfig.UNPOSITIONED`, and
+-- `UserSettings.ordered` is a STABLE sort — so for those users the home screen's
+-- order, and therefore "your first station", collapses to whatever order this
+-- query happened to return. Without an ORDER BY that is undefined: SQLite is
+-- free to change it, and `restoreFromCloud` clears the table and re-inserts, so
+-- it demonstrably does.
+--
+-- Three surfaces read "first" off that order and every one of them means the
+-- user's first: the widget's configuration picker, the gallery's
+-- `recommendations()`, and the station a newly added widget takes. An
+-- unrelated sync must not move any of them.
+--
+-- `id` is AUTOINCREMENT, so it is insertion order and never reused.
 selectAllSelections:
-SELECT * FROM UserSelectionEntity;
+SELECT * FROM UserSelectionEntity ORDER BY id;
 
 clearSelections:
 DELETE FROM UserSelectionEntity;

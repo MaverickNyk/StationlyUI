@@ -40,7 +40,7 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
     func snapshot(for configuration: SelectStationIntent, in context: Context) async -> DepartureEntry {
         let data = context.isPreview
             ? WidgetData.placeholder
-            : AppGroupStorage.shared.readWidgetData(stationId: configuration.station?.id)
+            : AppGroupStorage.shared.readWidgetData(for: configuration.station)
         return DepartureEntry(
             date: Date(),
             widgetData: data,
@@ -76,7 +76,7 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
     // LiveClock); the per-minute entries re-anchor it across midnight.
     func timeline(for configuration: SelectStationIntent, in context: Context) async -> Timeline<DepartureEntry> {
         let tStart = Date()
-        var data = AppGroupStorage.shared.readWidgetData(stationId: configuration.station?.id)
+        var data = AppGroupStorage.shared.readWidgetData(for: configuration.station)
 
         // Tell the APP which station this widget is on. It cannot find out for
         // itself — the answer lives in an AppIntent type compiled into this
@@ -84,17 +84,25 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         // other source for. Written before the fetch below, so a widget whose
         // refresh fails is still counted as placed.
         //
-        // ── The CONFIGURED station, not the rendered one ──
+        // ── The RENDERED station, not the configured one ──
         //
-        // These two differ for exactly one widget: one whose station has been
-        // deleted and which `readWidgetData` has repointed. Stamping the
-        // configured id keeps that widget from claiming the station it borrowed
-        // — if it claimed it, the next build would find it taken and repoint
-        // somewhere else, and the board would walk down the user's station list
-        // a few minutes at a time. The `?? data.stationId` arm is for a widget
-        // with no configuration at all, which is showing what it stamps.
+        // They are the same in every ordinary case, because a widget never
+        // borrows another station's board. They differ in exactly one: a station
+        // whose GROUPING id changed underneath a placed widget, which
+        // `StationResolver.directoryEntry` still resolves by name so the board
+        // keeps working. The configuration then holds the old pole naptan while
+        // the board — and the app, and the directory — use the new StopArea.
+        //
+        // `HomeStateProbe` matches these stamps against the app's own board ids
+        // to decide whether the delete dialog warns that a widget is showing the
+        // station about to go. Stamping the configured id would file that widget
+        // under an id the app no longer knows, and the warning would silently
+        // stop appearing for the one station whose id had moved.
+        //
+        // Empty for every empty state, and `notePlacement` drops those: a widget
+        // with nothing on it is not showing a station and must not hold one.
         AppGroupStorage.shared.notePlacement(
-            station: configuration.station?.id ?? data.stationId,
+            station: data.stationId,
             family: String(describing: context.family)
         )
 
@@ -118,30 +126,31 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         // actually stale — an app-driven reload writes the board first, so its
         // data is seconds old and this is skipped.
         //
-        // ── Never for a signed-out account ──
+        // ── Never for a board that has nothing to fetch ──
         //
         // This fetch authenticates with the API key, not the user's token, and
         // its station comes from a configuration the app cannot erase — so on
         // its own it would repopulate a board a sign-out had just cleared, and
-        // go on doing it every couple of minutes. `readWidgetData` already
-        // returns the signed-out board above; this stops the network call that
-        // would have replaced it. See `AppGroupKeys.signedOut`.
-        if !data.isSignedOut,
+        // go on doing it every couple of minutes.
+        //
+        // `isFetchable` covers all four empty states (signed out, no stations,
+        // no station chosen, station removed) AND the tracked-but-unwritten
+        // board, which is dated to the epoch and would otherwise start a bounded
+        // refresh on every single build to produce nothing. It is the same
+        // predicate `WidgetRefreshService.targetStations` filters on, so the two
+        // cannot disagree about what is worth a round trip. See `WidgetData`.
+        if data.isFetchable,
            Date().timeIntervalSince(data.lastUpdated) > Self.staleAfterSeconds {
             let outcome = await Self.refreshBounded(stationId: data.stationId)
             if outcome == .refreshed {
                 // Re-read: the refresh wrote the App Group, and the whole point
                 // is to render what it just fetched rather than what we opened
                 // this function holding.
-                data = AppGroupStorage.shared.readWidgetData(stationId: configuration.station?.id)
+                data = AppGroupStorage.shared.readWidgetData(for: configuration.station)
             }
             WidgetRefreshService.note("timeline stale → refresh outcome=\(outcome)")
         }
         let tRead = Date()
-        // `departureCount`, not `departures.count`: the latter flattened every
-        // block into a throwaway array to log a number. Instrumentation must
-        // never be the most expensive thing on the path it measures.
-        providerLog.notice("timeline family=\(String(describing: context.family), privacy: .public) station=\(data.stationName.isEmpty ? "<none>" : "set", privacy: .public) id=\(data.stationId, privacy: .public) deps=\(data.departureCount) statusLen=\(data.status.count)")
 
         // Align entries to minute boundaries so the clock flips exactly on the minute.
         let calendar = Calendar.current
@@ -299,11 +308,30 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         let ageHours = RefreshScheduleStore.scheduleAgeHours(at: now)
         let boostNote = cadence.boostActive ? " boost" : ""
         let staleNote = cadence.isFallback ? " FALLBACK" : ""
+        // ── One line per build, on each of the two channels that work ──
+        //
+        // `cfg`, `shown` and `state` are the whole story: what this widget is
+        // CONFIGURED for, which station actually came out, and which rung of
+        // `StationResolver` answered. Without them a report of "it's showing the
+        // wrong station" can only be investigated by guessing which of six
+        // states produced it. `cfg=nil` is the one to look for — it means iOS
+        // gave the provider no station, which is either a widget nobody has
+        // chosen for or one whose station was deleted underneath it. `cfg` and
+        // `shown` differing is the grouping-id change described at
+        // `notePlacement` above.
+        //
+        // There used to be a SECOND `providerLog` line earlier in this function
+        // carrying family, station id and a departure count. It said nothing
+        // these two do not, and the count walked every row of every block on a
+        // path where instrumentation must never be the most expensive thing it
+        // measures. `family` moved here; the rest is covered by `state`.
         WidgetRefreshService.note(
-            "timeline \(cause) read=\(readMs)ms tick=\(tickMs)ms entries=\(entries.count) " +
+            "timeline \(cause) cfg=\(configuration.station?.id ?? "nil") " +
+            "shown=\(data.stationId.isEmpty ? "none" : data.stationId) state=\(data.stateName) " +
+            "read=\(readMs)ms tick=\(tickMs)ms entries=\(entries.count) " +
             "tier=\(cadence.tierId)\(boostNote)\(staleNote) next=\(cadence.intervalMinutes)m " +
             "spent=\(spent)\(isFree ? " FREE" : "") schedAge=\(ageHours)h")
-        providerLog.notice("timeline returning \(entries.count) entries (\(cause, privacy: .public)) read=\(readMs)ms tick=\(tickMs)ms tier=\(cadence.tierId, privacy: .public) next=\(cadence.intervalMinutes)m spent=\(spent)")
+        providerLog.notice("timeline \(String(describing: context.family), privacy: .public) state=\(data.stateName, privacy: .public) entries=\(entries.count) (\(cause, privacy: .public)) read=\(readMs)ms tick=\(tickMs)ms tier=\(cadence.tierId, privacy: .public) next=\(cadence.intervalMinutes)m spent=\(spent)")
         return Timeline(entries: entries, policy: .after(nextRefresh))
     }
 
@@ -423,9 +451,23 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
     /// minute, so anything older than this is worth a round trip.
     static let staleAfterSeconds: TimeInterval = 120
 
-    /// Puts the station's name on the widget in the home-screen editor's
-    /// carousel of configured widgets, so three Stationly widgets are told
-    /// apart while being arranged.
+    /// The preconfigured variants of this widget — one per station, in the
+    /// user's own home-screen order.
+    ///
+    /// Two jobs. It puts each station's name on the widget in the home-screen
+    /// editor's carousel, so three Stationly widgets are told apart while being
+    /// arranged. And it supplies the swipeable previews in the **widget
+    /// gallery**, each labelled with its station, which is where the user
+    /// actually chooses.
+    ///
+    /// A widget added without swiping takes whichever variant leads, so this
+    /// order and `defaultResult()` agree by construction: both are the first
+    /// station on the home screen.
+    ///
+    /// This list used to be ROTATED so that the next station nothing was showing
+    /// led it. That is gone with the rest of the assignment machinery — it
+    /// required knowing the exact home screen, which is not knowable cheaply or
+    /// reliably from here, and the swipe is right there.
     func recommendations() -> [AppIntentRecommendation<SelectStationIntent>] {
         AppGroupStorage.shared.readStations().map { station in
             AppIntentRecommendation(
@@ -483,8 +525,14 @@ struct StationlyDepartureBoardWidget: Widget {
         // of your stations") rather than what the product is. "Live TfL
         // departures" described a category; nobody adding this doubts it shows
         // departures.
+        //
+        // Second sentence says the ONE thing the shape of this widget is not
+        // obvious about: you get another station by adding another widget, not
+        // by configuring this one twice. It used to read "add a board for each
+        // station you follow", which named the wrong unit — a board is what the
+        // app calls a station's departures, and what you add here is a widget.
         .configurationDisplayName("Station Boards")
-        .description("Choose one of your stations to show live departures. Add a board for each station you follow.")
+        .description("Choose one of your stations to show live departures. Add one widget per station.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         // The black dot-matrix panel IS the product identity — keep it under
         // the amber text everywhere (StandBy, lock screen contexts) instead of

@@ -351,16 +351,18 @@ fun StationSettingsScreen(
             //
             // A widget pinned to this station cannot be cleared: its station
             // lives in an AppIntent configuration that nothing on this side can
-            // rewrite. It repoints itself to another station instead
-            // (`AppGroupStorage.unclaimedStation`), which is recoverable and
-            // visible — the station name is the largest thing on the panel — but
-            // it is not something to discover by glancing at the home screen.
+            // rewrite. So it stops showing departures and says the station was
+            // removed, and only the user's own tap can point it somewhere else.
+            // See `StationResolver` in the widget target.
             //
-            // Deliberately does NOT name the replacement. The widget resolves
-            // that at its next timeline build, from placement stamps that can
-            // move in between, so any name promised here could be the wrong one
-            // — and predicting it would mean a second copy of the rule living in
-            // Kotlin, free to drift from the Swift one that actually decides.
+            // It used to switch to another station by itself, and this text used
+            // to say so. That substitution is gone: a board is glanced at, not
+            // read, so "wrong station, right-looking times" was the worst
+            // failure available.
+            //
+            // Nothing is lost by deleting. The configured id survives, so
+            // re-adding this station brings its widget back with no action from
+            // the user, which is why the text below promises exactly that.
             body = buildString {
                 append(
                     if (boards.size == 1) {
@@ -370,8 +372,12 @@ fun StationSettingsScreen(
                     },
                 )
                 if (onHomeScreen) {
-                    append("\n\nA widget is showing this station. It will switch to another one — ")
-                    append("long-press it to choose which.")
+                    append("\n\nA widget is showing this station. It will stop showing departures. ")
+                    // The same gesture, in the same words the widget itself uses
+                    // in that state (`EmptyWidgetView`). Two surfaces describing
+                    // one tap differently is how a user ends up hunting for a
+                    // control that was named twice.
+                    append("Touch and hold it, then tap Edit Widget, to choose another station.")
                 }
             },
             confirmLabel = "Delete",

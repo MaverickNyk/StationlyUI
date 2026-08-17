@@ -369,6 +369,21 @@ class IosWidgetManager : WidgetManager {
         // board write at all.
         val all = Platform.sqlStorage.getAllSelections()
         if (all.isEmpty()) {
+            // ── Empty on purpose, or empty in transit? ──
+            //
+            // A login restore clears SQLite before refilling it from the cloud,
+            // so for the length of that operation this table is empty for a user
+            // who has stations and is signing in to get them back. Wiping here
+            // publishes "you have no stations" to every placed widget, and the
+            // widget has no way to know it was told something transient.
+            //
+            // Storage cannot tell the two apart; only the caller's INTENT can,
+            // which is why the restore raises this flag and nothing else does.
+            // Skipping the write leaves the previous contents in place, which is
+            // stale for a few seconds and then corrected by the board writes the
+            // restore itself produces — where the wipe would have been wrong for
+            // the same few seconds and visible on the home screen.
+            if (WidgetRestore.inProgress) return@withContext
             // Nothing left to show (last board deleted / logged out): wipe to
             // the widget's designed empty state ("No station set") — the iOS
             // analog of Android's "No boards yet" fallback rows.
@@ -497,9 +512,10 @@ class IosWidgetManager : WidgetManager {
         //
         // It is no longer where a DELETED station's widget lands. That used to
         // fall through to here — a silent jump to whichever board happened to be
-        // primary, through a path that can be staler than the per-station keys —
-        // and it now repoints through `AppGroupStorage.unclaimedStation()`
-        // instead. These keys are the last resort, not the general fallback.
+        // primary, through a path that can be staler than the per-station keys.
+        // A widget whose station is gone now renders its own removed state
+        // (`StationResolver`, in the widget target) and fetches nothing. These
+        // keys are reached only by a widget with no configuration at all.
         //
         // "Primary" now means the FIRST BOARD ON THE HOME SCREEN, since `boards`
         // follows the user's arrangement. It used to mean the oldest.

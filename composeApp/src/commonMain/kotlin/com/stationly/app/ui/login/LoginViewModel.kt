@@ -299,45 +299,63 @@ class LoginViewModel(
         try {
             val uid = authProvider.currentUserUid()
                 ?: throw IllegalStateException("No uid after sign-in")
-            userSyncRepository.syncUserAndGetSavedStations(
-                uid         = uid,
-                email       = authProvider.currentUserEmail() ?: "",
-                displayName = authProvider.currentUserDisplayName(),
-                photoURL    = authProvider.currentUserPhotoUrl(),
-                provider    = provider,
-                deviceId    = DeviceIdentity.deviceId(),
-                deviceInfo  = DeviceIdentity.deviceInfo()
-            )
-
-            // Re-seed the in-memory selection cache from disk BEFORE restoring.
+            // ── The whole restore, declared as one ──
             //
-            // `syncUserAndGetSavedStations` wipes SQLite and repopulates it
-            // directly, without going through the repository — so the shared
-            // cache still holds whatever the PREVIOUS session left in it. iOS
-            // deliberately does not call `cleanupAll()` here (it would wipe the
-            // identity keys Swift just wrote), and `cleanupAll` is what would
-            // otherwise have cleared it.
+            // Everything inside this block runs with SQLite either empty or
+            // half-filled, and the widget write reads SQLite. Told nothing, it
+            // reads an empty table as "the user deleted their last board" and
+            // wipes the App Group, so every placed widget says "Open the app to
+            // add a station" to a user who is in the middle of signing in.
             //
-            // Without this, signing in as somebody else shows the previous user's
-            // boards until something happens to rebuild the screen.
-            runCatching { selectionRepository.initialize() }
+            // Only this side knows the emptiness is deliberate and temporary, so
+            // only this side can say so. See [WidgetRestore] — the flag suppresses
+            // exactly one branch, the empty-state wipe, and boards written as each
+            // one is set up still publish normally.
+            //
+            // Scoped to the block rather than set and cleared by hand: the restore
+            // has four failure points inside it and a `finally` is the only shape
+            // that cannot leave the flag raised on the way out.
+            com.stationly.core.platform.WidgetRestore.during {
+                userSyncRepository.syncUserAndGetSavedStations(
+                    uid         = uid,
+                    email       = authProvider.currentUserEmail() ?: "",
+                    displayName = authProvider.currentUserDisplayName(),
+                    photoURL    = authProvider.currentUserPhotoUrl(),
+                    provider    = provider,
+                    deviceId    = DeviceIdentity.deviceId(),
+                    deviceInfo  = DeviceIdentity.deviceInfo()
+                )
 
-            // Drop anything held for a previous session BEFORE restoring. The
-            // settings stores are process-wide objects that survive a logout,
-            // so signing in as somebody else without this leaves the previous
-            // user's layout and order in memory — and the new user's first
-            // settings change would then upload that arrangement to THEIR
-            // account.
-            UserStateSync.resetForNewSession()
+                // Re-seed the in-memory selection cache from disk BEFORE restoring.
+                //
+                // `syncUserAndGetSavedStations` wipes SQLite and repopulates it
+                // directly, without going through the repository — so the shared
+                // cache still holds whatever the PREVIOUS session left in it. iOS
+                // deliberately does not call `cleanupAll()` here (it would wipe the
+                // identity keys Swift just wrote), and `cleanupAll` is what would
+                // otherwise have cleared it.
+                //
+                // Without this, signing in as somebody else shows the previous user's
+                // boards until something happens to rebuild the screen.
+                runCatching { selectionRepository.initialize() }
 
-            // A second read, and worth it. `syncProfile` returns the profile as
-            // it was BEFORE this device's session was registered, and more to
-            // the point it is the legacy-shaped response — the v2 board list and
-            // the settings blob are what this login needs, and this is the call
-            // that is guaranteed to carry them.
-            val profile = UserStateSync.repository.fetch(uid)
+                // Drop anything held for a previous session BEFORE restoring. The
+                // settings stores are process-wide objects that survive a logout,
+                // so signing in as somebody else without this leaves the previous
+                // user's layout and order in memory — and the new user's first
+                // settings change would then upload that arrangement to THEIR
+                // account.
+                UserStateSync.resetForNewSession()
 
-            UserStateSync.restoreBoards(profile, stationLifecycleUseCase)
+                // A second read, and worth it. `syncProfile` returns the profile as
+                // it was BEFORE this device's session was registered, and more to
+                // the point it is the legacy-shaped response — the v2 board list and
+                // the settings blob are what this login needs, and this is the call
+                // that is guaranteed to carry them.
+                val profile = UserStateSync.repository.fetch(uid)
+
+                UserStateSync.restoreBoards(profile, stationLifecycleUseCase)
+            }
 
             // Best-effort — a failed token registration shouldn't block login;
             // it is retried on the next foreground.

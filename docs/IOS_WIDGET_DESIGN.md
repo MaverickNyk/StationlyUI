@@ -20,6 +20,7 @@ its configuration (§5).
 | `AppGroupID.swift` / `AppGroupKeys.swift` | The App Group's identifier and every key in it — one declaration each, per target (§5) |
 | `StationlyWidget.swift` | Widget declaration + `DepartureBoardProvider` (the timeline) |
 | `StationConfiguration.swift` | Which station this widget shows — entity, query, configuration intent (§5) |
+| `StationResolution.swift` | What a PLACED widget shows: the resolver ladder (§9.3) |
 | `WidgetPageIntent.swift` | Per-station platform paging + the refresh intent (§6) |
 | `WidgetRefreshService.swift` | The extension's own REST refresh |
 | `WidgetViews.swift` | All views: board, rows, status strip, footer, live clock, empty state |
@@ -813,6 +814,7 @@ there:
 | `widget_reload_signal` | KMP, and the extension after a refresh | the app's `WidgetReloadObserver` |
 | `widget_page_<id>` (+ `#u`/`#d` sections), `widget_page_dir_<id>` | extension | extension — **but KMP deletes them** when a station is removed, because it is the only side with an event for that. A section added in Swift needs its suffix in `AppGroupKeys.WIDGET_PAGE_SECTIONS` or it leaks |
 | `widget_last_manual_refresh`, `widget_refresh_*` | extension | extension |
+| `widget_placements` | extension (a stamp per station+family, every timeline build) | the app's `HomeStateProbe`, for the delete dialog |
 
 ---
 
@@ -843,35 +845,81 @@ Full procedure, signing and Xcode-26 gotchas: `IOS_BUILD_AND_HANDOFF.md` §0/§3
 
 ---
 
-## 9. Which station a widget shows, and where a tap goes (2026-08-14)
+## 9. Which station a widget shows, and where a tap goes (2026-08-16)
 
 Four questions a widget has to answer about its own identity. Defect log and
-verification: `SESSION_2026-08-14_WIDGET_CONFIG.md`.
+verification: `SESSION_2026-08-17_WIDGET_STATION.md`, which replaced the
+repointing design described by `SESSION_2026-08-14_WIDGET_CONFIG.md`.
 
-### 9.1 A new widget takes the next station, not always the first
+**One rule sits above all of it:**
 
-`StationEntityQuery.defaultResult()` → `AppGroupStorage.unclaimedStation()`:
+> A widget shows the station in its own configuration, or it shows why it can't.
+> It never substitutes another station's board.
 
-> the first station in the user's order that no placed widget is already
-> showing; when every station is spoken for, a rotation.
+The two halves of the problem are separate questions, and running one rule for
+both is what let a widget change station on its own:
 
-Three stations and three widgets is one each, in the order arranged on the home
-screen; a fourth wraps to the first.
+- **Which station a NEW widget takes.** Add path only, and it cannot move a
+  widget that is already placed. `defaultResult()` and `recommendations()`, both
+  one-liners over the directory (§9.1). This was two files and ~320 lines until
+  2026-08-17; §9.1 records what went and why.
+- **What a PLACED widget shows.** `StationResolution.swift`, on every timeline
+  build. It cannot pick a station the configuration did not name, and when the
+  configuration names nothing it picks nothing (§9.3.2).
 
-**It is a pure read, and that is the design.** The obvious version — a cursor in
-the App Group, advanced per new widget — cannot be made correct, because
-`defaultResult()` is not called once per widget. The system consults it whenever
-the parameter is unresolved, which includes gallery previews and every trip into
-the editor, so a cursor advances on calls that added no widget, drifts, and has
-no repair path: **nothing can rewrite a placed widget's configuration.**
+### 9.1 A new widget starts on your first station
 
-Deriving from the placement stamps (§7) instead makes it idempotent — ten asks,
-one answer — and self-healing: remove the widget showing the second station and
-the next one added takes that station back.
+`defaultResult()` is one line — `readStations().first` — and `recommendations()`
+is the directory, unrotated. They agree by construction, because they are the
+same thing: the station at the top of the user's own home screen.
 
-A short-lived reservation was considered, to close §9.5, and rejected: it cannot
-tell "the same widget asking twice" from "a second widget asking", so it would
-break exactly that idempotency.
+The gallery shows one swipeable preview per station, each labelled with its name,
+so choosing a different one is a swipe before tapping Add. That is where the user
+chooses; this is only the default if they do not.
+
+**It used to distribute** — the first station no placed widget was already
+configured for, wrapping when they were all taken. That needed the exact home
+screen, which needed `getCurrentConfigurations`, which is async and returns an
+empty list inside `timeline(for:in:)`, which needed a cached snapshot in the App
+Group, a TTL, a rule about when an empty answer may overwrite a good one, and a
+fallback to the §7 placement stamps. About 320 lines, two files, to decide which
+station a new widget *suggests*.
+
+It was removed on 2026-08-17, at the user's call, after a run of bugs that all
+came from the same place: **everything it depended on moves.** Stations get
+added, widgets come and go, and the snapshot is only ever as fresh as the last
+caller that could read it. The cost of removing it is that adding two widgets
+without swiping gives the same station twice, fixed by one swipe or one edit.
+
+#### ⚠️ "A widget must never be empty when I have stations" is an ADD-TIME rule
+
+Settled 2026-08-17 and worth writing down, because it comes back as *"why doesn't
+§9.3.2 just render the first station?"* and the answer is not obvious.
+
+It is the same sentence, and it has two possible homes:
+
+| Where it could live | What it does |
+|---|---|
+| **Add time** (here) | A widget is BORN configured for station 1, so it never reaches the empty state at all |
+| Nil time (§9.3.2) | A widget that has *lost* its station gets given station 1 |
+
+They sound interchangeable and are not, because of §9.5.1: **a widget added
+normally never arrives at the provider with a nil station.** `defaultResult()`
+fills it, or the gallery's `recommendations()` intent does, or iOS pre-fills from
+its own cache — and `entities(for:)` only resolves live stations, so even the
+pre-filled value is one of the user's own. The nil population at the provider is
+therefore almost entirely widgets whose station the user *deleted*, which is the
+one case where going empty is what the user asked for.
+
+So the add-time rule delivers the whole benefit, and a nil-time fallback would
+add nothing to the add path while re-creating bugs 3 and 4 of the session log on
+the delete path — delete station A, A's widget silently shows B; add a station,
+every nil widget migrates onto it because a new station goes to the top.
+
+One edge is accepted knowingly: a widget added while the user tracked **zero**
+stations has an empty configuration nothing can ever write, so it stays on
+"Choose a station" after they add their first one. One tap fixes it permanently.
+Every mechanism that would auto-fill it is one of the five substitution defects.
 
 ### 9.2 The directory is in the HOME SCREEN's order
 
@@ -884,31 +932,133 @@ top moved it on the home screen and nowhere else, while the picker, the gallery'
 `UserSettings`, and sorting against an unloaded store sees every board
 `UNPOSITIONED`, ties, and silently falls back to insertion order.
 
-### 9.3 A deleted station's widget REPOINTS; it is never cleared
+⚠️ **That fallback had no defined order until 2026-08-16.** Boards a user has
+never dragged all tie at `UNPOSITIONED`, `ordered` is a stable sort, and
+`selectAllSelections` had no `ORDER BY` — so "your first station" was whatever
+SQLite felt like returning, and `clearAllData()` + re-insert on a cloud restore
+could redefine it. It is now `ORDER BY id`, which is AUTOINCREMENT insertion
+order and never reused. Three surfaces read "first" off that order and all three
+mean the user's first: the picker, `recommendations()`, and the station a new
+widget takes.
 
-`readWidgetData(stationId:)` used to fall through to the legacy flat keys — a
-silent jump to whichever board was primary, through a path that can be staler
-than the per-station keys. It now repoints via `unclaimedStation(anchor:)`.
+### 9.3 A deleted station's widget SAYS SO; it is never substituted
 
-**Repoint rather than clear, because the configured id survives.** Sign out and
-the directory is wiped, every widget shows its empty state, and signing back in
-restores each one to its own station with no action from the user. Re-add a
-deleted station and its widget returns by itself. A widget that had been
-"cleared" would stay cleared **permanently** — there is no API to undo it.
+`readWidgetData(stationId:)` used to REPOINT: a configured station with no stored
+board was silently swapped for "the first station no placed widget is showing".
+Three things were wrong with it.
 
-Two rules keep a repointed widget still:
+1. **It moved on its own.** The unclaimed branch derived its answer from the live
+   placement stamps, and that set moves — stamps expire, the app prunes them,
+   adding any other widget changes it. The `anchor` argument was added to stop
+   exactly this and guarded only the rotation branch underneath it.
+2. **It fired on a missing PAYLOAD, not a missing STATION.** Nothing checked the
+   directory, so a station the user still tracked lost its widget during any
+   window where its board key was briefly absent.
+3. **It was unreadable.** A board is glanced at, not read, so "wrong station,
+   right-looking times" is the worst failure available. The defence — the station
+   name being the largest element — assumed a reading the format does not get.
 
-- **`anchor`** — in the rotation branch the answer would otherwise depend on how
-  many stamps are live, and that number moves as the app prunes them. A board
-  that changed station because an unrelated stamp expired is the failure this
-  design exists to prevent. FNV-1a, not `hashValue`: Swift seeds String hashing
-  per process, so `hashValue` picks a new station on every extension launch.
-- **The stamp records the CONFIGURED station**, not the rendered one. Otherwise a
-  repointed widget claims the station it borrowed, the next build finds it taken,
-  and the board walks down the station list a few minutes at a time.
+**Substitution was chosen because clearing looked unrecoverable:** *"there is no
+API to un-clear it."* That conflated two different things. It is true of ERASING
+THE CONFIGURATION, which nothing in this codebase can do. It is not true of
+rendering an explanatory state: that is decided fresh on every timeline build and
+persists nothing, so the configured id survives and re-adding a station restores
+its widget by itself. **The recoverability the old design protected is kept in
+full. Only the substitution is gone.**
 
-A widget with **no** configuration uses `.first` instead — it stamps what it
-renders, so the claim rule would make it walk for the same reason.
+`StationResolver.board(for:)` is one ordered ladder, total and mutually
+exclusive, first match wins:
+
+| # | condition | result |
+|---|---|---|
+| 1 | signed out | "Sign in to see your board" |
+| 2 | directory empty | "Open the app to add a station" (§9.4) |
+| 3 | no configuration | **asks for one** — see §9.3.2 |
+| 4 | configured id not in the directory | **removed**, named |
+| 5 | station tracked, board not written yet | that station, empty ("waiting") |
+| 6 | otherwise | the live board |
+
+Rung 1 is first because every branch below it looks for a station to show, which
+after a sign-out is the wrong instinct: it would hand a board to a widget the
+previous account left behind. It is also the only rung that must suppress the
+extension's own REST refresh, which authenticates with the API key and would
+refill what the sign-out just cleared.
+
+Rung 4 has one piece of forgiveness before it declares a station gone:
+`directoryEntry(for:in:)` falls back to a **unique name + mode** match. A board's
+directory id is `parentStationId.ifBlank { station }`, so a selection that later
+acquires a hub id changes identity from a pole naptan (`490008805N`) to a
+StopArea (`490G00008805`) — which a cross-device sync can cause, since the legacy
+`stations` payload carries `parentStationId` as optional. Without it the widget
+would announce a station as removed while it sits visibly in the user's list.
+**Uniqueness is what makes it safe**: it keeps Paddington the bus stop from
+matching Paddington the tube station, and an ambiguous directory falls through to
+the removed state, which is unhelpful rather than wrong.
+
+Rung 5 is deliberately not the skeleton and deliberately not another station's
+board. The directory and the per-station boards are separate `NSUserDefaults`
+writes, so a build landing between them sees a station it has no payload for.
+`waiting(at:)` dates its board to the epoch, which is how the trace tells it
+apart from a station whose last train has gone.
+
+**The stale-fetch guard widened from `!isSignedOut` to `!isEmpty`.** Rungs 1, 2
+and 4 all have nothing to fetch, and a removed board carries no `stationId`, so
+the fetch would have fallen through to the legacy keys and quietly refreshed
+somebody else's station into a widget that had just said "removed".
+`WidgetRefreshService.targetStations` skips the same three states for the same
+reason, and only uses the legacy feed for a board with no station id of its own.
+
+### 9.3.2 A widget with no configuration ASKS for one
+
+Rung 3 is not marginal. A widget added while the user tracked no stations can
+never acquire a configuration — `defaultResult()` had nothing to return at the
+time, iOS stored nothing, and nothing afterwards can write a placed widget's
+configuration — and a widget whose station is later deleted arrives here too,
+because iOS nils an unresolvable parameter (§9.3.3). Both show `cfg=nil`.
+
+**It renders `WidgetData.needsStation` and picks nothing.**
+
+⚠️ **This rung is where every substitution bug in this feature came from.** It
+guessed twice, and each guess produced its own defect:
+
+| guess | defect |
+|---|---|
+| `stations[0]` | a newly added station goes to the TOP of the home screen, so every station added dragged every unconfigured widget onto it |
+| a remembered "adopted" station | held still, but put every unconfigured widget on ONE station — and caught widgets whose own station had just been deleted, so deleting station A made its widget show station B |
+
+The second is the important lesson. Each fix made the guess smarter and left the
+guessing in place, and the guessing was the bug. **A provider is handed no widget
+identity**, so nothing here can know which widget is asking or what it showed
+last. The only correct answer to "which station is this?" when nothing has said,
+is to say that nothing has said.
+
+One tap fixes it permanently. Picking a station writes a real configuration, and
+every rung below applies for the life of the widget.
+
+### 9.3.3 Deleting a station UNTAGS its widget — and the sheet lags
+
+A consequence of §9.5.1 worth stating on its own, because it changes what §9.3's
+rung 4 is actually for.
+
+When a station is deleted, `entities(for:)` stops resolving its id. WidgetKit then
+hands the provider `configuration.station == nil` — `cfg=nil` in the trace — and
+reports `station:""` for that widget in `getCurrentConfigurations`. So the widget
+does not reach rung 4 at all; it falls to rung 3 and asks to be given a station.
+
+**That is the intended product behaviour**: deleting a station untags the widgets
+pinned to it. It is also still recoverable, because iOS keeps the STORED
+parameter — re-add the station and it resolves again, and the widget returns to
+it on its own.
+
+⚠️ **Rung 4 is therefore rarer than it looks.** It is reached when the provider
+does get an entity for a station the directory no longer lists, which now means
+essentially the §9.3 grouping-id case, not the ordinary delete.
+
+⚠️ **The Edit sheet can show the deleted station's name for a while.** iOS paints
+the stored parameter from a display representation it cached while the station
+existed, and there is no API that reaches that cache. The board and the sheet
+therefore disagree until the user picks anything from the list, which writes a
+real configuration and ends it permanently.
 
 ### 9.4 "No stations at all" is ONE state
 
@@ -921,24 +1071,116 @@ The widget cannot break the tie: the uid is in the app's **standard** defaults,
 not the App Group, and an extension cannot read those. One empty state — "Open
 the app to add a station" — is true either way and is what ships.
 
-### 9.5 The window that cannot be closed
+### 9.5 Two widgets added together can take the same station
 
-A widget claims its station on its **first timeline build**, a second or two after
-being added. Two widgets added inside that window take the same station. A
-provider is handed no widget identity, so nothing can distinguish them. One Edit
-Widget fixes it.
+With §9.1 simplified this is no longer a race, just a consequence: a widget added
+without swiping takes the first station, so two of them take the same one. One
+swipe in the gallery, or one Edit Widget afterwards, and they differ for ever.
+
+The old note here described a genuine race — a claim window that could not be
+closed because a provider is handed no widget identity — which mattered only
+while a distribution rule was trying to use that identity. It is gone with it.
+
+### 9.5.1 ⚠️ iOS pre-fills a new widget's station, and that beats every rule here
+
+Measured on device 2026-08-16. A user with two healthy stations and two widgets
+added a third, and it arrived configured for a station deleted minutes earlier —
+one that was correctly absent from `widget_stations`, and which neither
+`recommendations()` nor `defaultResult()` could have produced, since both map
+over `readStations()`.
+
+**The widget gallery caches its preview configurations, and AppIntents remembers
+recently used entity values.** When iOS pre-fills the parameter from either, it
+is RESOLVED, so `defaultResult()` is never consulted and §9.1 never runs. There
+is no API to invalidate that cache; `reloadAllTimelines()` does not touch it.
+
+The only lever is `StationEntityQuery.entities(for:)`. An id that resolves to
+nothing leaves the parameter unresolved, which is what sends iOS to
+`defaultResult()` and back onto a real station. So that method must **drop** an
+id it cannot account for rather than describing it:
+
+- In the directory, exactly or via §9.3's name+mode match → the directory's entry.
+- Anything else, including an empty id → **nothing**.
+
+### ⚠️ Whatever `entities(for:)` returns, iOS may WRITE INTO A WIDGET
+
+It is not a display hook. The entity handed back is **persisted as a widget's
+configuration** and **cached as a recently-used value for the intent type**, from
+where iOS fills parameters that have none.
+
+**Measured on device, 2026-08-16.** An intermediate version answered a deleted
+station's id with a "tombstone": same id, last known name, subtitle "Removed from
+Stationly". The App Group showed what iOS did with it — entries in
+`widget_placed` that had read `"mode":"overground"` came back as `"mode":""`,
+which is the tombstone's own signature, since it deliberately carries no mode.
+
+From there it spread. A dead station confirmed by us as a resolvable entity is a
+candidate for every widget with an unresolved parameter, so deleted stations kept
+reappearing on widgets the user had never pointed at them — one capture had FIVE
+of six widgets configured for a station that no longer existed. And a parameter
+iOS can fill from its cache is not unresolved, so §9.1 never ran at all.
+
+The symptom that exposed it: a widget correctly showing a live station rebuilt as
+a deleted one after a refresh tap, with the refresh itself demonstrably fine.
+
+```
+1786919919 timeline tap cfg=490G00013695 state=live      ← live station
+1786920183 refresh targets=1 naptans=1
+1786920183 wrote 490G00013695 groups=1                   ← refresh worked
+1786920183 timeline tap cfg=910GHGHI state=removed       ← same widget, dead station
+```
+
+**So: answer only for things that exist.** An id with no station behind it
+resolves to nothing, iOS has nothing to propagate, and an unresolved parameter
+has nowhere to go but `defaultResult()`.
+
+What that costs: the Edit sheet opened on a widget whose station was deleted falls
+back to the name AppIntents cached — a stale label on one row, with the live
+stations listed underneath it. The board still names the dead station honestly,
+because rung 4 runs off the widget's own configuration and never travels through
+an AppEntity.
+
+**Do not reintroduce a descriptive entity of any kind here.** The `tombstone`
+factory has been deleted rather than left unused, with a note in its place.
+
+⚠️ **The empty directory MASKS the removed state, which makes the transition look
+like a malfunction.** With no stations, rung 2 fires first and every widget reads
+"Open the app to add a station" whatever it is configured for. Add one station
+and rung 2 stops firing, rung 4 takes over, and every stale configuration in the
+set becomes visible at once. Nothing changed about those widgets; they were
+covered.
+
+⚠️ **The tombstone needs that proof.** The first version returned one for any
+unresolved id, which answered "Removed station" to a user adding a third widget
+to a perfectly healthy pair. A tombstone is a claim about the user's own history
+and must not be made from an id alone.
 
 ### 9.6 A tap opens the app on THAT station
 
-`.widgetURL(entry.render.deepLink)` → `stationly://home?station=<groupingId>` →
+`.widgetURL(entry.render.deepLink)` → `<scheme>://home?station=<groupingId>` →
 `ContentView.onOpenURL` → `BoardFocus` → `SummaryScreen` pages the carousel or
 expands-and-scrolls the list.
+
+⚠️ **`<scheme>` is per environment and must never be written as a literal**
+(`stationly-staging` / `stationly`, from `STATIONLY_URL_SCHEME`). Both sides read
+it from their own Info.plist: the widget in `StationlyDeepLink`, the app in
+`stationlyUrlScheme` next to `ContentView`.
+
+**This cost a release.** The env split parameterised the widget and left
+`.onOpenURL` comparing against `"stationly"`, so on staging iOS routed every
+widget tap to the app and the handler dropped it one line later. The failure is
+invisible from outside — the app opens, on whatever it was last showing, which
+looks exactly like the feature never having been built — and it leaves **no
+trace entry**, because the guard returns before any logging so that foreign URLs
+cannot spend the 40-deep ring. Fixed 2026-08-16.
 
 - The URL is built **once per timeline**, in `BoardRenderState` (§ the archiving
   rule) — never in `body`, where it would be a percent-encode and a URL parse per
   entry, per widget, inside the archive pass.
-- It carries the **rendered** station, so a repointed widget opens what is on
-  screen rather than a station the user no longer has.
+- It carries the **rendered** station, which since §9.3 is always the configured
+  one as well. A widget in the removed state has no station id, so the URL is nil
+  and a tap just opens the app: there is nothing to deep-link to, and the fix for
+  that widget is a touch-and-hold rather than a tap.
 - It does not fight the arrows or refresh: `Button(intent:)` keeps its own hit
   region, `widgetURL` claims the rest — §6's rule, now leading somewhere.
 - `BoardFocus` is a singleton flow, **not** a `MainViewController` parameter: the

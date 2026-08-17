@@ -7,6 +7,34 @@ import os
 /// Deep-link arrivals — see the `.onOpenURL` handler below.
 private let deepLinkLog = Logger(subsystem: "com.stationly.mobile", category: "deeplink")
 
+/// The scheme THIS build answers to, read from its own Info.plist.
+///
+/// Not a literal, and the reason is a bug this spent a release with: staging and
+/// production register different schemes (`stationly-staging` / `stationly`, from
+/// `STATIONLY_URL_SCHEME`) so that a tap in the staging widget cannot be handed
+/// to the production app. The widget was parameterised for the split;
+/// `.onOpenURL` was left comparing against the production literal, so on staging
+/// every widget tap was registered by iOS, delivered here, and dropped one line
+/// later. The user saw the app open on whatever it was last showing, which is
+/// indistinguishable from the feature never having been built.
+///
+/// `$(STATIONLY_URL_SCHEME)` populates both this key and `CFBundleURLSchemes`
+/// from one build setting, so what we compare against and what iOS routes to us
+/// cannot drift apart again.
+///
+/// Falls back rather than trapping, unlike the widget's copy of this: an app
+/// extension can afford `fatalError` on a broken build contract, and the app
+/// refusing to launch over a deep-link scheme cannot be the right trade.
+private let stationlyUrlScheme: String = {
+    guard let scheme = Bundle.main.object(forInfoDictionaryKey: "StationlyUrlScheme") as? String,
+          !scheme.isEmpty
+    else {
+        deepLinkLog.error("StationlyUrlScheme missing from Info.plist — widget taps will not focus a station")
+        return "stationly"
+    }
+    return scheme
+}()
+
 struct ContentView: View {
     @AppStorage("app_theme") private var appTheme: String = "system"
     /// `AuthBridge.hasSession` rather than `Auth.auth().currentUser != nil`.
@@ -111,7 +139,7 @@ struct ContentView: View {
                 // Returned before any logging so a foreign URL cannot spend
                 // entries in `PushTraceSwift`'s 40-deep ring, which is shared
                 // with the push trace and is the only diagnostic either side has.
-                guard url.scheme == "stationly" else { return }
+                guard url.scheme == stationlyUrlScheme else { return }
                 guard url.host == "home",
                       let station = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                           .queryItems?.first(where: { $0.name == "station" })?.value,

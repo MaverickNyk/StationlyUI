@@ -408,39 +408,57 @@ enum WidgetRefreshService {
     /// Falls back to the tapped station alone if WidgetKit declines to answer,
     /// so a refresh never becomes a no-op just because that call failed.
     private static func targetStations(_ d: UserDefaults, tapped: String) async -> [RefreshTarget] {
-        var ids: [String] = []
+        // The whole ENTITY, not just the id: `StationResolver` needs the name to
+        // recognise a station whose grouping id changed, and to name one that is
+        // gone. Passing an id alone would make this path resolve a widget
+        // differently from the renderer, which is the one thing it must not do.
+        var configured: [StationEntity?] = []
         for info in await installedWidgets() {
-            if let id = info.widgetConfigurationIntent(of: SelectStationIntent.self)?
-                .station?.id, !id.isEmpty {
-                ids.append(id)
+            if let station = info.widgetConfigurationIntent(of: SelectStationIntent.self)?
+                .station, !station.id.isEmpty {
+                configured.append(station)
             }
         }
         // The tapped widget last: it is almost certainly already in the list,
         // and appending rather than prepending keeps WidgetKit's own ordering.
-        if !tapped.isEmpty { ids.append(tapped) }
-        // An unconfigured widget contributes no id at all, so a home screen of
+        // Only its id is available here (it arrives from an AppIntent parameter),
+        // so it is rebuilt as a bare entity — enough for the exact id match that
+        // resolves a live station, and `seen` collapses it into the richer copy
+        // above whenever both are present, which is the normal case.
+        if !tapped.isEmpty {
+            configured.append(StationEntity(id: tapped, name: "", mode: "", lines: []))
+        }
+        // An unconfigured widget contributes nothing, so a home screen of
         // nothing but legacy widgets still has to reach the legacy board.
-        if ids.isEmpty { ids.append("") }
+        if configured.isEmpty { configured.append(nil) }
 
         var seen = Set<String>()
         var targets: [RefreshTarget] = []
-        for id in ids {
+        for station in configured {
             // Resolved through the same reader the RENDERER uses, so a refresh
-            // can never target a board other than the one on screen — including
-            // the REPOINT it applies for a station since deleted. That shared
-            // resolution is why this invariant survived repointing replacing the
-            // old legacy-key fallback: both live in `readWidgetData`, and
-            // `seen` then collapses two widgets repointed to the same station
-            // into one fetch.
-            let board = AppGroupStorage.shared.readWidgetData(stationId: id)
+            // can never target a board other than the one on screen. `seen` then
+            // collapses two widgets deliberately placed on one station into a
+            // single fetch.
+            let board = AppGroupStorage.shared.readWidgetData(for: station)
+            // Nothing to ask the API for: any of the four empty states, or a
+            // tracked station whose payload has not been written yet, whose
+            // feeds live in that payload. Both must be skipped BEFORE the legacy
+            // fallback below — those flat keys belong to whichever board leads
+            // the home screen, so using them here would fetch one station and
+            // write it under another's key. Same predicate as the timeline
+            // provider's staleness guard; see `WidgetData.isFetchable`.
+            guard board.isFetchable else { continue }
             guard seen.insert(board.stationId).inserted else { continue }
-            let feeds = board.feeds.isEmpty ? legacyFeed(d).map { [$0] } ?? [] : board.feeds
-            if !feeds.isEmpty {
-                targets.append(RefreshTarget(
-                    stationId: board.stationId, feeds: feeds,
-                    mode: board.mode, groups: board.groups
-                ))
-            }
+            // `isFetchable` has already established that an empty `feeds` means
+            // the legacy board, so this no longer has to re-test the station id.
+            let feeds = board.feeds.isEmpty
+                ? (legacyFeed(d).map { [$0] } ?? [])
+                : board.feeds
+            guard !feeds.isEmpty else { continue }
+            targets.append(RefreshTarget(
+                stationId: board.stationId, feeds: feeds,
+                mode: board.mode, groups: board.groups
+            ))
         }
         return targets
     }

@@ -25,6 +25,7 @@
 		7ECDD355828B7FFCA7AF9072 /* AppGroupID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97E45A83D0043D7E5591F183 /* AppGroupID.swift */; };
 		875215AA235312C1FEF7D5E1 /* WidgetPushHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = D168F4502EC6C4FECA881F67 /* WidgetPushHandler.swift */; };
 		8B590E4A471A5538649CEBCF /* WidgetRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AA433530A96563307A6CAA8 /* WidgetRefreshService.swift */; };
+		8E7C81E20D63BC001B6F1D33 /* StationResolution.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DD084811CFD2DD3C10F78DB /* StationResolution.swift */; };
 		99B49945DB0F17F7094153A9 /* RefreshScheduleStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72065508ED95ACC5AA5B3711 /* RefreshScheduleStore.swift */; };
 		9F3A175D3B8A470544BB8BE2 /* AppGroupKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71BBE9EECA29F7BC9A109C5B /* AppGroupKeys.swift */; };
 		A127096D6F3B2879A8B21DBD /* BGTaskIdentifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C3094654CA7F51E16206428 /* BGTaskIdentifier.swift */; };
@@ -102,6 +103,7 @@
 		8FD2D2AA7865370F9D9B2E85 /* WidgetTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetTheme.swift; sourceTree = "<group>"; };
 		96749FEEFB87671930DBEF31 /* AppGroupID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupID.swift; sourceTree = "<group>"; };
 		97E45A83D0043D7E5591F183 /* AppGroupID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupID.swift; sourceTree = "<group>"; };
+		9DD084811CFD2DD3C10F78DB /* StationResolution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationResolution.swift; sourceTree = "<group>"; };
 		C117AD187833E2513BD2F553 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C357B6723C45127EC27E81E4 /* Staging.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Staging.xcconfig; sourceTree = "<group>"; };
 		C6D2DD7FE2E0BF5DB2A96B4B /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -200,6 +202,7 @@
 				75982716E6D0AEC8FEED4D33 /* StationConfiguration.swift */,
 				DC75E3E8045F2DC8D1922D50 /* StationlyWidget.swift */,
 				8F7BF3D0F900FDF96129BA89 /* StationlyWidgetBundle.swift */,
+				9DD084811CFD2DD3C10F78DB /* StationResolution.swift */,
 				306E4366DEB79A6AD438619D /* WidgetPageIntent.swift */,
 				D168F4502EC6C4FECA881F67 /* WidgetPushHandler.swift */,
 				4AA433530A96563307A6CAA8 /* WidgetRefreshService.swift */,
@@ -441,6 +444,7 @@
 				15004BFF21C3E1734FA5E510 /* DepartureEntry.swift in Sources */,
 				99B49945DB0F17F7094153A9 /* RefreshScheduleStore.swift in Sources */,
 				CFE992350AE1D45C71A414A2 /* StationConfiguration.swift in Sources */,
+				8E7C81E20D63BC001B6F1D33 /* StationResolution.swift in Sources */,
 				C0D402F91C254C0EFB1C3A91 /* StationlyWidget.swift in Sources */,
 				C3E3BCF8F138F630927C544F /* StationlyWidgetBundle.swift in Sources */,
 				A774AD58CF3505F914CB83D7 /* WidgetPageIntent.swift in Sources */,

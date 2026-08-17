@@ -1444,6 +1444,13 @@ Four asks, all about a widget knowing which station it is for. Full defect log:
 **`SESSION_2026-08-14_WIDGET_CONFIG.md`**. Feature reasoning:
 `IOS_WIDGET_DESIGN.md` §9.
 
+> ⚠️ **Points 1 and 2 below were superseded two days later.** Repointing is gone:
+> a widget whose station was deleted now says so and shows nothing, rather than
+> substituting another station's board, and `unclaimedStation()` was deleted with
+> it. Kept as written because this is a dated log of what that session did. The
+> current design is `SESSION_2026-08-17_WIDGET_STATION.md` and the rewritten
+> `IOS_WIDGET_DESIGN.md` §9.
+
 1. **A new widget takes the next station.** `defaultResult()` →
    `AppGroupStorage.unclaimedStation()` — the first station no placed widget is
    showing, rotating when all are taken. A pure read of the placement stamps, so

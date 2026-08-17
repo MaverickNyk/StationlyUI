@@ -297,10 +297,12 @@ sign-out has to be **stated**, in the one place both processes can see:
 - `widget_signed_out`, **raised** by `AuthBridge.logout()` and by
   `IosWidgetManager.clearWidgetData` (reached only from `cleanupAll()`), and
   **lowered** by `AuthBridge.persistUserIdentity`.
-- The extension checks it in `AppGroupStorage.readWidgetData` (renders
-  `WidgetData.signedOut` — "Sign in to see your board"), in the timeline's
-  staleness branch, and in `WidgetRefreshService.refresh` (the door the refresh
-  button and the WidgetKit push handler come through).
+- The extension checks it on the **first rung** of `StationResolver.board(for:)`
+  (renders `WidgetData.signedOut` — "Sign in to see your board"), in the
+  timeline's staleness branch, and in `WidgetRefreshService.refresh` (the door
+  the refresh button and the WidgetKit push handler come through). It is first
+  because every rung below it looks for a station to show, which after a sign-out
+  would hand a board to a widget the previous account left behind.
 - It is **not** the same as "no stations". A signed-in user who deletes their
   last board wipes to the same empty App Group and must keep the refresh path
   they have — so `refreshAllBoards`'s own `wipe()` never raises it.

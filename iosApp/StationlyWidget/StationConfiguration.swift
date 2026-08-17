@@ -84,6 +84,17 @@ struct StationEntity: AppEntity, Identifiable, Hashable {
 
     private static let maxNamedLines = 3
 
+    // ⚠️ There was a `tombstone(id:name:)` factory here, for describing a
+    // station the user had deleted. It is gone, and it must not come back: iOS
+    // PERSISTS whatever `StationEntityQuery.entities(for:)` returns into widget
+    // configurations and its own recently-used cache, so an entity built to
+    // describe an absence became a live candidate that kept re-assigning deleted
+    // stations to widgets. The full measurement is on `entities(for:)`.
+    //
+    // Nothing else needs it. The board's removed state is `WidgetData.removed`,
+    // built from the widget's own configuration, and never travels through an
+    // AppEntity.
+
     /// SF Symbol of last resort — see [RoundelImage] for when it is reached.
     static func symbol(for mode: String) -> String {
         switch mode.lowercased() {
@@ -207,11 +218,69 @@ enum RoundelImage {
 /// will never use it; one who tracks eight will, and an inert search box is
 /// worse than none.
 struct StationEntityQuery: EntityStringQuery {
+    /// Resolves the value the Edit Widget sheet shows as *currently selected*.
+    ///
+    /// ## Three things this has to get right, and it used to get one
+    /// It was `all.first { $0.id == id }` — an exact lookup that returns nothing
+    /// for an id the directory no longer lists. Nothing is not neutral here:
+    /// AppIntents falls back to the display representation it cached when the
+    /// widget was configured, so the sheet showed a station that was **not in
+    /// the list below it and not on the board**, with no explanation. That is
+    /// the reported defect.
+    ///
+    ///  1. **A station that still exists resolves to the DIRECTORY's copy**, not
+    ///     the configuration's. So a renamed station, or one whose tracked lines
+    ///     changed, shows what the app shows today rather than what it was
+    ///     called when the widget was set up.
+    ///  2. **A station whose grouping id changed still resolves**, through
+    ///     `StationResolver.directoryEntry` — the same match the board uses, so
+    ///     the sheet and the widget can never disagree about whether a station
+    ///     is gone.
+    ///  3. **A station that is gone resolves to NOTHING.** Not a substitute, and
+    ///     not a description of the absence either. See below — this one was
+    ///     learned the hard way.
+    ///
+    /// ## ⚠️ Whatever this returns, iOS may WRITE INTO A WIDGET
+    /// This is not a display hook. The entity handed back here is persisted as a
+    /// widget's configuration and cached as a recently-used value for the intent
+    /// type, from where iOS will use it to fill in a parameter that has none.
+    ///
+    /// **Measured, on device.** An earlier version answered a deleted station's
+    /// id with a "tombstone" — the same id, the last known name, subtitle
+    /// "Removed from Stationly" — on the theory that naming the absence was
+    /// friendlier than a blank. The App Group told the real story: entries in
+    /// `widget_placed` that had read `"mode":"overground"` came back as
+    /// `"mode":""`, which is the tombstone's own signature, because the tombstone
+    /// deliberately carries no mode. iOS had taken it and stored it.
+    ///
+    /// From there it spread. A dead station, confirmed by us as a resolvable
+    /// entity, is a candidate for every widget with an unresolved parameter — so
+    /// deleted stations kept reappearing on widgets the user had never pointed at
+    /// them, and one capture had FIVE of six widgets configured for a station
+    /// that no longer existed. `defaultResult()` never got a chance, because a
+    /// parameter iOS can fill from its cache is not unresolved.
+    ///
+    /// So the rule is the plain one every other entity query follows: **answer
+    /// for things that exist.** An id with no station behind it resolves to
+    /// nothing, iOS has nothing to propagate, and an unresolved parameter has
+    /// nowhere to go but `defaultResult()` — which is the only thing here that
+    /// knows how to pick a station the user actually tracks.
+    ///
+    /// What is lost: the Edit sheet, opened on a widget whose station was
+    /// deleted, falls back to the name AppIntents cached. That is a stale label
+    /// on one row of one sheet, and the row below it is the live station the user
+    /// came to pick. The board still names the dead station honestly — that runs
+    /// off the widget's own configuration in `StationResolver`, and nothing here
+    /// touches it.
     func entities(for identifiers: [String]) async throws -> [StationEntity] {
         let all = AppGroupStorage.shared.readStations()
         // Preserve the caller's order — it is asking about specific ids, and
         // one already-configured widget asks about exactly one.
-        return identifiers.compactMap { id in all.first { $0.id == id } }
+        return identifiers.compactMap { id in
+            // An unconfigured widget's parameter. Never was a station.
+            guard !id.isEmpty else { return nil }
+            return all.first { $0.id == id }
+        }
     }
 
     /// Matches the station name AND its lines: "victoria" should find both
@@ -231,22 +300,28 @@ struct StationEntityQuery: EntityStringQuery {
         AppGroupStorage.shared.readStations()
     }
 
-    /// What a newly added widget shows.
+    /// The station a new widget starts on: **the first one on the home screen.**
     ///
-    /// A widget dropped on the home screen must say something immediately — an
-    /// empty board reading "choose a station" would make the user open an editor
-    /// to see anything at all.
+    /// ## Why this is a one-liner
+    /// It used to distribute — the first station no placed widget was already
+    /// configured for, wrapping when they were all taken — which needed the exact
+    /// home screen, which needed a cached snapshot with a TTL, a rule about empty
+    /// answers, and a fallback to placement stamps. About 320 lines to decide
+    /// which station a new widget *suggests*, on a screen where the user is
+    /// already looking at one labelled preview per station and can swipe.
     ///
-    /// It used to be `.first` unconditionally, which meant a user with three
-    /// stations who added three widgets got three copies of the same board and
-    /// had to go into Edit Widget twice to fix it. Now it is the first station
-    /// nothing is already showing, so widgets fill the list in the order the
-    /// user arranged it and a fourth wraps around. `unclaimedStation()` carries
-    /// the reasoning, including why this is a pure read — it matters here, since
-    /// the system calls this whenever the parameter is unresolved and not once
-    /// per widget.
+    /// It was also the source of a run of bugs, because everything it depended on
+    /// moves: stations get added, widgets come and go, and the snapshot is only
+    /// as fresh as the last time something asked for it.
+    ///
+    /// The user picks in the gallery. This just has to be a sane, stable, honest
+    /// default, and "the station at the top of your home screen" is all three.
+    ///
+    /// Nil when the user tracks no stations. The widget then renders
+    /// `WidgetData.needsStation` and asks to be given one, which is the only
+    /// truthful thing available — see `StationResolver` rung 3.
     func defaultResult() async -> StationEntity? {
-        AppGroupStorage.shared.unclaimedStation()
+        AppGroupStorage.shared.readStations().first
     }
 }
 
@@ -268,7 +343,7 @@ struct SelectStationIntent: WidgetConfigurationIntent {
     /// takes a `LocalizedStringResource`, which is built from a literal at
     /// COMPILE time so the string can be extracted for localisation. A `+`
     /// concatenation is an ordinary `String` and does not match the initialiser.
-    static var description = IntentDescription("Pick the station this board shows. How deep each platform goes, and which platform leads, come from that station's settings in Stationly.")
+    static var description = IntentDescription("Pick the station this widget shows. How many departures it lists, and which platform comes first, are set per station in Stationly.")
 
     /// "Station" and not "Board": the row's VALUE is a station name, and a
     /// label that disagrees with the thing next to it makes the user read both.

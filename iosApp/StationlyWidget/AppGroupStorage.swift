@@ -1,5 +1,15 @@
 import Foundation
 import UIKit
+import os
+
+/// The two failures in this file that a user could hit and nobody would see.
+///
+/// `os_log`, NOT `print`: print goes to stdout, which is unattached in a widget
+/// extension on a real device, so the two calls this replaced could never have
+/// been read by anyone. Both are hard faults on a path with a silent fallback
+/// (`.empty`), which is exactly the shape that gets misreported as "the widget
+/// is just blank".
+private let storageLog = Logger(subsystem: "com.stationly.mobile.StationlyWidget", category: "appgroup")
 
 // MARK: - ModeIconProvider
 
@@ -348,37 +358,122 @@ struct WidgetData {
     /// however high the setting goes. See `BoardMetrics.rows(for:)`.
     var rowCap: Int = 3
 
-    /// Why this board is empty: the account signed out, rather than no station
-    /// having been chosen.
+    /// Why this board has nothing to draw. Set ONLY by the factories below, so
+    /// the four states cannot overlap or need a precedence rule between them.
     ///
-    /// Only the copy differs — "Sign in to see your board" instead of "Open the
-    /// app to add a station" — but telling a user to add a station they already
-    /// have is the kind of wrong answer that reads as the widget being broken.
-    /// Defaulted so every existing construction site keeps its meaning.
-    var isSignedOut: Bool = false
+    /// This was three parallel flags (`isSignedOut`, `removedStationName`,
+    /// `needsStation`) plus a computed property that ordered them. Nothing ever
+    /// read the flags directly — every consumer went through [emptyReason] — so
+    /// they bought nothing but the ability to set two at once and the question of
+    /// which would win. One value cannot disagree with itself.
+    ///
+    /// Private because it is only half the answer: an empty board with no reason
+    /// recorded still means something (see [emptyReason]), and a caller reading
+    /// this raw would miss it.
+    private var reason: EmptyReason? = nil
+
+    /// Why this board has nothing to draw, or nil when it has something.
+    ///
+    /// Everything user-visible about an empty board comes through here: the
+    /// empty view's three copy variants and the trace's [stateName] are each a
+    /// total switch over it, so a state added later cannot silently inherit
+    /// another one's wording.
+    ///
+    /// The `?? .noStations` is load-bearing. `WidgetData.empty` is constructed in
+    /// several places that pre-date these states and records no reason, and "the
+    /// user tracks no stations" is exactly what a bare empty board has always
+    /// meant. Without the default those boards would report no reason at all and
+    /// render nothing under the roundel.
+    var emptyReason: EmptyReason? {
+        guard isEmpty else { return nil }
+        return reason ?? .noStations
+    }
+
+    /// The four ways a board can have nothing to show. Mutually exclusive by
+    /// construction — only `StationResolver` builds them, in one ordered ladder.
+    enum EmptyReason: Equatable {
+        /// The account signed out. The directory is wiped, but every widget's
+        /// configuration survives, so signing back in restores all of them.
+        case signedOut
+        /// The user tracks no stations: a fresh install, or the last board
+        /// deleted. Indistinguishable from each other here by design — see
+        /// `StationResolver` rung 2.
+        case noStations
+        /// Nothing has ever said which station this widget is for.
+        case needsStation
+        /// The station it was configured for is no longer tracked.
+        case removed(station: String)
+    }
+
+    /// Which state this board is in, as one word, for the on-device trace.
+    ///
+    /// Lives here rather than on `StationResolver` because every input is a
+    /// property of this type: the resolver decides which board to build, and
+    /// this describes the board that came out. Reading it off the data means the
+    /// trace cannot claim a rung the renderer did not take.
+    ///
+    /// An extension has no attachable console (`os_log` is write-only on the
+    /// test device), so "which state is this widget actually in" is otherwise
+    /// unanswerable without pulling the App Group and inferring it.
+    var stateName: String {
+        switch emptyReason {
+        case .signedOut:    return "signedOut"
+        case .noStations:   return "none"
+        case .needsStation: return "unset"
+        case .removed:      return "removed"
+        case nil:
+            // `waiting` is told from a genuinely quiet station by the TIMESTAMP,
+            // not by the row count: `StationResolver.waiting(at:)` dates its
+            // board to the epoch because no fetch has produced one, where a
+            // station whose last train has gone carries the time of the fetch
+            // that said so.
+            if groups.isEmpty { return hasTimestamp ? "quiet" : "waiting" }
+            return "live"
+        }
+    }
+
+    /// Whether the extension's own REST refresh could do anything for this board.
+    ///
+    /// Two boards are fetchable: one carrying its own [feeds], and the legacy
+    /// single-station board, which has no station id and is served by the flat
+    /// `widget_api_*` keys.
+    ///
+    /// ⚠️ **A tracked station whose payload has not been written yet is NOT.**
+    /// Its feeds live in that payload — the naptan to call and the (line,
+    /// direction) pairs to keep — so there is literally nothing to ask the API
+    /// for. It is also dated to the epoch, which makes it permanently "stale", so
+    /// without this check the timeline path started a task group, a timeout timer
+    /// and a WidgetKit enumeration on EVERY build to produce zero targets.
+    ///
+    /// Used by the provider's staleness guard and by
+    /// `WidgetRefreshService.targetStations`, which must agree or one of them
+    /// fetches something the other will not render.
+    var isFetchable: Bool {
+        guard !isEmpty else { return false }
+        return !feeds.isEmpty || stationId.isEmpty
+    }
 
     // A `departures` property that flattened every block used to live here, and
     // it is deliberately gone: the render path only ever asked it three
     // questions — is it empty, give me the first few, how many — and answering
     // any of them by materialising the whole board is work paid on a process
-    // iOS cold-launched to service one tap. The accessors below answer them
-    // without allocating, and none of them can be written past.
+    // iOS cold-launched to service one tap.
     //
-    // (`firstDepartures(_:)` was the third, and went with the caller that
-    // needed it: the small family used to show the first three rows of whatever
-    // block happened to come first, which is precisely the behaviour that hid
-    // every other platform from it. It now pages blocks like the medium board,
-    // so there is nothing left that wants a flat prefix of the whole station.)
+    // Two of the three callers have since gone as well:
+    //
+    // - `firstDepartures(_:)` went with the small family's old layout, which
+    //   showed the first three rows of whatever block happened to come first —
+    //   precisely the behaviour that hid every other platform from it. It pages
+    //   blocks like the medium board now, so nothing wants a flat prefix.
+    // - `departureCount` existed for one `os_log` line in the timeline provider
+    //   that has been folded into the trace. It walked every row of every block
+    //   to produce a number nobody read, on the path it was measuring.
 
     /// Whether the board has any row at all, without building the list.
     ///
     /// Short-circuits on the first non-empty block — one comparison in the
     /// common case, against a full flatMap before.
     var hasDepartures: Bool { groups.contains { !$0.rows.isEmpty } }
-
-    /// Row count without building the list — for logging, which must never be
-    /// the most expensive thing on a code path.
-    var departureCount: Int { groups.reduce(0) { $0 + $1.rows.count } }
 
     // MARK: Sections (how a tall canvas divides its blocks)
 
@@ -656,15 +751,18 @@ struct WidgetData {
         )
     }
 
-    /// Shown when the account signed out — see `AppGroupKeys.signedOut`.
+    /// A board with nothing on it and a recorded reason why.
     ///
-    /// `lastUpdated` is NOW rather than the epoch on purpose: the timeline
-    /// provider fetches whatever it holds if it is older than
-    /// `staleAfterSeconds`, and a signed-out board dated 1970 would send every
-    /// build straight down the path this state exists to stop. Belt and braces
-    /// — the provider checks the flag first — but a board that describes itself
-    /// honestly cannot be misread by a future caller that forgets to.
-    static var signedOut: WidgetData {
+    /// The three states below were three copies of this, differing in one
+    /// assignment each.
+    ///
+    /// ## `lastUpdated` is NOW, and that is load-bearing for all of them
+    /// The timeline provider fetches whatever it holds once that is older than
+    /// `staleAfterSeconds`, so an empty board dated to the epoch would send
+    /// every single build down the path these states exist to stop. Belt and
+    /// braces — `isFetchable` rejects them first — but a board that describes
+    /// itself honestly cannot be misread by a future caller that forgets to.
+    private static func empty(_ reason: EmptyReason) -> WidgetData {
         var data = WidgetData(
             stationName: "",
             lineName: "",
@@ -675,8 +773,35 @@ struct WidgetData {
             lastUpdated: Date(),
             isEmpty: true
         )
-        data.isSignedOut = true
+        data.reason = reason
         return data
+    }
+
+    /// Shown when the account signed out — see `AppGroupKeys.signedOut`.
+    static var signedOut: WidgetData { empty(.signedOut) }
+
+    /// Shown when the user tracks no stations at all.
+    ///
+    /// Named for the state rather than matching `EmptyReason.noStations`, so
+    /// that a bare `.noStations` in a `WidgetData` position cannot be read as
+    /// the enum case. The type already had one static/case name collision
+    /// (`needsStation`) and it was not worth a second.
+    ///
+    /// `WidgetData.empty` reports the same reason by default — this is for the
+    /// callers that mean it deliberately rather than by omission.
+    static var noStationsTracked: WidgetData { empty(.noStations) }
+
+    /// Shown when nothing has said which station this widget is for.
+    ///
+    /// The widget has no configuration, and this extension has no way to invent
+    /// one: a timeline provider is handed no widget identity, so it cannot know
+    /// which widget is asking or what it showed last. Every previous attempt to
+    /// answer anyway became a substitution bug — see `StationResolver` rung 3.
+    static var needsStation: WidgetData { empty(.needsStation) }
+
+    /// Shown when the configured station is no longer one the user tracks.
+    static func removed(station name: String) -> WidgetData {
+        empty(.removed(station: name))
     }
 
     // MARK: Tick layer (Android consistency contract)
@@ -752,9 +877,9 @@ struct WidgetData {
         // idea which station it is — and its paging and refresh buttons acting
         // on whatever the legacy keys happened to hold.
         //
-        // `isSignedOut` is not listed because it cannot reach here: that board
-        // has no groups, so the guard above returns `self` with the flag intact.
-        // Anything that gives a signed-out board blocks must carry it here too.
+        // `reason` is not listed because it cannot reach here: every board that
+        // records one has no groups, so the guard above returns `self` with it
+        // intact. An empty state that ever gains blocks must carry it here too.
         return WidgetData(
             stationName: stationName, lineName: lineName, lineDisplay: lineDisplay,
             direction: direction, mode: mode, groups: tickedGroups, status: status,
@@ -916,7 +1041,7 @@ class AppGroupStorage {
     /// no cross-process race to lose here, and the worst case if one were lost
     /// is a stamp that refreshes on the next build a few minutes later.
     func notePlacement(station: String, family: String) {
-        guard !station.isEmpty, let defaults else { return }
+        guard !station.isEmpty else { return }
         let now = Date().timeIntervalSince1970
         var stamps = readPlacementStamps()
         if let index = stamps.firstIndex(where: { $0.station == station && $0.family == family }) {
@@ -930,12 +1055,18 @@ class AppGroupStorage {
         if stamps.count > Self.maxPlacementStamps {
             stamps = Array(stamps.sorted { $0.at > $1.at }.prefix(Self.maxPlacementStamps))
         }
-        guard let encoded = try? JSONEncoder().encode(stamps),
-              let raw = String(data: encoded, encoding: .utf8) else { return }
-        defaults.set(raw, forKey: AppGroupKeys.placements)
+        writePlacementStamps(stamps)
     }
 
-    func readPlacementStamps() -> [WidgetPlacementStamp] {
+    /// Both directions of the stamp list, private because the pair is only ever
+    /// a read-modify-write of the whole array and [notePlacement] is the one
+    /// operation anybody wants. The encode half used to be written out twice —
+    /// once inline above and once in a `writePlacementStamps` that no longer had
+    /// any caller at all.
+    ///
+    /// The app reads the same key through its own decoder in `HomeStateProbe`;
+    /// it is a separate target and cannot see these.
+    private func readPlacementStamps() -> [WidgetPlacementStamp] {
         guard let raw = defaults?.string(forKey: AppGroupKeys.placements),
               let data = raw.data(using: .utf8),
               let stamps = try? JSONDecoder().decode([WidgetPlacementStamp].self, from: data)
@@ -943,7 +1074,7 @@ class AppGroupStorage {
         return stamps
     }
 
-    func writePlacementStamps(_ stamps: [WidgetPlacementStamp]) {
+    private func writePlacementStamps(_ stamps: [WidgetPlacementStamp]) {
         guard let defaults else { return }
         guard let encoded = try? JSONEncoder().encode(stamps),
               let raw = String(data: encoded, encoding: .utf8) else { return }
@@ -952,160 +1083,28 @@ class AppGroupStorage {
 
     private static let maxPlacementStamps = 24
 
-    // MARK: - Which station a widget takes when its own answer is missing
+    // MARK: - Which station a widget shows
 
-    /// How long a placement stamp goes on speaking for a station after it last
-    /// moved.
+    /// The board a widget should render for its configured station.
     ///
-    /// A stamp is refreshed on every timeline build, so one that has stopped
-    /// moving belongs to a widget that has stopped being asked for timelines —
-    /// i.e. one that was removed. The bound has to clear the longest gap a LIVE
-    /// widget can have between builds, and that is not a small number: the
-    /// overnight tiers taper to hours (a measured build scheduled its successor
-    /// 395 minutes out), and a widget that has spent its daily reload budget can
-    /// go longer still with nothing wrong with it.
-    ///
-    /// 36 hours clears both with room, and is short enough that a widget removed
-    /// on a phone whose owner never opens the app stops holding its station
-    /// within a day and a half. It is a backstop and not the mechanism: the app
-    /// reconciles stamps against the host's real placement list on every
-    /// foreground (`HomeStateProbe.describe`), which is exact and normally gets
-    /// there first.
-    private static let claimTTL: TimeInterval = 36 * 3600
-
-    /// The station a widget should take when its own configuration cannot say.
-    ///
-    /// Two callers ask the same question: a widget being ADDED
-    /// (`StationEntityQuery.defaultResult`) and a widget whose configured
-    /// station has since been DELETED (`readWidgetData(stationId:)`).
-    ///
-    /// ## The rule
-    /// The first station in the user's own order that no placed widget is
-    /// already showing; when every station is spoken for, a rotation. So three
-    /// stations and three widgets means one each, in the order the user
-    /// arranged them on the home screen, and a fourth widget wraps to the first.
-    ///
-    /// ## Why it is a pure READ
-    /// The obvious implementation is a cursor in the App Group that advances per
-    /// new widget, and it cannot be made correct. `defaultResult()` is not
-    /// called once per widget — the system consults it whenever the parameter is
-    /// unresolved, which includes gallery previews and every trip into the
-    /// editor — so a cursor advances on calls that added no widget, drifts, and
-    /// has no repair path, because nothing can rewrite a placed widget's
-    /// configuration afterwards.
-    ///
-    /// Deriving the answer from the placement stamps makes it idempotent
-    /// instead: asking ten times gives the same answer ten times. It also
-    /// self-heals — remove the widget showing the second station and the next
-    /// widget added takes that station back rather than duplicating the first.
-    ///
-    /// ## [anchor] is what stops a repointed widget from wandering
-    /// In the rotation branch the answer would otherwise depend on how many
-    /// stamps happen to be live, and that number MOVES — the app prunes stamps
-    /// for widgets that have gone. A board that silently changed station because
-    /// a stamp elsewhere expired is the one failure this whole design is meant
-    /// to avoid, so a caller that has an id to be consistent about passes it and
-    /// gets an answer derived from that id alone. A widget being added has no
-    /// such id and does not need one: its answer is resolved once and stored.
-    ///
-    /// ## The window it cannot close
-    /// A widget claims its station on its FIRST TIMELINE BUILD, a second or two
-    /// after being added. Two widgets added inside that window see the same
-    /// claims and take the same station. Nothing available fixes it — a provider
-    /// is handed no widget identity, so "the same widget asking twice" and "a
-    /// second widget asking" are indistinguishable, which is also why a
-    /// short-lived reservation was considered and rejected: it would break
-    /// exactly the idempotency above. The fallout is one Edit Widget away.
-    func unclaimedStation(anchor: String? = nil, now: Date = Date()) -> StationEntity? {
-        let stations = readStations()
-        guard !stations.isEmpty else { return nil }
-
-        let live = readPlacementStamps().filter {
-            now.timeIntervalSince1970 - $0.at < Self.claimTTL
-        }
-        let claimed = Set(live.map(\.station))
-        if let free = stations.first(where: { !claimed.contains($0.id) }) { return free }
-
-        // Every station already has a widget.
-        if let anchor, !anchor.isEmpty {
-            return stations[Self.stableIndex(anchor, count: stations.count)]
-        }
-        return stations[live.count % stations.count]
+    /// The decision itself lives in `StationResolver` — this is the seam the
+    /// rest of the extension goes through. Kept as a method on the storage type
+    /// so every existing call site reads the same way it always has, and so
+    /// `WidgetRefreshService` and the timeline provider cannot end up resolving
+    /// the same widget differently.
+    func readWidgetData(for configured: StationEntity?) -> WidgetData {
+        StationResolver.board(for: configured)
     }
 
-    /// A stable index into a list of [count], derived from [key].
+    /// One station's board, or nil when it has not been written yet.
     ///
-    /// FNV-1a rather than `hashValue`, because Swift seeds String hashing per
-    /// PROCESS: `hashValue` would pick a different station every time the
-    /// extension is relaunched, which is the precise failure [anchor] exists to
-    /// prevent. This is not a security hash and does not need to be a good one —
-    /// it needs to be the same one tomorrow.
-    private static func stableIndex(_ key: String, count: Int) -> Int {
-        var hash: UInt32 = 2_166_136_261
-        for byte in key.utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
-        return Int(hash % UInt32(count))
-    }
-
-    /// The board for one configured station, and what to do when there isn't one.
-    ///
-    /// ## A configuration that cannot be honoured is REPOINTED, never blanked
-    /// The station id lives in an AppIntent configuration, and nothing — not
-    /// this extension, not the app — can rewrite a placed widget's
-    /// configuration. So a widget whose station was deleted can only be helped
-    /// at render time, and it has to be helped every time.
-    ///
-    /// Repointing rather than clearing is deliberate, and the reason is
-    /// recoverability: the configured id SURVIVES. Sign out and the directory is
-    /// wiped, every widget goes to its empty state, and signing back in restores
-    /// each one to its own station with no action from the user. A widget that
-    /// had been "cleared" would stay cleared, permanently, because there is no
-    /// API to un-clear it. The visible risk of repointing — reading the wrong
-    /// station's trains — is carried by the largest, boldest element on the
-    /// panel being the station name.
-    ///
-    /// This used to fall through to the LEGACY single-station keys instead,
-    /// which were written for whichever board happened to be primary: a silent
-    /// jump to an arbitrary station, through an older path that can be
-    /// arbitrarily stale. Those keys are now the last resort only.
-    func readWidgetData(stationId: String?) -> WidgetData {
-        // FIRST, ahead of every fallback below. The repoint chain exists to find
-        // a widget *something* to show when its own station has gone, and after
-        // a sign-out that is precisely the wrong instinct — it would hand the
-        // board of whoever signs in next to a widget the previous user left
-        // behind. One read, on the hottest path this file has, and it is the
-        // only question that can be answered before any of the others matter.
-        if isSignedOut { return .signedOut }
-
-        if let board = storedBoard(stationId) { return widgetData(from: board) }
-
-        let replacement: StationEntity?
-        if let stationId, !stationId.isEmpty {
-            // Named a station the user no longer tracks — deleted in the app.
-            // Anchored on the id it asked for, so this widget's answer is the
-            // same on every build. See `unclaimedStation(anchor:)`.
-            replacement = unclaimedStation(anchor: stationId)
-        } else {
-            // Named nothing at all: a widget added before the configuration
-            // existed, or one whose default the system never resolved.
-            //
-            // Deliberately NOT the claim rule. A widget with no configuration
-            // stamps whatever it renders, so it would claim its own answer and
-            // the next build would skip past it to the following station — a
-            // board that changes station every few minutes. The first station is
-            // stable, and distributing across stations is `defaultResult()`'s
-            // job, which runs once per widget and is stored.
-            replacement = readStations().first
-        }
-        if let replacement, let board = storedBoard(replacement.id) {
-            return widgetData(from: board)
-        }
-
-        // Nothing to point at: signed out, or the last board was deleted. Both
-        // wipe the legacy keys too, so this renders `EmptyWidgetView` — "Open
-        // the app to add a station", which is true either way. It is also still
-        // the right answer for a pre-multi-station widget, whose board only ever
-        // lived in those keys.
-        return readWidgetData()
+    /// The "not yet" case is a real one and is NOT an error: the directory and
+    /// the per-station boards are separate `NSUserDefaults` writes, so a
+    /// timeline build landing between them sees a station it has no payload for.
+    /// It renders that station empty — never a different station's departures.
+    func board(for station: StationEntity) -> WidgetData? {
+        guard let stored = storedBoard(station.id) else { return nil }
+        return widgetData(from: stored)
     }
 
     /// One station's stored board, or nil if it is not there to be read.
@@ -1212,9 +1211,19 @@ class AppGroupStorage {
 
     // MARK: - Legacy single-station keys
 
-    func readWidgetData() -> WidgetData {
+    /// The pre-multi-station board, written by KMP for whichever station leads
+    /// the home screen.
+    ///
+    /// Renamed from `readWidgetData()` so it can no longer be reached by
+    /// accident: it used to be the fall-through for *any* configuration that
+    /// could not be honoured, which meant a widget whose station was deleted
+    /// silently jumped to the primary board through a path that can be
+    /// arbitrarily stale. It now has exactly one caller — a widget with no
+    /// configuration at all, on a device with no directory — which is the case
+    /// these keys were written for.
+    func legacyBoard() -> WidgetData {
         guard let defaults = defaults else {
-            print("[AppGroupStorage] Cannot open App Group suite: \(appGroupID)")
+            storageLog.error("cannot open App Group suite \(self.appGroupID, privacy: .public)")
             return .empty
         }
 
@@ -1234,7 +1243,7 @@ class AppGroupStorage {
         do {
             departures = try JSONDecoder().decode([DepartureRow].self, from: Data(predictionsJson.utf8))
         } catch {
-            print("[AppGroupStorage] Failed to decode predictions: \(error)")
+            storageLog.error("legacy predictions failed to decode: \(error.localizedDescription, privacy: .public)")
             departures = []
         }
 

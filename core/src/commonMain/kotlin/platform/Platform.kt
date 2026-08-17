@@ -2,6 +2,7 @@ package com.stationly.core.platform
 
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.WidgetState
+import kotlin.concurrent.Volatile
 
 enum class AppEnvironment { STAGING, PRODUCTION }
 
@@ -10,6 +11,59 @@ interface WidgetManager {
     suspend fun showWaitingState(station: String, line: String)
     suspend fun formatForWidget(predictions: List<UserSelection>): WidgetState
     suspend fun clearWidgetData()
+}
+
+/**
+ * "Local storage is empty on purpose, on its way to being refilled."
+ *
+ * A login restore CLEARS SQLite and then re-inserts from the cloud profile, so
+ * for the length of that operation `getAllSelections()` answers honestly and
+ * wrongly: the account has stations, this device just does not hold them yet.
+ * The iOS widget write treats an empty selection table as "the user deleted
+ * their last board" and wipes the App Group, which puts *every* placed widget on
+ * "Open the app to add a station" — for a user who is at that moment signing in
+ * and has done nothing wrong.
+ *
+ * The two cases are identical in storage and can only be told apart by INTENT,
+ * which is known here and nowhere else. So the restore says so, and the widget
+ * write skips the wipe while it is being said. Nothing else changes: boards
+ * written *during* the restore still publish as each one is set up, so widgets
+ * refill progressively and no explicit "publish once at the end" step is needed
+ * — one less thing that can be forgotten on a new restore path.
+ *
+ * ## Deliberately not a counter
+ * Restores do not nest and do not overlap: there is one, on the login path,
+ * awaited. If two ever did overlap, the first to finish would clear the flag
+ * early and the second would behave exactly as it does today — a wipe. That is
+ * the current behaviour, not a new failure, which is what makes a plain flag
+ * safe enough to prefer over an atomic counter.
+ *
+ * In-memory only, so a process killed mid-restore cannot leave it stuck raised.
+ */
+object WidgetRestore {
+    @Volatile
+    private var restoring: Boolean = false
+
+    /** Whether a destructive restore is in flight. Read by the widget write. */
+    val inProgress: Boolean get() = restoring
+
+    /**
+     * Run [block] with the widget's empty-state wipe suppressed.
+     *
+     * Wrap the WHOLE restore — the clear, the re-insert, and the board setup
+     * that follows — not just the clear. The gap that matters is the one where
+     * the table is empty, but the boards only come back one at a time, and a
+     * refresh landing between two of them would see a partial list rather than
+     * an empty one, which is written correctly anyway.
+     */
+    suspend fun <T> during(block: suspend () -> T): T {
+        restoring = true
+        try {
+            return block()
+        } finally {
+            restoring = false
+        }
+    }
 }
 
 interface NotificationManager {

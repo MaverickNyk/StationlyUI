@@ -86,6 +86,21 @@ enum AppGroupKeys {
     /// against the authoritative COUNT.
     static let placements    = "widget_placements"
 
+    // ⚠️ `widget_placed` / `widget_placed_at` used to live here: a cached copy of
+    // the exact home screen from `getCurrentConfigurations`, kept so that the
+    // synchronous `recommendations()` could order the gallery by which stations
+    // were already taken. Both are gone with the assignment machinery.
+    //
+    // Do not reintroduce them without reading `StationResolver` rung 3 first.
+    // Everything derived from that snapshot moved — widgets come and go, the
+    // snapshot is only as fresh as the last caller that could read it, and
+    // WidgetKit returns an empty list for it inside `timeline(for:in:)` — and a
+    // moving input is what made widgets change station on their own. Nothing a
+    // board renders may depend on it.
+    //
+    // A device that used a build between 2026-08-16 and 2026-08-17 may still
+    // have these two keys in its App Group. They are inert.
+
     /// The refresh cadence, precomputed by KMP as a list of time SEGMENTS.
     ///
     /// A schedule rather than a single current decision, because this extension
