@@ -6,9 +6,16 @@ import com.stationly.core.model.FilterMode
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.LineStatus
 import kotlinx.datetime.Clock
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
 
 class SqlStorage(private val database: StationlyDatabase) {
     private val queries = database.stationlyDatabaseQueries
+
+    /** One instance: building a Json is not free and this runs per board save. */
+    private val listJson = Json
+    private val listOfStrings = ListSerializer(String.serializer())
 
     fun saveSelection(selection: UserSelection) {
         queries.insertSelection(
@@ -18,14 +25,16 @@ class SqlStorage(private val database: StationlyDatabase) {
             parentStationId = selection.parentStationId,
             stationName = selection.stationName,
             direction = selection.direction.lowercase(),
-            destinations = selection.destinations.joinToString(","),
-            destinationIds = selection.destinationIds.joinToString(","),
+            // Every list column goes through [encodeList] — see it for why a
+            // comma-joined string was a latent desync waiting on one stop name.
+            destinations = encodeList(selection.destinations),
+            destinationIds = encodeList(selection.destinationIds),
             filterMode = selection.filterMode.name,
-            // CSV like `destinations`/`destinationIds` above — a junction line
-            // can have several via stops picked, and this keeps the schema flat
-            // rather than adding a join table for at most a handful of ids.
-            viaStationId = selection.viaStationIds.joinToString(","),
-            viaStationName = selection.viaStationNames.joinToString(","),
+            viaStationId = encodeList(selection.viaStationIds),
+            viaStationName = encodeList(selection.viaStationNames),
+            viaKeys = encodeList(selection.viaKeys),
+            patternIds = encodeList(selection.patternIds),
+            patternNames = encodeList(selection.patternNames),
             routeResolvedAt = selection.routeResolvedAt,
         )
     }
@@ -39,18 +48,51 @@ class SqlStorage(private val database: StationlyDatabase) {
                 parentStationId = it.parentStationId,
                 stationName = it.stationName,
                 direction = it.direction,
-                destinations = it.destinations.splitCsv(),
-                destinationIds = it.destinationIds.splitCsv(),
+                destinations = decodeList(it.destinations),
+                destinationIds = decodeList(it.destinationIds),
                 filterMode = FilterMode.fromStorage(it.filterMode),
-                viaStationIds = it.viaStationId.orEmpty().splitCsv(),
-                viaStationNames = it.viaStationName.orEmpty().splitCsv(),
+                viaStationIds = decodeList(it.viaStationId),
+                viaStationNames = decodeList(it.viaStationName),
+                viaKeys = decodeList(it.viaKeys),
+                patternIds = decodeList(it.patternIds),
+                patternNames = decodeList(it.patternNames),
                 routeResolvedAt = it.routeResolvedAt,
             )
         }
     }
 
-    private fun String.splitCsv(): List<String> =
-        if (isEmpty()) emptyList() else split(",").filter { it.isNotEmpty() }
+    /**
+     * Store a list of strings in one TEXT column, losslessly.
+     *
+     * These columns used to be comma-joined, which is fine for ids and NOT fine
+     * for names: `viaStationNames` and `destinations` hold stop names, and a
+     * single comma in one of them splits it into two entries. That silently
+     * desynchronises them from the index-aligned id list beside them, so a board
+     * comes back labelling the wrong stops — and the wire format already avoids
+     * exactly this mistake, which is what made the local column the odd one out.
+     *
+     * A JSON array costs a few bytes and cannot be ambiguous. Encoding is
+     * applied to every list column rather than only the risky ones, so there is
+     * one rule here instead of a per-column judgement call nobody will remember.
+     */
+    private fun encodeList(values: List<String>): String =
+        if (values.isEmpty()) "" else listJson.encodeToString(listOfStrings, values)
+
+    /**
+     * Read a list column, tolerating the comma-joined form it used to hold.
+     *
+     * The fallback is not for released data — there is none — but for a database
+     * written by a build from earlier in this change, which every dev machine
+     * has. It costs one `startsWith`.
+     */
+    private fun decodeList(raw: String?): List<String> {
+        val text = raw?.trim().orEmpty()
+        if (text.isEmpty()) return emptyList()
+        if (text.startsWith("[")) {
+            runCatching { return listJson.decodeFromString(listOfStrings, text) }
+        }
+        return text.split(",").filter { it.isNotEmpty() }
+    }
     
     /**
      * Remove ONE tracked board: a (station, line, direction) triple.
@@ -97,6 +139,7 @@ class SqlStorage(private val database: StationlyDatabase) {
                     direction = normalizedDirection,
                     destination = it.destination,
                     destId = it.destId,
+                    viaKey = it.viaKey,
                     matchesFilter = if (it.matchesFilter) 1L else 0L,
                     platform = it.platform,
                     eta = it.eta,
@@ -149,6 +192,7 @@ class SqlStorage(private val database: StationlyDatabase) {
                 isDue = it.isDue == 1L,
                 stopLetter = it.stopLetter,
                 destId = it.destId,
+                viaKey = it.viaKey,
                 matchesFilter = it.matchesFilter == 1L,
                 targetEpochMs = it.targetEpochMs,
             )
@@ -164,6 +208,7 @@ class SqlStorage(private val database: StationlyDatabase) {
         lineId: String,
         direction: String,
         allowedDestIds: Set<String>,
+        allowedViaKeys: Set<String> = emptySet(),
     ) {
         val normalizedLine = lineId.lowercase()
         val normalizedDir = direction.lowercase()
@@ -176,7 +221,10 @@ class SqlStorage(private val database: StationlyDatabase) {
                     direction = row.direction,
                     destination = row.destination,
                     destId = row.destId,
-                    matchesFilter = if (matchesFilter(row.destId, allowedDestIds)) 1L else 0L,
+                    viaKey = row.viaKey,
+                    matchesFilter = if (
+                        matchesFilter(row.destId, allowedDestIds, row.viaKey, allowedViaKeys)
+                    ) 1L else 0L,
                     platform = row.platform,
                     eta = row.eta,
                     isDue = row.isDue,
@@ -233,13 +281,43 @@ class SqlStorage(private val database: StationlyDatabase) {
          * The single runtime filter check, shared by ingest and re-apply so the
          * two can never disagree about what a board shows.
          *
-         * FAILS OPEN twice over: an empty allow-list means "no filter", and a
-         * departure with no usable destId is shown rather than hidden. TfL sends
-         * destinations like "Check Front of Train" and depot moves that map to
-         * no station at all — those must never silently disappear from a board.
+         * Two questions, both of which must pass:
+         *  1. WHERE does it end — is `destId` somewhere downstream of the stop
+         *     the user picked? Right on its own for a line that only splits, and
+         *     the reason a short-terminating service still matches: a Piccadilly
+         *     train showing "Northfields" genuinely does call at Green Park.
+         *  2. WHICH WAY does it go — is `viaKey` one of the branches that
+         *     actually reach that stop? Needed the moment a line rejoins, where
+         *     the same destination is reachable both through the stop and around
+         *     it. "Morden via Bank" and "Morden via Charing Cross" carry one
+         *     naptan between them and nothing else can separate them.
+         *
+         * FAILS OPEN four times over, and every one of them matters: an empty
+         * allow-list means "no filter"; a departure with no usable destId is
+         * shown rather than hidden (TfL sends "Check Front of Train" and depot
+         * moves that map to no station); an empty [allowedViaKeys] means the
+         * patterns carried no discriminator, as on the Metropolitan; and a null
+         * [viaKey] means this departure carried none, which is the case for
+         * every unbranched service and for every payload from a backend that
+         * predates the field. Showing an extra train costs a glance. Hiding the
+         * one the user needed costs them the journey.
+         *
+         * Both new parameters are defaulted so existing call sites — including
+         * any in the Android app, which shares this module — compile and behave
+         * exactly as they did.
          */
-        fun matchesFilter(destId: String?, allowedDestIds: Set<String>): Boolean =
-            allowedDestIds.isEmpty() || destId.isNullOrBlank() || destId in allowedDestIds
+        fun matchesFilter(
+            destId: String?,
+            allowedDestIds: Set<String>,
+            viaKey: String? = null,
+            allowedViaKeys: Set<String> = emptySet(),
+        ): Boolean {
+            if (allowedDestIds.isEmpty()) return true
+            if (destId.isNullOrBlank()) return true
+            if (destId !in allowedDestIds) return false
+            if (allowedViaKeys.isEmpty() || viaKey == null) return true
+            return viaKey in allowedViaKeys
+        }
     }
 
     /**

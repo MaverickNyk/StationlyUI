@@ -169,9 +169,17 @@ class UserSyncRepository(
             // triple (as the legacy path does) makes that edit invisible: the
             // key matches, the board is left alone, and the two devices show
             // different trains for what is nominally the same board.
+            //
+            // Every field the filter matches on has to be compared, or an edit
+            // that only touched one of them syncs into storage and is never
+            // re-applied to the departures already on this device. Taking a
+            // whole branch changes `patternIds` and `viaKeys` and NOTHING else,
+            // so the first two lines alone would have missed it entirely.
             val filterChanged = existing.filterMode != restored.filterMode ||
                 existing.destinationIds != restored.destinationIds ||
-                existing.viaStationIds != restored.viaStationIds
+                existing.viaStationIds != restored.viaStationIds ||
+                existing.viaKeys != restored.viaKeys ||
+                existing.patternIds != restored.patternIds
             if (filterChanged) lifecycle.updateBoardFilter(restored)
         }
 

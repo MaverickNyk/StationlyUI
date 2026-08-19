@@ -459,12 +459,14 @@ fun SelectionScreen(
                 // Selecting a whole branch = selecting its FIRST unique stop.
                 // Everything past a divergence is only reachable through it, so
                 // that one id already implies the entire branch downstream.
-                onToggleBranch = { branch ->
-                    branch.stops.firstOrNull()?.let {
-                        viewModel.toggleFilterVia(
-                            line.id, dir.id, it.id, branch.terminusName ?: it.name
-                        )
-                    }
+                // A chip means "this whole service", stored as the pattern it
+                // names. It no longer ticks a stop, so nothing in the middle of
+                // the branch lights up as though the user had chosen it.
+                onToggleBranch = { patterns ->
+                    viewModel.toggleFilterBranch(
+                        line.id, dir.id,
+                        patterns.map { it.id to it.label },
+                    )
                 },
                 onDismiss = { filterTarget = null },
             )

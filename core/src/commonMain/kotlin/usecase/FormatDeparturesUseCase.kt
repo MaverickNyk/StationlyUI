@@ -39,8 +39,9 @@ class FormatDeparturesUseCase {
         // the unfiltered list when nothing matches matters more here than
         // anywhere else — the widget has no empty state to explain itself with,
         // so a filter that matches nothing would leave a silently blank widget.
-        val filteredPredictions = filterByDestinations(predictions, selection.destinationIds)
-            .ifEmpty { predictions }
+        val filteredPredictions =
+            filterByDestinations(predictions, selection.destinationIds, selection.viaKeys)
+                .ifEmpty { predictions }
 
         // Format predictions for display
         val formattedPredictions = filteredPredictions.map { pred ->
@@ -77,7 +78,8 @@ class FormatDeparturesUseCase {
      */
     private fun filterByDestinations(
         predictions: List<PredictionItem>,
-        allowedDestIds: List<String>
+        allowedDestIds: List<String>,
+        allowedViaKeys: List<String> = emptyList(),
     ): List<PredictionItem> {
         if (allowedDestIds.isEmpty()) return predictions
         // Same check the board and the re-apply path use, so the widget can
@@ -86,7 +88,10 @@ class FormatDeparturesUseCase {
         // that map to no station, and a plain `in` test would drop them here
         // while the board still showed them.
         val allowed = allowedDestIds.toSet()
-        return predictions.filter { SqlStorage.matchesFilter(it.destId, allowed) }
+        val allowedVia = allowedViaKeys.toSet()
+        return predictions.filter {
+            SqlStorage.matchesFilter(it.destId, allowed, it.viaKey, allowedVia)
+        }
     }
     
     /**

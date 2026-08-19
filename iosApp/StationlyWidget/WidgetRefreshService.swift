@@ -618,6 +618,14 @@ enum WidgetRefreshService {
             let platform: String?
             let eta: String?
             let stopLetter: String?
+            /// Naptan of the train's destination. Decoded because the board's
+            /// filter matches on THIS, never on the display name — the route
+            /// sequence says "Hammersmith (Dist&Picc Line)" where a prediction
+            /// says "Hammersmith".
+            let destId: String?
+            /// Which branch the train takes, when TfL labels one. ABSENT for
+            /// nearly every service; absent means "cannot narrow, show it".
+            let viaKey: String?
         }
         let lines: [String: Line]?
     }
@@ -657,7 +665,16 @@ enum WidgetRefreshService {
             // H&C one at the same platform. Stamping here is what lets a
             // refreshed board keep the prefixes a pushed one shows; without it
             // they would vanish on every refresh tap.
-            mapRows(preds, into: &mapped, seen: &seen, lineShort: feed.lineShort)
+            // Narrow to this board's filter before mapping.
+            //
+            // FAILS OPEN, exactly as SqlStorage.getPredictions does: if the
+            // filter currently matches nothing, show the unfiltered list rather
+            // than an empty widget. A widget has no empty state to explain
+            // itself with, so a filter matching nothing would read as "no trains
+            // at all" — indistinguishable from a genuinely dead line.
+            let kept = preds.filter { feed.admits(destId: $0.destId, viaKey: $0.viaKey) }
+            mapRows(kept.isEmpty ? preds : kept,
+                    into: &mapped, seen: &seen, lineShort: feed.lineShort)
         }
         return mapped
     }

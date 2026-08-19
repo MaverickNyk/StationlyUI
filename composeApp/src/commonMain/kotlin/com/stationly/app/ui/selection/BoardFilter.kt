@@ -28,7 +28,23 @@ data class BoardFilter(
      * summary text; ids are what filter.
      */
     val viaStops: List<SduiRouteStop> = emptyList(),
+    /**
+     * Whole services taken from the map's terminus chips, by pattern id.
+     *
+     * Separate from [viaStops] because they answer different questions. "All
+     * Morden via Bank trains" is about where a train GOES; "trains through Bank"
+     * is about a PLACE. Expressing the first as the second is what put a tick on
+     * a station in the middle of a branch nobody had tapped.
+     *
+     * Names are kept for the summary line, since a pattern id is unreadable.
+     */
+    val patterns: List<PatternPick> = emptyList(),
 ) {
+    /** One taken service: its id, and what to call it. */
+    data class PatternPick(val id: String, val label: String)
+
+    val patternIds: Set<String> get() = patterns.mapTo(LinkedHashSet()) { it.id }
+    val patternNames: List<String> get() = patterns.map { it.label }
     /** Ids only, for membership checks on the map. */
     val viaStopIds: Set<String> get() = viaStops.mapTo(LinkedHashSet()) { it.id }
     val viaStopNames: List<String> get() = viaStops.map { it.name }
@@ -44,15 +60,25 @@ data class BoardFilter(
         get() = when (mode) {
             FilterMode.ALL -> false
             FilterMode.DESTINATIONS -> destinationIds.isNotEmpty()
-            FilterMode.VIA -> viaStops.isNotEmpty()
+            FilterMode.VIA -> viaStops.isNotEmpty() || patterns.isNotEmpty()
         }
 
-    /** Human summary of the via picks, for the card and board tags. */
+    /**
+     * Human summary of the picks, for the card and board tags.
+     *
+     * Whole services read as their own name ("Morden via Bank"), stops as the
+     * place. Mixing them in one list is fine: they are all answers to "what do
+     * you want to see", and naming them separately would be a distinction the
+     * user did not make.
+     */
     val viaSummary: String
-        get() = when (viaStopNames.size) {
-            0 -> "a stop"
-            1 -> viaStopNames[0]
-            2 -> "${viaStopNames[0]} & ${viaStopNames[1]}"
-            else -> "${viaStopNames[0]} & ${viaStopNames.size - 1} more"
+        get() {
+            val names = patterns.map { it.label } + viaStopNames
+            return when (names.size) {
+                0 -> "a stop"
+                1 -> names[0]
+                2 -> "${names[0]} & ${names[1]}"
+                else -> "${names[0]} & ${names.size - 1} more"
+            }
         }
 }

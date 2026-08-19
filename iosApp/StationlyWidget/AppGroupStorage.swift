@@ -189,16 +189,37 @@ struct BoardFeed: Codable, Hashable {
     /// lets a refresh re-label the rows it rebuilds, so prefixes written by a
     /// push survive a refresh tap instead of disappearing.
     var lineShort: String = ""
+    /// The board's RESOLVED allow-list: naptan ids a departure's `destId` must
+    /// be one of. Empty means no filter.
+    ///
+    /// Carried from KMP rather than re-derived, because resolving a filter needs
+    /// route data the extension has no way to fetch. Without it this refresh
+    /// rebuilt rows straight from the payload and showed every departure in the
+    /// direction, so a board narrowed in the app sat beside an unfiltered widget
+    /// of the same board.
+    var destinationIds: [String] = []
+    /// Branch tokens a departure's own `viaKey` must be one of, alongside
+    /// [destinationIds]. Empty means "do not narrow by branch".
+    var viaKeys: [String] = []
 
     private enum CodingKeys: String, CodingKey {
-        case station, line, direction, lineShort
+        case station, line, direction, lineShort, destinationIds, viaKeys
     }
 
-    init(station: String, line: String, direction: String, lineShort: String = "") {
+    init(
+        station: String,
+        line: String,
+        direction: String,
+        lineShort: String = "",
+        destinationIds: [String] = [],
+        viaKeys: [String] = []
+    ) {
         self.station = station
         self.line = line
         self.direction = direction
         self.lineShort = lineShort
+        self.destinationIds = destinationIds
+        self.viaKeys = viaKeys
     }
 
     init(from decoder: Decoder) throws {
@@ -207,6 +228,25 @@ struct BoardFeed: Codable, Hashable {
         self.line = try c.decode(String.self, forKey: .line)
         self.direction = try c.decode(String.self, forKey: .direction)
         self.lineShort = try c.decodeIfPresent(String.self, forKey: .lineShort) ?? ""
+        // Absent on any board written before the widget could filter. Empty
+        // means no filter, so an old payload keeps its old behaviour.
+        self.destinationIds = try c.decodeIfPresent([String].self, forKey: .destinationIds) ?? []
+        self.viaKeys = try c.decodeIfPresent([String].self, forKey: .viaKeys) ?? []
+    }
+
+    /// The single filter check, mirroring `SqlStorage.matchesFilter` in KMP.
+    ///
+    /// Kept identical on purpose, including every fail-open branch: the widget
+    /// and the board it mirrors must never disagree about which trains belong,
+    /// and the cost of disagreeing downward — hiding a train the user needed —
+    /// is a missed journey.
+    func admits(destId: String?, viaKey: String?) -> Bool {
+        if destinationIds.isEmpty { return true }
+        guard let destId, !destId.isEmpty else { return true }
+        if !destinationIds.contains(destId) { return false }
+        if viaKeys.isEmpty { return true }
+        guard let viaKey else { return true }
+        return viaKeys.contains(viaKey)
     }
 }
 

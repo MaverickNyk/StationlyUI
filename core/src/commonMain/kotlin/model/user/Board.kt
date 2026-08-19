@@ -205,6 +205,9 @@ data class BoardSelection(
         filterMode = filter.mode,
         viaStationIds = filter.viaIds,
         viaStationNames = filter.viaNames,
+        viaKeys = filter.viaKeys,
+        patternIds = filter.patternIds,
+        patternNames = filter.patternNames,
         routeResolvedAt = filter.resolvedAt,
     )
 
@@ -220,6 +223,9 @@ data class BoardSelection(
                 destinationNames = selection.destinations,
                 viaIds = selection.viaStationIds,
                 viaNames = selection.viaStationNames,
+                viaKeys = selection.viaKeys,
+                patternIds = selection.patternIds,
+                patternNames = selection.patternNames,
                 resolvedAt = selection.routeResolvedAt,
             ),
         )
@@ -264,6 +270,20 @@ data class BoardFilter(
     val viaIds: List<String> = emptyList(),
     @SerialName("viaNames")
     val viaNames: List<String> = emptyList(),
+    /**
+     * Branch tokens the resolution produced — the "via Bank" half of the check.
+     *
+     * Part of the RESOLUTION, not the intent, so it is re-derived whenever the
+     * board is re-resolved. Empty means "do not narrow by branch".
+     */
+    @SerialName("viaKeys")
+    val viaKeys: List<String> = emptyList(),
+    /** Whole services taken, by pattern id. Intent, like [viaIds]. */
+    @SerialName("patternIds")
+    val patternIds: List<String> = emptyList(),
+    /** Display names for [patternIds], index-aligned. */
+    @SerialName("patternNames")
+    val patternNames: List<String> = emptyList(),
     /** When [destinationIds] was last resolved from route data, epoch millis. */
     val resolvedAt: Long = 0L,
 ) {

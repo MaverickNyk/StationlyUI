@@ -77,7 +77,7 @@ import androidx.compose.ui.unit.sp
 import com.stationly.core.model.FilterMode
 import com.stationly.core.model.sdui.SduiDropdownOption
 import com.stationly.core.util.BoardFilterResolver
-import com.stationly.core.util.RouteTree
+import com.stationly.core.util.RouteGraph
 import com.stationly.core.model.sdui.SduiRouteStop
 
 /**
@@ -115,7 +115,7 @@ fun BoardFilterSheet(
     onSetMode: (FilterMode) -> Unit,
     onToggleDestination: (String) -> Unit,
     onToggleVia: (SduiRouteStop) -> Unit,
-    onToggleBranch: (RouteTree) -> Unit,
+    onToggleBranch: (List<RouteGraph.Pattern>) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -125,7 +125,7 @@ fun BoardFilterSheet(
     // de-pluralised.
     val vehicleOne = if (vehicles == "Buses") "bus" else vehicles.dropLast(1).lowercase()
     val stopNoun = stopNounSingular(mode)            // station / stop
-    val tree = remember(directionOption) { RouteTree.from(directionOption) }
+    val tree = remember(directionOption) { RouteGraph.from(directionOption) }
     val viaStops = remember(tree) { tree.allStops }
 
     // Whether id-accurate filtering is possible at all. A cached 24h payload from
@@ -240,6 +240,7 @@ fun BoardFilterSheet(
                     originName = originName,
                     stopNoun = stopNoun,
                     selectedIds = filter.viaStopIds,
+                    selectedPatternIds = filter.patternIds,
                     primary = primary,
                     lineColor = lineColor,
                     vehiclePlural = vehicles,
@@ -275,6 +276,12 @@ private fun FilterPreview(
     modifier: Modifier = Modifier,
     onConfirm: () -> Unit,
 ) {
+    // MUST mirror what `saveSelection` will resolve, argument for argument.
+    //
+    // `chosenPatternIds` was missing here: taking a whole branch left this
+    // preview resolving an empty via-stop set, so the sheet announced "Nothing
+    // matches. All trains will be shown." for a filter that was about to save
+    // perfectly well. The preview lying about the save is worse than no preview.
     val resolution = remember(directionOption, filter) {
         if (!filter.isActive) BoardFilterResolver.EMPTY
         else BoardFilterResolver.resolve(
@@ -282,19 +289,26 @@ private fun FilterPreview(
             direction = directionOption,
             chosenDestinationIds = filter.destinationIds,
             viaStopIds = filter.viaStopIds,
+            chosenPatternIds = filter.patternIds,
         )
     }
     val destTotal = (directionOption.destinations ?: emptyList()).size
 
-    val (text, warn) = when {
-        !filter.isActive ->
-            "Showing every ${vehicles.dropLast(1).lowercase()} going this way" to false
-        resolution.isEmpty ->
-            "Nothing matches. All ${vehicles.lowercase()} will be shown." to true
-        filter.mode == FilterMode.DESTINATIONS ->
-            "Showing ${filter.destinationIds.size} of $destTotal destinations" to false
-        else ->
-            "Showing ${vehicles.lowercase()} that call at ${filter.viaSummary}" to false
+    // Remembered: this builds four strings and is read on every recomposition of
+    // a sheet the user is actively tapping.
+    val (text, warn) = remember(filter, resolution, vehicles, destTotal) {
+        when {
+            !filter.isActive ->
+                "Showing every ${vehicles.dropLast(1).lowercase()} going this way" to false
+            resolution.isEmpty ->
+                "Nothing matches. All ${vehicles.lowercase()} will be shown." to true
+            filter.mode == FilterMode.DESTINATIONS ->
+                "Showing ${filter.destinationIds.size} of $destTotal destinations" to false
+            // Whole services read as their own name, stops as the place. Both are
+            // answers to "what do you want to see".
+            else ->
+                "Showing ${vehicles.lowercase()} that call at ${filter.viaSummary}" to false
+        }
     }
 
     Surface(
@@ -461,7 +475,8 @@ private fun CheckRow(
  */
 @Composable
 private fun ViaStopPicker(
-    tree: RouteTree,
+    tree: RouteGraph,
+    selectedPatternIds: Set<String>,
     originName: String,
     stopNoun: String,
     selectedIds: Set<String>,
@@ -469,7 +484,7 @@ private fun ViaStopPicker(
     lineColor: Color,
     vehiclePlural: String,
     onToggleStop: (SduiRouteStop) -> Unit,
-    onToggleBranch: (RouteTree) -> Unit,
+    onToggleBranch: (List<RouteGraph.Pattern>) -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
     var searchOpen by remember { mutableStateOf(false) }
@@ -495,7 +510,7 @@ private fun ViaStopPicker(
     // off — the exact drift these shared constants exist to prevent.
     LaunchedEffect(match?.id) {
         val stop = match ?: return@LaunchedEffect
-        val idx = tree.indexOfStop(stop.id)
+        val idx = tree.columnOfStop(stop.id)
         if (idx < 0) return@LaunchedEffect
         val targetPx = with(density) {
             (ROUTE_EDGE_GUTTER + ROUTE_ORIGIN_W + ROUTE_STOP_W * idx).toPx()
@@ -611,9 +626,10 @@ private fun ViaStopPicker(
             )
         } else {
             RouteGraphPicker(
-                tree = tree,
+                graph = tree,
                 originName = originName,
                 selectedIds = selectedIds,
+                selectedPatternIds = selectedPatternIds,
                 focusedId = match?.id,
                 lineColor = lineColor,
                 vehiclePlural = vehiclePlural,

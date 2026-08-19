@@ -11,7 +11,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -56,7 +55,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.stationly.core.model.sdui.SduiRouteStop
-import com.stationly.core.util.RouteTree
+import com.stationly.core.util.RouteGraph
 import kotlin.math.roundToInt
 
 /* Geometry — one place, so the canvas, the nodes and the search-scroll can never
@@ -77,48 +76,46 @@ private val TERMINUS_W = 92.dp
  */
 internal val ROUTE_EDGE_GUTTER = 20.dp
 
-/** A tree node with its resolved grid position. */
-private data class Placed(val node: RouteTree, val startCol: Int, val row: Float)
-
 /**
- * Assign every node a column and a row.
+ * A terminus chip: the segment it sits past, the services that end there, and
+ * what to call them.
  *
- * Columns follow the route: a node starts where its parent's stops end. Leaves
- * take the next free row and an internal node centres on its children, which is
- * what makes a split read as one line dividing rather than several unrelated
- * lines stacked up.
+ * Resolved once per graph rather than per recomposition — working out which
+ * services end at a segment means walking the pattern list, which is graph work
+ * and not render work.
  */
-private fun place(
-    node: RouteTree,
-    startCol: Int,
-    out: MutableList<Placed>,
-    nextLeafRow: IntArray,
-): Float {
-    val childStart = startCol + node.stops.size
-    val row = if (node.isLeaf) {
-        (nextLeafRow[0]++).toFloat()
-    } else {
-        node.children.map { place(it, childStart, out, nextLeafRow) }.average().toFloat()
-    }
-    out.add(Placed(node, startCol, row))
-    return row
-}
+private data class ChipSpec(
+    val segment: RouteGraph.Segment,
+    val patterns: List<RouteGraph.Pattern>,
+    val label: String,
+)
 
 /**
  * Horizontal tube-map picker for "show me trains that go through here".
  *
  * Left-to-right like real signage: you on the left, the line running right,
- * dividing wherever the route divides. The geometry IS the information — past a
- * split a Uxbridge train never reaches Heathrow, and no list can show that.
+ * dividing wherever the route divides AND COMING BACK TOGETHER wherever it
+ * rejoins. The geometry IS the information — past a split a Uxbridge train never
+ * reaches Heathrow, and no list can show that.
+ *
+ * ## Why it draws from a graph and not a tree
+ * The earlier model was a tree, which can only ever divide. Real lines merge:
+ * the Northern splits at Camden Town and is one line again from Kennington. A
+ * tree can express that only by repeating the shared tail down both branches,
+ * which drew two Kenningtons and two Mordens and told the user they were
+ * different places. [RouteGraph] gives every stop ONE node, so a merge is drawn
+ * as a merge and the picture matches the printed map.
  *
  * Line-work is one [Canvas] with the stops positioned on top: connectors cross
  * rows diagonally, which stacked row composables cannot draw.
  */
 @Composable
 fun RouteGraphPicker(
-    tree: RouteTree,
+    graph: RouteGraph,
     originName: String,
     selectedIds: Set<String>,
+    /** Whole services already taken, by pattern id — fills the terminus chip. */
+    selectedPatternIds: Set<String> = emptySet(),
     /** Stop the search matched — ringed for attention, deliberately NOT selected. */
     focusedId: String?,
     /** The TfL colour of the line being drawn; branches are shades of it. */
@@ -126,31 +123,88 @@ fun RouteGraphPicker(
     /** "Trains" / "Buses" / "Trams" — the terminus chips are not always trains. */
     vehiclePlural: String,
     onToggleStop: (SduiRouteStop) -> Unit,
-    onToggleBranch: (RouteTree) -> Unit,
+    /** Every service the tapped chip stands for — a shared tail names several. */
+    onToggleBranch: (List<RouteGraph.Pattern>) -> Unit,
     /** Fired on any touch of the map, so the search field can fold itself away. */
     onInteract: () -> Unit = {},
     scrollState: ScrollState,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    val placed = remember(tree) {
-        mutableListOf<Placed>().also { place(tree, 0, it, intArrayOf(0)) }
-    }
 
-    val rowCount = tree.leafCount.coerceAtLeast(1)
-    val colCount = placed.maxOfOrNull { it.startCol + it.node.stops.size } ?: 0
+    val rowCount = graph.rowCount.coerceAtLeast(1)
+    val colCount = graph.colCount
 
-    // Sized exactly to the tree — a fixed height left dead space on a
+    // Sized exactly to the graph — a fixed height left dead space on a
     // two-branch line and clipped a four-branch one.
     val totalW = ROUTE_ORIGIN_W + ROUTE_STOP_W * colCount + TERMINUS_W
     val totalH = ROW_H * rowCount
 
     fun x(col: Int): Dp = ROUTE_ORIGIN_W + ROUTE_STOP_W * col + ROUTE_STOP_W / 2
-    fun y(row: Float): Dp = ROW_H * row + ROW_H / 2
+    fun y(row: Int): Dp = ROW_H * row + ROW_H / 2
 
-    /** Branch shade: same hue as the line, lightened down the tree so siblings separate. */
-    fun shadeFor(depth: Int, sibling: Int): Color =
-        lineColor.copy(alpha = (1f - (depth * 0.06f) - (sibling * 0.10f)).coerceIn(0.45f, 1f))
+    val byId = remember(graph) { graph.segments.associateBy { it.id } }
+
+    // What the current picks actually claim. Choosing a stop admits every train
+    // that gets that far, so the whole route beyond it is covered — and showing
+    // that is what stops "All Battersea trains" from looking like it ticked one
+    // arbitrary station. The chip picks the first stop only that branch reaches;
+    // the branch then lights up behind it.
+    val coveredIds = remember(graph, selectedIds, selectedPatternIds) {
+        val out = selectedIds.flatMapTo(mutableSetOf()) { graph.downstreamOf(it) }
+        // A taken service claims its whole line, which is the point of tapping
+        // the chip. Without this the chip filled and nothing else moved, so the
+        // map gave no sign of what had just been chosen.
+        graph.segments.forEach { seg ->
+            if (seg.patternIds.any { it in selectedPatternIds }) {
+                seg.stops.forEach { out.add(it.id) }
+            }
+        }
+        out
+    }
+
+    // The line's own colour, solid, on every branch.
+    //
+    // Deliberately NOT shaded per branch. A tube line diagram — the one on the
+    // platform and in the carriage — draws the whole line in one colour and lets
+    // the GEOMETRY carry the branching. Fading a branch reads as "this part is
+    // less real", which is the opposite of true: a Charing Cross train is as
+    // frequent as a Bank one. The terminus chips carry the distinction instead,
+    // exactly as on the printed map.
+
+    /**
+     * Everything derived from the graph, resolved once per graph.
+     *
+     * All three were being recomputed inside the draw lambda or the render loop,
+     * so a scroll or a single tap re-walked the segment list several times over.
+     * The graph only changes when the user picks a different direction.
+     */
+    val sources = remember(graph) { graph.segments.filter { it.prevIds.isEmpty() } }
+
+    // The origin sits level with the branches leaving it.
+    val originRow = remember(graph) {
+        if (sources.isEmpty()) 0 else sources.sumOf { it.row } / sources.size
+    }
+
+    /** Terminal segments with their chip text, resolved once rather than per draw. */
+    val chips = remember(graph) {
+        graph.segments
+            .filter { it.isTerminal && it.stops.isNotEmpty() }
+            .map { seg ->
+                val ending = graph.patterns.filter { it.id in seg.patternIds }
+                // A tail shared by several services is named for the place they
+                // all reach ("Morden"); a branch only one takes carries its own
+                // name ("Morden via Bank"), because that is the only thing
+                // distinguishing it from its sibling.
+                val label = when {
+                    ending.isEmpty() -> seg.stops.last().name
+                    ending.size == 1 -> ending.first().label
+                    else -> ending.map { it.terminusName }.distinct()
+                        .singleOrNull() ?: seg.stops.last().name
+                }
+                ChipSpec(seg, ending, label)
+            }
+    }
 
     // Scrolling the map is also "I'm done searching".
     val collapseOnScroll = remember(onInteract) {
@@ -172,55 +226,63 @@ fun RouteGraphPicker(
             Canvas(Modifier.width(totalW).height(totalH)) {
                 val stroke = 3.5.dp.toPx()
 
-                fun drawNode(p: Placed, depth: Int, sibling: Int, isRoot: Boolean) {
-                    val tint = shadeFor(depth, sibling)
-                    val yPx = y(p.row).toPx()
+                /**
+                 * A divergence or a convergence, drawn the same way.
+                 *
+                 * An S-curve is the tube-map idiom for one line becoming two —
+                 * and, run the other way, for two becoming one. A right-angle
+                 * elbow reads as a different line rather than the same one
+                 * splitting or joining.
+                 */
+                fun link(fromX: Float, fromY: Float, toX: Float, toY: Float, tint: Color) {
+                    val path = Path().apply {
+                        moveTo(fromX, fromY)
+                        val mid = (fromX + toX) / 2f
+                        cubicTo(mid, fromY, mid, toY, toX, toY)
+                    }
+                    drawPath(path, color = tint, style = Stroke(width = stroke, cap = StrokeCap.Round))
+                }
 
-                    // Segment across this node's own stops.
-                    //
-                    // Only the ROOT reaches back to the origin marker. A child
-                    // must start at its FIRST stop: the junction S-curve already
-                    // covers the gap from the parent, so extending back a column
-                    // drew a stray stub sticking out to the left of every
-                    // post-split node.
-                    val fromX = if (isRoot) (ROUTE_ORIGIN_W - ORIGIN_DOT_INSET).toPx()
-                                else x(p.startCol).toPx()
-                    val toX = if (p.node.stops.isEmpty()) fromX
-                              else x(p.startCol + p.node.stops.size - 1).toPx()
+                // Every segment is one straight run on one row, by construction:
+                // a segment ends exactly where the set of services on it changes.
+                graph.segments.forEach { seg ->
+                    val yPx = y(seg.row).toPx()
+                    val fromX = x(seg.startCol).toPx()
+                    val toX = x(seg.endCol).toPx()
                     if (toX > fromX) {
                         drawLine(
-                            tint, Offset(fromX, yPx), Offset(toX, yPx),
+                            lineColor, Offset(fromX, yPx), Offset(toX, yPx),
                             strokeWidth = stroke, cap = StrokeCap.Round,
                         )
                     }
-
-                    // Junction out to each child: an S-curve, the way a tube map
-                    // draws a divergence. A right-angle elbow reads as a
-                    // different line rather than the same one splitting.
-                    val childCol = p.startCol + p.node.stops.size
-                    p.node.children.forEachIndexed { i, child ->
-                        val cp = placed.first { it.node === child }
-                        val cy = y(cp.row).toPx()
-                        val cx = x(childCol).toPx()
-                        val path = Path().apply {
-                            moveTo(toX, yPx)
-                            val mid = (toX + cx) / 2f
-                            cubicTo(mid, yPx, mid, cy, cx, cy)
-                        }
-                        drawPath(
-                            path,
-                            color = shadeFor(depth + 1, i),
-                            style = Stroke(width = stroke, cap = StrokeCap.Round),
-                        )
-                        drawNode(cp, depth + 1, i, isRoot = false)
-                    }
                 }
 
-                placed.firstOrNull { it.node === tree }?.let { drawNode(it, 0, 0, isRoot = true) }
+                // Links out of the origin, to every service leaving it.
+                val originX = (ROUTE_ORIGIN_W - ORIGIN_DOT_INSET).toPx()
+                val originY = y(originRow).toPx()
+                sources.forEach { seg ->
+                    link(originX, originY, x(seg.startCol).toPx(), y(seg.row).toPx(), lineColor)
+                }
+
+                // Links between segments. A merge falls out for free: two
+                // parents both point at one child, so two curves arrive at the
+                // same node instead of the child being drawn twice.
+                graph.segments.forEach { seg ->
+                    seg.nextIds.forEach { childId ->
+                        val child = byId[childId] ?: return@forEach
+                        link(
+                            x(seg.endCol).toPx(), y(seg.row).toPx(),
+                            x(child.startCol).toPx(), y(child.row).toPx(),
+                            // Tinted by the segment being entered, so a branch
+                            // takes its own weight the moment it leaves.
+                            lineColor,
+                        )
+                    }
+                }
             }
 
             /* ── Origin ── */
-            NodeSlot(x = ROUTE_ORIGIN_W / 2, y = y(placed.first { it.node === tree }.row),
+            NodeSlot(x = ROUTE_ORIGIN_W / 2, y = y(originRow),
                      width = ROUTE_ORIGIN_W, density = density) {
                 // Boxed label on the LEFT, the route's root dot on the RIGHT.
                 // The label is a caption for where you are; the dot is where the
@@ -266,85 +328,73 @@ fun RouteGraphPicker(
             }
 
             /* ── Stops ── */
-            placed.forEach { p ->
-                val depth = depthOf(placed, tree, p)
-                val tint = shadeFor(depth, siblingIndexOf(placed, p))
-                p.node.stops.forEachIndexed { i, stop ->
+            graph.segments.forEach { seg ->
+                seg.stops.forEachIndexed { i, stop ->
                     StopNode(
                         stop = stop,
-                        x = x(p.startCol + i),
-                        y = y(p.row),
-                        accent = tint,
+                        x = x(seg.startCol + i),
+                        y = y(seg.row),
+                        accent = lineColor,
                         selected = stop.id in selectedIds,
+                        covered = stop.id in coveredIds,
                         focused = stop.id == focusedId,
-                        // The last stop of a LEAF is where that branch ends —
-                        // drawn solid to match the origin, so both caps of the
-                        // route read as endpoints. A last stop on an internal
-                        // node is only the point before a split, and stays a
-                        // ring: the line carries on through it.
-                        isEndpoint = p.node.isLeaf && i == p.node.stops.lastIndex,
+                        // The last stop of a segment nothing continues from is
+                        // where that service ends — drawn solid to match the
+                        // origin, so both caps of the route read as endpoints. A
+                        // last stop before a split or a merge stays a ring: the
+                        // line carries on through it.
                         density = density,
                         onClick = { onInteract(); onToggleStop(stop) },
                     )
                 }
-                // Terminus chip past the end of a leaf — the tube-map idiom, and
-                // a one-tap way to take the whole branch.
-                // `stops.isNotEmpty()` guard: a destination whose whole run is a
-                // prefix of its siblings' becomes a leaf with no stops of its
-                // own. Its chip would be positioned one column early and could
-                // never be selected, since selecting a branch means selecting
-                // its first stop.
-                if (p.node.isLeaf && p.node.terminusName != null && p.node.stops.isNotEmpty()) {
-                    val lastCol = p.startCol + p.node.stops.size - 1
-                    val chipX = x(lastCol) + ROUTE_STOP_W / 2 + TERMINUS_W / 2
-                    val taken = p.node.stops.firstOrNull()?.id?.let { it in selectedIds } == true
-                    NodeSlot(x = chipX, y = y(p.row), width = TERMINUS_W, density = density) {
-                        Box(
-                            Modifier
-                                .clip(RoundedCornerShape(7.dp))
-                                .background(if (taken) tint else tint.copy(alpha = 0.16f))
-                                .clickable { onInteract(); onToggleBranch(p.node) }
-                                .padding(horizontal = 8.dp, vertical = 5.dp)
-                        ) {
-                            Text(
-                                "All ${p.node.terminusName} ${vehiclePlural.lowercase()}",
-                                color = if (taken) MaterialTheme.colorScheme.onPrimary else tint,
-                                fontSize = 9.sp, lineHeight = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                textAlign = TextAlign.Center,
-                                maxLines = 2, overflow = TextOverflow.Ellipsis,
-                            )
-                        }
+
+            }
+
+            /* ── Terminus chips ── */
+            //
+            // A separate pass, not a branch inside the stop loop: the chip is a
+            // property of the SERVICE, and resolving which services end at a
+            // segment is graph work that has no business rerunning on every
+            // recomposition. See `chips`.
+            chips.forEach { chip ->
+                val seg = chip.segment
+                val chipX = x(seg.endCol) + ROUTE_STOP_W / 2 + TERMINUS_W / 2
+                // The chip fills when the SERVICE is taken, not when some stop
+                // along it happens to be selected. Those are different answers,
+                // and conflating them is what made the map's feedback unreadable.
+                //
+                // All-or-nothing across `patterns`: a tail past a merge ends
+                // several services — Oval to Morden is reached both via Bank and
+                // via Charing Cross — and the chip there says "Morden", so it
+                // stands for all of them.
+                val taken = chip.patterns.isNotEmpty() &&
+                    chip.patterns.all { it.id in selectedPatternIds }
+                NodeSlot(x = chipX, y = y(seg.row), width = TERMINUS_W, density = density) {
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(if (taken) lineColor else lineColor.copy(alpha = 0.16f))
+                            .clickable {
+                                onInteract()
+                                if (chip.patterns.isNotEmpty()) onToggleBranch(chip.patterns)
+                            }
+                            .padding(horizontal = 8.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            "All ${chip.label} ${vehiclePlural.lowercase()}",
+                            color = if (taken) MaterialTheme.colorScheme.onPrimary else lineColor,
+                            fontSize = 9.sp, lineHeight = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
             }
+
         }
         }
     }
-}
-
-private fun depthOf(placed: List<Placed>, root: RouteTree, target: Placed): Int {
-    var depth = 0
-    var current = root
-    while (current !== target.node) {
-        val next = current.children.firstOrNull { child ->
-            child === target.node || containsNode(child, target.node)
-        } ?: return depth
-        current = next
-        depth++
-    }
-    return depth
-}
-
-private fun containsNode(node: RouteTree, target: RouteTree): Boolean =
-    node === target || node.children.any { containsNode(it, target) }
-
-private fun siblingIndexOf(placed: List<Placed>, target: Placed): Int {
-    placed.forEach { p ->
-        val i = p.node.children.indexOfFirst { it === target.node }
-        if (i >= 0) return i
-    }
-    return 0
 }
 
 /**
@@ -380,9 +430,7 @@ private fun NodeSlot(
 @Composable
 private fun StackedNode(
     label: String,
-    sublabel: String? = null,
     labelColor: Color,
-    sublabelColor: Color = labelColor,
     marker: @Composable () -> Unit,
 ) {
     Column(
@@ -398,14 +446,6 @@ private fun StackedNode(
                     textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(horizontal = 2.dp)
                 )
-                if (sublabel != null) {
-                    Text(
-                        sublabel,
-                        color = sublabelColor,
-                        fontSize = 8.sp, fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center, maxLines = 1,
-                    )
-                }
                 Spacer(Modifier.height(4.dp))
             }
         }
@@ -427,9 +467,9 @@ private fun StopNode(
     y: Dp,
     accent: Color,
     selected: Boolean,
+    /** Downstream of a pick, so this train is already included by it. */
+    covered: Boolean,
     focused: Boolean,
-    /** Last stop of a branch — drawn solid, like the origin, to cap the line. */
-    isEndpoint: Boolean = false,
     density: Density,
     onClick: () -> Unit,
 ) {
@@ -452,6 +492,7 @@ private fun StopNode(
                 labelColor = when {
                     selected -> MaterialTheme.colorScheme.onSurface
                     focused -> accent
+                    covered -> MaterialTheme.colorScheme.onSurface
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
             ) {
@@ -472,7 +513,14 @@ private fun StopNode(
                                 .border(1.5.dp, accent.copy(alpha = pulse), CircleShape)
                         )
                     }
+                    // THREE states, and no more. Every extra circle on this map
+                    // was read as selection feedback, because that is what a
+                    // marker changing shape means to someone tapping stations.
+                    // Structure — where the line ends, where it divides — is
+                    // carried by the geometry and the terminus chips, which is
+                    // where a printed diagram carries it too.
                     when {
+                        // The stop you actually chose.
                         selected -> Box(
                             Modifier.size(19.dp).background(accent, CircleShape),
                             Alignment.Center,
@@ -486,7 +534,15 @@ private fun StopNode(
                         // Branch end: solid disc, same as the origin. Reads as a
                         // terminus rather than "one more stop the line passes
                         // through", which a ring cannot say on its own.
-                        isEndpoint -> Box(Modifier.size(14.dp).background(accent, CircleShape))
+                        // Included by a pick further back. A filled centre
+                        // says "already covered" without claiming you chose it:
+                        // the tick belongs to the stop you actually tapped.
+                        covered -> Box(
+                            Modifier.size(14.dp)
+                                .background(MaterialTheme.colorScheme.surface, CircleShape)
+                                .border(3.dp, accent, CircleShape),
+                            Alignment.Center,
+                        ) { Box(Modifier.size(6.dp).background(accent, CircleShape)) }
                         else -> Box(
                             Modifier.size(14.dp)
                                 .background(MaterialTheme.colorScheme.surface, CircleShape)

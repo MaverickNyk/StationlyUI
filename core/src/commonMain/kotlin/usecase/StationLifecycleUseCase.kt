@@ -128,6 +128,7 @@ class StationLifecycleUseCase(
             selection.line,
             selection.direction,
             selection.destinationIds.toSet(),
+            selection.viaKeys.toSet(),
         )
     }
 

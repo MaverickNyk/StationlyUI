@@ -1,3 +1,32 @@
+-- ⚠️ NO MIGRATIONS. Deliberate, and temporary.
+--
+-- `migrations/` was deleted during active development (2026-08-19). iOS has
+-- never shipped, so there is no install to upgrade, and `Schema.create` applies
+-- this file in full to every fresh database — which is the only kind that
+-- exists. Carrying migrations for a schema still changing daily was churn with
+-- no reader.
+--
+-- ## Before the next ANDROID release, this must be reinstated
+-- Android IS live (versionCode 2) and writes to `UserSelectionEntity` through
+-- `SqlStorage.saveSelection` → `insertSelection`. `Schema.create` runs only on
+-- an EMPTY database, so an existing Android install never gains a column added
+-- here. The first board save then fails with "no such column" — at runtime, on
+-- exactly the devices that have been using the app longest, and never on the
+-- freshly wiped one a developer tests with.
+--
+-- What a reinstated `migrations/1.sqm` has to contain, at minimum:
+--   CREATE TABLE ActivityEventEntity (…);  plus its index
+--   ALTER TABLE UserSelectionEntity ADD COLUMN viaKeys      TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE UserSelectionEntity ADD COLUMN patternIds   TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE UserSelectionEntity ADD COLUMN patternNames TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE PredictionEntity    ADD COLUMN viaKey       TEXT;
+-- Diff this file against the last released Android build before writing it —
+-- the list above is only what was outstanding on the day migrations were
+-- dropped, and anything added since belongs in it too.
+--
+-- SQLDelight derives the schema version from the migration COUNT, so adding the
+-- first file back bumps the database to 2 and every later change gets a home.
+
 CREATE TABLE UserSelectionEntity (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     mode TEXT NOT NULL,
@@ -11,8 +40,12 @@ CREATE TABLE UserSelectionEntity (
     parentStationId TEXT NOT NULL DEFAULT '',
     stationName TEXT NOT NULL,
     direction TEXT NOT NULL,
-    destinations TEXT NOT NULL, -- JSON or comma-separated
-    destinationIds TEXT NOT NULL, -- JSON or comma-separated
+    -- Every list column here is a JSON array of strings, written by
+    -- `SqlStorage.encodeList`. NOT comma-joined: these hold stop NAMES, and one
+    -- comma in a name splits an entry in two and shifts every later name onto
+    -- the wrong id in the list beside it. Reads tolerate the old comma form.
+    destinations TEXT NOT NULL,
+    destinationIds TEXT NOT NULL,
     -- ALL | DESTINATIONS | VIA. Stored as the enum name rather than an ordinal
     -- so adding a filter kind can never renumber the existing ones; anything
     -- unrecognised decodes back to ALL (show everything).
@@ -22,6 +55,23 @@ CREATE TABLE UserSelectionEntity (
     -- branch closes, so the intent has to survive to be re-resolved.
     viaStationId TEXT,
     viaStationName TEXT,
+    -- Branch tokens the departure's own viaKey must be one of ("bank",
+    -- "charingcross"), CSV like the columns above. Part of the RESOLUTION, not
+    -- the intent: re-derived every time the board is re-resolved.
+    --
+    -- Blank means "do not narrow by branch" and is the right answer for most of
+    -- the network — only a line that splits AND rejoins needs it. Safe to store
+    -- CSV: these are generated tokens, [a-z0-9] only, so unlike the stop-name
+    -- columns above they can never contain a comma.
+    viaKeys TEXT NOT NULL DEFAULT '',
+    -- Whole services taken from the map's terminus chips, by pattern id, CSV.
+    -- Intent rather than resolution: kept so reopening the sheet can show the
+    -- branch as chosen instead of a stop in the middle of it.
+    patternIds TEXT NOT NULL DEFAULT '',
+    -- Display names for patternIds, index-aligned, as viaStationName is for
+    -- viaStationId. A pattern id is unreadable, and the card has to name the
+    -- filter without re-fetching route data to do it.
+    patternNames TEXT NOT NULL DEFAULT '',
     -- Epoch millis of the last resolution, so a stale allow-list can be found
     -- and refreshed without prompting the user again.
     routeResolvedAt INTEGER NOT NULL DEFAULT 0
@@ -45,6 +95,13 @@ CREATE TABLE PredictionEntity (
     -- Not part of the primary key — it is an attribute of the train, and the
     -- existing key already identifies the row.
     destId TEXT NOT NULL DEFAULT '',
+    -- Which BRANCH this train takes ("bank", "charingcross"), when TfL labels
+    -- one. Stored rather than recomputed because `reapplyFilter` re-evaluates
+    -- the filter against rows already on disk — when the user narrows a board
+    -- the departures are not re-fetched — and without this it would have only
+    -- destId to go on and would silently re-admit the trains the new filter
+    -- exists to exclude. Null for every unbranched service.
+    viaKey TEXT,
     -- Precomputed answer to "does this row pass the board's filter", written
     -- once at ingest. The board re-reads these rows on every recomposition and
     -- every one-second countdown tick, so the filter is evaluated per WRITE
@@ -127,8 +184,8 @@ CREATE INDEX activity_by_time ON ActivityEventEntity(t);
 
 -- Queries
 insertSelection:
-INSERT INTO UserSelectionEntity(mode, line, station, parentStationId, stationName, direction, destinations, destinationIds, filterMode, viaStationId, viaStationName, routeResolvedAt)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO UserSelectionEntity(mode, line, station, parentStationId, stationName, direction, destinations, destinationIds, filterMode, viaStationId, viaStationName, viaKeys, patternIds, patternNames, routeResolvedAt)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- ORDER BY is load-bearing, not tidiness.
 --
@@ -155,8 +212,8 @@ deleteSelection:
 DELETE FROM UserSelectionEntity WHERE station = ? AND line = ? AND direction = ?;
 
 insertPrediction:
-INSERT OR REPLACE INTO PredictionEntity(stationId, lineId, direction, destination, destId, matchesFilter, platform, eta, isDue, stopLetter, timestamp, targetEpochMs)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO PredictionEntity(stationId, lineId, direction, destination, destId, viaKey, matchesFilter, platform, eta, isDue, stopLetter, timestamp, targetEpochMs)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- Board reads. Filtered rows are excluded in SQL off the precomputed flag, and
 -- ordered here so the render path receives them ready to draw — it must do no

@@ -23,6 +23,7 @@ class BoardLabelsTest {
         destinations: List<String> = emptyList(),
         destinationIds: List<String> = emptyList(),
         viaStationNames: List<String> = emptyList(),
+        patternNames: List<String> = emptyList(),
     ) = UserSelection(
         mode = "tube",
         line = line,
@@ -33,6 +34,7 @@ class BoardLabelsTest {
         destinationIds = destinationIds,
         filterMode = filterMode,
         viaStationNames = viaStationNames,
+        patternNames = patternNames,
     )
 
     @Test
@@ -130,5 +132,66 @@ class BoardLabelsTest {
             )
         )
         assertEquals("Via 2 stops", label)
+    }
+
+    @Test
+    fun `a board filtered to one whole service is named after it`() {
+        // Taking a branch stores no via STOP, only a pattern. The card read a
+        // bare "Filtered" — honest and useless — because it looked at
+        // viaStationNames alone.
+        assertEquals(
+            "Morden via Bank",
+            BoardLabels.filterLabel(
+                board(
+                    filterMode = FilterMode.VIA,
+                    destinationIds = listOf("940GZZLUMDN"),
+                    patternNames = listOf("Morden via Bank"),
+                )
+            ),
+        )
+    }
+
+    @Test
+    fun `a service is not prefixed with Via`() {
+        // "Via Morden via Bank" is not a sentence. A stop is a place you pass
+        // and takes the prefix; a service already carries its own name.
+        val label = BoardLabels.filterLabel(
+            board(
+                filterMode = FilterMode.VIA,
+                destinationIds = listOf("940GZZLUMDN"),
+                patternNames = listOf("Morden via Charing Cross"),
+            )
+        )
+        assertEquals(false, label?.startsWith("Via "))
+    }
+
+    @Test
+    fun `several services are counted`() {
+        assertEquals(
+            "2 services",
+            BoardLabels.filterLabel(
+                board(
+                    filterMode = FilterMode.VIA,
+                    destinationIds = listOf("a"),
+                    patternNames = listOf("Morden via Bank", "Morden via Charing Cross"),
+                )
+            ),
+        )
+    }
+
+    @Test
+    fun `a stop and a service together are counted rather than mis-named`() {
+        // Neither phrasing fits both, and naming one would hide the other.
+        assertEquals(
+            "2 filters",
+            BoardLabels.filterLabel(
+                board(
+                    filterMode = FilterMode.VIA,
+                    destinationIds = listOf("a"),
+                    viaStationNames = listOf("Bank"),
+                    patternNames = listOf("Battersea"),
+                )
+            ),
+        )
     }
 }

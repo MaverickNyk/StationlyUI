@@ -71,19 +71,32 @@ object BoardLabels {
     }
 
     /**
-     * "Only Brixton", "Via Green Park" — or null when the board shows everything.
+     * "Only Brixton", "Via Green Park", "Morden via Bank" — or null when the
+     * board shows everything.
      *
-     * VIA reports the stops the user ASKED to travel through rather than the
-     * destinations that compiled to, because the resolution is an allow-list of
-     * every stop beyond the via point and reading it back would name places the
-     * user never mentioned.
+     * VIA reports what the user ASKED for rather than the destinations it
+     * compiled to, because the resolution is an allow-list of every stop beyond
+     * the via point and reading it back would name places they never mentioned.
+     *
+     * A VIA board can hold two kinds of pick and they read differently. A stop
+     * is a place you pass, so it takes "Via"; a whole service already carries
+     * its own name, and "Via Morden via Bank" is not a sentence.
      */
     fun filterLabel(board: UserSelection): String? = when {
         board.isUnfiltered -> null
-        board.filterMode == FilterMode.VIA -> when (board.viaStationNames.size) {
-            0 -> "Filtered"
-            1 -> "Via ${board.viaStationNames[0]}"
-            else -> "Via ${board.viaStationNames.size} stops"
+        board.filterMode == FilterMode.VIA -> {
+            val services = board.patternNames
+            val stops = board.viaStationNames
+            when {
+                services.isEmpty() && stops.isEmpty() -> "Filtered"
+                stops.isEmpty() && services.size == 1 -> services[0]
+                stops.isEmpty() -> "${services.size} services"
+                services.isEmpty() && stops.size == 1 -> "Via ${stops[0]}"
+                services.isEmpty() -> "Via ${stops.size} stops"
+                // Both kinds picked. Neither phrasing fits, and naming one would
+                // hide the other.
+                else -> "${services.size + stops.size} filters"
+            }
         }
         board.destinations.size == 1 -> "Only ${board.destinations[0]}"
         // A resolved filter whose display names never arrived. Saying "filtered"

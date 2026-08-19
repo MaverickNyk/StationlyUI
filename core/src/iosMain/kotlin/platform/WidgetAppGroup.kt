@@ -70,6 +70,29 @@ data class WidgetFeed(
      * naming map in the project rather than one per process.
      */
     val lineShort: String = "",
+    /**
+     * The board's resolved allow-list, so the extension's OWN refresh applies
+     * the same filter the app does.
+     *
+     * Without it the widget rebuilt its rows straight from the REST payload and
+     * showed every departure in the direction — a board narrowed to "through
+     * Bank" in the app sat beside an unfiltered widget of the same board on the
+     * same home screen.
+     *
+     * Carried rather than re-derived because resolving a filter needs route
+     * data, which the extension has no way to fetch and no business knowing.
+     * Empty means no filter, exactly as it does everywhere else.
+     *
+     * Defaulted so a board written by an older build still decodes.
+     */
+    val destinationIds: List<String> = emptyList(),
+    /**
+     * Branch tokens a departure's own `viaKey` must be one of, alongside
+     * [destinationIds]. Empty means "do not narrow by branch".
+     *
+     * See `stationly-backend/docs/BRANCH_VIA_KEYS.md`.
+     */
+    val viaKeys: List<String> = emptyList(),
 )
 
 /**

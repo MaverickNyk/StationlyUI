@@ -722,7 +722,15 @@ class IosWidgetManager : WidgetManager {
             // exact board from one REST call: which naptan, and which
             // (line, direction) pairs to keep out of the payload.
             feeds = boards.map {
-                WidgetFeed(it.station, it.line, it.direction, LineShortNames.shortName(it.line))
+                WidgetFeed(
+                    it.station, it.line, it.direction, LineShortNames.shortName(it.line),
+                    // The RESOLVED allow-list, not the intent: the extension
+                    // cannot resolve a filter (that needs route data) and must
+                    // not try. This is what lets its own refresh narrow the
+                    // board the same way the app already has.
+                    destinationIds = it.destinationIds,
+                    viaKeys = it.viaKeys,
+                )
             },
             // The user's display depth, carried across the process boundary
             // because the extension cannot read the preference itself — see

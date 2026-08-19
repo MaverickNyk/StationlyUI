@@ -57,6 +57,9 @@ class SyncPredictionsUseCase(
         // tick, so the filter is evaluated on the write side and the answer is
         // persisted as a boolean per row.
         val allowedDestIds = selection.destinationIds.toSet()
+        // The branch half of the same check, materialised alongside it. Empty
+        // for every board that does not need it, which is nearly all of them.
+        val allowedViaKeys = selection.viaKeys.toSet()
 
         // 3. Format predictions for display. Capture the absolute arrival
         //    time (parsed from the FCM's ISO timestamp) alongside the
@@ -78,7 +81,10 @@ class SyncPredictionsUseCase(
                 isDue = etaString == "Due",
                 stopLetter = pred.stopLetter,
                 destId = pred.destId,
-                matchesFilter = SqlStorage.matchesFilter(pred.destId, allowedDestIds),
+                viaKey = pred.viaKey,
+                matchesFilter = SqlStorage.matchesFilter(
+                    pred.destId, allowedDestIds, pred.viaKey, allowedViaKeys,
+                ),
                 targetEpochMs = StationlyFormatters.parseTargetEpochMs(pred.eta),
             )
         // Dedupe on absolute arrival time, NOT the formatted eta string.

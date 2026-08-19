@@ -271,8 +271,52 @@ data class SduiDropdownOption(
     val directionName: String? = null,
     val towards: String? = null,
     val destinations: List<SduiDropdownOption>? = null,
+    /**
+     * Every DISTINCT service pattern from the origin, none collapsed.
+     *
+     * [destinations] is keyed on terminus, so two routes ending at the same
+     * place become one chip and the shorter is deleted — which is how "Morden
+     * via Charing Cross" disappeared, and how Chigwell, Grange Hill and Roding
+     * Valley became unreachable on the Central line map. This list keeps them.
+     *
+     * Nullable because it is additive: an older backend, or a payload cached
+     * before it existed, has none. Callers fall back to [destinations], which
+     * behaves exactly as it always did.
+     */
+    val patterns: List<SduiRoutePattern>? = null,
     /** Station this route sequence is relative to; every stop list starts AFTER it. */
     val originStationId: String? = null,
+)
+
+/**
+ * One way a train can actually run from the origin, in this direction.
+ *
+ * The unit the MAP is built from and the FILTER resolves against. Distinct from
+ * a destination chip in exactly one way that matters: two patterns may share a
+ * [terminusId] and differ in [viaKey], which is the case a terminus-keyed model
+ * cannot express and the reason branch filtering was wrong.
+ */
+@Serializable
+data class SduiRoutePattern(
+    /** Unique within one direction. Terminus, plus the branch where there is one. */
+    val id: String,
+    val terminusId: String,
+    val terminusName: String,
+    /** TfL's own words — "Bank", "Charing Cross" — or null when unbranched. */
+    val via: String? = null,
+    /**
+     * The comparable form of [via], matched against a departure's
+     * [com.stationly.core.model.PredictionItem.viaKey].
+     *
+     * Null means TfL published nothing to tell this pattern apart from its
+     * siblings — four Metropolitan runs to Aldgate differ only in whether they
+     * call at Willesden Green. Read it as "cannot narrow", never as "no match".
+     */
+    val viaKey: String? = null,
+    /** "Morden via Bank" — how the branch is named on the map. */
+    val label: String,
+    /** Stops after the origin, in order. */
+    val stops: List<SduiRouteStop> = emptyList(),
 )
 
 /** One stop on a route sequence: the naptan id to match on, plus a display name. */

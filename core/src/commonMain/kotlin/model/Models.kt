@@ -134,6 +134,34 @@ data class UserSelection(
      */
     val viaStationIds: List<String> = emptyList(),
     val viaStationNames: List<String> = emptyList(),
+    /**
+     * Branch tokens the departure's own `viaKey` must be one of, resolved
+     * alongside [destinationIds].
+     *
+     * Empty means "do not narrow by branch", which is the answer for every line
+     * that never rejoins and for the Metropolitan, where TfL publishes no
+     * discriminator at all. Defaulted so nothing that constructs a selection
+     * without it — the Android app included — changes behaviour.
+     */
+    val viaKeys: List<String> = emptyList(),
+    /**
+     * Whole services the user took, by pattern id ("940GZZLUMDN:bank").
+     *
+     * The INTENT behind a terminus chip, kept beside [viaStationIds] because the
+     * two are different questions: a pattern says where a train goes, a via stop
+     * says where it passes. Storing a branch as a stop id is what made tapping
+     * "All Morden via Bank trains" tick a station in the middle of the branch.
+     */
+    val patternIds: List<String> = emptyList(),
+    /**
+     * Display names for [patternIds], index-aligned, exactly as
+     * [viaStationNames] is for [viaStationIds].
+     *
+     * Stored rather than re-derived because a pattern id ("940GZZLUMDN:bank") is
+     * unreadable, and the board's own card has to name the filter without
+     * re-fetching route data to do it.
+     */
+    val patternNames: List<String> = emptyList(),
     /** When [destinationIds] was last resolved from route data, epoch millis. */
     val routeResolvedAt: Long = 0L,
 ) {
@@ -278,7 +306,22 @@ data class PredictionItem(
     val displayName: String = "",
     val platform: String = "",
     val eta: String = "",
-    val stopLetter: String? = null
+    val stopLetter: String? = null,
+    /**
+     * Which BRANCH this service takes, when TfL labels one — "Morden via Bank"
+     * arrives here as `bank`.
+     *
+     * [destId] answers "where does it end", and on a line that splits and
+     * rejoins that is not the same question as "does it pass my stop": the two
+     * Northern line routes to Morden report the same naptan and share every stop
+     * from Kennington south. This is the only field that separates them.
+     *
+     * Null on every unbranched service, on anything TfL leaves unlabelled, and
+     * on any payload from a backend that predates the field. All three mean
+     * "cannot narrow", and the filter must FAIL OPEN on them — showing an extra
+     * train costs a glance, hiding the needed one costs the journey.
+     */
+    val viaKey: String? = null,
 )
 
 /**
@@ -325,6 +368,12 @@ data class PredictionDisplay(
      * as SHOW, never hide.
      */
     val destId: String = "",
+    /**
+     * Branch token from [PredictionItem.viaKey], carried through so the ingest
+     * filter can ask "which way does this one go" alongside "where does it end".
+     * Null means unlabelled, which the filter reads as "show it".
+     */
+    val viaKey: String? = null,
     /**
      * Whether this departure passes the board's destination/via filter.
      *

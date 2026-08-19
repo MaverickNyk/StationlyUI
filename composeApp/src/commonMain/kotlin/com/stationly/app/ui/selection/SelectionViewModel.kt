@@ -10,7 +10,7 @@ import com.stationly.core.model.FilterMode
 import com.stationly.core.model.UserSelection
 import com.stationly.core.util.BoardFilterResolver
 import com.stationly.core.util.LineNameStore
-import com.stationly.core.util.RouteTree
+import com.stationly.core.util.RouteGraph
 import com.stationly.core.model.sdui.SduiRouteStop
 import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.model.sdui.SduiAppScreen
@@ -138,6 +138,31 @@ class SelectionViewModel(
      */
     private val _boardFilters = MutableStateFlow<Map<String, BoardFilter>>(emptyMap())
     val boardFilters: StateFlow<Map<String, BoardFilter>> = _boardFilters.asStateFlow()
+
+    /**
+     * Built route graphs, keyed by [boardFilterKey].
+     *
+     * Building one is not free — it topologically sorts the stops, cuts them into
+     * segments and packs them into rows — and [toggleFilterVia] needs one on
+     * EVERY tap of a station. Rebuilding it per tap did that whole pipeline on
+     * the main thread and threw the result away immediately.
+     *
+     * Cleared whenever a line's directions are replaced, which is the only thing
+     * that can change the answer.
+     */
+    private val graphCache = mutableMapOf<String, RouteGraph>()
+
+    private fun graphFor(lineId: String, directionId: String): RouteGraph? {
+        val key = boardFilterKey(lineId, directionId)
+        graphCache[key]?.let { return it }
+        val option = _directionsByLine.value[lineId]?.find { it.id == directionId } ?: return null
+        return RouteGraph.from(option).also { graphCache[key] = it }
+    }
+
+    /** Drop cached graphs for one line — its route data has been replaced. */
+    private fun invalidateGraphs(lineId: String) {
+        graphCache.keys.removeAll { it.startsWith("$lineId|") }
+    }
 
     /**
      * The one line whose directions are currently expanded, or null for none.
@@ -564,6 +589,9 @@ class SelectionViewModel(
                         viaStops = sel.viaStationIds.mapIndexed { i, id ->
                             SduiRouteStop(id, sel.viaStationNames.getOrElse(i) { id })
                         },
+                        patterns = sel.patternIds.mapIndexed { i, id ->
+                            BoardFilter.PatternPick(id, sel.patternNames.getOrElse(i) { id })
+                        },
                     )
                 }
             }
@@ -730,6 +758,7 @@ class SelectionViewModel(
                     try {
                         val cached = jsonFormat.decodeFromString<List<SduiDropdownOption>>(cachedJson)
                         _directionsByLine.value = _directionsByLine.value + (lineId to cached)
+                        invalidateGraphs(lineId)
                     } catch (_: Exception) {}
                 }
 
@@ -738,6 +767,7 @@ class SelectionViewModel(
                 storageManager.saveString(tsKey, now.toString())
 
                 _directionsByLine.value = _directionsByLine.value + (lineId to options)
+                invalidateGraphs(lineId)
                 _uiState.value = _uiState.value.copy(
                     failedFetches = _uiState.value.failedFetches - failKey
                 )
@@ -769,7 +799,16 @@ class SelectionViewModel(
                 // "Heathrow" as "via Heathrow" would change which trains show.
                 FilterMode.ALL -> BoardFilter()
                 FilterMode.DESTINATIONS -> BoardFilter(mode = mode, destinationIds = current.destinationIds)
-                FilterMode.VIA -> BoardFilter(mode = mode, viaStops = current.viaStops)
+                // BOTH kinds of VIA pick survive. Stops and whole services are
+                // two ways of answering the same question, and this rebuilds the
+                // filter from scratch — omitting `patterns` silently threw a
+                // branch selection away the next time the user touched the mode
+                // row, with nothing on screen to say it had gone.
+                FilterMode.VIA -> BoardFilter(
+                    mode = mode,
+                    viaStops = current.viaStops,
+                    patterns = current.patterns,
+                )
             }
         }
     }
@@ -801,9 +840,7 @@ class SelectionViewModel(
      */
     fun toggleFilterVia(lineId: String, directionId: String, stopId: String, stopName: String) {
         performHaptic(HapticType.TAP)
-        val tree = _directionsByLine.value[lineId]
-            ?.find { it.id == directionId }
-            ?.let { RouteTree.from(it) }
+        val tree = graphFor(lineId, directionId)
 
         updateFilter(lineId, directionId) { current ->
             if (stopId in current.viaStopIds) {
@@ -813,9 +850,9 @@ class SelectionViewModel(
                 // for an empty set, so nothing is filtered either way.
                 current.copy(mode = FilterMode.VIA, viaStops = current.viaStops.filterNot { it.id == stopId })
             } else {
-                val incoming = tree?.terminiFrom(stopId).orEmpty()
+                val incoming = tree?.patternsFrom(stopId).orEmpty()
                 val kept = current.viaStops.filterNot { existing ->
-                    val other = tree?.terminiFrom(existing.id).orEmpty()
+                    val other = tree?.patternsFrom(existing.id).orEmpty()
                     incoming.isNotEmpty() && other.isNotEmpty() &&
                         (incoming.containsAll(other) || other.containsAll(incoming))
                 }
@@ -824,6 +861,37 @@ class SelectionViewModel(
                     viaStops = kept + SduiRouteStop(stopId, stopName),
                 )
             }
+        }
+    }
+
+    /**
+     * Take or drop a WHOLE service from the map's terminus chip.
+     *
+     * Separate from [toggleFilterVia] on purpose. A branch used to be expressed
+     * as "via the first stop nothing else reaches", which is exact but put a
+     * tick on a station in the middle of the branch — feedback for a choice the
+     * user never made. A pattern id says what the chip says.
+     */
+    fun toggleFilterBranch(
+        lineId: String,
+        directionId: String,
+        /** Every service the chip stands for: (id, label). */
+        picks: List<Pair<String, String>>,
+    ) {
+        if (picks.isEmpty()) return
+        performHaptic(HapticType.TAP)
+        val ids = picks.map { it.first }.toSet()
+        updateFilter(lineId, directionId) { current ->
+            // All-or-nothing on the whole chip. A tail past a merge names several
+            // services, and leaving some of them on would fill nothing and show
+            // half the trains.
+            val allTaken = ids.all { id -> current.patterns.any { it.id == id } }
+            current.copy(
+                mode = FilterMode.VIA,
+                patterns = if (allTaken) current.patterns.filterNot { it.id in ids }
+                           else current.patterns.filterNot { it.id in ids } +
+                                picks.map { BoardFilter.PatternPick(it.first, it.second) },
+            )
         }
     }
 
@@ -883,6 +951,7 @@ class SelectionViewModel(
                 direction = dirOption,
                 chosenDestinationIds = filter.destinationIds,
                 viaStopIds = filter.viaStopIds,
+                chosenPatternIds = filter.patternIds,
             )
         } else BoardFilterResolver.EMPTY
 
@@ -907,6 +976,13 @@ class SelectionViewModel(
             filterMode = effective,
             viaStationIds = if (effective == FilterMode.VIA) filter.viaStopIds.toList() else emptyList(),
             viaStationNames = if (effective == FilterMode.VIA) filter.viaStopNames else emptyList(),
+            // Part of the RESOLUTION, so it is taken from the resolver rather
+            // than the intent, and it applies to every filter kind — a
+            // destination pick narrows to specific patterns just as a via pick
+            // does. Empty whenever the route data carries no branch labels.
+            viaKeys = resolution.viaKeys,
+            patternIds = if (effective == FilterMode.VIA) filter.patterns.map { it.id } else emptyList(),
+            patternNames = if (effective == FilterMode.VIA) filter.patternNames else emptyList(),
             routeResolvedAt = if (resolution.isEmpty) 0L
                               else kotlinx.datetime.Clock.System.now().toEpochMilliseconds(),
         )
