@@ -79,7 +79,6 @@ import androidx.compose.material.icons.rounded.Train
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -124,6 +123,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.stationly.app.ui.common.ServiceUnavailableScreen
+import com.stationly.app.ui.common.StationlySpinner
 import com.stationly.app.ui.summary.components.lineColorForTheme
 import com.stationly.app.ui.theme.isDarkTheme
 import com.stationly.core.model.FilterMode
@@ -236,13 +236,17 @@ fun SelectionScreen(
      * screen's "Edit station". Null starts the flow at the mode step as usual.
      */
     editStation: Triple<String, String, String>? = null,
+    /** A line to open expanded — see [SelectionViewModel.openForStation]. */
+    focusLine: String? = null,
     viewModel: SelectionViewModel = viewModel { SelectionViewModel() }
 ) {
     // Keyed on the station so re-entering for a DIFFERENT one re-runs, and
     // recomposition alone never does — replaying it would fight the user by
     // dragging them back to the line step every time they pressed back.
-    LaunchedEffect(editStation) {
-        editStation?.let { (id, mode, name) -> viewModel.openForStation(mode, id, name) }
+    LaunchedEffect(editStation, focusLine) {
+        editStation?.let { (id, mode, name) ->
+            viewModel.openForStation(mode, id, name, focusLine)
+        }
     }
 
     val st by viewModel.uiState.collectAsStateWithLifecycle()
@@ -1026,10 +1030,7 @@ private fun LineDirectionScreen(
                                 line.id in loadingDirections ||
                                     directionsByLine[line.id] == null ->
                                     Box(Modifier.fillMaxWidth().height(56.dp), Alignment.Center) {
-                                        CircularProgressIndicator(
-                                            color = primary, strokeWidth = 2.dp,
-                                            modifier = Modifier.size(22.dp)
-                                        )
+                                        StationlySpinner(size = 22.dp, color = primary)
                                     }
 
                                 // Directions side by side, two per row, each
@@ -1509,8 +1510,12 @@ private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, layou
 /* ═══════════════════════════════════════════════════════════════
    Shared utilities
    ═══════════════════════════════════════════════════════════════ */
+/**
+ * The step's own content is still loading. Inline rather than an overlay: there
+ * is nothing behind it yet to protect, and the back button must stay live.
+ */
 @Composable private fun Loader(primary: Color) = Box(Modifier.fillMaxSize(), Alignment.Center) {
-    CircularProgressIndicator(color = primary, strokeWidth = 2.5.dp, modifier = Modifier.size(28.dp))
+    StationlySpinner(size = 28.dp, color = primary)
 }
 
 @Composable

@@ -413,8 +413,16 @@ data class BoardConfig(
  */
 @Serializable
 enum class BoardView(val label: String) {
-    /** Hero and board. The default, and what most stations want. */
-    FULL("Next departure + board"),
+    /**
+     * Hero and board. The default, and what most stations want.
+     *
+     * Named "Next departure" and not "Next departure + board": this label sits
+     * under a drawing of the layout that already shows the board beneath the
+     * hero, so the second half restates the picture. It is also the app's own
+     * phrase — the hero itself reads NEXT DEPARTURE — which is what stops this
+     * screen inventing a third word ("countdown") for a thing already named.
+     */
+    FULL("Next departure"),
 
     /**
      * Board only.

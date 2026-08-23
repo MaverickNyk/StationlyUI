@@ -75,7 +75,6 @@ object DreamSettings {
     private const val KEY_THEME      = "theme"
     private const val KEY_CLOCK_STYLE = "clock_style"
     private const val KEY_STATION_ID  = "station_id"  // optional override
-    private const val KEY_EVER_STARTED = "ever_started"
 
     /**
      * Notification that a setting changed. **Nothing subscribes to it today.**
@@ -158,27 +157,14 @@ object DreamSettings {
     fun getStationId(): String? = DreamPrefsBackend.get(KEY_STATION_ID)?.ifBlank { null }
     fun setStationId(stationId: String?) = write(KEY_STATION_ID, stationId)
 
-    /**
-     * Has the user ever actually run the screensaver?
-     *
-     * Drives the home "Set as Screensaver" promo. Android asks the system
-     * (`Settings.Secure.screensaver_components` — is Stationly the active
-     * dream?), which iOS has no equivalent for: there is no system screensaver
-     * slot to be chosen for, the dream is an in-app surface. "Has run it at
-     * least once" is the honest iOS analogue of "has picked us" — the promo's
-     * job is to tell people the feature exists, and once they've seen it, it
-     * has done that job.
-     */
-    fun hasEverStarted(): Boolean = DreamPrefsBackend.get(KEY_EVER_STARTED) == "true"
-
-    /**
-     * Deliberately NOT routed through [write], and NOT synced.
-     *
-     * The others are preferences; this is a fact about this DEVICE. It drives a
-     * first-run hint telling the user the screensaver exists, and someone who
-     * has run the dream on their tablet has still never seen it on the phone
-     * they just set up — restoring it would hide the hint from exactly the
-     * person it is for.
-     */
-    fun markStarted() = DreamPrefsBackend.set(KEY_EVER_STARTED, "true")
+    // `hasEverStarted()` / `markStarted()` and their `ever_started` key were
+    // removed on 2026-08-23 along with the home "Set as Screensaver" promo,
+    // which was their only reader and writer. They tracked one thing — has this
+    // device ever run the dream — purely so the promo could retire itself.
+    //
+    // Nothing records that fact now. If it is wanted, it belongs in the activity
+    // trail beside `settings.dream_changed`, not in a preferences store: the
+    // trail is where "what do people actually use" is answered, and it already
+    // crosses devices and reaches the backend. A boolean here could only ever
+    // answer it for one phone.
 }

@@ -45,7 +45,6 @@ import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.rounded.Settings
@@ -99,6 +98,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.stationly.app.ui.common.AnnouncementBanner
+import com.stationly.app.ui.common.AppBusy
 import com.stationly.app.ui.common.NotificationPermissionEffect
 import com.stationly.app.ui.common.OfflineBanner
 import com.stationly.app.ui.summary.components.BoardSection
@@ -129,7 +129,6 @@ fun SummaryScreen(
      */
     onOpenStationSettings: (String, String, String) -> Unit = { _, _, _ -> },
     onNavigateToProfile: () -> Unit,
-    onOpenScreensaver: () -> Unit = {},
     /** Home-wide settings (theme, boards, screensaver) — the gear in the top bar. */
     onOpenHomeSettings: () -> Unit = {},
     viewModel: SummaryViewModel = viewModel { SummaryViewModel() }
@@ -143,14 +142,22 @@ fun SummaryScreen(
     val announcement by viewModel.announcement.collectAsStateWithLifecycle()
     val homeConfig by viewModel.homeConfig.collectAsStateWithLifecycle()
     val forceUpdate by viewModel.forceUpdate.collectAsStateWithLifecycle()
-    val showWidgetPromo by viewModel.showWidgetPromo.collectAsStateWithLifecycle()
-    val showDreamPromo by viewModel.showDreamPromo.collectAsStateWithLifecycle()
     val showNotificationDeniedBanner by viewModel.showNotificationDeniedBanner.collectAsStateWithLifecycle()
+    val pendingExpansion by BoardExpansion.pending.collectAsStateWithLifecycle()
     val boardConfigs by viewModel.boardConfigs.collectAsStateWithLifecycle()
     // Tells "the user has no preferences" apart from "we have not read them
     // yet" — the two are the same empty map, and they must not render the same.
     val prefsLoaded by viewModel.prefsLoaded.collectAsStateWithLifecycle()
     val homeLayout by viewModel.homeLayout.collectAsStateWithLifecycle()
+
+    // Arrived. Whatever covered the journey here — today only the station
+    // delete — comes down on this screen's FIRST FRAME rather than after a
+    // guessed duration, so a slow teardown stays covered instead of tearing.
+    //
+    // Keyed on entry, which is the whole contract: every path that raises
+    // [AppBusy] ends on this screen, so the one screen that clears it is the one
+    // screen they all reach, and it cannot be left standing.
+    LaunchedEffect(Unit) { AppBusy.clear() }
 
     // First authenticated screen — the one place Android asks too. Re-check the
     // denied banner on the user's answer so a denial surfaces it immediately
@@ -347,11 +354,19 @@ fun SummaryScreen(
                           !prefsLoaded -> emptySet()
                           // Every page is open in a carousel.
                           homeLayout == HomeLayout.CAROUSEL -> stationIds.toSet()
-                          // One station has nothing to collapse for — and no
-                          // chevron either, since `collapsible` is `size > 1`.
-                          // There is no user intent to respect where there is no
-                          // control to express it with.
-                          stationIds.size == 1 -> stationIds.toSet()
+                          // ⚠️ NO exception for a single station.
+                          //
+                          // There used to be one — a lone station was forced
+                          // open, on the reasoning that there is nothing to
+                          // collapse FOR when no other card is competing for the
+                          // room. True about the room, and it made the setting a
+                          // lie: the settings screen offered Expanded/Collapsed,
+                          // stored the choice, said "Applies when you switch it
+                          // to List", and the home screen then ignored it and
+                          // drew the card open. The user with one station is
+                          // exactly the user most likely to go looking for why.
+                          // The chevron is offered here too, for the same reason
+                          // — see `collapsible` at the call site.
                           // Whatever the settings say, and NOTHING else. There
                           // used to be an `else` here force-opening the first
                           // station whenever no station was marked, so that the
@@ -378,6 +393,35 @@ fun SummaryScreen(
                           // id that matches no card — which would then be counted
                           // in the height budget.
                           else -> expandedIdsState!!.filter { it in stationIds }.toSet()
+                      }
+
+                      // ── Changing "Default view" applies NOW, not next launch ──
+                      //
+                      // The stored flag is only the DEFAULT; `expandedIdsState`
+                      // above is what is actually open, and it outranks the
+                      // default on purpose once the user has touched a chevron.
+                      // So a change made on the settings screen has to arrive as
+                      // an instruction rather than be inferred from the value
+                      // moving — see [BoardExpansion], which carries the full
+                      // argument and the bug that produced it.
+                      //
+                      // Applied in every layout, including the carousel. There it
+                      // changes nothing on screen (every page is open), but it
+                      // leaves the session state correct for the moment the user
+                      // switches back to a list.
+                      LaunchedEffect(pendingExpansion, prefsLoaded, stationIds) {
+                          if (!prefsLoaded || pendingExpansion.isEmpty()) return@LaunchedEffect
+                          val applicable = pendingExpansion.filterKeys { it in stationIds }
+                          // Nothing to act on yet. Left PENDING rather than
+                          // consumed: the station may simply not have loaded, and
+                          // dropping the request would lose a choice the user made.
+                          if (applicable.isEmpty()) return@LaunchedEffect
+                          val base = expandedIdsState?.toSet()
+                              ?: stationIds.filter { (boardConfigs[it] ?: BoardConfig()).expanded }.toSet()
+                          expandedIdsState = applicable.entries
+                              .fold(base) { open, (id, wanted) -> if (wanted) open + id else open - id }
+                              .toList()
+                          BoardExpansion.consume(applicable.keys)
                       }
 
                       // The board that gets the room left over. Everything else
@@ -453,11 +497,21 @@ fun SummaryScreen(
                       LaunchedEffect(focus, isCarousel) {
                           val wanted = focus ?: return@LaunchedEffect
                           if (isCarousel) return@LaunchedEffect
-                          // Open it, and leave everything the user had open
-                          // alone. Collapsing the others would make a widget tap
-                          // quietly rearrange the home screen, which is a bigger
-                          // edit than the one that was asked for.
-                          expandedIdsState = (expandedIds + wanted.stationId).toList()
+                          // Open it ONLY when the user asked to see this board —
+                          // a widget tap, where a collapsed card is not what they
+                          // tapped. Everything else they had open is left alone,
+                          // because rearranging the home screen is a bigger edit
+                          // than the one that was asked for.
+                          //
+                          // ⚠️ A RESTORE must not open anything. It runs when the
+                          // user comes BACK from this station's own settings, and
+                          // this line used to reopen the card they had just set
+                          // to Collapsed — every time, because this effect is
+                          // declared after the one that applies the setting and
+                          // therefore wins. Two correct features cancelling out.
+                          if (wanted.kind == BoardFocus.Kind.REVEAL) {
+                              expandedIdsState = (expandedIds + wanted.stationId).toList()
+                          }
                           runCatching { focusRequester.bringIntoView() }
                       }
 
@@ -574,18 +628,16 @@ fun SummaryScreen(
                             // removed to match the redesigned Android home — the top-bar
                             // brand lockup already sets context; boards are the focus.
                             //
-                            // Banners and promos are grouped so their COMBINED height
-                            // can be measured in one place — the board's cap is
-                            // whatever is left after them, and they come and go as
-                            // they are dismissed.
-                            val widgetPromoEnabled = (homeConfig["home.promo.widget.show"] ?: "true").equals("true", ignoreCase = true)
-                            val dreamPromoEnabled = (homeConfig["home.promo.dream.show"] ?: "true").equals("true", ignoreCase = true)
+                            // Banners are grouped so their COMBINED height can be
+                            // measured in one place — the board's cap is whatever is
+                            // left after them, and they come and go as they are
+                            // dismissed. Both survivors are things the user can ACT
+                            // on: an admin announcement, and a permission they can
+                            // grant. Nothing here advertises a feature.
                             val notifBannerEnabled = (homeConfig["home.notif_denied.show"] ?: "true").equals("true", ignoreCase = true)
 
                             val hasChrome = announcement != null ||
-                                (showNotificationDeniedBanner && notifBannerEnabled) ||
-                                (showWidgetPromo && widgetPromoEnabled) ||
-                                (showDreamPromo && dreamPromoEnabled)
+                                (showNotificationDeniedBanner && notifBannerEnabled)
 
                             if (hasChrome) {
                                 Column(
@@ -603,22 +655,6 @@ fun SummaryScreen(
                                             strings = homeConfig,
                                             onDismiss = { viewModel.dismissNotificationDeniedBanner() },
                                             onEnable = { viewModel.dismissNotificationDeniedBanner() },
-                                        )
-                                    }
-                                    if (showWidgetPromo && widgetPromoEnabled) {
-                                        WidgetPromoCard(
-                                            strings = homeConfig,
-                                            onDismiss = { viewModel.dismissWidgetPromo() },
-                                        )
-                                    }
-                                    if (showDreamPromo && dreamPromoEnabled) {
-                                        DreamPromoCard(
-                                            strings = homeConfig,
-                                            onDismiss = { viewModel.dismissDreamPromo() },
-                                            onSetUp = {
-                                                viewModel.hideDreamPromoForSession()
-                                                onOpenScreensaver()
-                                            },
                                         )
                                     }
                                 }
@@ -742,7 +778,14 @@ fun SummaryScreen(
                                         stationCard(
                                             stationId,
                                             groupSelections,
-                                            stationGroups.size > 1 && !isCarousel,
+                                            // Collapsible whenever the card is in
+                                            // a LIST, however many stations are
+                                            // in it. It used to need a SECOND
+                                            // station, which left the one-station
+                                            // user with a stored setting, no
+                                            // chevron to express it with, and a
+                                            // card that ignored it anyway.
+                                            !isCarousel,
                                             // The top open station gets the leftover
                                             // room; the rest get the floor, which is
                                             // three departures (MIN_BOARD_HEIGHT).
@@ -989,36 +1032,6 @@ private fun PromoBanner(
 }
 
 /**
- * "Add a home screen widget" — shown until the WidgetKit probe says one is
- * installed.
- *
- * **No CTA button, by design.** Android offers "Add" only when
- * `isRequestPinAppWidgetSupported`, and passes `cta = null` otherwise; iOS is
- * permanently in that second case, because there is no API to add a widget on
- * the user's behalf — the gesture is theirs to make. So the subtitle carries
- * the instruction instead. Backends that want iOS-specific wording can set
- * `home.promo.widget.subtitle.ios`; otherwise the shared key is used.
- */
-@Composable
-private fun WidgetPromoCard(
-    strings: Map<String, String>,
-    onDismiss: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    PromoBanner(
-        icon = Icons.Default.Add,
-        title = strings["home.promo.widget.title"] ?: "Add a home screen widget",
-        subtitle = strings["home.promo.widget.subtitle.ios"]
-            ?: strings["home.promo.widget.subtitle"]
-            ?: "Touch and hold the Home Screen, tap ＋, then search Stationly",
-        cta = null,
-        onCta = {},
-        onDismiss = onDismiss,
-        modifier = modifier,
-    )
-}
-
-/**
  * Surfaces when the OS reports notification permission as denied. Without it,
  * line-status auto-alerts and admin pushes silently no-op and the user has no
  * way to know they're missing them.
@@ -1045,32 +1058,6 @@ private fun NotificationDeniedBanner(
             com.stationly.app.platform.openAppNotificationSettings()
             onEnable()
         },
-        onDismiss = onDismiss,
-        modifier = modifier,
-    )
-}
-
-/**
- * "Set as Screensaver" — shown until the user has actually run the dream.
- *
- * Android's CTA opens system Settings → Display → Screen saver, because the
- * dream is a system-owned surface there. On iOS the screensaver is an in-app
- * route, so "Set up" goes straight to the dream settings screen — strictly
- * fewer taps, same destination in spirit.
- */
-@Composable
-private fun DreamPromoCard(
-    strings: Map<String, String>,
-    onDismiss: () -> Unit,
-    onSetUp: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    PromoBanner(
-        icon = Icons.Default.Bedtime,
-        title = strings["home.promo.dream.title"] ?: "Set as Screensaver",
-        subtitle = strings["home.promo.dream.subtitle"] ?: "Live departures when docked or charging",
-        cta = strings["home.promo.dream.cta"] ?: "Set up",
-        onCta = onSetUp,
         onDismiss = onDismiss,
         modifier = modifier,
     )

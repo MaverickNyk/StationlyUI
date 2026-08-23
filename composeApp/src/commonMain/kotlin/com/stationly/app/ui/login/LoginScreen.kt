@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.stationly.app.ui.common.StationlySpinner
 import com.stationly.app.ui.common.AppleLogo
 import com.stationly.app.ui.common.GoogleGLogo
 import com.stationly.app.ui.common.LocalOpenUrl
@@ -678,8 +679,12 @@ private fun FormScreenContent(
         }
         Spacer(Modifier.height(24.dp))
         when {
+            // The LAYOUT is still arriving, so there is no form to block — this
+            // is a placeholder holding the page's height, not a busy state.
+            // Anything that blocks (an auth call in flight) uses the full-screen
+            // overlay at the bottom of this screen instead.
             uiState.isLoading -> Box(Modifier.fillMaxWidth().height(220.dp), Alignment.Center) {
-                CircularProgressIndicator(color = Amber, strokeWidth = 2.dp, modifier = Modifier.size(32.dp))
+                StationlySpinner(size = 32.dp, color = Amber)
             }
             screenType == "forgot-password" && uiState.resetEmailSent ->
                 ResetSuccessContent(uiState.resetEmail, onBack, Modifier.padding(horizontal = 28.dp))

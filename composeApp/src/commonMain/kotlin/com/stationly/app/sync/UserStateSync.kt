@@ -138,8 +138,8 @@ object UserStateSync {
      * The screensaver's settings live in a store that deliberately SURVIVES the
      * logout wipe, so unlike the others they are still here after `cleanupAll()`
      * — and would show the previous user's screensaver to the next one. Cleared
-     * explicitly; `hasEverStarted` is left alone because it is a fact about the
-     * device, not the account.
+     * explicitly: every key this store holds is a preference belonging to whoever
+     * was signed in.
      */
     private fun clearDreamSettings() {
         DreamSettings.applyRemote {

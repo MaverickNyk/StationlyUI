@@ -20,8 +20,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -90,11 +92,7 @@ fun LoadingOverlay(
                     modifier = Modifier.padding(32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    CircularProgressIndicator(
-                        color = MaterialTheme.colorScheme.primary,
-                        strokeWidth = 3.dp,
-                        modifier = Modifier.size(36.dp),
-                    )
+                    StationlySpinner(size = 36.dp)
                     if (!label.isNullOrBlank()) {
                         Spacer(Modifier.height(14.dp))
                         Text(
@@ -109,4 +107,33 @@ fun LoadingOverlay(
             }
         }
     }
+}
+
+/**
+ * The ONE spinner in the app.
+ *
+ * Every busy state used to hand-roll a `CircularProgressIndicator` with its own
+ * size and its own stroke — 16dp/2dp in a dialog button, 18dp/2dp in the sign-out
+ * row, 20dp/2dp on verify, 22dp/2dp in the line picker, 28dp/2.5dp on the
+ * selection screen, 32dp/2dp on login, 36dp/3dp in this overlay. Seven weights of
+ * the same mark, so the app appeared to be waiting in seven different ways
+ * depending on where you happened to be.
+ *
+ * The stroke is DERIVED from the size rather than passed alongside it, which is
+ * what makes them one mark at different sizes instead of different marks. Roughly
+ * one twelfth, which is the ratio the overlay's own 36/3 already had.
+ *
+ * @param size diameter. The only knob, on purpose.
+ */
+@Composable
+fun StationlySpinner(
+    size: Dp = 24.dp,
+    color: Color = MaterialTheme.colorScheme.primary,
+    modifier: Modifier = Modifier,
+) {
+    CircularProgressIndicator(
+        color = color,
+        strokeWidth = size / 12,
+        modifier = modifier.size(size),
+    )
 }

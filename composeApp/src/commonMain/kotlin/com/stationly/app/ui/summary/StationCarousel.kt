@@ -75,9 +75,10 @@ internal fun StationCarousel(
 
     // ── Turn to the station that was asked for ──
     //
-    // Animated rather than snapped. The user tapped a widget and is looking at
-    // the app arriving; a page that slides says the app went somewhere, where an
-    // instant jump is indistinguishable from having been there all along. It is
+    // Animated for a widget tap, snapped for a restore. The user who tapped a
+    // widget is looking at the app arriving, and a page that slides says the app
+    // went somewhere; the user coming back from that station's own settings has
+    // been there all along, and should not watch a journey. It is
     // also what makes the settled-page haptic below fire, which is the same
     // acknowledgement a swipe gets.
     //
@@ -89,7 +90,11 @@ internal fun StationCarousel(
         val wanted = focus ?: return@LaunchedEffect
         val index = stationGroups.indexOfFirst { it.first == wanted.stationId }
         if (index >= 0 && index != pagerState.currentPage) {
-            pagerState.animateScrollToPage(index)
+            // A restore arrives instantly. The user is returning from a screen
+            // about THIS station and believes they never left it, so there is no
+            // journey to show them — see `BoardFocus.restore`.
+            if (wanted.kind == BoardFocus.Kind.REVEAL) pagerState.animateScrollToPage(index)
+            else pagerState.scrollToPage(index)
         }
     }
 

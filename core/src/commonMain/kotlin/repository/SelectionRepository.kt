@@ -93,15 +93,38 @@ class SelectionRepository(
      * No-op if the board is not tracked, so a stale edit cannot resurrect a
      * board that was deleted meanwhile.
      */
-    suspend fun updateSelectionInPlace(selection: UserSelection) {
+    suspend fun updateSelectionInPlace(selection: UserSelection) =
+        updateSelectionsInPlace(listOf(selection))
+
+    /**
+     * [updateSelectionInPlace] for several boards at once, in ONE write.
+     *
+     * Each replacement rewrites the whole table — `clearSelections()` then a
+     * re-insert of every row, because insertion order IS list order. Done one
+     * board at a time that is quadratic in a way that does not show up on a
+     * developer's two-board account: the settings screen's route backfill
+     * touches every board of a station, and on a real account of twenty boards
+     * a four-board station cost four clears and eighty inserts to change eight
+     * fields.
+     *
+     * Boards not currently tracked are skipped rather than inserted, so a stale
+     * edit cannot resurrect one that was deleted meanwhile.
+     */
+    suspend fun updateSelectionsInPlace(selections: List<UserSelection>) {
+        if (selections.isEmpty()) return
         val current = _selections.value.toMutableList()
-        val idx = current.indexOfFirst {
-            it.station == selection.station &&
-                it.line == selection.line &&
-                it.direction == selection.direction
+        var changed = false
+        for (selection in selections) {
+            val idx = current.indexOfFirst {
+                it.station == selection.station &&
+                    it.line == selection.line &&
+                    it.direction == selection.direction
+            }
+            if (idx < 0) continue
+            current[idx] = selection
+            changed = true
         }
-        if (idx < 0) return
-        current[idx] = selection
+        if (!changed) return
         _selections.value = current
 
         sqlStorage.clearSelections()

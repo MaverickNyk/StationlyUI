@@ -7,6 +7,8 @@ import com.stationly.app.ui.login.PlatformAuthProvider
 import com.stationly.core.activity.ActivityEvents
 import com.stationly.core.activity.ActivityLog
 import com.stationly.core.model.sdui.SyncProfileRequest
+import com.stationly.app.ui.summary.BoardExpansion
+import com.stationly.app.ui.summary.BoardFocus
 import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SelectionRepository
@@ -81,7 +83,7 @@ class ProfileViewModel(
             // Identity keys (name/email/photo) are written by Swift AuthBridge's
             // auth-state listener at launch; a keychain-restored session can
             // reach this screen before that write lands, which rendered the card
-            // as "User" / "Stationly" / "Since Recently". Instead of a blunt
+            // as a literal "User". Instead of a blunt
             // fixed wait, POLL briefly and resolve the instant the keys appear
             // (usually a few hundred ms) — no overshoot, and isIdentityLoading
             // keeps a skeleton on screen rather than "User" until then.
@@ -96,14 +98,10 @@ class ProfileViewModel(
                         ?: authProvider.currentUserEmail()?.substringBefore("@")
                 }
             }
-            val provider    = storageManager.loadString("signin_provider") ?: "Stationly"
-            val memberSince = storageManager.loadString("member_since") ?: ""
             _uiState.value = _uiState.value.copy(
                 email = authProvider.currentUserEmail() ?: "",
                 displayName = name ?: "User",
                 photoUrl = authProvider.currentUserPhotoUrl(),
-                signInProvider = provider,
-                memberSince = memberSince,
                 isIdentityLoading = false,
             )
         }
@@ -244,6 +242,12 @@ class ProfileViewModel(
                 authProvider.signOut()
                 // Unsubscribe FCM, clear widget, clear all storage
                 stationLifecycleUseCase.cleanupAll()
+                // A pending Expanded/Collapsed request names a station id, and
+                // ids are TfL naptans — shared across accounts. Left behind, it
+                // would apply to whoever signs in next if they happen to track
+                // the same station.
+                BoardExpansion.clear()
+                BoardFocus.clear()
                 // Forget the cached (token, uid) pair so the NEXT user on this
                 // device re-registers instead of being skipped as "unchanged".
                 com.stationly.app.util.FcmTokenRegistrar.clearCache()
@@ -291,6 +295,12 @@ class ProfileViewModel(
                 sduiApi.deleteAccount(uid)
                 authProvider.signOut()
                 stationLifecycleUseCase.cleanupAll()
+                // A pending Expanded/Collapsed request names a station id, and
+                // ids are TfL naptans — shared across accounts. Left behind, it
+                // would apply to whoever signs in next if they happen to track
+                // the same station.
+                BoardExpansion.clear()
+                BoardFocus.clear()
                 com.stationly.app.util.FcmTokenRegistrar.clearCache()
                 // The teardown `signOut()` does, plus the disk. This was missing
                 // entirely, and each half of it mattered: a debounced push queued

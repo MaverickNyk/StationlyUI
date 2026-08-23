@@ -1,10 +1,8 @@
 package com.stationly.app.platform
 
-import com.stationly.core.platform.IosAppGroup
 import kotlinx.coroutines.suspendCancellableCoroutine
 import platform.Foundation.NSBundle
 import platform.Foundation.NSURL
-import platform.Foundation.NSUserDefaults
 import platform.UIKit.UIApplication
 import platform.UIKit.UIApplicationOpenSettingsURLString
 // ObjC CATEGORY method (UIApplication + UIRemoteNotifications) — surfaces as an
@@ -21,24 +19,6 @@ import platform.UserNotifications.UNUserNotificationCenter
 import platform.darwin.dispatch_async
 import platform.darwin.dispatch_get_main_queue
 import kotlin.coroutines.resume
-
-/**
- * WidgetKit is a Swift-only framework — `WidgetCenter` has no Objective-C
- * interface, so Kotlin/Native cannot see it at all. The Swift host probes
- * `WidgetCenter.shared.getCurrentConfigurations` on launch/foreground and
- * writes the answer here (see `iosApp/iosApp/HomeStateProbe.swift`), which is
- * the same App-Group channel the auth identity keys and widget payload use.
- *
- * Absent key → probe hasn't landed yet → `null` (undecided), never `false`.
- */
-actual fun hasHomeScreenWidget(): Boolean? {
-    val suite = NSUserDefaults(suiteName = APP_GROUP_ID)
-    return when (suite.stringForKey(KEY_WIDGET_INSTALLED)) {
-        "true"  -> true
-        "false" -> false
-        else    -> null
-    }
-}
 
 /**
  * UserNotifications IS an Objective-C framework, so unlike WidgetKit this
@@ -99,11 +79,3 @@ actual fun openAppNotificationSettings() {
  */
 actual fun appVersionName(): String =
     NSBundle.mainBundle.objectForInfoDictionaryKey("CFBundleShortVersionString") as? String ?: "0"
-
-// `val`, not `const val`: since the staging/production split the App Group
-// identifier is read from the Info.plist at runtime (see `IosAppGroup`), so it
-// is not a compile-time constant any more.
-private val APP_GROUP_ID: String get() = IosAppGroup.ID
-
-/** Written by Swift `HomeStateProbe`; keep the literal in lockstep with it. */
-private const val KEY_WIDGET_INSTALLED = "home_widget_installed"

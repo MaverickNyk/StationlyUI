@@ -752,13 +752,9 @@ class AuthBridge {
                rawProvider == "apple.com"  ? "Apple"  : "Email",
                forKey: "signin_provider")
 
-        // "Member since Month YYYY" label
-        if let created = user.metadata.creationDate {
-            let fmt = DateFormatter()
-            fmt.dateFormat = "MMMM yyyy"
-            fmt.locale = Locale(identifier: "en_GB")
-            ud.set(fmt.string(from: created), forKey: "member_since")
-        }
+        // No `member_since` any more — the profile card's "Since …" chip was the
+        // only reader and it is gone (2026-08-23). It stays in `clearUserInfo`
+        // below so devices that already wrote it are swept on the next sign-out.
         ud.synchronize()
     }
 

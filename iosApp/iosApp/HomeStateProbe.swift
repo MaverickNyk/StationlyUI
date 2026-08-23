@@ -3,23 +3,33 @@ import UIKit
 import WidgetKit
 import composeApp
 
-/// Answers one question Kotlin cannot ask for itself: **has the user actually
-/// placed a Stationly widget?**
+/// Answers one question no other process can: **which Stationly widgets are on
+/// the Home Screen right now?**
 ///
-/// Android's `SummaryViewModel.checkWidgetPromo` reads `AppWidgetManager`
-/// directly from shared code. WidgetKit has no Objective-C interface — it is
-/// Swift-only — so Kotlin/Native cannot see `WidgetCenter` at all. The host
-/// probes it here and drops the answer in the App Group, which is the same
-/// Kotlin↔Swift channel the auth identity keys and the widget payload use.
-/// `composeApp`'s `hasHomeScreenWidget()` reads exactly this key.
+/// WidgetKit has no Objective-C interface — it is Swift-only — so Kotlin/Native
+/// cannot see `WidgetCenter` at all, and the widget extension cannot see it
+/// either from inside `timeline(for:in:)`, where `getCurrentConfigurations`
+/// returns an empty list. The app host is the only place the question can be
+/// asked, so it asks here and publishes the answer through the App Group.
 ///
-/// Runs on launch and on every foreground, so removing (or adding) a widget
-/// from the Home Screen re-evaluates the promo on the next app switch —
-/// matching Android, whose check re-runs on every `ON_RESUME`.
+/// Two consumers, both of which need it and neither of which is cosmetic:
+///
+///   - **The activity trail** derives `widget.added` / `widget.removed` /
+///     `widget.count` by diffing consecutive snapshots. WidgetKit has no
+///     placement callback, so a snapshot diff is the only signal there is.
+///   - **The extension's refresh ledger** reaps entries for widgets that no
+///     longer exist. Left to itself it can only infer death from silence, which
+///     takes hours to be safe about; this makes it certain on the next app open.
+///
+/// It also fed a third consumer until 2026-08-23 — a `home_widget_installed`
+/// flag behind the "add a home screen widget" promo. The promo is gone (iOS
+/// gives an app no way to place a widget, so the card could only recite Home
+/// Screen instructions), and the flag went with it. The probe did not, and
+/// **must not**: the two above are unrelated to it.
+///
+/// Runs on launch and on every foreground, so adding or removing a widget is
+/// noticed on the next app switch.
 enum HomeStateProbe {
-
-    /// Keep this literal in lockstep with `HomePromoPlatform.ios.kt`.
-    private static let widgetInstalledKey = "home_widget_installed"
 
     /// Start probing: once now, then on every foreground.
     static func start() {
@@ -43,15 +53,13 @@ enum HomeStateProbe {
             case .failure:
                 // Probe failed (the extension can be momentarily unavailable).
                 // Leave whatever the last known answer was rather than
-                // asserting "no widget" and nagging someone who has one — and
-                // report NOTHING to the activity trail, or a transient failure
-                // would be recorded as the user removing every widget at once.
+                // asserting "no widget" — and report NOTHING to the activity
+                // trail, or a transient failure would be recorded as the user
+                // removing every widget at once.
                 return
             }
-            UserDefaults(suiteName: AppGroupID.value)?
-                .set(configurations.isEmpty ? "false" : "true", forKey: widgetInstalledKey)
 
-            // The same snapshot, handed to KMP so it can derive add/remove by
+            // The snapshot, handed to KMP so it can derive add/remove by
             // diffing against the previous one, and so each BOARD knows whether
             // it is on the home screen. This probe is the only source WidgetKit
             // offers — there is no placement callback — so it does double duty.

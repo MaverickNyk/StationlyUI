@@ -120,19 +120,24 @@ fun BoardArrangementSection(
     // offers them by number.
     val service = if (isBus) "route" else "line"
 
-    // The heading IS the readout. "Departures per stop" needed a caption to
-    // explain that the number was a maximum; putting the live value in the
-    // sentence says it in the words themselves, and leaves the caption free to
-    // say something the user could not work out by looking.
-    SettingsSectionLabel("Show up to ${prefs.rowCap} per $place")
+    // The heading IS the readout: it carries the live value, so the caption is
+    // free to say something the user could not work out by looking.
+    //
+    // "Show up to 5 per stop" was the earlier wording and it never parsed on
+    // first read — "up to 5" of WHAT, and "per stop" attached to nothing. The
+    // noun has to be in the sentence. This one is a complete phrase and the
+    // number is the only part that moves.
+    SettingsSectionLabel("Up to ${prefs.rowCap} departures per $place")
     DepthSlider(
         rows = prefs.rowCap,
         label = "Departures per $place",
         onChange = onRowsPerPlatform,
     )
+    // Two things the number itself cannot say: that it is a ceiling rather than
+    // a promise, and which of the two card states it governs.
     SettingsCaption(
-        "A quiet $place shows fewer — TfL sends what it sends. " +
-            "Applies once the station is open."
+        "A maximum, not a target: a quiet $place shows fewer. " +
+            "Applies to the full board, not the collapsed card."
     )
 
     // ── Show first ──
@@ -176,19 +181,19 @@ fun BoardArrangementSection(
                 // interchange is on more than one platform, and the user should
                 // know it brings all of them rather than picking one.
                 BoardPin.Kind.LINE ->
-                    "Every $place ${LineShortNames.displayName(pin.id)} calls at leads the board."
-                BoardPin.Kind.PLATFORM -> "${pin.id} leads the board. The rest keep their order."
+                    "Every $place the ${LineShortNames.displayName(pin.id)} calls at moves to the top."
+                BoardPin.Kind.PLATFORM -> "${pin.id} moves to the top. The rest keep their order."
                 // Named by where it goes, because a naptan is not something the
                 // user has ever seen — see BoardPin.Kind.STOP.
                 BoardPin.Kind.STOP -> {
                     val towards = stops.firstOrNull { it.key == pin.id }?.towards
-                    if (towards != null) "The $place towards $towards leads the board."
-                    else "One $place leads the board. The rest keep their order."
+                    if (towards != null) "The $place towards $towards moves to the top."
+                    else "One $place moves to the top. The rest keep their order."
                 }
                 // Says what happens WITHOUT a pin, which is the one thing the
                 // other three branches cannot tell you.
-                null -> "Nothing pinned. Whichever $place has the soonest " +
-                    "departure leads, and a $service can be pinned instead."
+                null -> "Nothing pinned. The $place with the soonest departure " +
+                    "comes first. You can pin a $service instead of a $place."
             },
         )
     }
@@ -306,8 +311,8 @@ private fun DepthSlider(rows: Int, label: String, onChange: (Int) -> Unit) {
                     // and the range, `setProgress` is what the rotor's increment
                     // and decrement actually call, and the label is spelled out
                     // because the heading above is a separate node that says
-                    // "Show up to 3 per platform" — a number, with no statement
-                    // that this control is what changes it.
+                    // "Up to 3 departures per platform" — a number, with no
+                    // statement that this control is what changes it.
                     .progressSemantics(
                         value = rows.toFloat(),
                         valueRange = min.toFloat()..max.toFloat(),

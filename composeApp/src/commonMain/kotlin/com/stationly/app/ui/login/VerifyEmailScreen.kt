@@ -30,6 +30,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.stationly.app.resources.Res
 import com.stationly.app.resources.stationly_logo
 import com.stationly.app.ui.common.LocalOpenUrl
+import com.stationly.app.ui.common.StationlySpinner
 import com.stationly.core.platform.Platform
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -218,7 +219,7 @@ fun VerifyEmailScreen(
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Amber)
             ) {
                 if (uiState.isAuthenticating) {
-                    CircularProgressIndicator(color = Amber, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                    StationlySpinner(size = 20.dp, color = Amber)
                 } else {
                     Text(
                         str("auth.verify.confirm", "I've verified"),

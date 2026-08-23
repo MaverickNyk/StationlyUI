@@ -35,6 +35,9 @@ class SqlStorage(private val database: StationlyDatabase) {
             viaKeys = encodeList(selection.viaKeys),
             patternIds = encodeList(selection.patternIds),
             patternNames = encodeList(selection.patternNames),
+            directionName = selection.directionName,
+            directionDestinations = encodeList(selection.directionDestinations),
+            directionTowards = selection.directionTowards,
             routeResolvedAt = selection.routeResolvedAt,
         )
     }
@@ -56,6 +59,9 @@ class SqlStorage(private val database: StationlyDatabase) {
                 viaKeys = decodeList(it.viaKeys),
                 patternIds = decodeList(it.patternIds),
                 patternNames = decodeList(it.patternNames),
+                directionName = it.directionName,
+                directionDestinations = decodeList(it.directionDestinations),
+                directionTowards = it.directionTowards,
                 routeResolvedAt = it.routeResolvedAt,
             )
         }

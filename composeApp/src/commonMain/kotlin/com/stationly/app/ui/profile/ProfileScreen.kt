@@ -18,9 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Email
-import androidx.compose.material.icons.rounded.AlternateEmail
 import androidx.compose.material.icons.rounded.ArrowBackIosNew
-import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Logout
@@ -43,7 +41,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.stationly.app.platform.appVersionName
 import com.stationly.app.ui.common.LoadingOverlay
+import com.stationly.app.ui.common.StationlySpinner
 import com.stationly.app.ui.common.LocalOpenUrl
 import com.stationly.app.ui.login.PlatformAuthProvider
 import com.stationly.app.ui.theme.DisplayFamily
@@ -74,7 +74,6 @@ private val White08  @Composable get() = MaterialTheme.colorScheme.onBackground.
 private val DangerRed @Composable get() = LocalThemeTokens.current.error
 
 private const val STATIONLY_WEB_URL = "https://stationly.co.uk"
-private const val APP_VERSION = "1.0"
 
 /**
  * Where "Rate Stationly" goes on iOS. Becomes a real listing once the app
@@ -157,8 +156,6 @@ fun ProfileScreen(
                         loading = uiState.isIdentityLoading,
                         email = uiState.email,
                         photoUrl = uiState.photoUrl,
-                        provider = uiState.signInProvider,
-                        memberSince = uiState.memberSince.ifBlank { "Recently" },
                         onEditName = { showEditNameDialog = true }
                     )
                 }
@@ -289,11 +286,13 @@ fun ProfileScreen(
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = Amber)
                 ) {
-                    if (isSavingName) {
-                        CircularProgressIndicator(color = Amber, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-                    } else {
-                        Text("Save", fontWeight = FontWeight.Bold)
-                    }
+                    // Inline, because this one does NOT block the screen: the
+                    // dialog stays up, Cancel stays reachable, and the rest of
+                    // the app is untouched. Everything destructive on this
+                    // screen uses the full-screen overlay instead — see the two
+                    // `LoadingOverlay` calls above.
+                    if (isSavingName) StationlySpinner(size = 16.dp, color = Amber)
+                    else Text("Save", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -343,8 +342,12 @@ fun ProfileScreen(
                     enabled = !uiState.isDeletingAccount,
                     colors = ButtonDefaults.textButtonColors(contentColor = DangerRed)
                 ) {
-                    if (uiState.isDeletingAccount) CircularProgressIndicator(color = DangerRed, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-                    else Text(daConfirm, fontWeight = FontWeight.Bold)
+                    // No spinner here. `isDeletingAccount` already raises the
+                    // full-screen overlay, and a second spinner inside the
+                    // button under it was the same wait told twice — the
+                    // button's job while the overlay is up is to be disabled,
+                    // which it is.
+                    Text(daConfirm, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -360,8 +363,6 @@ private fun ProfileHeaderCard(
     loading: Boolean,
     email: String,
     photoUrl: String?,
-    provider: String,
-    memberSince: String,
     onEditName: () -> Unit
 ) {
     Surface(color = Surface1, shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, White08)) {
@@ -401,22 +402,21 @@ private fun ProfileHeaderCard(
                     }
                 }
                 Spacer(Modifier.height(4.dp))
-                Text(email, color = White55, fontSize = 14.sp)
-                Spacer(Modifier.height(14.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Surface(color = White08, shape = RoundedCornerShape(20.dp)) {
-                        Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Icon(if (provider == "Google") Icons.Rounded.AlternateEmail else Icons.Outlined.Email, null, tint = Amber, modifier = Modifier.size(13.dp))
-                            Text(provider, color = White55, fontSize = 11.sp)
-                        }
-                    }
-                    Surface(color = White08, shape = RoundedCornerShape(20.dp)) {
-                        Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Icon(Icons.Rounded.CalendarMonth, null, tint = Amber, modifier = Modifier.size(13.dp))
-                            Text("Since $memberSince", color = White55, fontSize = 11.sp)
-                        }
-                    }
-                }
+                // Avatar, name, email. NO chips under them.
+                //
+                // There were two, and neither survived being read as a stranger
+                // would read it. "Since Recently" was the fallback string
+                // showing through — `member_since` is only written when Firebase
+                // reports a creation date, so the card announced a date it did
+                // not have. And the provider chip put a mail glyph beside the
+                // word "Apple", because Material has no Apple mark and the code
+                // branched only on Google.
+                //
+                // Both told the user something they already knew (their own
+                // email is on the line above) in a shape that implied it
+                // mattered. `signin_provider` is still written and still read —
+                // `syncProfile` sends it to the backend — it just is not
+                // decoration any more.
             }
         }
     }
@@ -457,7 +457,11 @@ private fun AboutCard(card: SduiAppComponent.Card) {
             if (card.style == "brand") {
                 Spacer(Modifier.height(14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    InfoChip("v$APP_VERSION")
+                    // Read once. It cannot change while the process is
+                    // alive, and this sits inside a list item that recomposes
+                    // with the rest of the About card.
+                    val version = remember { appVersionName() }
+                    InfoChip("v$version")
                     InfoChip("TfL Powered")
                     InfoChip("Made in London")
                 }
@@ -519,9 +523,11 @@ private fun SignOutButton(label: String, isSigningOut: Boolean, onClick: () -> U
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(1.dp, White08)
     ) {
+        // Wording only, no spinner: `isSigningOut` raises the full-screen
+        // overlay, which is already saying "Signing out…" over the top of this
+        // row. Two spinners for one operation is how the app came to look like
+        // it was waiting on two different things.
         if (isSigningOut) {
-            CircularProgressIndicator(color = DangerRed, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(12.dp))
             Text("Signing out…", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
         } else {
             Icon(Icons.Rounded.Logout, null, tint = DangerRed, modifier = Modifier.size(20.dp))

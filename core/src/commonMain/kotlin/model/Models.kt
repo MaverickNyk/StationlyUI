@@ -162,6 +162,47 @@ data class UserSelection(
      * re-fetching route data to do it.
      */
     val patternNames: List<String> = emptyList(),
+    /**
+     * What the LINE PICKER called this direction — "Southbound", "Clockwise",
+     * "Towards" on a bus. Blank on a board saved before this was stored.
+     *
+     * The backend computes it (`getCompassDirection` in `lineController.ts`) and
+     * serves it as `SduiDropdownOption.directionName`, which is the string the
+     * user actually chose from. Storing it is what lets the settings screen name
+     * a board in the same words the picker used, instead of showing TfL's raw
+     * `inbound`/`outbound` — an operational fact about the network that means
+     * nothing to a passenger.
+     *
+     * The server's answer, kept verbatim. [BoardLabels.compassFallback] exists
+     * for rows saved before this field and must never override a stored value.
+     */
+    val directionName: String = "",
+    /**
+     * Every destination this DIRECTION serves, filtered or not — the same chips
+     * the picker offered under it.
+     *
+     * Distinct from [destinations], which is the resolved ALLOW-LIST and is
+     * empty on an unfiltered board. This one is what the direction can reach, so
+     * a board the user never narrowed can still say where its trains go instead
+     * of the empty-sounding "All destinations".
+     *
+     * Route data, so it cannot be derived locally: it is stored at save time and
+     * backfilled by `StationSettingsViewModel` for rows that predate it.
+     */
+    val directionDestinations: List<String> = emptyList(),
+    /**
+     * Where this direction heads, as the picker put it — "Putney Bridge".
+     *
+     * The answer for anything with no compass bearing, which is every bus: TfL
+     * publishes no direction for a route, the backend returns the literal
+     * "Towards" as [directionName], and "Inbound" is not something a passenger
+     * standing at a stop can act on. The picker's own headline is "Towards
+     * Putney Bridge"; this is the second half of it.
+     *
+     * Blank on a board saved before it was stored, and on the rare direction TfL
+     * gives no towards for at all.
+     */
+    val directionTowards: String = "",
     /** When [destinationIds] was last resolved from route data, epoch millis. */
     val routeResolvedAt: Long = 0L,
 ) {

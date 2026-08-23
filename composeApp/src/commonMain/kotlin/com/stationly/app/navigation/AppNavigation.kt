@@ -17,6 +17,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.stationly.app.ui.dream.DreamHost
 import com.stationly.app.ui.dream.DreamSettingsScreen
+import com.stationly.app.ui.summary.BoardFocus
 import com.stationly.app.ui.login.LoginScreen
 import com.stationly.app.ui.login.PlatformAuthProvider
 import com.stationly.app.ui.profile.ProfileScreen
@@ -77,6 +78,15 @@ fun AppNavigation(
     var pendingEditStation by remember {
         mutableStateOf<Triple<String, String, String>?>(null)
     }
+
+    /**
+     * The line the picker should open expanded on, when the user came from one
+     * board's row rather than from "Add or edit lines".
+     *
+     * Cleared alongside [pendingEditStation] on every entry, so a line focused
+     * once cannot leak into the next, unrelated visit.
+     */
+    var pendingFocusLine by remember { mutableStateOf<String?>(null) }
 
     /**
      * Navigate, but only from the screen that asked.
@@ -219,6 +229,7 @@ fun AppNavigation(
             SummaryScreen(
                 onNavigateToSelection = {
                     pendingEditStation = null
+                    pendingFocusLine = null
                     navController.navigate("selection")
                 },
                 onOpenStationSettings = { stationId, mode, stationName ->
@@ -226,7 +237,6 @@ fun AppNavigation(
                     navigateFrom("summary", "station/settings")
                 },
                 onNavigateToProfile = { navController.navigate("profile") },
-                onOpenScreensaver = { navController.navigate("dream/settings") },
                 onOpenHomeSettings = { navController.navigate("home/settings") }
             )
         }
@@ -259,9 +269,26 @@ fun AppNavigation(
                     stationId = stationId,
                     stationName = stationName,
                     mode = mode,
-                    onBack = { navController.popBackStack() },
-                    onEditLines = {
+                    // ── Come back to the station you were editing ──
+                    //
+                    // Not "come back to the home screen". A user on page C of a
+                    // four-station carousel who opens C's settings and taps back
+                    // is still thinking about C, and landing on A makes them
+                    // find their way back to a place they never chose to leave.
+                    //
+                    // Raised here rather than left to the pager's own saved
+                    // state, which is not enough on its own: the summary re-reads
+                    // its repository on resume, and on any frame where that list
+                    // is momentarily empty both the pager and the scroll position
+                    // clamp to zero. The list layout is served by the same
+                    // request, which expands the card and scrolls it into view.
+                    onBack = {
+                        BoardFocus.restore(stationId)
+                        navController.popBackStack()
+                    },
+                    onEditLines = { line ->
                         pendingEditStation = target
+                        pendingFocusLine = line
                         navController.navigate("selection")
                     },
                 )
@@ -271,7 +298,18 @@ fun AppNavigation(
         composable("selection") {
             SelectionScreen(
                 editStation = pendingEditStation,
+                focusLine = pendingFocusLine,
                 onNavigateToSummary = {
+                    // Saving REBUILDS the summary destination (`popUpTo …
+                    // inclusive`), which throws away its pager page and scroll
+                    // position along with everything else. That is correct for a
+                    // brand new station — it goes to the TOP of the home screen,
+                    // so the first card already is the one just added — and wrong
+                    // for an edit, which would drop the user on someone else's
+                    // board after changing this one's lines.
+                    pendingEditStation?.let { (stationId, _, _) ->
+                        BoardFocus.restore(stationId)
+                    }
                     navController.navigate("summary") {
                         popUpTo("summary") { inclusive = true }
                     }

@@ -11,19 +11,14 @@ package com.stationly.app.platform
  */
 enum class NotificationAuthState { NOT_DETERMINED, AUTHORIZED, DENIED }
 
-/**
- * Has the user actually placed a Stationly widget?
- *
- * `null` means "not probed yet" — the caller must NOT decide anything from
- * it (showing the "add a widget" promo to someone who already has one, for
- * the half-second before the probe lands, is worse than showing nothing).
- *
- * Android reads `AppWidgetManager.getAppWidgetIds` directly. iOS's
- * equivalent (`WidgetCenter.getCurrentConfigurations`) is Swift-only, so the
- * Swift host probes it and drops the answer in the App Group — same
- * Kotlin↔Swift channel the auth identity keys and widget payload already use.
- */
-expect fun hasHomeScreenWidget(): Boolean?
+// `hasHomeScreenWidget()` lived here until 2026-08-23, read by exactly one
+// caller: the "add a home screen widget" promo. That promo is gone (see
+// `SummaryViewModel`), and with it the only question this seam answered.
+//
+// The Swift probe it read from is NOT gone — `HomeStateProbe` still runs on
+// every foreground, because the activity trail derives widget add/remove from
+// its snapshot and the extension's refresh ledger reaps deleted widgets
+// against it. What went is the one extra App Group key it wrote for the promo.
 
 /** Current OS-level notification authorization. */
 expect suspend fun notificationAuthState(): NotificationAuthState

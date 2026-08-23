@@ -321,7 +321,20 @@ class SelectionViewModel(
         return if (options.any { it.id == pinned.id }) options else listOf(pinned) + options
     }
 
-    fun openForStation(mode: String, stationId: String, stationName: String) {
+    fun openForStation(
+        mode: String,
+        stationId: String,
+        stationName: String,
+        /**
+         * A line to open the picker already expanded on.
+         *
+         * Set when the user came from ONE board's row on the station settings
+         * screen, so they land on the line they tapped instead of a collapsed
+         * list they have to find it in again. Null from the generic "Add or edit
+         * lines" entry, which is about the station rather than one line.
+         */
+        focusLine: String? = null,
+    ) {
         viewModelScope.launch {
             // The layout arrives from cache within a frame or two, or from the
             // network. Bounded so a dead backend leaves the user on the mode
@@ -341,6 +354,12 @@ class SelectionViewModel(
             _dropdownData.value = seeded
 
             onDropdownSelected("station", stationId)
+
+            // AFTER the station lands. `onDropdownSelected("station", …)` runs
+            // `clearLinePicks()`, which sets `_expandedLine` to null so the
+            // previous station's open line cannot survive into this one —
+            // setting the focus first would be wiped by it.
+            focusLine?.let { line -> _expandedLine.value = line }
         }
     }
 
@@ -912,17 +931,23 @@ class SelectionViewModel(
         line: String,
         direction: String,
         /**
-         * The pole this board is ALREADY on, for rows that exist.
+         * The row this board ALREADY has, for a board being re-saved rather
+         * than added. Null for a genuinely new board.
          *
-         * Supplying it skips the resolve entirely. That is not just an
-         * optimisation: `updateSelectionInPlace` matches on `station`, so if a
-         * re-resolve returned anything different — a genuine route change, or
-         * the hub fallback after a network failure — the match would miss and
-         * the user's filter edit would be silently discarded. Re-resolving also
-         * cost one network round trip per untouched board on every save.
+         * Two jobs, and both of them are correctness rather than economy.
+         *
+         * Its `station` skips the pole resolve: `updateSelectionInPlace` matches
+         * on `station`, so if a re-resolve returned anything different — a
+         * genuine route change, or the hub fallback after a network failure —
+         * the match would miss and the user's filter edit would be silently
+         * discarded. It also saves one network round trip per untouched board.
+         *
+         * And its route TEXT is what the three `direction*` fields below fall
+         * back to. See them for what happens without it.
          */
-        knownStation: String? = null,
+        existing: UserSelection? = null,
     ): UserSelection {
+        val knownStation = existing?.station
         // Resolve the exact stop this (line, direction) departs from.
         //
         // Re-enabled after being disabled for multi-line tube: it used to be the
@@ -983,6 +1008,33 @@ class SelectionViewModel(
             viaKeys = resolution.viaKeys,
             patternIds = if (effective == FilterMode.VIA) filter.patterns.map { it.id } else emptyList(),
             patternNames = if (effective == FilterMode.VIA) filter.patternNames else emptyList(),
+            // Display facts about the DIRECTION, kept whatever the filter is.
+            //
+            // The picker knew both and threw them away, which left the settings
+            // screen showing TfL's raw "inbound" and the words "All
+            // destinations" for a board it could have described exactly. Neither
+            // is derivable from the saved row: `directionName` is the backend's
+            // own compass mapping, and the destination chips are route data.
+            //
+            // ⚠️ The previous row's answer is KEPT when there is no new one.
+            //
+            // `dirOption` is null whenever this line's direction list is not
+            // loaded — an edit save on a line the user never opened, or any save
+            // at all made while the directions fetch was failing offline. Read
+            // straight from it, that wrote three blanks OVER text a previous
+            // save had resolved, and the settings screen dropped back to TfL's
+            // raw "Inbound" for a board it had been naming properly. It did
+            // not even self-heal on the way back: the backfill runs from the
+            // settings screen's `init`, and returning from the picker is an
+            // ON_RESUME, so the row stayed wrong until the screen was left and
+            // re-entered.
+            //
+            // Blank is only ever written for a board that has nothing stored
+            // yet, which is exactly the case the backfill exists for.
+            directionName = dirOption?.directionName ?: existing?.directionName.orEmpty(),
+            directionDestinations = dirOption?.destinations?.map { it.label }
+                ?: existing?.directionDestinations.orEmpty(),
+            directionTowards = dirOption?.towards ?: existing?.directionTowards.orEmpty(),
             routeResolvedAt = if (resolution.isEmpty) 0L
                               else kotlinx.datetime.Clock.System.now().toEpochMilliseconds(),
         )
@@ -1168,7 +1220,7 @@ class SelectionViewModel(
                     } ?: continue
                     val rebuilt = buildSelection(
                         mode, stationId, stationName, line, direction,
-                        knownStation = existing.station,
+                        existing = existing,
                     )
                     if (rebuilt.filterMode == existing.filterMode &&
                         rebuilt.destinationIds == existing.destinationIds &&

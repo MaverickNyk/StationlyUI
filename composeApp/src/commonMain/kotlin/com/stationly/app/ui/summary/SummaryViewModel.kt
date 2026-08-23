@@ -30,7 +30,6 @@ import com.stationly.app.platform.performHaptic
 import com.stationly.app.platform.HapticType
 import com.stationly.app.platform.getConnectivityFlow
 import com.stationly.app.platform.NotificationAuthState
-import com.stationly.app.platform.hasHomeScreenWidget
 import com.stationly.app.platform.notificationAuthState
 
 class SummaryViewModel(
@@ -95,12 +94,6 @@ class SummaryViewModel(
 
     private val _forceUpdate = MutableStateFlow(false)
     val forceUpdate: StateFlow<Boolean> = _forceUpdate.asStateFlow()
-
-    private val _showWidgetPromo = MutableStateFlow(false)
-    val showWidgetPromo: StateFlow<Boolean> = _showWidgetPromo.asStateFlow()
-
-    private val _showDreamPromo = MutableStateFlow(false)
-    val showDreamPromo: StateFlow<Boolean> = _showDreamPromo.asStateFlow()
 
     private val _showNotificationDeniedBanner = MutableStateFlow(false)
     val showNotificationDeniedBanner: StateFlow<Boolean> = _showNotificationDeniedBanner.asStateFlow()
@@ -169,8 +162,6 @@ class SummaryViewModel(
             // backend and every uid-targeted push fails NotRegistered.
             com.stationly.app.util.FcmTokenRegistrar.ensureRegistered()
         }
-        checkWidgetPromo()
-        checkDreamPromo()
         checkNotificationDeniedBanner()
         viewModelScope.launch {
             getConnectivityFlow().collect { online ->
@@ -591,52 +582,25 @@ class SummaryViewModel(
         } catch (_: Exception) {}
     }
 
-    /**
-     * Show the "add a home screen widget" promo to people who don't have one.
-     *
-     * Android reads `AppWidgetManager.getAppWidgetIds` and filters by host
-     * category. iOS's `WidgetCenter` is Swift-only, so the Swift host probes
-     * it into the App Group and [hasHomeScreenWidget] reads that — `null`
-     * means the probe hasn't landed, in which case we decide nothing rather
-     * than flash a promo at someone who already has the widget.
-     */
-    fun checkWidgetPromo() {
-        _showWidgetPromo.value = hasHomeScreenWidget() == false
-    }
-
-    /**
-     * X button — hides until the next foreground re-evaluates (same
-     * non-persistent behaviour as Android's `dismissWidgetPromo`).
-     *
-     * Android also has `hideWidgetPromoForSession()` for its "Add" CTA. iOS
-     * has no counterpart on purpose: there is no API to add a widget on the
-     * user's behalf, so the card ships with `cta = null` permanently (see
-     * `WidgetPromoCard`) and a session-hide method would be unreachable code.
-     */
-    fun dismissWidgetPromo() {
-        _showWidgetPromo.value = false
-    }
-
-    /**
-     * Show the screensaver promo until the user has actually run the dream.
-     *
-     * Android asks the system whether Stationly is the selected screensaver
-     * (`Settings.Secure.screensaver_components` + the `screensaver_enabled`
-     * flag). iOS has no system screensaver slot — the dream is an in-app
-     * surface — so "has run it at least once" is the analogue, persisted in
-     * the app-group dream prefs so it survives the logout wipe.
-     */
-    fun checkDreamPromo() {
-        _showDreamPromo.value = !com.stationly.app.ui.dream.DreamSettings.hasEverStarted()
-    }
-
-    fun dismissDreamPromo() {
-        _showDreamPromo.value = false
-    }
-
-    fun hideDreamPromoForSession() {
-        _showDreamPromo.value = false
-    }
+    // ── No "add a widget" or "set as screensaver" promo ──────────────────
+    //
+    // Both were ports of Android nudges that do not survive the crossing, and
+    // they were removed on 2026-08-23 rather than kept for parity's sake.
+    //
+    // The widget promo asked for a gesture iOS gives the app no way to help
+    // with: `isRequestPinAppWidgetSupported` is Android's, and there is no API
+    // that adds a widget on the user's behalf, so the card had no CTA and could
+    // only recite Home Screen instructions at someone who had not asked.
+    //
+    // The screensaver promo advertised a surface iOS has no system slot for.
+    // On Android the dream is chosen in system Settings and the promo takes you
+    // there; here it is an ordinary in-app screen, reachable from home settings
+    // like every other setting. A banner for one row of the settings screen is
+    // an advert, not a signpost.
+    //
+    // What remains on the home screen is the announcement banner and the
+    // notification-denied banner — one is a message, the other is a permission
+    // the user can grant. Both are acted on, not dismissed past.
 
     /**
      * Surface the "notifications are off" banner when the OS says the user
@@ -693,11 +657,8 @@ class SummaryViewModel(
             // catches a token that rotated while we were backgrounded.
             com.stationly.app.util.FcmTokenRegistrar.ensureRegistered()
         }
-        // Same ON_RESUME re-evaluation Android does: the user may have added a
-        // widget, run the screensaver, or flipped notifications in Settings
-        // while we were backgrounded.
-        checkWidgetPromo()
-        checkDreamPromo()
+        // Same ON_RESUME re-evaluation Android does: the user may have flipped
+        // notifications in Settings while we were backgrounded.
         checkNotificationDeniedBanner()
     }
 

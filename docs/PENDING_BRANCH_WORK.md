@@ -9,25 +9,44 @@ Background: `ROUTE_BRANCHES_AND_REJOINS.md` (what changed),
 
 ---
 
-## P0 — will break something if forgotten
+## Release posture — read this before worrying about any of the below
 
-### 1. Reinstate migrations before the next ANDROID release
-**Blocking. Silent until it isn't.**
+**Decided 2026-08-23.** The only thing being built is **iOS v1**, which has never
+shipped. **Android is live at versionCode 2 and is FROZEN** — no new Android
+release is planned for this cycle.
 
-`core/src/commonMain/sqldelight/.../migrations/` was deleted during active
-development. Fine for iOS, which has never shipped — but **Android is live
-(versionCode 2)** and writes to `UserSelectionEntity` through the same
-`SqlStorage.saveSelection` → `insertSelection`, which now names four columns
-that did not exist in the shipped build.
+Everything about Android in this document is therefore *deferred*, not blocking.
+Nothing in `core` can reach an Android user until an APK ships, and none is
+being built.
 
-`Schema.create` runs only on an EMPTY database, so an existing Android install
-never gains them. The first board save fails with **"no such column"** — at
-runtime, on the devices that have been using the app longest, and never on the
-freshly wiped one a developer tests with.
+### 1. No database migrations during development — wipe and reinstall
+`migrations/` is deliberately absent. The schema still moves daily, the only
+databases in existence are on development devices, and every `.sqm` is a file to
+keep in hand-sync with the `.sq` for no reader.
 
-The required SQL is in the banner at the top of `StationlyDatabase.sq`. **Diff
-the `.sq` against the last released Android build before writing it** — that
-list is only what was outstanding on the day migrations were dropped.
+> **When you change `StationlyDatabase.sq`, DELETE THE APP AND REINSTALL IT.**
+
+`Schema.create` applies the `.sq` in full to an empty database, so a fresh
+install is correct by construction. Installing *over* an app keeps its container
+and its old database — which is exactly what crashed the iOS build on 2026-08-23
+with "no such column". Boards come back from the cloud on sign-in, so a wipe
+costs nothing but the sign-in.
+
+Migrations were briefly reinstated that day to rescue that install, then removed
+once it was clear no Android release was coming. **If you are about to write one,
+check that premise first** — it is the only thing this policy rests on.
+
+### 1b. What Android owes, whenever it is picked back up
+An Android database has never seen anything added to the `.sq` since its release.
+The full gap is listed in the banner at the top of `StationlyDatabase.sq`, and
+**that list must be kept current as columns are added** — it is maintained by
+hand and is the only record.
+
+When the time comes it is ONE migration, written against the last released
+Android build, and it should be a table **rebuild** rather than a list of
+`ALTER`s: build the table in its current shape under a temporary name, copy
+across, drop, rename. That reaches the same result whatever the source database
+contained, which matters because "version 1" has meant several different schemas.
 
 ### 2. The Android app has not been touched at all
 Deliberate — Android was explicitly held back for a later cycle. It compiles and

@@ -1,31 +1,48 @@
--- ⚠️ NO MIGRATIONS. Deliberate, and temporary.
+-- ⚠️ NO MIGRATIONS, DELIBERATELY. Wipe and reinstall instead.
 --
--- `migrations/` was deleted during active development (2026-08-19). iOS has
--- never shipped, so there is no install to upgrade, and `Schema.create` applies
--- this file in full to every fresh database — which is the only kind that
--- exists. Carrying migrations for a schema still changing daily was churn with
--- no reader.
+-- ## The policy, decided 2026-08-23
+-- The only thing being built right now is **iOS v1**, which has never shipped.
+-- **Android is live (versionCode 2) and is FROZEN** — no new Android release is
+-- planned, so nothing in this file can reach an Android user: the schema meets a
+-- phone only when an APK ships, and the shipped APK carries its own old copy.
 --
--- ## Before the next ANDROID release, this must be reinstated
--- Android IS live (versionCode 2) and writes to `UserSelectionEntity` through
--- `SqlStorage.saveSelection` → `insertSelection`. `Schema.create` runs only on
--- an EMPTY database, so an existing Android install never gains a column added
--- here. The first board save then fails with "no such column" — at runtime, on
--- exactly the devices that have been using the app longest, and never on the
--- freshly wiped one a developer tests with.
+-- That makes migrations pure overhead. The schema is still moving daily while
+-- the iOS app is finished, every `.sqm` is a file to keep in hand-sync with this
+-- one, and the only databases in existence are on development devices.
 --
--- What a reinstated `migrations/1.sqm` has to contain, at minimum:
+--   **When you change this file, DELETE THE APP AND REINSTALL IT.**
+--
+-- `Schema.create` applies this file in full to an empty database, so a fresh
+-- install is always correct by construction. Installing OVER an app keeps its
+-- container and therefore its old database — that is what crashed the iOS build
+-- on 2026-08-23 with "no such column". Delete the app first; boards come back
+-- from the cloud on sign-in.
+--
+-- Migrations were briefly reinstated that day to rescue that install and were
+-- removed again once it was clear no Android release was coming. If you find
+-- yourself writing one, check that premise first — it is the only thing this
+-- policy rests on.
+--
+-- ## What this defers, and what it costs
+-- An Android database has never seen anything added here since its release. When
+-- Android is eventually picked back up it needs ONE migration written against
+-- the last released build, and the gap it must cross is everything below. **Keep
+-- this list current when you add a column** — it is maintained by hand and is
+-- the only record of what an Android upgrade owes.
+--
 --   CREATE TABLE ActivityEventEntity (…);  plus its index
---   ALTER TABLE UserSelectionEntity ADD COLUMN viaKeys      TEXT NOT NULL DEFAULT '';
---   ALTER TABLE UserSelectionEntity ADD COLUMN patternIds   TEXT NOT NULL DEFAULT '';
---   ALTER TABLE UserSelectionEntity ADD COLUMN patternNames TEXT NOT NULL DEFAULT '';
---   ALTER TABLE PredictionEntity    ADD COLUMN viaKey       TEXT;
--- Diff this file against the last released Android build before writing it —
--- the list above is only what was outstanding on the day migrations were
--- dropped, and anything added since belongs in it too.
+--   ALTER TABLE UserSelectionEntity ADD COLUMN viaKeys               TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE UserSelectionEntity ADD COLUMN patternIds            TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE UserSelectionEntity ADD COLUMN patternNames          TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE UserSelectionEntity ADD COLUMN directionName         TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE UserSelectionEntity ADD COLUMN directionDestinations TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE UserSelectionEntity ADD COLUMN directionTowards      TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE PredictionEntity    ADD COLUMN viaKey                TEXT;
 --
--- SQLDelight derives the schema version from the migration COUNT, so adding the
--- first file back bumps the database to 2 and every later change gets a home.
+-- Write it as a table REBUILD, not a list of ALTERs — build the table in its
+-- current shape under a temporary name, copy across, drop, rename. That lands on
+-- the same result whatever the source database happened to contain, which
+-- matters because "version 1" has meant several different schemas over time.
 
 CREATE TABLE UserSelectionEntity (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,6 +89,15 @@ CREATE TABLE UserSelectionEntity (
     -- viaStationId. A pattern id is unreadable, and the card has to name the
     -- filter without re-fetching route data to do it.
     patternNames TEXT NOT NULL DEFAULT '',
+    -- What the picker CALLED this direction ("Southbound"), and every destination
+    -- the direction serves. Both are route data the picker had and used to throw
+    -- away, leaving the settings screen to show TfL's raw "inbound". Display
+    -- only: nothing filters on either.
+    directionName TEXT NOT NULL DEFAULT '',
+    directionDestinations TEXT NOT NULL DEFAULT '',
+    -- Where the direction heads, as the picker said it. The answer for anything
+    -- with no compass bearing, which is every bus.
+    directionTowards TEXT NOT NULL DEFAULT '',
     -- Epoch millis of the last resolution, so a stale allow-list can be found
     -- and refreshed without prompting the user again.
     routeResolvedAt INTEGER NOT NULL DEFAULT 0
@@ -184,8 +210,8 @@ CREATE INDEX activity_by_time ON ActivityEventEntity(t);
 
 -- Queries
 insertSelection:
-INSERT INTO UserSelectionEntity(mode, line, station, parentStationId, stationName, direction, destinations, destinationIds, filterMode, viaStationId, viaStationName, viaKeys, patternIds, patternNames, routeResolvedAt)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO UserSelectionEntity(mode, line, station, parentStationId, stationName, direction, destinations, destinationIds, filterMode, viaStationId, viaStationName, viaKeys, patternIds, patternNames, directionName, directionDestinations, directionTowards, routeResolvedAt)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- ORDER BY is load-bearing, not tidiness.
 --

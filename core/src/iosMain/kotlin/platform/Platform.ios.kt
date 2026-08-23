@@ -286,9 +286,10 @@ object AppGroupKeys {
     // immediately on receipt, long before an interactive Google flow finishes).
     const val AUTH_COMMAND_DONE       = "auth_command_done"
 
-    // Profile metadata
+    // Profile metadata. `member_since` was here too until 2026-08-23; the
+    // profile card's "Since …" chip was its only reader, and Swift no longer
+    // writes the key.
     const val SIGNIN_PROVIDER         = "signin_provider"
-    const val MEMBER_SINCE            = "member_since"
     const val FIREBASE_USER_EMAIL_VERIFIED = "firebase_user_email_verified"
     const val FIREBASE_USER_IS_EMAIL_PROVIDER = "firebase_user_is_email_provider"
 
