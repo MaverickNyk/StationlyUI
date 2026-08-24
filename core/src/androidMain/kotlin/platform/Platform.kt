@@ -205,6 +205,15 @@ actual object Platform {
     actual fun getEnvironment(): AppEnvironment = environment
     actual fun getBaseUrl(): String = com.stationly.core.config.AppConfig.apiBaseUrl
     
+    /**
+     * `forceRefresh = false` is the whole implementation, and it is not laziness.
+     *
+     * The SDK answers from its cache while the token has more than ~5 minutes
+     * left and goes to Google only when it does not, which is exactly the
+     * freshness contract [com.stationly.core.platform.Platform.getAuthToken]
+     * now states. iOS had to be taught this; Android has always had it for free,
+     * which is why the hour-long auto-logout was an iOS-only symptom.
+     */
     actual suspend fun getAuthToken(): String? {
         return try {
             val user = FirebaseAuth.getInstance().currentUser
@@ -214,10 +223,29 @@ actual object Platform {
         }
     }
 
-    actual suspend fun signOutFromAuthExpiry() {
+    /** The same call with the cache bypassed. See the expect declaration for
+     *  why this is reserved for the 401 retry and never used per-request. */
+    actual suspend fun refreshAuthToken(): String? {
+        return try {
+            val user = FirebaseAuth.getInstance().currentUser
+            user?.getIdToken(true)?.await()?.token
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    actual suspend fun signOutFromAuthExpiry(path: String, status: Int, accountGone: Boolean) {
         val auth = FirebaseAuth.getInstance()
         if (auth.currentUser != null) {
-            android.util.Log.w("Platform", "Backend returned 401 — signing user out")
+            // Logged with the three facts that identify WHICH request ended the
+            // session. Android has never shown the iOS symptom, but it shares
+            // the caller — so if this line ever appears here it means the
+            // backend labelled an account gone, and that is worth being able to
+            // read off a bug report rather than infer.
+            android.util.Log.w(
+                "Platform",
+                "Forced sign-out: path=$path status=$status accountGone=$accountGone"
+            )
             auth.signOut()
         }
     }

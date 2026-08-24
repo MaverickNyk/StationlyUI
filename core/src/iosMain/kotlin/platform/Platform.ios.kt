@@ -1386,17 +1386,55 @@ actual object Platform {
     actual fun getEnvironment(): AppEnvironment = IOS_ENVIRONMENT
     actual fun getBaseUrl(): String = com.stationly.core.config.AppConfig.apiBaseUrl
 
-    actual suspend fun getAuthToken(): String? = withContext(Dispatchers.IO) {
-        NSUserDefaults.standardUserDefaults.stringForKey(AppGroupKeys.FIREBASE_AUTH_TOKEN)
-    }
+    /**
+     * Delegated to [IosAuthTokenAuthority], which resolves through FirebaseAuth
+     * in front of a cache — matching Android's `getIdToken(false)` semantics.
+     *
+     * This used to be the whole implementation:
+     *
+     * ```
+     * NSUserDefaults.standardUserDefaults.stringForKey(ATOKEN)
+     * ```
+     *
+     * A read of a key nothing on the request path ever refreshed. Firebase ID
+     * tokens live one hour, so an app left alone for longer sent a dead bearer
+     * on its next call under `/user/` and signed itself out on the 401. See
+     * [IosAuthTokenAuthority] for the full account and for why the crossing is a
+     * direct framework call rather than the 250 ms command bridge.
+     *
+     * No `Dispatchers.IO` hop any more. The old body did one blocking defaults
+     * read and wanted to be off the caller's thread; the new one usually touches
+     * nothing but memory, and when it does cross it suspends on a
+     * `CompletableDeferred` rather than blocking anything.
+     */
+    actual suspend fun getAuthToken(): String? = IosAuthTokenAuthority.token()
 
-    actual suspend fun signOutFromAuthExpiry() {
+    /** See the expect declaration: the 401-retry path only, never per-request. */
+    actual suspend fun refreshAuthToken(): String? = IosAuthTokenAuthority.forceRefresh()
+
+    actual suspend fun signOutFromAuthExpiry(path: String, status: Int, accountGone: Boolean) {
+        // ── The tripwire, and it is the point of the parameters ──
+        //
+        // A forced logout used to leave NO evidence anywhere. The user found a
+        // login screen, the activity table showed the session simply stopping,
+        // and nothing said which request had ended it — which is why the stale
+        // token above took several rounds to find. This line, plus the
+        // `auth.forced_logout` row the caller writes, is the permanent
+        // diagnostic for that. Do not remove it once the bug feels fixed: its
+        // whole value is being there the next time one is not.
+        PushTrace.log("auth:forced-logout path=$path status=$status accountGone=$accountGone")
+
         // iOS Firebase sign-out runs in Swift; enqueue the "signOut" command for the
         // AuthBridge to pick up. Token slot is cleared so any in-flight request that
         // re-reads it sees no token rather than the expired one.
         val ud = NSUserDefaults.standardUserDefaults
         if (ud.stringForKey(AppGroupKeys.FIREBASE_AUTH_TOKEN) == null) return
         ud.removeObjectForKey(AppGroupKeys.FIREBASE_AUTH_TOKEN)
+        // The in-memory copy as well. Clearing only the defaults key would leave
+        // the authority still serving the dead session's token from memory to
+        // every request until it aged out — and, worse, to whoever signs in
+        // next, since nothing else in this process invalidates that cache.
+        IosAuthTokenAuthority.invalidate()
         ud.setObject("signOut", forKey = "auth_pending_command")
     }
 }

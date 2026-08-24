@@ -29,8 +29,13 @@ actual object Platform {
     actual fun getApiKey(): String = ""
     actual fun getEnvironment(): AppEnvironment = AppEnvironment.PRODUCTION
     actual fun getBaseUrl(): String = com.stationly.core.config.AppConfig.apiBaseUrl
+    // Web target: no auth bridge yet, so there is no session to keep fresh and
+    // none to end. Both stay no-ops rather than being made to look implemented —
+    // a null token means "no credential", which the network layer already
+    // handles by sending no Authorization header at all.
     actual suspend fun getAuthToken(): String? = null
-    actual suspend fun signOutFromAuthExpiry() {} // Web target: no auth bridge yet.
+    actual suspend fun refreshAuthToken(): String? = null
+    actual suspend fun signOutFromAuthExpiry(path: String, status: Int, accountGone: Boolean) {}
 }
 
 class WebWidgetManager : WidgetManager {

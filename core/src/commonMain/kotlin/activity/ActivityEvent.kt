@@ -98,6 +98,36 @@ object ActivityEvents {
     const val AUTH_LOGGED_IN = "auth.logged_in"
     const val AUTH_LOGGED_OUT = "auth.logged_out"
     const val AUTH_ACCOUNT_DELETED = "auth.account_deleted"
+
+    /**
+     * Props: `path`, `status`, `account_gone`. A session ended by the NETWORK
+     * layer rather than by the person using the app.
+     *
+     * The tripwire for the class of bug where the app signs itself out and
+     * nobody can say why. Until this existed a forced logout left no evidence at
+     * all — the trail simply stopped, indistinguishable from a user who put
+     * their phone down — and diagnosing one meant reasoning about which of
+     * several equally plausible paths had fired. The three props name the
+     * request, its status, and whether the SERVER said the account was gone, so
+     * the answer is a row rather than a hypothesis.
+     *
+     * `account_gone = false` here should not happen: [NetworkModule.forceLogout]
+     * is only called on a labelled 401. If it ever appears, something learned to
+     * end sessions without the server's verdict, and that is the bug.
+     */
+    const val AUTH_FORCED_LOGOUT = "auth.forced_logout"
+
+    /**
+     * Props: `path`, `retried`. A 401 that was NOT allowed to end the session.
+     *
+     * The counterpart to [AUTH_FORCED_LOGOUT], and it earns its place by being
+     * the only positive evidence that the guard is working. A regression that
+     * restored the old sign-out-on-any-401 behaviour would show up as these rows
+     * disappearing and forced logouts appearing in their place — a shape that is
+     * visible in the data, where "the app stopped logging people out" on its own
+     * is not.
+     */
+    const val AUTH_401_SURVIVED = "auth.401_survived"
     /** Props: `reason` — which `user.sync` push arrived. */
     const val SYNC_RECONCILED = "sync.reconciled"
     /** Props: `stage`, `reason`. The one event that exists for diagnosis. */

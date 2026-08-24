@@ -105,26 +105,53 @@ object ActivityLog {
      * For the handful of call sites that are about to end the process or the
      * session — a logout, a scene going to background — where a detached
      * coroutine is not guaranteed to survive long enough to run.
+     *
+     * @param uid files the event against this account instead of whoever storage
+     *   says is signed in. Only for an event ABOUT a teardown, which by
+     *   definition cannot read the uid itself — see [persist].
      */
-    suspend fun recordBlocking(name: String, props: Map<String, String> = emptyMap()) {
+    suspend fun recordBlocking(
+        name: String,
+        props: Map<String, String> = emptyMap(),
+        uid: String? = null,
+    ) {
         persist(
             ActivityEvent(
                 id = newEventId(),
                 name = name,
                 t = Clock.System.now().toEpochMilliseconds(),
                 props = props,
-            )
+            ),
+            uidOverride = uid,
         )
     }
 
-    private suspend fun persist(event: ActivityEvent) = withContext(Dispatchers.Default) {
+    private suspend fun persist(
+        event: ActivityEvent,
+        uidOverride: String? = null,
+    ) = withContext(Dispatchers.Default) {
         runCatching {
             mutex.withLock {
                 // The uid is stamped HERE, not at upload time: an event belongs
                 // to whoever was signed in when it happened. A queue that spans
                 // a logout would otherwise file yesterday's activity under
                 // today's account.
-                val uid = Platform.storageManager.loadString(UID_KEY).orEmpty()
+                //
+                // ## Why the override exists
+                // For one event this read is guaranteed to be too late.
+                // `auth.forced_logout` describes a session ending, and the
+                // teardown that ends it wipes this very key — so the row landed
+                // with an EMPTY uid, measured twice on device. That is not a
+                // cosmetic loss: `ActivityUploader.flush` selects `WHERE uid = ?`,
+                // so a blank row matches nobody, never uploads, and is eventually
+                // trimmed. The one event whose purpose is to be readable
+                // afterwards was the one guaranteed to be thrown away.
+                //
+                // `NetworkModule.forceLogout` therefore passes the uid from the
+                // `sub` claim of the token the server just rejected, which no
+                // teardown can erase.
+                val uid = uidOverride?.takeIf { it.isNotBlank() }
+                    ?: Platform.storageManager.loadString(UID_KEY).orEmpty()
                 storage.enqueueActivityEvent(
                     id = event.id,
                     uid = uid,

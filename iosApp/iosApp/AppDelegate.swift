@@ -107,6 +107,26 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         // Wire KMP ↔ Swift auth command protocol
         AuthBridge.shared.wireToKMP()
 
+        // ── Tell KMP how to get a bearer token, before anything asks ──
+        //
+        // The shared network layer resolves the token per request through this
+        // resolver (see `IosAuthTokenAuthority`), which is what stops a
+        // `/user/*` call carrying an hour-old bearer and being answered with a
+        // 401 the app used to treat as a sign-out.
+        //
+        // Registered here, in the launch path, because a BACKGROUND launch takes
+        // it too. That is the case that matters most: `ActivityUploadScheduler`
+        // fires at 03:00 on a charger in a process that never foregrounds, so
+        // `refreshTokenIfNeeded()` — which runs on `didBecomeActive` — has not
+        // run and never will. Registering lazily on first use, or from a
+        // foreground hook, would leave exactly that path on the old behaviour,
+        // which is the silent overnight logout.
+        //
+        // Not gated on `firebaseReady`: the resolver checks `FirebaseApp.app()`
+        // itself on every call, and a launch where configuration failed but
+        // later succeeded should not be left with no resolver at all.
+        AuthTokenBridge.shared.register(resolver: AuthTokenResolver())
+
         // MUST happen before launch finishes — BGTaskScheduler refuses
         // registrations afterwards and background refresh is then silently dead
         // for the whole session. Scheduling the first request is separate and
@@ -227,11 +247,33 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
                    : bg == .restricted ? "RESTRICTED" : "unknown"
         PushTraceSwift.log("bgRefresh=\(bgName) lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled)")
 
+        #if DEBUG
+        // Pick up an auth test command dropped into the App Group from the Mac.
+        // Placed before the refresh below so a command that wants to control the
+        // token's fate is not racing a refresh that has already started. See
+        // `AuthTestControls.runPendingCommand`.
+        AuthTestControls.runPendingCommand()
+        #endif
+
         // Again on foreground, this time to SAVE: on a first run the id did not
         // exist at launch and Kotlin has minted one since. Idempotent — once
         // both stores agree it does one Keychain read and returns.
         DeviceIdentityStore.sync()
 
+        // Detached, and NOT ordered before the network work further down.
+        //
+        // It used to matter enormously that it was not. This task and the
+        // `uploadActivityIfStale()` task below both start here with nothing
+        // sequencing them, the upload usually won, and it posted
+        // `/user/activity/batch` with an hour-old bearer — a 401 the app then
+        // treated as a sign-out. Ordering them was never the fix: it would have
+        // left the 03:00 background upload, which does not pass through here at
+        // all, still broken.
+        //
+        // Requests resolve their own token now (`IosAuthTokenAuthority`), so
+        // this races nothing. What it still does is ask Google whether the
+        // account exists — see `refreshTokenIfNeeded` — and that answer is worth
+        // having on every foreground but is not something any request waits for.
         if FirebaseApp.app() != nil {
             Task { await AuthBridge.shared.refreshTokenIfNeeded() }
         }

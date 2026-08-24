@@ -140,6 +140,31 @@ struct ContentView: View {
                 // entries in `PushTraceSwift`'s 40-deep ring, which is shared
                 // with the push trace and is the only diagnostic either side has.
                 guard url.scheme == stationlyUrlScheme else { return }
+                #if DEBUG
+                // ── The only way to reach the auth test controls on device ──
+                //
+                // Auth cannot be verified through `devicectl device process
+                // launch`: a CLI-launched process reads no Keychain, so
+                // FirebaseAuth reports no user on a phone that is signed in
+                // (recorded on `AuthBridge.settleAuthState`). The app has to be
+                // opened by hand, which leaves no channel for a test command —
+                // so this is one. Tapping
+                // `stationly-staging://debug?action=expire-token` in Notes
+                // forces the exact state the auto-logout needed.
+                //
+                // DEBUG only, and it writes nothing a release build could reach.
+                if url.host == "debug" {
+                    let action = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                        .queryItems?.first(where: { $0.name == "action" })?.value
+                    switch action {
+                    case "expire-token":   AuthTestControls.forceExpiredToken()
+                    case "stale-request":  Task { await AuthTestControls.staleTokenRequest() }
+                    case "fast-path":      Task { await AuthTestControls.fastPathBurst() }
+                    default:               PushTraceSwift.log("TEST unknown action=\(action ?? "-")")
+                    }
+                    return
+                }
+                #endif
                 guard url.host == "home",
                       let station = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                           .queryItems?.first(where: { $0.name == "station" })?.value,

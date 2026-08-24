@@ -121,16 +121,90 @@ expect object Platform {
     fun getApiKey(): String
     fun getEnvironment(): AppEnvironment
     fun getBaseUrl(): String
+
+    /**
+     * A bearer token that is still valid when the caller uses it — not merely
+     * the last one this device happened to see.
+     *
+     * ## The contract this did not used to have
+     * It used to promise nothing about freshness, and iOS took that literally:
+     * its actual was one `NSUserDefaults` read of `firebase_auth_token`. Firebase
+     * ID tokens live exactly one hour, and that key is written only by sign-in,
+     * by `settleAuthState`, and by `AuthBridge.refreshTokenIfNeeded()` on
+     * foreground — none of which is sequenced before an outbound request. So
+     * every call under `/user/` made more than an hour after the last foreground
+     * carried a dead bearer, the backend answered 401, and the 401 handler
+     * signed the user out. The app was not timing out; it was deliberately
+     * ending a healthy session because a stale token looked like a revoked one.
+     *
+     * Android never had the bug because its actual asks the SDK
+     * (`currentUser.getIdToken(false)`), which refreshes when the cached token is
+     * close to expiry. That behaviour is now the CONTRACT rather than one
+     * platform's accident, and iOS implements it too — see
+     * `IosAuthTokenAuthority`.
+     *
+     * ## What "valid" is allowed to mean
+     * Fresh enough to survive the round trip, not freshly minted. Implementations
+     * may — and should — return a cached token while it has comfortable life
+     * left; crossing to the auth SDK on every request would put a lock and, on
+     * iOS, a language boundary in front of every HTTP call for no gain.
+     *
+     * Returns null when there is no session, and ALSO when there is one but no
+     * token can be produced right now (offline at the moment the cached one
+     * aged out). Null is not evidence that the user is signed out — nothing may
+     * treat it that way. See [signOutFromAuthExpiry] for what is allowed to end
+     * a session.
+     */
     suspend fun getAuthToken(): String?
 
     /**
-     * Invoked by the network layer when the backend returns 401 for a request that
-     * carried a Firebase token. Signs the user out of Firebase locally — the platform
-     * UI layer subscribes to FirebaseAuth state changes and navigates to login as a
-     * side effect. No-op if there is no signed-in user (the 401 was about something
-     * other than the user's session).
+     * Go and ask the auth SDK for a token, ignoring any cache.
+     *
+     * The retry half of the 401 handling in `NetworkModule`: a 401 that the
+     * server did NOT label `account_gone` means "this credential did not work",
+     * and the one repair worth attempting is a forced refresh followed by a
+     * single retry. [getAuthToken] cannot serve that path, because by
+     * construction it is entitled to hand back the very token that just failed.
+     *
+     * Deliberately NOT used on the ordinary request path. A forced refresh is a
+     * network round trip to Google on every call, and the expiry window
+     * [getAuthToken] already honours makes it unnecessary — see
+     * `IosAuthTokenAuthority.REFRESH_WINDOW_SECONDS` for the trade.
+     *
+     * Returns null if no token could be obtained, including when the session has
+     * genuinely ended. The caller must not read that as a sign-out either; the
+     * platform's own auth listener owns that conclusion.
      */
-    suspend fun signOutFromAuthExpiry()
+    suspend fun refreshAuthToken(): String?
+
+    /**
+     * End this device's session because the backend says the ACCOUNT is gone.
+     *
+     * ## Only ever called for a labelled 401
+     * The parameters exist to keep that honest. `NetworkModule` calls this only
+     * when the 401 body carried `"account_gone"` — the marker
+     * `AuthMiddleware.validateUserToken` sets for a deleted, disabled or
+     * revoked user, as distinct from `token_invalid` for one that merely
+     * expired. A bare 401 must never reach here; it means the credential was
+     * wrong, not that the person is gone, and the two used to be treated alike.
+     *
+     * ## Every call leaves evidence, and that is a requirement
+     * [path], [status] and [accountGone] are recorded by the caller as an
+     * `auth.forced_logout` activity row and, on iOS, a `PushTrace` line. A
+     * forced logout used to leave no trace at all: the user found a login
+     * screen, the activity table showed the session simply stopping, and there
+     * was nothing to say which request had ended it. That absence is what made
+     * this bug take several rounds to find, so the tripwire is part of the fix
+     * and not scaffolding to be tidied away later.
+     *
+     * @param path the request path that returned the 401, e.g. `/user/activity/batch`
+     * @param status the HTTP status, always 401 today — recorded rather than
+     *   assumed so a future caller widening this cannot do so silently
+     * @param accountGone whether the response body carried the `account_gone`
+     *   marker; false here means the sign-out was driven by something other than
+     *   the server's own verdict, which is a bug worth being able to see
+     */
+    suspend fun signOutFromAuthExpiry(path: String, status: Int, accountGone: Boolean)
 }
 
 /**

@@ -82,6 +82,27 @@ enum ActivityUploadScheduler {
         // nightly upload silently over until the next launch.
         schedule()
 
+        // ── No `await AuthBridge.shared.refreshTokenIfNeeded()` first, and that
+        //    is deliberate ──
+        //
+        // This task is where the auto-logout was at its worst: it runs at 03:00
+        // on a charger, in a process that never foregrounded, so the foreground
+        // refresh has not run and never will. The upload posts
+        // `/user/activity/batch`, which used to carry whatever token was last
+        // written to `firebase_auth_token` — hours old by then — and the 401 it
+        // earned signed the user out while the phone sat on a bedside table.
+        //
+        // Sequencing a refresh in front of it would fix this one caller. It is
+        // the wrong layer to fix it at: the next background caller added would
+        // have the same bug, and nothing would catch it. The request itself now
+        // resolves the token through `IosAuthTokenAuthority`, so every caller on
+        // every thread gets a valid bearer whether or not it remembered to ask.
+        //
+        // There is also nothing useful for a refresh to do here. On a locked
+        // phone — which at 03:00 it is — protected data is unavailable and
+        // FirebaseAuth cannot read the Keychain at all, so `currentUser` is nil
+        // and `refreshTokenIfNeeded` returns on its first line. It would be a
+        // line of code that looks like a safeguard and is not one.
         let work = Task { @MainActor in
             let uploaded = (try? await ActivityBridge.shared.uploadActivity())?.boolValue ?? false
             PushTraceSwift.log("activity upload ran, uploaded=\(uploaded)")

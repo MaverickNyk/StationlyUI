@@ -39,6 +39,12 @@ kotlin {
             dependencies {
                 implementation(kotlin("test"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+                // Lets the 401 policy in NetworkModule be driven against scripted
+                // responses. That path decides whether a user stays signed in and
+                // is otherwise UNTESTABLE: `account_gone` needs a deleted account,
+                // and the retry needs a server that 401s a freshly minted token,
+                // neither of which can be arranged against the real backend.
+                implementation("io.ktor:ktor-client-mock:3.0.0-rc-1")
             }
         }
 

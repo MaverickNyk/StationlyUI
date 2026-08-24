@@ -624,6 +624,23 @@ class AuthBridge {
     /// Refresh the ID token on foreground — and, in doing so, find out whether
     /// this account still exists.
     ///
+    /// ## This is no longer what keeps requests authenticated
+    /// It used to be, by accident, and that was the bug. `Platform.getAuthToken()`
+    /// on iOS was one read of `firebase_auth_token`, so the freshness of every
+    /// `/user/*` call depended entirely on this method having run recently
+    /// enough — and nothing sequenced it before an outbound request. A phone left
+    /// alone for an hour sent a dead bearer, the backend answered 401, and the
+    /// 401 handler signed the user out. `AppDelegate.handleDidBecomeActive`
+    /// starts this and the activity upload in two unordered tasks and the upload
+    /// usually won; the 03:00 `BGProcessingTask` never ran this at all.
+    ///
+    /// The request path now resolves its own token through
+    /// `IosAuthTokenAuthority` (see the resolver below), which is the same
+    /// arrangement Android has always had. So this method keeps ONE job, and it
+    /// is the job the section below describes: asking Google whether the account
+    /// is still there. Do not "simplify" it into the resolver — the resolver
+    /// deliberately does not force a refresh, and something has to.
+    ///
     /// ## Why the refresh is FORCED
     /// `getIDToken()` returns the cached token until it is within ~5 minutes of
     /// expiring, so for most of an hour it answers without asking Firebase
@@ -658,29 +675,10 @@ class AuthBridge {
         persistUserIdentity(user)
         do {
             let token = try await user.getIDToken(forcingRefresh: true)
-            // ── The session may have ended while this was in flight ──
-            //
-            // This is a network round trip, and a sign-out landing inside it
-            // finds the token already fetched and about to be written — so the
-            // write resurrects a key `clearUserInfo()` has just removed, and
-            // leaves the exact torn state measured on device: a valid token with
-            // no uid, no email and no provider beside it. Nothing repairs that,
-            // because every reader of the identity is looking at keys that are
-            // gone while every check for "is there a session" sees a token that
-            // is there.
-            //
-            // The activity log dated it to the second: the last event stamped
-            // with a uid at 15:24:53, and the token this wrote issued at
-            // 15:24:54 — with no `auth.logged_out` anywhere in the table.
-            //
-            // Re-checked rather than captured up front: what matters is the
-            // state NOW, after the await, not when the refresh started.
-            guard !expectingSignOut, Auth.auth().currentUser != nil else {
-                print("[AuthBridge] Token arrived after sign-out — dropped")
-                return
-            }
-            UserDefaults.standard.set(token, forKey: "firebase_auth_token")
-            UserDefaults.standard.synchronize()
+            // Dropped rather than written if the session ended while this was in
+            // flight — the guard, and the torn state it prevents, are documented
+            // once on `persistFetchedToken`.
+            guard await persistFetchedToken(token) else { return }
         } catch {
             if Self.isSessionGone(error) {
                 PushTraceSwift.log("token refresh → account gone, signing out")
@@ -692,6 +690,60 @@ class AuthBridge {
             // token is still valid for now, and the next foreground tries again.
             print("[AuthBridge] Token refresh failed (kept session): \(error.localizedDescription)")
         }
+    }
+
+    /// Write a freshly fetched token, unless the session ended while it was in
+    /// flight.
+    ///
+    /// ## The race this refuses, in one place instead of two
+    /// Fetching a token is a network round trip, and a sign-out landing inside
+    /// it finds the token already fetched and about to be written — so the write
+    /// resurrects a key `clearUserInfo()` has just removed, and leaves the exact
+    /// torn state measured on device: a valid token with no uid, no email and no
+    /// provider beside it. Nothing repairs that, because every reader of the
+    /// identity is looking at keys that are gone while every check for "is there
+    /// a session" sees a token that is there. See `discardTornIdentity`.
+    ///
+    /// The activity log dated it to the second: the last event stamped with a
+    /// uid at 15:24:53, and the token that wrote it issued at 15:24:54 — with no
+    /// `auth.logged_out` anywhere in the table.
+    ///
+    /// Re-checked rather than captured up front: what matters is the state NOW,
+    /// after the await, not when the fetch started.
+    ///
+    /// Extracted because there are now TWO fetchers. `refreshTokenIfNeeded` runs
+    /// on foreground; the resolver below runs whenever the shared network layer
+    /// needs a bearer, which is on background-task threads the foreground path
+    /// never touches. A guard that only one of them honoured would reopen the
+    /// race on the other.
+    ///
+    /// - Returns: whether the token was written. False means it was dropped
+    ///   because the session is over, and the caller should treat it as no token.
+    /// Not `private`: `AuthTokenResolver` is a separate type and fetches tokens
+    /// too, so it needs the same guard. Nothing outside this file should call it.
+    ///
+    /// `@MainActor` because it now has a genuinely concurrent caller. Every other
+    /// reader and writer of [expectingSignOut] runs on the main queue — the
+    /// auth-state listener, the command dispatcher, `logout()` — but the resolver
+    /// is driven by the shared Ktor client, which calls it from whatever
+    /// background thread a request happens to be on. Reading the flag from there
+    /// unsynchronised is a data race on the one piece of state that decides
+    /// whether a token may be written at all, and getting it wrong reintroduces
+    /// exactly the torn identity this guard exists to prevent.
+    ///
+    /// The hop costs nothing where it is paid: crossings are rare by design (see
+    /// `IosAuthTokenAuthority`), and the caller is already suspended awaiting a
+    /// network round trip.
+    @MainActor
+    @discardableResult
+    func persistFetchedToken(_ token: String) -> Bool {
+        guard !expectingSignOut, Auth.auth().currentUser != nil else {
+            print("[AuthBridge] Token arrived after sign-out — dropped")
+            return false
+        }
+        UserDefaults.standard.set(token, forKey: "firebase_auth_token")
+        UserDefaults.standard.synchronize()
+        return true
     }
 
     /// Whether an auth error means "this session is over", as opposed to "ask
@@ -764,6 +816,263 @@ class AuthBridge {
          "firebase_user_email_verified", "firebase_user_is_email_provider"]
             .forEach { UserDefaults.standard.removeObject(forKey: $0) }
         UserDefaults.standard.synchronize()
+        // KMP holds the last token in memory as well, so that the request path
+        // does not have to read defaults — see `IosAuthTokenAuthority`. Removing
+        // the key without this would leave that copy serving the ended session's
+        // bearer to every request until it aged out, and then to whoever signed
+        // in next. The nine keys above are only half the state now.
+        AuthTokenBridge.shared.invalidate()
+    }
+}
+
+// MARK: - Test control
+
+#if DEBUG
+/// Forces the state the auto-logout bug needed, so it can be reproduced on
+/// demand instead of by waiting an hour.
+///
+/// The bug is only reachable with a token that is SYNTACTICALLY valid and
+/// EXPIRED: a malformed one fails a different way (`IosAuthTokenAuthority`
+/// treats an unparseable token as "refresh now", and the backend rejects it
+/// before the revocation check), and an absent one just sends no header. So the
+/// control mints a real three-segment JWT whose payload is a plausible Firebase
+/// claim set with `exp` in the past, and overwrites `firebase_auth_token` with
+/// it.
+///
+/// The signature is deliberately GARBAGE. Nothing on the device verifies it —
+/// the authority reads the `exp` claim and the backend is the only verifier —
+/// and a control that could mint a signable token would be a control that could
+/// mint credentials.
+///
+/// `#if DEBUG` because it exists to break a working session on purpose. It ships
+/// in no release build.
+enum AuthTestControls {
+
+    /// Overwrite the stored token with an expired one, and drop the in-memory
+    /// copy so the next request cannot answer from it.
+    ///
+    /// Both halves are needed. Writing the key alone reproduces nothing once
+    /// `IosAuthTokenAuthority` is holding a live token in memory — which is the
+    /// point of that cache, and would make the test silently pass.
+    @discardableResult
+    static func forceExpiredToken() -> String {
+        let uid = UserDefaults.standard.string(forKey: "firebase_user_uid") ?? "test-uid"
+        let issued = Int(Date().timeIntervalSince1970) - 7200
+        let expired = issued + 3600            // an hour of life, spent an hour ago
+        let header = #"{"alg":"RS256","typ":"JWT"}"#
+        let payload = """
+        {"iss":"https://securetoken.google.com/stationly","aud":"stationly",\
+        "auth_time":\(issued),"user_id":"\(uid)","sub":"\(uid)",\
+        "iat":\(issued),"exp":\(expired)}
+        """
+        let token = [base64url(header), base64url(payload), "c3RhbGUtc2lnbmF0dXJl"]
+            .joined(separator: ".")
+        UserDefaults.standard.set(token, forKey: "firebase_auth_token")
+        UserDefaults.standard.synchronize()
+        AuthTokenBridge.shared.invalidate()
+        PushTraceSwift.log("TEST forced expired token exp=\(expired)")
+        return token
+    }
+
+    /// The `exp` claim of whatever is stored, for comparing before and after a
+    /// refresh. Returns 0 if there is no token or it does not parse.
+    static func storedTokenExpiry() -> Int {
+        guard let token = UserDefaults.standard.string(forKey: "firebase_auth_token") else { return 0 }
+        let parts = token.split(separator: ".")
+        guard parts.count == 3 else { return 0 }
+        var b64 = String(parts[1]).replacingOccurrences(of: "-", with: "+")
+                                  .replacingOccurrences(of: "_", with: "/")
+        b64 += String(repeating: "=", count: (4 - b64.count % 4) % 4)
+        guard let data = Data(base64Encoded: b64),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let exp = object["exp"] as? Int
+        else { return 0 }
+        return exp
+    }
+
+    private static func base64url(_ s: String) -> String {
+        Data(s.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    /// Phase 1: prove a `/user/*` request repairs its own stale bearer.
+    ///
+    /// ## Why it refreshes FIRST, before expiring anything
+    /// Because otherwise the test races the app. Any route that reaches this
+    /// control is a foreground — a deep link makes the scene active — so
+    /// `handleDidBecomeActive` has already started `refreshTokenIfNeeded()` in a
+    /// detached task. Expiring the token straight away would leave two writers
+    /// with no ordering between them, and a passing run would not distinguish
+    /// "the request refreshed it" from "the foreground refresh happened to land
+    /// after". Awaiting the refresh first drains that writer, so the expiry that
+    /// follows is the last word and the only thing that can undo it is the
+    /// request itself.
+    ///
+    /// The endpoint is `/user/activity/batch` deliberately: it is the exact call
+    /// that both the foreground upload and the 03:00 `BGProcessingTask` make,
+    /// and the one the old skip list did not exempt.
+    static func staleTokenRequest() async {
+        // Both this and `handleDidBecomeActive` call `refreshTokenIfNeeded()`,
+        // and awaiting ours says nothing about whether the other has finished.
+        // A refresh landing AFTER the expiry below would rewrite a fresh token
+        // and the test would pass without the request having done anything.
+        // The settle wait closes that; `crossings` closes it properly, since a
+        // crossing can only be made by the resolver and the resolver is only
+        // called from the Kotlin request path — `refreshTokenIfNeeded` talks to
+        // Firebase directly and never touches it.
+        await AuthBridge.shared.refreshTokenIfNeeded()
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        await enqueueOneEvent()
+        forceExpiredToken()
+        let before = storedTokenExpiry()
+        let crossingsBefore = AuthTokenBridge.shared.crossings()
+        let uploaded = (try? await ActivityBridge.shared.uploadActivity())?.boolValue ?? false
+        let after = storedTokenExpiry()
+        let crossingsAfter = AuthTokenBridge.shared.crossings()
+        PushTraceSwift.log(
+            "TEST stale-request before=\(before) after=\(after) " +
+            "advanced=\(after > before) uploaded=\(uploaded) " +
+            "crossings=\(crossingsBefore)->\(crossingsAfter)")
+    }
+
+    /// Run a command left in the App Group container, if there is one.
+    ///
+    /// ## Why a FILE and not a deep link
+    /// The deep link below works, but only from something that will hand a
+    /// custom scheme to the system — Safari's address bar treats
+    /// `stationly-staging://…` as a search term and Notes will not linkify it,
+    /// so on this device it needs the Shortcuts app to fire at all. That makes
+    /// every test step depend on the person holding the phone getting a fiddly
+    /// bit of UI right.
+    ///
+    /// A file can be dropped from the Mac with
+    /// `devicectl device copy to --domain-type appGroupDataContainer`, which is
+    /// the same channel the traces are pulled back through, so the whole test
+    /// becomes: drop the command, ask the user to open the app, read the ring.
+    ///
+    /// Consumed on read — deleted before the work starts, so a command cannot
+    /// re-run on the next foreground if the app is killed mid-test.
+    static func runPendingCommand() {
+        guard let root = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: AppGroupID.value) else { return }
+        let file = root.appendingPathComponent("stationly_debug_command")
+        guard let raw = try? String(contentsOf: file, encoding: .utf8) else { return }
+        try? FileManager.default.removeItem(at: file)
+        let action = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        PushTraceSwift.log("TEST command=\(action)")
+        Task {
+            switch action {
+            case "expire-token":  forceExpiredToken()
+            case "stale-request": await staleTokenRequest()
+            case "fast-path":     await fastPathBurst()
+            default:              PushTraceSwift.log("TEST unknown command=\(action)")
+            }
+        }
+    }
+
+    /// Put one row in the activity queue and wait for it to land.
+    ///
+    /// `ActivityUploader.flush` returns without making any request when the
+    /// queue is empty, so without this the "upload" under test would be a no-op
+    /// and the test would pass by never issuing the request it is measuring.
+    /// `ActivityLog.record` is fire-and-forget onto its own scope, hence the
+    /// wait rather than a plain call.
+    private static func enqueueOneEvent() async {
+        ActivityBridge.shared.appOpened(cold: false)
+        try? await Task.sleep(nanoseconds: 400_000_000)
+    }
+
+    /// Phase 1, second half: prove the fast path does not cross.
+    ///
+    /// Ten `/user/*` calls on a token minted moments ago must move the crossing
+    /// counter by zero. A cache that refetches per request would look identical
+    /// from the outside — same responses, same timings on wifi — and would put a
+    /// language boundary and a Firebase round trip in front of every call in the
+    /// app. This is the only way to see it.
+    static func fastPathBurst() async {
+        await AuthBridge.shared.refreshTokenIfNeeded()
+        let before = AuthTokenBridge.shared.crossings()
+        var posted = 0
+        for _ in 0..<10 {
+            await enqueueOneEvent()
+            if (try? await ActivityBridge.shared.uploadActivity())?.boolValue == true { posted += 1 }
+        }
+        let after = AuthTokenBridge.shared.crossings()
+        PushTraceSwift.log(
+            "TEST fast-path posted=\(posted) crossings=\(before)->\(after) delta=\(after - before)")
+    }
+}
+#endif
+
+// MARK: - Token resolver for the shared network layer
+
+/// Answers "what bearer should this request carry?" for KMP.
+///
+/// ## Why this exists on the Swift side
+/// FirebaseAuth is a Swift-only SDK — Kotlin cannot call `Auth.auth()` at all —
+/// while the place a token is actually needed is the shared Ktor client, which
+/// is Kotlin. Registered once at launch through `AuthTokenBridge`; the Kotlin
+/// half and the caching in front of it are documented on
+/// `IosAuthTokenAuthority`.
+///
+/// ## Why `getIDToken()` and not `getIDToken(forcingRefresh: true)`
+/// Because the SDK's own judgement is the thing worth having, and forcing
+/// overrides it. Unforced, it answers from its cache while the token has
+/// comfortable life left and goes to Google only when it does not — which is
+/// exactly the contract `Platform.getAuthToken()` now states, and exactly what
+/// Android's `getIdToken(false)` has always done. Forcing here would put a
+/// network round trip in front of every `/user/*` request in the app, to replace
+/// a token that was going to work.
+///
+/// The one caller that DOES force is the 401 retry, and it says so:
+/// `Platform.refreshAuthToken()` arrives here with `forceRefresh = true`.
+/// `refreshTokenIfNeeded` forces too, for a different reason — it is not after a
+/// token, it is after an answer about whether the account still exists.
+///
+/// ## What it deliberately does not do
+/// It never signs anybody out, on any error. A `getIDToken` failure here is
+/// reported as nil and nothing else, even for `userNotFound` — which this can
+/// see, and `isSessionGone` would classify as final. Ending a session from a
+/// background-task thread, on the strength of one failed call made while nobody
+/// is looking at the app, is the exact asymmetry `settleAuthState` argues
+/// against: a missed deletion costs one more foreground, and a wrong sign-out
+/// costs the user their account in front of them. `refreshTokenIfNeeded` makes
+/// that call on the next foreground, deliberately, with the user present.
+final class AuthTokenResolver: NSObject, IosAuthTokenResolver {
+
+    func resolveToken(forceRefresh: Bool, completion: @escaping (String?) -> Void) {
+        // Firebase may not be configured — a test build with no plist, or a
+        // launch that failed configuration. `Auth.auth()` traps in that case, so
+        // this is a guard against a crash and not tidiness.
+        guard FirebaseApp.app() != nil, let user = Auth.auth().currentUser else {
+            completion(nil)
+            return
+        }
+        // The async variant, matching `refreshTokenIfNeeded`. One spelling of
+        // "fetch a token" in this file, so the two cannot drift.
+        Task {
+            guard let token = try? await user.getIDToken(forcingRefresh: forceRefresh) else {
+                completion(nil)
+                return
+            }
+            // Written through the same guard as every other token this app
+            // fetches, so a sign-out landing inside the fetch cannot be undone
+            // by it — see `persistFetchedToken`. The key still has to be written:
+            // `IosPlatformAuthProvider.isLoggedIn()`, `hasSession`'s
+            // protected-data fallback and `DevicePushCoordinator` all read it,
+            // and none of them can see the Kotlin cache.
+            //
+            // If the write is refused the session is over, so the token is not
+            // handed back either — a request authenticated as a user who has
+            // just signed out is worse than an unauthenticated one.
+            guard await AuthBridge.shared.persistFetchedToken(token) else {
+                completion(nil)
+                return
+            }
+            completion(token)
+        }
     }
 }
 

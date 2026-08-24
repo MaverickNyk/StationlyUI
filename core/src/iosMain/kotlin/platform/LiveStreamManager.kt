@@ -366,6 +366,18 @@ object LiveStreamManager {
                     return
                 }
 
+                // Resolved per connection through `IosAuthTokenAuthority`, not
+                // read from `firebase_auth_token` — the same authority every
+                // HTTP request goes through, and for the same reason. A socket
+                // opened after the app has been idle for an hour used to
+                // authenticate with a dead token; the backend accepts the frame
+                // and the stream then carries nothing the user is entitled to,
+                // silently, until the next reconnect. Reconnects are exactly
+                // when this happens, since the socket closes on background.
+                //
+                // No change was needed here beyond this note: this line already
+                // called `Platform.getAuthToken()`, so teaching that function to
+                // refresh fixed the WebSocket at the same time as the REST path.
                 val token = Platform.getAuthToken()
                 wsSession.send(Frame.Text(buildJsonObject {
                     put("action", "auth")
