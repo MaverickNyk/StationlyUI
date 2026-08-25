@@ -213,15 +213,17 @@ class MultiLineBoardProcessorTest {
     }
 
     @Test
-    fun `never prefixes a bus row with the route — since the backend appends it`() {
+    fun `prefixes every bus row with its bare route number`() {
         val rows = MultiLineBoardProcessor.buildRows(
             feeds = listOf(
-                feed("39", stationId = "A", predictions = listOf(pred("39 Putney", 3, platform = "Stop W"))),
-                feed("85", stationId = "A", predictions = listOf(pred("85 Kingston", 5, platform = "Stop W"))),
+                feed("39", stationId = "A", predictions = listOf(pred("Putney", 3, platform = "Stop W"))),
+                feed("85", stationId = "A", predictions = listOf(pred("Kingston", 5, platform = "Stop W"))),
             ),
             isBus = true,
         )
-        assertTrue(realDepartures(rows).all { it.linePrefix.isEmpty() })
+        // Bare, not bracketed: on a bus board the number is the headline, and
+        // "(39)" would demote the one fact that says whether the bus is yours.
+        assertEquals(listOf("39", "85"), realDepartures(rows).map { it.linePrefix })
     }
 
     // ── Direction ──
@@ -904,19 +906,31 @@ class MultiLineBoardProcessorTest {
     }
 
     @Test
-    fun `bus groups never carry a line prefix`() {
-        // The backend already appends the route to the destination
-        // ("39 Putney Bridge"), so a prefix would print it twice.
+    fun `bus groups always carry the route, even with one route at the pole`() {
+        // The backend does NOT append the route to the destination — its
+        // displayName is built from `towards`/`destinationName` alone — so
+        // without this the two routes below are two bare place names.
         val groups = MultiLineBoardProcessor.buildGroups(
             feeds = listOf(
-                feed("39", stationId = "A", predictions = listOf(pred("39 Putney", 3, platform = "Stop W"))),
-                feed("85", stationId = "A", predictions = listOf(pred("85 Kingston", 5, platform = "Stop W"))),
+                feed("39", stationId = "A", predictions = listOf(pred("Putney", 3, platform = "Stop W"))),
+                feed("85", stationId = "A", predictions = listOf(pred("Kingston", 5, platform = "Stop W"))),
             ),
             isBus = true,
         )
         val stop = groups.single()
-        assertFalse(stop.mixesLines, "two routes at one pole, still no prefix")
-        assertTrue(stop.departures.all { it.lineShort.isEmpty() })
+        assertTrue(stop.isBus)
+        assertTrue(stop.showsLinePrefix, "two routes at one pole, both named")
+        assertEquals(listOf("39", "85"), stop.departures.map { it.lineShort })
+
+        val single = MultiLineBoardProcessor.buildGroups(
+            feeds = listOf(feed("39", stationId = "A", predictions = listOf(pred("Putney", 3)))),
+            isBus = true,
+        ).single()
+        assertTrue(single.showsLinePrefix,
+            "a bus sign prints the number even when one route calls there")
+        // `mixesLines` stays a plain fact about the block's contents — one route
+        // is one line, whatever the board chooses to draw.
+        assertFalse(single.mixesLines)
     }
 
     @Test

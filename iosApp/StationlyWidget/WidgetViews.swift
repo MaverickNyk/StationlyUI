@@ -1100,6 +1100,8 @@ struct DotMatrixRow: View {
     let dep: DepartureRow
     let m: BoardMetrics
     var showLine: Bool = false
+    /// Bare route number instead of a bracketed line name — see `linePrefix`.
+    var isBus: Bool = false
 
     var body: some View {
         LitCell(hPad: m.rowPad) {
@@ -1113,13 +1115,20 @@ struct DotMatrixRow: View {
                      : WidgetTheme.amber
             let nameTint = dep.hasDeparted ? WidgetTheme.amberDim : WidgetTheme.amber
             HStack(spacing: 6) {
-                // Bracketed short form — "(Cir.) Edgware Road", exactly as
-                // `MultiLineBoardProcessor` renders it on the home board. The
-                // brackets keep the line subordinate to the destination, which
-                // is what the eye is actually scanning for; bold so one line can
-                // still be picked out of a merged platform at a glance.
+                // Two shapes, exactly as `MultiLineBoardProcessor.linePrefixFor`
+                // renders them on the home board:
+                //
+                // Rail gets the bracketed short form — "(Cir.) Edgware Road".
+                // The brackets keep the line subordinate to the destination,
+                // which is what the eye is actually scanning for; bold so one
+                // line can still be picked out of a merged platform at a glance.
+                //
+                // Bus gets the bare route number — "39 Putney Bridge", the way a
+                // TfL stop sign prints it. At a pole the number is the headline,
+                // not a footnote, and brackets would demote the one fact that
+                // says whether this departure is yours.
                 if showLine, !dep.lineShort.isEmpty {
-                    Text("(\(dep.lineShort))")
+                    Text(isBus ? dep.lineShort : "(\(dep.lineShort))")
                         .font(WidgetTheme.font(m.row, .bold))
                         .foregroundColor(nameTint)
                         .lineLimit(1)
@@ -1800,10 +1809,10 @@ struct BoardWidgetView: View {
     /// What goes in one departure cell: a train, the board's one message, or
     /// nothing at all.
     ///
-    /// `mixesLines` is one prefix decision for the whole block, taken by KMP
-    /// from every row the block HAS rather than the handful that fit — otherwise
-    /// a platform would gain and lose its prefixes as trains tick off the bottom
-    /// of it.
+    /// `showsLinePrefix` is one prefix decision for the whole block, taken by
+    /// KMP from every row the block HAS rather than the handful that fit —
+    /// otherwise a platform would gain and lose its prefixes as trains tick off
+    /// the bottom of it.
     @ViewBuilder
     private func rowCell(_ index: Int, in section: SectionRender,
                          rows: ArraySlice<DepartureRow>, speaks: Bool) -> some View {
@@ -1814,7 +1823,8 @@ struct BoardWidgetView: View {
             // the classic Swift out-of-bounds crash waiting for the day someone
             // changes where the slice comes from.
             DotMatrixRow(dep: rows[rows.startIndex + index], m: metrics,
-                         showLine: section.group?.mixesLines ?? false)
+                         showLine: section.group?.showsLinePrefix ?? false,
+                         isBus: section.group?.isBus ?? false)
         // The board's message, across TWO cells — the title where the first
         // train would be, the detail in the dark cell under it.
         //

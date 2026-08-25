@@ -568,7 +568,8 @@ enum WidgetRefreshService {
                 // Recomputed rather than inherited: a platform genuinely gains
                 // and loses lines between fetches, and a stale `true` would put
                 // a prefix on every row of what is now a single-line platform.
-                mixesLines: BoardGroup.mixesLines(Array(sorted), isBus: isBus),
+                mixesLines: BoardGroup.mixesLines(Array(sorted)),
+                isBus: isBus,
                 rows: Array(sorted)
             )
         }
@@ -694,7 +695,14 @@ enum WidgetRefreshService {
 
             // Dedupe on absolute arrival time, not the label — two trains in
             // the same minute bucket are distinct rows.
-            let key = "\(destination)_\(platform)_\(target.map(String.init) ?? (p.eta ?? ""))"
+            //
+            // Keyed on the LINE as well, because `seen` is shared across every
+            // feed this refresh walks: two routes calling at one pole can share
+            // a destination, and a key blind to the route silently dropped one
+            // of them. The KMP-side dedupe in `SyncPredictionsUseCase` needs no
+            // such term — it runs per feed, so a collision there is genuinely
+            // TfL returning the same service twice.
+            let key = "\(lineShort)_\(destination)_\(platform)_\(target.map(String.init) ?? (p.eta ?? ""))"
             if seen.contains(key) { continue }
             seen.insert(key)
 

@@ -711,12 +711,13 @@ class IosWidgetManager : WidgetManager {
                 headerVariants = group.headerVariants,
                 label = group.label,
                 mixesLines = group.mixesLines,
+                isBus = group.isBus,
                 // The line label is stamped onto the row here because after this
                 // it is unrecoverable: on the wire a block is a list of
                 // departures and nothing distinguishes a Circle train from an
-                // H&C one standing at the same platform. buildGroups has already
-                // blanked it on bus, where the backend appends the route to the
-                // destination itself.
+                // H&C one standing at the same platform. On bus this carries the
+                // route number itself ("39"), which the extension prints bare in
+                // front of the destination.
                 predictions = group.departures.map { it.prediction.copy(lineShort = it.lineShort) },
             )
         }

@@ -139,6 +139,37 @@ object MultiLineBoardProcessor {
         val predictions: List<PredictionDisplay>,
     )
 
+    /**
+     * What a row prints before its destination — "39", "(Cir.)", or nothing.
+     *
+     * Two shapes, and the difference is which fact leads on that board:
+     *
+     *  - **Rail: the bracketed short form**, "(Cir.) Edgware Road". The brackets
+     *    keep the line subordinate to the destination, which is what you scan a
+     *    tube platform for; an unbracketed prefix competes with it.
+     *  - **Bus: the bare route number**, "39 Putney Bridge", exactly as a TfL
+     *    stop sign prints it. At a pole the number IS what you are looking for,
+     *    and brackets around it would demote the one fact that says whether this
+     *    departure is yours.
+     *
+     * Public and mode-shaped rather than inlined at the one call site, because
+     * it is not the only surface that draws this: the dream board builds the
+     * same prefix from its single selection, and the iOS widget restates it in
+     * Swift. Three copies of "bare on bus, bracketed on rail" is how the three
+     * surfaces come to disagree about the same row.
+     *
+     * WHETHER a row gets one is a separate question, and the block owns it —
+     * see [Group.showsLinePrefix].
+     */
+    fun linePrefixText(lineShort: String, isBus: Boolean): String {
+        val short = lineShort.trim()
+        return when {
+            short.isEmpty() -> ""
+            isBus           -> short
+            else            -> "($short)"
+        }
+    }
+
     sealed class Row {
         /** "Platform 2 (Eastbound)" for rail, "Stop W" for buses. */
         data class PlatformHeader(val title: String) : Row()
@@ -587,11 +618,9 @@ object MultiLineBoardProcessor {
             shown.forEach { departure ->
                 rows.add(
                     Row.Departure(
-                        // Bracketed short form — "(Cir.) Edgware Road". The
-                        // brackets keep the line visually subordinate to the
-                        // destination, which is what you are actually scanning
-                        // for; an unbracketed prefix competes with it.
-                        linePrefix = if (group.mixesLines) "(${departure.lineShort})" else "",
+                        linePrefix = if (group.showsLinePrefix) {
+                            linePrefixText(departure.lineShort, group.isBus)
+                        } else "",
                         destination = departure.prediction.destination,
                         eta = departure.prediction.eta,
                         departed = BoardTicker.isGone(departure.prediction),
@@ -685,8 +714,41 @@ object MultiLineBoardProcessor {
         /** The backend's own platform label, verbatim: "Platform 8", "Stop C". */
         val label: String,
         val departures: List<GroupedDeparture>,
+        /**
+         * Whether this block holds departures from more than one line — a plain
+         * fact about its contents, and nothing more. It answers the DISPLAY
+         * question for rail (see [showsLinePrefix]) but is not the same
+         * question, and conflating the two is what would make a single-route bus
+         * pole claim to mix lines.
+         */
         val mixesLines: Boolean,
-    )
+        /**
+         * Whether this block is a bus pole. Decides both whether a row takes a
+         * prefix at all ([showsLinePrefix]) and how it is SHAPED
+         * ([linePrefixText]).
+         *
+         * Defaulted so every existing construction site is unchanged.
+         */
+        val isBus: Boolean = false,
+    ) {
+        /**
+         * Whether rows here name their own line.
+         *
+         * **Rail: only when the block mixes lines.** On a single-line platform
+         * the header already named it, so a prefix would be the same word on
+         * every row — pure noise, and it would change how the long-standing
+         * single-line board looks.
+         *
+         * **Bus: always.** A route number is not a repeated word; it is the
+         * first thing you scan a stop's board for, and every TfL bus sign prints
+         * it against each departure even where a single route calls. It is also
+         * the only thing separating two rows at a pole served by the 39 and the
+         * 85 — the backend's `displayName` is the destination alone (see the
+         * note on [GroupedDeparture.lineShort]), so without it those rows are
+         * two bare place names.
+         */
+        val showsLinePrefix: Boolean get() = isBus || mixesLines
+    }
 
     /**
      * The board as BLOCKS — grouping, ordering, capping and header text, with no
@@ -779,23 +841,30 @@ object MultiLineBoardProcessor {
                         GroupedDeparture(
                             prediction = prediction,
                             line = feed.line,
-                            // Buses never take a client-side prefix: the backend
-                            // appends the route number to the destination itself
-                            // ("53 Nags Head"), so adding one here would double
-                            // it up.
-                            lineShort = if (isBus) "" else LineShortNames.shortName(feed.line),
+                            // One naming map for every mode, bus included: a
+                            // route number comes back unchanged ("39"), which is
+                            // already what the blind on the front of the bus
+                            // says, and it is what `WidgetFeed.lineShort` has
+                            // always carried across to the widget's own refresh.
+                            //
+                            // Blank on bus until now, on the belief that the
+                            // backend appended the route to the destination
+                            // itself ("53 Nags Head"). It does not: the
+                            // prediction source builds `displayName` out of
+                            // `towards`/`destinationName` alone (see
+                            // `TubeDlrBusTramMixPredictionSource.formatDisplayName`),
+                            // so a pole serving several routes rendered as a
+                            // column of destinations with nothing saying which
+                            // bus was which.
+                            lineShort = LineShortNames.shortName(feed.line),
                             // The last point at which a row knows which board it
                             // came from — see [GroupedDeparture.stationId].
                             stationId = feed.stationId,
                             direction = feed.direction,
                         )
                     },
-                    // Show the line on a row ONLY when the group actually mixes
-                    // lines. On a single-line platform the header already named
-                    // it, so a prefix would be the same word on every row — pure
-                    // noise, and it would change how the long-standing
-                    // single-line board looks.
-                    mixesLines = lines.size > 1 && !isBus,
+                    mixesLines = lines.size > 1,
+                    isBus = isBus,
                 )
             }
     }
@@ -992,7 +1061,11 @@ object MultiLineBoardProcessor {
      */
     private fun legWhere(prediction: PredictionDisplay, feed: Feed, isBus: Boolean): String {
         val label = groupLabelFor(prediction, isBus).trim().replace("Platform", "Plat.")
-        val line = if (isBus) feed.line.trim() else LineShortNames.shortName(feed.line)
+        // [LineShortNames.shortName] for every mode, bus included: it returns a
+        // route number unchanged apart from casing a night route's letter
+        // ("n39" → "N39"), which the raw feed id does not. One naming map, so a
+        // leg and the row it collapses cannot spell the same route two ways.
+        val line = LineShortNames.shortName(feed.line)
         return listOf(line, label).filter { it.isNotBlank() }.joinToString(" ")
     }
 

@@ -143,6 +143,16 @@ data class WidgetGroup(
     val label: String,
     /** Whether rows in this block should carry their line prefix. */
     val mixesLines: Boolean = false,
+    /**
+     * Whether this block is a bus pole, which decides the SHAPE of that prefix —
+     * a bare "39" rather than rail's bracketed "(Cir.)". See
+     * [MultiLineBoardProcessor.Group.isBus].
+     *
+     * Sent rather than re-derived from the board's `mode` so the extension keeps
+     * no line vocabulary of its own; defaulted false so a board written by an
+     * older build decodes unchanged.
+     */
+    val isBus: Boolean = false,
     val predictions: List<PredictionDisplay> = emptyList(),
 )
 

@@ -44,6 +44,8 @@ import com.stationly.app.ui.util.rememberTickedPredictions
 import com.stationly.core.util.resolveBoardFallbackCopy
 import com.stationly.core.util.GlobalBoardProcessor
 import com.stationly.core.util.LegacyRow
+import com.stationly.core.util.LineShortNames
+import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.StaleColor
 import com.stationly.core.util.StationlyFormatters
 import kotlinx.datetime.Instant
@@ -109,9 +111,30 @@ fun DreamBoard(
     // in lockstep with the home Board and the widget.
     val nowMs by rememberMinuteTick()
 
-    val linePrefix = if (sel != null) {
-        StationlyFormatters.formatLinePrefix(sel.mode, sel.line, sduiStrings)
-    } else ""
+    // Both labels are pure functions of the selection, and the dream board
+    // recomposes on every minute tick behind a screensaver that runs all night —
+    // so they are keyed to the selection rather than rebuilt on each pass.
+    val linePrefix = remember(sel?.mode, sel?.line, sduiStrings) {
+        if (sel != null) {
+            StationlyFormatters.formatLinePrefix(sel.mode, sel.line, sduiStrings)
+        } else ""
+    }
+
+    // The route number in front of every bus departure — "39 Putney Bridge" —
+    // the way a TfL stop sign prints it, shaped by the same function the home
+    // board and the widget use so the three cannot disagree.
+    //
+    // Read off the SELECTION rather than the row because this is the legacy
+    // single-selection path: a dream board is one (station, line, direction), so
+    // every row on it is that route by construction. Blank on rail, where the
+    // header names the line once and repeating it per row is noise.
+    val busRoute = remember(sel?.mode, sel?.line) {
+        val s = sel
+        if (s == null || !MultiLineBoardProcessor.isBus(s.mode)) ""
+        else MultiLineBoardProcessor.linePrefixText(
+            LineShortNames.shortName(s.line), isBus = true,
+        )
+    }
 
     // Same fallback rules as home + widget so the three surfaces never
     // disagree about why the board is empty.
@@ -253,6 +276,13 @@ fun DreamBoard(
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
+                                    if (busRoute.isNotEmpty()) {
+                                        Text(
+                                            busRoute, color = BoardAmber, fontSize = rowSp,
+                                            fontWeight = FontWeight.Bold, maxLines = 1
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                    }
                                     Text(
                                         row.destination, color = BoardAmber, fontSize = rowSp,
                                         fontWeight = FontWeight.Normal,

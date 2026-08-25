@@ -109,13 +109,15 @@ struct DepartureRow: Codable, Identifiable {
     /// the receipt-time string. Nil for defensive-fallback rows; those render
     /// their stored eta unchanged, same as Android.
     let targetEpochMs: Double?
-    /// Which line this train is on, in short display form ("Cir.", "H&C"),
-    /// resolved by KMP — mirrors `PredictionDisplay.lineShort`.
+    /// Which line this train is on, in short display form ("Cir.", "H&C") — or
+    /// the bus route number ("39"), which is its own short form. Resolved by
+    /// KMP; mirrors `PredictionDisplay.lineShort`.
     ///
-    /// Empty on rows written before this build and on any board whose station
-    /// tracks a single line, which the renderer treats identically: no prefix.
-    /// See `DotMatrixRow` for when it is actually drawn — a prefix on every row
-    /// of a single-line platform would be the same word repeated.
+    /// Stamped on every row of every board, rail and bus alike. Empty only on
+    /// rows written before it existed, which the renderer treats as "no prefix".
+    /// Whether it is DRAWN is `BoardGroup.showsLinePrefix`, not this — a prefix
+    /// on every row of a single-line rail platform would be the same word
+    /// repeated, while a bus row without its number is a bare place name.
     let lineShort: String
 
     // Memberwise init (used for previews / placeholders)
@@ -280,6 +282,10 @@ struct BoardGroup: Codable, Identifiable {
     /// Whether rows here should carry their line prefix — decided by KMP from
     /// every departure the block HAS, not the handful that fit on screen.
     let mixesLines: Bool
+    /// Whether this block is a bus pole, which decides the SHAPE of a row's
+    /// prefix: a bare "39" rather than rail's bracketed "(Cir.)". Mirror of
+    /// `MultiLineBoardProcessor.Group.isBus`.
+    let isBus: Bool
     let rows: [DepartureRow]
 
     /// Identity for `ForEach`. The key is unique within a board by construction
@@ -287,15 +293,20 @@ struct BoardGroup: Codable, Identifiable {
     /// per-minute entries in a way a row's regenerated UUID is not.
     var id: String { key }
 
+    /// Whether rows here name their own line — rail only when the block mixes
+    /// lines, bus always. Mirror of `MultiLineBoardProcessor.Group.showsLinePrefix`,
+    /// and the one thing the row renderer should ask.
+    var showsLinePrefix: Bool { isBus || mixesLines }
+
     /// `rows` is `predictions` on the wire — the Kotlin field name. Renamed here
     /// because a block's contents read as rows at every use site in the views.
     private enum CodingKeys: String, CodingKey {
-        case key, header, headerVariants, label, mixesLines
+        case key, header, headerVariants, label, mixesLines, isBus
         case rows = "predictions"
     }
 
     init(key: String, header: String, headerVariants: [String] = [],
-         label: String, mixesLines: Bool, rows: [DepartureRow]) {
+         label: String, mixesLines: Bool, isBus: Bool = false, rows: [DepartureRow]) {
         self.key = key
         self.header = header
         // The full header is always the widest rung, so a group given no ladder
@@ -304,6 +315,7 @@ struct BoardGroup: Codable, Identifiable {
         self.headerVariants = headerVariants.isEmpty ? [header] : headerVariants
         self.label = label
         self.mixesLines = mixesLines
+        self.isBus = isBus
         self.rows = rows
     }
 
@@ -316,12 +328,15 @@ struct BoardGroup: Codable, Identifiable {
         self.headerVariants = variants.isEmpty ? [header] : variants
         self.label = try c.decodeIfPresent(String.self, forKey: .label) ?? ""
         self.mixesLines = try c.decodeIfPresent(Bool.self, forKey: .mixesLines) ?? false
+        // Absent on a board written before bus rows carried their route, which
+        // is the same state as "not a bus block" as far as the renderer goes.
+        self.isBus = try c.decodeIfPresent(Bool.self, forKey: .isBus) ?? false
         self.rows = try c.decodeIfPresent([DepartureRow].self, forKey: .rows) ?? []
     }
 
     func with(rows: [DepartureRow]) -> BoardGroup {
         BoardGroup(key: key, header: header, headerVariants: headerVariants,
-                   label: label, mixesLines: mixesLines, rows: rows)
+                   label: label, mixesLines: mixesLines, isBus: isBus, rows: rows)
     }
 
     // MARK: Block rules the extension has to restate
@@ -340,13 +355,13 @@ struct BoardGroup: Codable, Identifiable {
         mode.trimmingCharacters(in: .whitespaces).lowercased() == "bus"
     }
 
-    /// Whether a block carries more than one line, which is the ONLY case a row
-    /// draws its line prefix. Mirror of `MultiLineBoardProcessor.Group.mixesLines`.
+    /// Whether a block carries more than one line — a plain fact about its
+    /// contents. Mirror of `MultiLineBoardProcessor.Group.mixesLines`.
     ///
-    /// Buses never take one: the backend appends the route to the destination
-    /// itself ("53 Nags Head"), so a prefix would print it twice.
-    static func mixesLines(_ rows: [DepartureRow], isBus: Bool) -> Bool {
-        guard !isBus else { return false }
+    /// Whether a row DRAWS its line is `showsLinePrefix`, which is not the same
+    /// question: a bus pole draws the route number whatever it holds.
+    ///
+    static func mixesLines(_ rows: [DepartureRow]) -> Bool {
         var seen = Set<String>()
         for row in rows where !row.lineShort.isEmpty {
             seen.insert(row.lineShort)
@@ -682,7 +697,8 @@ struct WidgetData {
                 key: key,
                 header: fallbackHeader(platform: key, lineDisplay: lineDisplay),
                 label: key,
-                mixesLines: BoardGroup.mixesLines(rows, isBus: isBus),
+                mixesLines: BoardGroup.mixesLines(rows),
+                isBus: isBus,
                 rows: rows
             )
         }
