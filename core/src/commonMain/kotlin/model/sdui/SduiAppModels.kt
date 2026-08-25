@@ -366,7 +366,9 @@ data class SyncProfileRequest(
 @Serializable
 data class SyncStationsRequest(
     val uid: String,
-    val stations: List<SubscribedStation>
+    val stations: List<SubscribedStation>,
+    /** This device, so the server's fan-out skips it. See [SyncBoardsRequest.deviceId]. */
+    val deviceId: String? = null,
 )
 
 @Serializable
@@ -397,6 +399,20 @@ data class UserProfileResponse(
     val boards: List<com.stationly.core.model.user.Board> = emptyList(),
     /** LWW guard for [boards] — the device clock of the last accepted write. */
     val boardsUpdatedAt: Long = 0L,
+    /**
+     * The account's revision — bumped by the server on every CONTENT write and
+     * never on session or device churn.
+     *
+     * This is the value a client stores as its `localRev` after applying a
+     * profile, and compares against on every foreground. When it has not moved
+     * there is nothing to fetch, which is what takes an app open on an unchanged
+     * account from one Firestore read to zero.
+     *
+     * Defaulted, because a backend that predates the field omits it and an older
+     * response must still decode. Zero then reads as "no revision known", and a
+     * client holding zero simply fetches once — the safe direction.
+     */
+    val stateRev: Long = 0L,
 )
 
 /** Body of `POST /user/sync/boards`. */
@@ -419,6 +435,18 @@ data class SyncBoardsRequest(
      * clear an account by omission. Ignored entirely when [boards] is non-empty.
      */
     val allowEmpty: Boolean = false,
+    /**
+     * This device, so the server's `user.sync` fan-out skips it.
+     *
+     * Advisory and never authorising: the server takes the account from the
+     * bearer token and uses this only to decide who NOT to wake. The worst a
+     * wrong value can do is wake this device or fail to wake it — one redundant
+     * reconcile either way, and reconciles are idempotent.
+     *
+     * The server has accepted this since before any client sent it, so shipping
+     * it changes only who gets pushed, never whether the write lands.
+     */
+    val deviceId: String? = null,
 )
 
 /**
@@ -433,4 +461,25 @@ data class SyncStateResponse(
     val success: Boolean = false,
     val applied: Boolean = true,
     val reason: String? = null,
+    /**
+     * The account revision this write produced, for the writer's own use.
+     *
+     * Stamped into `localRev` so this device does not turn round on its next
+     * foreground and fetch the profile it just wrote. `excludeDeviceId` keeps the
+     * PUSH away, but nothing else would stop the rev check noticing that the
+     * account moved and going to look.
+     *
+     * The server sends an optimistic value: at least the true revision minus the
+     * effect of any write racing this one, never more. Undershooting only ever
+     * causes one extra fetch, and if a concurrent write really did land there is
+     * something to fetch. Null from a backend that predates the field.
+     */
+    val rev: Long? = null,
+)
+
+/** Body of `GET /user/state/rev` — the rev gate's server half. */
+@Serializable
+data class UserStateRevResponse(
+    val uid: String,
+    val rev: Long = 0L,
 )

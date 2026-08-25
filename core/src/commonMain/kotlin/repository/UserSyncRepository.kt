@@ -104,8 +104,34 @@ class UserSyncRepository(
      *
      * Restoring a filtered board unfiltered is worse than not restoring it: the
      * board looks right and shows exactly the trains the user excluded.
+     *
+     * ## The rev gate lives here
+     * This is the single entry point every mid-session reconcile funnels
+     * through — the `user.sync` push and the foreground check both call it — so
+     * it is the one place the "has anything actually changed?" question has to
+     * be asked. Asking it costs a request answered from the backend's SQLite
+     * mirror; answering "no" saves a Firestore read of the whole user document,
+     * which is the single largest line in the read budget.
+     *
+     * **Returns null when the gate is closed** — nothing was fetched and nothing
+     * was changed. Null rather than an unchanged profile because there IS no
+     * profile: the whole point is that none was read. Callers must treat it as
+     * "nothing to do", never as a failure; it is the most common outcome in the
+     * app, so logging it as an error would drown the log.
+     *
+     * @param observedRev a revision already learned from elsewhere — a push
+     *   payload today, a socket frame after P4. Null means "go and ask", which
+     *   is what the foreground path does. Passing a rev that is already known
+     *   saves the round trip entirely.
      */
-    suspend fun reconcileBoards(uid: String, lifecycle: StationLifecycleUseCase): UserProfileResponse {
+    suspend fun reconcileBoards(
+        uid: String,
+        lifecycle: StationLifecycleUseCase,
+        observedRev: Long? = null,
+    ): UserProfileResponse? {
+        val rev = observedRev ?: apiService.getUserStateRev(uid)
+        if (!LocalRevStore.shouldFetch(storageManager, uid, rev)) return null
+
         val profile = apiService.getUserProfile(uid)
         if (profile.uid != uid) return profile
 
@@ -186,6 +212,17 @@ class UserSyncRepository(
         // No configuration is adopted here. Appearance is device-local — see
         // UserSettings — so a board arriving from another device keeps whatever
         // arrangement THIS device already had for it, or the defaults.
+
+        // Stamped only now, at the END, and only on the path that actually
+        // applied the profile. An early return above means local state was
+        // deliberately left alone, and recording the revision there would tell
+        // this device it is up to date with a state it never adopted — the next
+        // rev check would agree and the account would never converge.
+        //
+        // From the profile, never from the rev that opened the gate: the
+        // observed rev may have been an undershoot (a concurrent write), while
+        // the profile carries what the document actually said when it was read.
+        LocalRevStore.store(storageManager, uid, profile.stateRev)
 
         return profile
     }

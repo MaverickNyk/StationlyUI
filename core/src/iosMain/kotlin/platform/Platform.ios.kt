@@ -1,5 +1,7 @@
 package com.stationly.core.platform
 
+import com.stationly.core.session.PendingOps
+
 import com.stationly.core.config.AppConfig
 import com.stationly.core.model.PredictionsPayload
 import com.stationly.core.model.PredictionDisplay
@@ -275,6 +277,19 @@ object AppGroupKeys {
     const val FIREBASE_USER_EMAIL     = "firebase_user_email"
     const val FIREBASE_USER_NAME      = "firebase_user_display_name"
     const val FIREBASE_USER_PHOTO     = "firebase_user_photo_url"
+    /**
+     * ⚠️ Deliberately still a literal, and the ONE that stays one.
+     *
+     * Swift's `AuthBridge` is the WRITER of this key and reaches
+     * `UserDefaults.standard` directly, outside KMP entirely — so the string has
+     * to exist on both sides of a boundary Kotlin cannot see across. Pointing
+     * this at [SessionStore] would make the Kotlin half single-sourced while
+     * leaving the Swift half exactly as it is, which buys the appearance of one
+     * declaration rather than the fact of it.
+     *
+     * Asserted equal to `SessionStore.Key.UID.storageKey` by `SessionStoreTest`,
+     * which is the honest version of the same guarantee.
+     */
     const val FIREBASE_USER_UID       = "firebase_user_uid"
 
     // Auth command protocol — KMP writes, Swift reads and executes, then clears
@@ -1435,6 +1450,41 @@ actual object Platform {
         // every request until it aged out — and, worse, to whoever signs in
         // next, since nothing else in this process invalidates that cache.
         IosAuthTokenAuthority.invalidate()
+
+        // ── TELL THE SERVER, EVENTUALLY ──
+        //
+        // This path is the worst of the four sign-outs precisely because it
+        // never did. It ends a session locally and the backend is never
+        // informed, so the account keeps its subscription hold and this device
+        // stays in the push audience of a session the SERVER ITSELF invalidated.
+        //
+        // It cannot call `/user/logout` inline: the token that would authorise
+        // that call is the one that just expired, which is how it got here. So
+        // the op is queued durably and replayed on the next launch — by which
+        // time the user has signed in again and a live token exists.
+        //
+        // Durable storage specifically, because the sign-out this triggers wipes
+        // the ordinary defaults domain.
+        //
+        // Skipped when the account is GONE: there is no account left to release
+        // a hold on, `deleteAccount` has already torn everything down
+        // server-side, and a queued logout against a deleted uid is a request
+        // that can only ever 404.
+        if (!accountGone) {
+            val uid = ud.stringForKey(AppGroupKeys.FIREBASE_USER_UID)
+            if (!uid.isNullOrBlank()) {
+                // Read straight from the APP GROUP suite, which is where
+                // `DeviceIdentity` keeps it so the id survives the logout-time
+                // wipe of the standard domain. `DeviceIdentity` itself lives in
+                // `composeApp` and `core` cannot see it — P3's component table
+                // moves it down here, and this read becomes a call when it does.
+                val deviceId = NSUserDefaults(suiteName = IosAppGroup.ID)
+                    .stringForKey("stationly_device_id")
+                    ?.takeIf { it.isNotBlank() }
+                runCatching { PendingOps.enqueueLogout(uid, deviceId) }
+            }
+        }
+
         ud.setObject("signOut", forKey = "auth_pending_command")
     }
 }
@@ -1463,12 +1513,43 @@ actual object Platform {
 object PushTrace {
     private const val KEY = "push_trace"
 
+    /**
+     * Live-departures chatter, kept in its OWN ring.
+     *
+     * ## Why the split exists
+     * One shared 40-entry ring made this log useless for the thing it was built
+     * for. `stream:subscribe` / `stream:update` fire once per station and once
+     * per line on every socket attach, so a single foreground writes forty of
+     * them in about two seconds — and every session, auth and registration line
+     * is gone before anyone can pull the container.
+     *
+     * Measured, not guessed: three attempts to read a sign-out/sign-in on the
+     * connected iPhone came back 40/40 `stream:` lines and nothing else, which
+     * turned a device test into a guess about what had happened.
+     *
+     * The volume is not the problem — the volume is genuinely useful when you
+     * are debugging the socket. Sharing one bounded ring between a high-rate
+     * source and a low-rate one is, because the loud half silently evicts the
+     * quiet half and the log still looks healthy.
+     */
+    private const val STREAM_KEY = "push_trace_stream"
+
+    /** The quiet ring can afford to be longer now that nothing floods it. */
+    private const val MAX = 120
+    private const val STREAM_MAX = 60
+
     fun log(msg: String) {
         try {
+            // Routed by prefix rather than by an extra parameter at each call
+            // site: there are dozens of `stream:` calls and one rule, and a rule
+            // enforced in one place cannot be forgotten at a new call site.
+            val stream = msg.startsWith("stream:")
+            val key = if (stream) STREAM_KEY else KEY
+            val cap = if (stream) STREAM_MAX else MAX
             val d = NSUserDefaults(suiteName = APP_GROUP_ID)
-            val existing = (d.arrayForKey(KEY) as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+            val existing = (d.arrayForKey(key) as? List<*>)?.filterIsInstance<String>() ?: emptyList()
             val ts = NSDate().timeIntervalSince1970.toLong()
-            d.setObject((existing + "$ts $msg").takeLast(40), forKey = KEY)
+            d.setObject((existing + "$ts $msg").takeLast(cap), forKey = key)
             d.synchronize()
         } catch (_: Exception) {
             // Diagnostics must never break the path they observe.

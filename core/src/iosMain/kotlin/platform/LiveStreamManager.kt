@@ -115,6 +115,26 @@ object LiveStreamManager {
     // whether pull-to-refresh can reuse the live connection.
     private var isReady = false
 
+    /**
+     * Where an account-level signal arriving on this socket is handed off.
+     *
+     * ## Why a settable handler rather than a direct call
+     * The reconcile this triggers needs a `StationLifecycleUseCase`, which is
+     * assembled from platform managers in `composeApp` — and `core` cannot see
+     * `composeApp`. So the dependency is inverted: this module knows only that
+     * *somebody* wants account frames, and `UserSyncBridge` says who, once, at
+     * launch (`ActivityBridge.start()`).
+     *
+     * Null until then, and null forever on any platform that does not install
+     * one — in which case the socket tier is simply absent and the push and
+     * foreground tiers cover everything, which is exactly the behaviour before
+     * P4. Nothing here degrades if this is never set.
+     *
+     * P3 replaces this with `SyncEngine`, which is the same seam given a name
+     * and a home. Until then this is the whole of the socket tier's client half.
+     */
+    var onUserSync: (suspend (reason: String?, uid: String?, rev: Long?) -> Unit)? = null
+
     private val subscribedStations = mutableSetOf<String>()
     private val subscribedLines = mutableSetOf<String>()
     private val pendingStations = mutableMapOf<String, MutableList<CompletableDeferred<PredictionsPayload>>>()
@@ -489,6 +509,41 @@ object LiveStreamManager {
                         resolveLine(lineId.lowercase(), status)
                     } catch (e: Exception) {
                         PushTrace.log("stream:decodeError line=$lineId ${e.message?.take(120)}")
+                    }
+                }
+            }
+
+            // The socket tier of the sync fabric. The SAME signal the APNs and
+            // FCM transports carry, on the connection a foregrounded device is
+            // already holding — so it costs no push, no poll, and no Firestore
+            // read, and it arrives while the user is looking at the board.
+            //
+            // Handled here rather than by a separate connection because the uid
+            // is already known to the hub: the server needed no new bookkeeping
+            // and this needs no new socket.
+            //
+            // Not awaited into the frame loop's critical path beyond what the
+            // handler itself does — a slow reconcile must not stall the
+            // departures frames queued behind it on the same socket.
+            "user_sync" -> {
+                val reason = root["reason"]?.jsonPrimitive?.contentOrNull
+                val uid = root["uid"]?.jsonPrimitive?.contentOrNull
+                // Absent means "no revision in this signal", which the gate
+                // reads as "cannot tell, go and look". Distinct from rev 0.
+                val rev = root["rev"]?.jsonPrimitive?.longOrNull
+                PushTrace.log("stream:user_sync reason=$reason rev=$rev")
+                val handler = onUserSync
+                if (handler == null) {
+                    // Not an error: a build with no handler installed simply has
+                    // no socket tier, and the other two still deliver.
+                    PushTrace.log("stream:user_sync dropped — no handler installed")
+                } else {
+                    scope.launch {
+                        // The handler owns its own mutex and its own rev gate.
+                        // Swallowed because a failed reconcile must not tear
+                        // down a socket that is also carrying departures.
+                        runCatching { handler(reason, uid, rev) }
+                            .onFailure { PushTrace.log("stream:user_sync failed ${it.message?.take(120)}") }
                     }
                 }
             }

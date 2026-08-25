@@ -77,6 +77,50 @@ object DreamSettings {
     private const val KEY_STATION_ID  = "station_id"  // optional override
 
     /**
+     * The account these settings belong to, or null when signed out.
+     *
+     * ## Why namespacing matters here
+     * This store deliberately SURVIVES the logout-time `clearAll()` — that is
+     * the whole point of it, so a user's screensaver arrangement is still there
+     * when they sign back in. Unscoped, that same durability means the NEXT
+     * person to sign in on the device inherits it: their dream opens on a
+     * stranger's layout, theme, clock style and pinned station.
+     *
+     * It only shows up on a device that has had two accounts signed in, which is
+     * exactly the case nobody tests, and it looks like a rendering bug rather
+     * than a storage one.
+     *
+     * ## Why a bound scope rather than reading the uid here
+     * Every accessor below is SYNCHRONOUS — the dream host reads them on a
+     * background thread with no coroutine and no dependency on the network
+     * stack. `SessionStore.uid()` is suspend because storage is async on iOS. So
+     * the session boundary pushes the scope in rather than each read pulling it.
+     *
+     * `@Volatile` because the two sides are on different threads: `bindAccount`
+     * is called from a coroutine at the session boundary, and every accessor
+     * below is read synchronously by the dream host on its own thread. Without
+     * it a reader can hold a stale scope and answer from the WRONG account's
+     * keys — briefly, silently, and only on a device that has had two people
+     * signed in, which is the case nobody tests.
+     */
+    @kotlin.concurrent.Volatile
+    private var accountScope: String? = null
+
+    /**
+     * Point the store at an account. Called at every session boundary — login,
+     * logout, account switch — by `UserStateSync`.
+     *
+     * Passing null falls back to the unscoped keys, which is also where every
+     * value written before P3 already lives. So an existing user's arrangement
+     * survives the upgrade instead of resetting once on the way through.
+     */
+    fun bindAccount(uid: String?) {
+        accountScope = uid?.takeIf { it.isNotBlank() }
+    }
+
+    private fun key(base: String): String = accountScope?.let { "$base:$it" } ?: base
+
+    /**
      * Notification that a setting changed. **Nothing subscribes to it today.**
      *
      * ## What this comment used to claim, and why it was wrong
@@ -141,21 +185,21 @@ object DreamSettings {
         try { block() } finally { applyingRemote = false }
     }
 
-    fun getLayout(): DreamLayout = DreamLayout.fromStored(DreamPrefsBackend.get(KEY_LAYOUT))
-    fun setLayout(layout: DreamLayout) = write(KEY_LAYOUT, layout.storedAs)
+    fun getLayout(): DreamLayout = DreamLayout.fromStored(DreamPrefsBackend.get(key(KEY_LAYOUT)))
+    fun setLayout(layout: DreamLayout) = write(key(KEY_LAYOUT), layout.storedAs)
 
-    fun getTheme(): DreamTheme = DreamTheme.fromStored(DreamPrefsBackend.get(KEY_THEME))
-    fun setTheme(theme: DreamTheme) = write(KEY_THEME, theme.storedAs)
+    fun getTheme(): DreamTheme = DreamTheme.fromStored(DreamPrefsBackend.get(key(KEY_THEME)))
+    fun setTheme(theme: DreamTheme) = write(key(KEY_THEME), theme.storedAs)
 
-    fun getClockStyle(): ClockStyle = ClockStyle.fromStored(DreamPrefsBackend.get(KEY_CLOCK_STYLE))
-    fun setClockStyle(style: ClockStyle) = write(KEY_CLOCK_STYLE, style.storedAs)
+    fun getClockStyle(): ClockStyle = ClockStyle.fromStored(DreamPrefsBackend.get(key(KEY_CLOCK_STYLE)))
+    fun setClockStyle(style: ClockStyle) = write(key(KEY_CLOCK_STYLE), style.storedAs)
 
     /**
      * Optional override telling the dream WHICH of the user's saved stations
      * to display. Null → use the first selection on the home screen.
      */
-    fun getStationId(): String? = DreamPrefsBackend.get(KEY_STATION_ID)?.ifBlank { null }
-    fun setStationId(stationId: String?) = write(KEY_STATION_ID, stationId)
+    fun getStationId(): String? = DreamPrefsBackend.get(key(KEY_STATION_ID))?.ifBlank { null }
+    fun setStationId(stationId: String?) = write(key(KEY_STATION_ID), stationId)
 
     // `hasEverStarted()` / `markStarted()` and their `ever_started` key were
     // removed on 2026-08-23 along with the home "Set as Screensaver" promo,

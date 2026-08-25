@@ -6,6 +6,7 @@ import com.stationly.core.activity.ActivityLog
 import com.stationly.core.model.push.UserSyncReason
 import com.stationly.core.platform.AppGroupKeys
 import com.stationly.core.platform.IosAppGroup
+import com.stationly.core.platform.LiveStreamManager
 import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SelectionRepository
@@ -133,10 +134,55 @@ object UserSyncBridge {
      * Returns whether anything was actually applied, which the caller reports to
      * iOS as its background-fetch result.
      */
-    suspend fun handle(reason: String?, pushUid: String?): Boolean = withContext(Dispatchers.Default) {
+    suspend fun handle(reason: String?, pushUid: String?): Boolean = handleSignal(reason, pushUid, null)
+
+    /**
+     * Start routing account frames off the live-departures socket into here.
+     *
+     * Called once at launch from `ActivityBridge.start()`, which is
+     * `AppDelegate.swift`'s existing app-start hook — so the socket tier needed
+     * no Swift change and no new call site.
+     *
+     * ## The third tier, and why it changes nothing about the other two
+     * A foregrounded device already holds this socket for departures, so an
+     * account change reaches it instantly for the price of one frame: no APNs
+     * round trip, no poll, no Firestore read on either side. The push tiers stay
+     * exactly as they are — they are what covers a BACKGROUNDED device, which
+     * has no socket at all.
+     *
+     * All three signals land on [handleSignal], behind one mutex and one rev
+     * gate, so a device told the same thing twice does nothing the second time.
+     * That is what makes adding a tier safe rather than a source of duplicate
+     * work.
+     */
+    fun installStreamHandler() {
+        LiveStreamManager.onUserSync = { reason, uid, rev -> handleSignal(reason, uid, rev); Unit }
+    }
+
+    /**
+     * The one implementation behind every source of a `user.sync` signal:
+     * APNs push, the live socket, and (via [reconcileOnForeground]) an app open.
+     *
+     * [signalUid] is the account the signal was minted for. It is checked
+     * against the signed-in user and the signal is DROPPED on a mismatch — a
+     * device token and a socket both outlive a session, so a signal can land on
+     * a phone that has since signed in as somebody else. Acting on it would
+     * reconcile the wrong account, and for `reason = "deleted"` would log out a
+     * user whose account is perfectly fine.
+     *
+     * [observedRev] is the revision the signal carried, when it carried one.
+     * Passing it through means a push or socket frame needs no round trip to
+     * ask what the current revision is — it was in the envelope. Null means
+     * "not stated", which the gate treats as "go and look".
+     */
+    private suspend fun handleSignal(
+        reason: String?,
+        signalUid: String?,
+        observedRev: Long?,
+    ): Boolean = withContext(Dispatchers.Default) {
         val currentUid = currentUid()
         if (currentUid.isNullOrEmpty()) return@withContext false
-        if (!pushUid.isNullOrEmpty() && pushUid != currentUid) return@withContext false
+        if (!signalUid.isNullOrEmpty() && signalUid != currentUid) return@withContext false
 
         mutex.withLock {
             when (reason) {
@@ -160,7 +206,14 @@ object UserSyncBridge {
                 // delete its own boards the first time the account's Android
                 // device saved one.
                 else -> runCatching {
-                    val profile = userSyncRepository.reconcileBoards(currentUid, lifecycle)
+                    // Null means the rev gate was closed: the account has not
+                    // moved since this device last applied it, so nothing was
+                    // fetched and nothing needs doing. That is a SUCCESS with no
+                    // work, not a failure — and after echo suppression it is the
+                    // expected outcome of a push this device's own write caused
+                    // to fan out to it anyway.
+                    val profile = userSyncRepository.reconcileBoards(currentUid, lifecycle, observedRev)
+                        ?: return@runCatching false
                     // Two cases where `reconcileBoards` deliberately left local
                     // state alone rather than diffing, and both end the same
                     // way — this device claims the account:
@@ -252,6 +305,12 @@ object UserSyncBridge {
                 // so the comparison is made here, against the flat rows it
                 // actually mutates.
                 val before = Platform.sqlStorage.getAllSelections().map { it.boardKey }.toSet()
+                // A null return (the rev gate found nothing new) needs no
+                // special case here: nothing was fetched, so nothing was
+                // applied, so `before` and `after` are equal and `changed` is
+                // false — which is exactly the right answer for a foreground
+                // where the account had not moved. This is now the common path,
+                // and the read it avoids is the one P1 exists to remove.
                 userSyncRepository.reconcileBoards(uid, lifecycle)
                 val after = Platform.sqlStorage.getAllSelections().map { it.boardKey }.toSet()
                 val changed = before != after

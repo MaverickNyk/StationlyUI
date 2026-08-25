@@ -1,4 +1,5 @@
 package com.stationly.app.ui.profile
+import com.stationly.core.session.SessionStore
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -6,6 +7,7 @@ import com.stationly.app.platform.DeviceIdentity
 import com.stationly.app.ui.login.PlatformAuthProvider
 import com.stationly.core.activity.ActivityEvents
 import com.stationly.core.activity.ActivityLog
+import com.stationly.core.session.PendingOps
 import com.stationly.core.model.sdui.SyncProfileRequest
 import com.stationly.app.ui.summary.BoardExpansion
 import com.stationly.app.ui.summary.BoardFocus
@@ -190,7 +192,7 @@ class ProfileViewModel(
                 // running them afterwards would 401 silently (the exact bug
                 // Android's FirebaseAuthManager documents). Both are capped so a
                 // slow backend can't strand the user "half signed out".
-                val uid = storageManager.loadString("firebase_user_uid")
+                val uid = SessionStore.uid()
                 if (uid != null) {
                     // ── Flush pending state BEFORE anything tears down ──
                     //
@@ -221,11 +223,36 @@ class ProfileViewModel(
                     //    station's subscription count and flips loggedIn=false.
                     //    Without it the Syncer keeps polling TfL for a user who
                     //    has gone, and the station stays in the subscribed set.
-                    try {
+                    val deviceId = com.stationly.app.platform.DeviceIdentity.deviceId()
+                    val toldTheServer = try {
                         kotlinx.coroutines.withTimeoutOrNull(4000) {
-                            sduiApi.logOut(uid, com.stationly.app.platform.DeviceIdentity.deviceId())
-                        }
-                    } catch (_: Exception) {}
+                            sduiApi.logOut(uid, deviceId)
+                        } == true
+                    } catch (_: Exception) { false }
+
+                    // QUEUE IT IF IT DID NOT LAND.
+                    //
+                    // The call above is capped at four seconds and swallows its
+                    // failure, which is right — the user asked to sign out and
+                    // must not be held hostage to a network. But until now that
+                    // meant an offline sign-out was simply never told to the
+                    // server: the account kept its subscription hold, the device
+                    // stayed in the push audience of an account nobody was signed
+                    // into, and only the 90-day sweep eventually cleared it.
+                    //
+                    // Queued in DURABLE storage, because the teardown a few lines
+                    // below wipes the ordinary defaults domain — a queue written
+                    // there would be erased by the very sequence it exists to
+                    // outlive.
+                    //
+                    // Replay is safe with no conditional: `/user/logout`
+                    // addresses `users/{uid}/devices/{deviceId}`, a path that
+                    // NAMES the account, so if somebody else has since signed in
+                    // on this device their row is under a different parent and
+                    // this cannot touch it.
+                    if (!toldTheServer) {
+                        runCatching { PendingOps.enqueueLogout(uid, deviceId) }
+                    }
 
                     // b) Unregister this device's FCM token so a push aimed at
                     //    the now-signed-out user can't land here after someone
@@ -248,9 +275,14 @@ class ProfileViewModel(
                 // the same station.
                 BoardExpansion.clear()
                 BoardFocus.clear()
-                // Forget the cached (token, uid) pair so the NEXT user on this
-                // device re-registers instead of being skipped as "unchanged".
-                com.stationly.app.util.FcmTokenRegistrar.clearCache()
+                // The push-registration cache is cleared on the Swift side, in
+                // `AuthBridge.logout()` — `DevicePushCoordinator.release()`. It
+                // has to happen there rather than here: the signature it holds
+                // is in-process Swift state, and `authProvider.signOut()` above
+                // is what reaches it. Without that clear the next sign-in on
+                // this device computes an identical body and skips the POST,
+                // leaving the device with no push address.
+                //
                 // Same reasoning for the settings stores: they are process-wide
                 // objects, so `cleanupAll()` wiping the DISK is invisible to a
                 // repository that has already loaded. Without this the next user
@@ -271,7 +303,7 @@ class ProfileViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isDeletingAccount = true, error = null)
             try {
-                val uid = storageManager.loadString("firebase_user_uid") ?: run {
+                val uid = SessionStore.uid() ?: run {
                     _uiState.value = _uiState.value.copy(isDeletingAccount = false, error = "Not authenticated")
                     return@launch
                 }
@@ -301,7 +333,6 @@ class ProfileViewModel(
                 // the same station.
                 BoardExpansion.clear()
                 BoardFocus.clear()
-                com.stationly.app.util.FcmTokenRegistrar.clearCache()
                 // The teardown `signOut()` does, plus the disk. This was missing
                 // entirely, and each half of it mattered: a debounced push queued
                 // by the deleted account could still fire, the settings stores are

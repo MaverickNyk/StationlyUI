@@ -1,4 +1,5 @@
 package com.stationly.core.activity
+import com.stationly.core.session.SessionStore
 
 import com.stationly.core.platform.Platform
 import com.stationly.core.repository.SqlStorage
@@ -196,5 +197,15 @@ object ActivityLog {
         return "${now.toString(36)}-${hi.toULong().toString(36)}-${lo.toUInt().toString(36)}"
     }
 
-    internal const val UID_KEY = "firebase_user_uid"
+    /**
+     * The signed-in account id.
+     *
+     * ⚠️ NOT its own string. [SessionStore] is the one declaration of every
+     * identity key, and this used to be one of TWELVE spellings of the same
+     * literal across four modules and two languages — which is how two readers
+     * came to disagree about whether anyone was signed in, in one process.
+     * Referencing it keeps this file's local name (every call site below reads
+     * better for it) without adding a thirteenth place for the string to drift.
+     */
+    internal val UID_KEY = SessionStore.Key.UID.storageKey
 }

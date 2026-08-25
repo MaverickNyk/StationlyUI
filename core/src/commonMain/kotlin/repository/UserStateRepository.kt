@@ -1,4 +1,5 @@
 package com.stationly.core.repository
+import com.stationly.core.session.SessionStore
 
 import com.stationly.core.model.sdui.UserProfileResponse
 import com.stationly.core.model.user.Board
@@ -76,6 +77,21 @@ import kotlinx.datetime.Clock
 class UserStateRepository(
     private val api: SduiApiService,
     private val sqlStorage: SqlStorage,
+    /**
+     * This device's stable id, for echo suppression on the write path.
+     *
+     * Injected rather than read from a global because `DeviceIdentity` lives in
+     * `composeApp` (it needs the iOS App Group and Android's own prefs file) and
+     * `core` cannot see it. P3 moves that type down here and this parameter
+     * becomes a lookup; until then, injection is the seam that avoids either a
+     * duplicate implementation or a premature move.
+     *
+     * Nullable and defaulted, so a caller that has no id — a test, or a platform
+     * that has not wired one — behaves exactly as before: the server excludes
+     * nobody and this device is woken by its own write, which is wasteful but
+     * harmless because reconciles are idempotent.
+     */
+    private val deviceId: String? = null,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -115,6 +131,19 @@ class UserStateRepository(
      */
     suspend fun fetch(uid: String): UserProfileResponse {
         val profile = api.getUserProfile(uid)
+
+        // Seed the rev gate from the login path.
+        //
+        // This fetch is NOT gated and must never be: it is the guarded
+        // destructive restore (`WidgetRestore.during`, `allowEmpty`,
+        // `BoardPushGate`) that a fresh session depends on, and a gate in front
+        // of it could skip the one read that makes signing in work. But it is
+        // the perfect place to STAMP: the profile is in hand and freshly
+        // authoritative, so the first mid-session foreground after a login
+        // already has something to compare against instead of paying for a
+        // redundant read.
+        LocalRevStore.store(Platform.storageManager, uid, profile.stateRev)
+
         // Remember what the server thinks each board's age is, so our next write
         // preserves it instead of restamping everything to now.
         //
@@ -233,7 +262,13 @@ class UserStateRepository(
         // counted against the NEXT push rather than cleared by this one's
         // acknowledgement.
         val target = gate.pending() ?: return@withLock
-        if (Platform.storageManager.loadString(UID_KEY).isNullOrBlank()) return@withLock
+        // Read once and reused below for the rev stamp. Two reads could
+        // disagree — a sign-out landing between them would make the second null
+        // — and the write has already gone out by then, so the stamp must use
+        // the account the write was made for, not whoever is signed in when it
+        // returns.
+        val uid = Platform.storageManager.loadString(UID_KEY)
+        if (uid.isNullOrBlank()) return@withLock
         // The unlocked variant — this block already holds [mutex]. See [buildBoards].
         val boards = buildBoards()
         // `updatedAt` is this device's clock, and the server drops a write older
@@ -245,7 +280,29 @@ class UserStateRepository(
             boards = boards,
             updatedAt = Clock.System.now().toEpochMilliseconds(),
             allowEmpty = gate.allowEmpty(),
+            // So the server's fan-out skips this device. Advisory only — it
+            // never authorises anything, and the account still comes from the
+            // bearer token.
+            deviceId = deviceId,
         )
+
+        // Stamp the revision this write produced, so this device does not turn
+        // round on its next foreground and read back the profile it just wrote.
+        //
+        // `excludeDeviceId` above keeps the PUSH away; it does nothing about the
+        // rev check, which would otherwise see the account move and dutifully go
+        // and look. Both halves are needed to actually suppress the echo, and
+        // only having the first is why the design's budget line said "echo
+        // suppressed" while the device still paid for a read.
+        //
+        // Only on an ACCEPTED write. A declined one (`stale`, `empty_rejected`)
+        // changed nothing on the server, so there is no new revision — and
+        // stamping a rev the account never reached would suppress a real fetch.
+        response.rev?.let { rev ->
+            if (response.success && response.applied) {
+                LocalRevStore.store(Platform.storageManager, uid, rev)
+            }
+        }
         // Acknowledged on `success`, not on `applied`. A declined write (stale,
         // or an empty list the server refused) is a 200 it understood, and
         // resending it would be refused for the same reason; a transport failure
@@ -262,6 +319,16 @@ class UserStateRepository(
          * switches apps has usually already synced.
          */
         const val DEBOUNCE_MS = 2_500L
-        private const val UID_KEY = "firebase_user_uid"
+    /**
+     * The signed-in account id.
+     *
+     * ⚠️ NOT its own string. [SessionStore] is the one declaration of every
+     * identity key, and this used to be one of TWELVE spellings of the same
+     * literal across four modules and two languages — which is how two readers
+     * came to disagree about whether anyone was signed in, in one process.
+     * Referencing it keeps this file's local name (every call site below reads
+     * better for it) without adding a thirteenth place for the string to drift.
+     */
+        private val UID_KEY = SessionStore.Key.UID.storageKey
     }
 }

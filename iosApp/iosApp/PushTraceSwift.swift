@@ -15,12 +15,19 @@ import Foundation
 ///   --domain-identifier group.com.stationly.shared --source / --destination /tmp/pull
 /// ```
 ///
-/// ⚠️ Keep the 40-entry bound in lockstep with Kotlin's `PushTrace` — they
-/// share the key, so the smaller cap would silently truncate the other side.
+/// ⚠️ Keep the bound in lockstep with Kotlin's `PushTrace` — they share the
+/// key, so the smaller cap would silently truncate the other side.
+///
+/// Raised from 40 to 120 when Kotlin moved its `stream:` chatter into a ring of
+/// its own (`push_trace_stream`). Those lines fire once per station and once per
+/// line on every socket attach, so they filled all forty in about two seconds
+/// and evicted every auth and registration line before it could be read — which
+/// is exactly the half this file exists to record. Nothing Swift writes here is
+/// high-rate, so this side stays on the quiet ring.
 enum PushTraceSwift {
     private static let appGroupID = AppGroupID.value
     private static let key = "push_trace"
-    private static let maxEntries = 40
+    private static let maxEntries = 120
 
     static func log(_ msg: String) {
         guard let d = UserDefaults(suiteName: appGroupID) else { return }

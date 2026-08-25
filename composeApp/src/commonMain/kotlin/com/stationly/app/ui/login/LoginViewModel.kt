@@ -6,6 +6,7 @@ import com.stationly.app.platform.DeviceIdentity
 import com.stationly.app.sync.UserStateSync
 import com.stationly.core.activity.ActivityEvents
 import com.stationly.core.activity.ActivityLog
+import com.stationly.core.session.PendingOps
 import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
@@ -357,14 +358,38 @@ class LoginViewModel(
                 UserStateSync.restoreBoards(profile, stationLifecycleUseCase)
             }
 
-            // Best-effort — a failed token registration shouldn't block login;
-            // it is retried on the next foreground.
+            // `FcmTokenRegistrar` was deleted here (P3).
             //
-            // Goes through FcmTokenRegistrar rather than POSTing inline so the
-            // "last registered (token, uid)" cache is seeded here. Registering
-            // directly left that cache empty, and SummaryViewModel's init call
-            // then re-POSTed the identical token seconds later on EVERY login.
-            com.stationly.app.util.FcmTokenRegistrar.ensureRegistered(uid = uid)
+            // It read as live wiring and was dead on iOS from its second line:
+            // `IosNotificationManager.registerDevice()` returns "" by design, so
+            // `ensureRegistered` returned immediately, every time, and had never
+            // registered anything. The guard that hid it (`if (token.isNotBlank())`)
+            // read like a safety check.
+            //
+            // It was also not the registrar Android uses — `android/…/service/
+            // FcmTokenRegistrar` is a DIFFERENT object with the same name. So the
+            // old audit finding "iOS never unregisters its push tokens at logout"
+            // really meant "iOS calls a function that was never capable of doing
+            // anything". iOS push registration is `DevicePushCoordinator`.
+
+            // Drain anything a previous session could not tell the server.
+            //
+            // THIS is the moment it can work, and the only one. `/user/logout`
+            // is bearer-gated and rejects a uid that does not match the token,
+            // so a queued logout for this account is replayable only while
+            // signed in AS this account — at launch the user is usually still
+            // signed out and every attempt would be a 401.
+            //
+            // The case this exists for: a forced auth-expiry ended the session
+            // without ever telling the backend (there was no live token to tell
+            // it with), the user signs in again here, and the queue drains.
+            //
+            // Best-effort and non-blocking on the login result: a failed replay
+            // leaves the op queued for next time, and must never turn a
+            // successful sign-in into a failed one.
+            runCatching {
+                PendingOps.replay(sduiApi, uid, DeviceIdentity.deviceId())
+            }
 
             ActivityLog.record(ActivityEvents.AUTH_LOGGED_IN, "provider", provider)
             return true

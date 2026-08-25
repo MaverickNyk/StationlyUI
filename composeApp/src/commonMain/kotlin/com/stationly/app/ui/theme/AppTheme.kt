@@ -35,11 +35,38 @@ enum class AppTheme(val storedAs: String, val displayName: String) {
 object AppSettings {
     private const val KEY_THEME = "app_theme"
 
+    /**
+     * DURABLE, and deliberately NOT namespaced by account.
+     *
+     * **Durable**, because sign-out wipes the app's ordinary defaults domain.
+     * That is right for anything naming the user and wrong for this: "dark mode"
+     * says nothing about who anybody is, and a user who signed out and back in
+     * had their theme silently reset to system every time.
+     *
+     * **Not scoped by uid, and that is a correction rather than an omission.**
+     * Scoping it was tried and broke the feature outright. The theme is read at
+     * THEME-HOST START — the earliest thing the UI does — which is before the
+     * uid has been restored. So the scoped read looked up `app_theme:` with no
+     * account, found nothing, and fell back to system. The setting was written
+     * correctly and never read back.
+     *
+     * The design says to namespace the DREAM settings by uid and to move this
+     * one to durable storage; those are different instructions for a reason.
+     * A per-account theme would need the read deferred until after auth
+     * restores, which means a visible flash of the wrong theme on every launch —
+     * a worse bug than two accounts on one device sharing a colour scheme.
+     *
+     * The read falls back to the ordinary domain so a value written before this
+     * became durable survives the upgrade instead of resetting once.
+     */
     suspend fun getTheme(): AppTheme =
-        AppTheme.fromStored(Platform.storageManager.loadString(KEY_THEME))
+        AppTheme.fromStored(
+            Platform.storageManager.loadDurable(KEY_THEME)
+                ?: Platform.storageManager.loadString(KEY_THEME),
+        )
 
     suspend fun setTheme(theme: AppTheme) {
-        Platform.storageManager.saveString(KEY_THEME, theme.storedAs)
+        Platform.storageManager.saveDurable(KEY_THEME, theme.storedAs)
     }
 }
 

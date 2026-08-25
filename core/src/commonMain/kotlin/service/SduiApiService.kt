@@ -75,7 +75,26 @@ interface SduiApiService {
      * both platforms back on one array and reintroduce the cross-platform wipe
      * that splitting the lists exists to fix.
      */
-    suspend fun syncStations(uid: String, stations: List<SubscribedStation>): Boolean
+    /**
+     * LEGACY station list. **[deviceId] has no producer today, deliberately.**
+     *
+     * The server accepts it and uses it as `excludeDeviceId`, and the parameter
+     * is here so Android-next gets echo suppression without a wire change. But
+     * the only callers of this endpoint are in the FROZEN APK, which cannot be
+     * rebuilt to send one — and iOS never calls it at all, because it writes
+     * through `syncBoards`. So nothing sends it and nothing can until a new
+     * Android ships.
+     *
+     * Said out loud because the alternative is reading the parameter as evidence
+     * that echo suppression works on this path. It does not; it is reserved. No
+     * harm follows from that today: the frozen APK has no revision gate to
+     * suppress, guards on uid, and its reconcile is idempotent.
+     */
+    suspend fun syncStations(
+        uid: String,
+        stations: List<SubscribedStation>,
+        deviceId: String? = null,
+    ): Boolean
     /**
      * v2 board list. Full replace, guarded by [SyncBoardsRequest.updatedAt].
      *
@@ -92,8 +111,30 @@ interface SduiApiService {
         boards: List<com.stationly.core.model.user.Board>,
         updatedAt: Long,
         allowEmpty: Boolean = false,
+        deviceId: String? = null,
     ): SyncStateResponse
     suspend fun getUserProfile(uid: String): UserProfileResponse
+
+    /**
+     * The account's current revision — the cheap half of the sync fabric.
+     *
+     * Answered from the backend's own SQLite mirror, so asking costs no
+     * Firestore read at all in the common case. A client compares the answer
+     * against the rev it last applied and fetches the profile only when it has
+     * moved; an app open on an account nobody has touched therefore reads
+     * nothing.
+     *
+     * Takes no uid on the wire: the account is whichever one the bearer token
+     * names. The parameter is here only so callers read symmetrically with
+     * [getUserProfile] and so a future multi-account client has a seam.
+     *
+     * Returns 0 when the backend predates the field or cannot answer. **Zero
+     * means "I cannot tell you", and the gate treats it as FETCH** — see
+     * [LocalRevStore.shouldFetch]. Not "nothing has changed": every account that
+     * predates `stateRev` reads 0, so a gate that skipped on zero would switch
+     * off cross-device reconcile for all of them.
+     */
+    suspend fun getUserStateRev(uid: String): Long
     suspend fun logOut(uid: String, deviceId: String? = null): Boolean
     suspend fun deleteAccount(uid: String): Boolean
 
@@ -219,10 +260,14 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
         }.body()
     }
 
-    override suspend fun syncStations(uid: String, stations: List<SubscribedStation>): Boolean {
+    override suspend fun syncStations(
+        uid: String,
+        stations: List<SubscribedStation>,
+        deviceId: String?,
+    ): Boolean {
         val response = client.post("$baseUrl/user/sync/stations") {
             contentType(ContentType.Application.Json)
-            setBody(SyncStationsRequest(uid, stations))
+            setBody(SyncStationsRequest(uid, stations, deviceId))
         }
         return response.status == HttpStatusCode.OK
     }
@@ -231,13 +276,14 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
         boards: List<com.stationly.core.model.user.Board>,
         updatedAt: Long,
         allowEmpty: Boolean,
+        deviceId: String?,
     ): SyncStateResponse {
         // No uid in the body: the server takes it from the validated bearer
         // token. This endpoint REPLACES a list the user cannot afford to lose,
         // so a self-asserted uid is not something it should ever accept.
         val response = client.post("$baseUrl/user/sync/boards") {
             contentType(ContentType.Application.Json)
-            setBody(SyncBoardsRequest(boards, updatedAt, allowEmpty))
+            setBody(SyncBoardsRequest(boards, updatedAt, allowEmpty, deviceId))
         }
         return if (response.status == HttpStatusCode.OK) response.body()
         else SyncStateResponse(success = false, applied = false, reason = "http_${response.status.value}")
@@ -256,6 +302,35 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
             400 -> ActivityUploadOutcome.Rejected
             else -> ActivityUploadOutcome.Retry
         }
+    }
+
+    override suspend fun getUserStateRev(uid: String): Long {
+        // Every failure answers 0, and 0 means "I CANNOT TELL YOU".
+        //
+        // Which the gate reads as *go and look* ([LocalRevStore.shouldFetch]),
+        // not as "nothing has changed". Getting that backwards is the single
+        // most dangerous misreading in this whole mechanism: every account that
+        // predates `stateRev` reads 0, so a gate that skipped on zero would
+        // silently disable cross-device reconcile for all of them, and the
+        // symptom — boards not appearing on the other device — looks nothing
+        // like a gate. An earlier version of this comment said exactly that
+        // wrong thing while the code did the right one.
+        //
+        // Answering rather than throwing is the deliberate part: the rev check
+        // is an optimisation, and an optimisation that throws turns a transient
+        // network blip into a visible failure on the most frequent path in the
+        // app. Falling back to a fetch is the correct, and more expensive,
+        // direction — which is the one to fail in.
+        //
+        // The one case worth distinguishing — the account is gone — is not this
+        // call's job. The profile fetch raises `UserNotFoundException` and the
+        // `deleted` push forces a sign-out; both are stronger signals than a
+        // 404 here, and duplicating that decision in two places is how the two
+        // copies drift.
+        return runCatching {
+            val response = client.get("$baseUrl/user/state/rev")
+            if (response.status == HttpStatusCode.OK) response.body<UserStateRevResponse>().rev else 0L
+        }.getOrDefault(0L)
     }
 
     override suspend fun getUserProfile(uid: String): UserProfileResponse {

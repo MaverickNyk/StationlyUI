@@ -1,4 +1,5 @@
 package com.stationly.app.ui.summary
+import com.stationly.core.session.SessionStore
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -160,7 +161,6 @@ class SummaryViewModel(
             // the iOS equivalent "first authenticated surface". Without it a
             // keychain-restored session (or a rotated token) never reaches the
             // backend and every uid-targeted push fails NotRegistered.
-            com.stationly.app.util.FcmTokenRegistrar.ensureRegistered()
         }
         checkNotificationDeniedBanner()
         viewModelScope.launch {
@@ -526,14 +526,18 @@ class SummaryViewModel(
      */
     private suspend fun registerDeviceSession() {
         try {
-            val uid = Platform.storageManager.loadString("firebase_user_uid") ?: return
+            // Through SessionStore, not raw literals. Every one of these was a
+            // separate spelling of a key declared elsewhere, and this block read
+            // five of them — so a rename anywhere else would have left this
+            // silently posting a login with empty fields.
+            val uid = SessionStore.uid() ?: return
             sduiApi.syncProfile(
                 com.stationly.core.model.sdui.SyncProfileRequest(
                     uid            = uid,
-                    email          = Platform.storageManager.loadString("firebase_user_email") ?: "",
-                    displayName    = Platform.storageManager.loadString("firebase_user_display_name"),
-                    photoURL       = Platform.storageManager.loadString("firebase_user_photo_url"),
-                    signInProvider = when (Platform.storageManager.loadString("signin_provider")) {
+                    email          = SessionStore.get(SessionStore.Key.EMAIL) ?: "",
+                    displayName    = SessionStore.get(SessionStore.Key.DISPLAY_NAME),
+                    photoURL       = SessionStore.get(SessionStore.Key.PHOTO_URL),
+                    signInProvider = when (SessionStore.get(SessionStore.Key.SIGNIN_PROVIDER)) {
                         "Google" -> "google.com"
                         "Apple"  -> "apple.com"
                         else     -> "email"
@@ -655,7 +659,6 @@ class SummaryViewModel(
             launch { refreshStaleBoards(selectionRepository.selections.value) }
             // Cheap when nothing changed (one string compare, no network) —
             // catches a token that rotated while we were backgrounded.
-            com.stationly.app.util.FcmTokenRegistrar.ensureRegistered()
         }
         // Same ON_RESUME re-evaluation Android does: the user may have flipped
         // notifications in Settings while we were backgrounded.

@@ -2,11 +2,18 @@ package com.stationly.app
 
 import com.stationly.app.platform.DeviceIdentity
 import com.stationly.app.sync.UserStateSync
+import com.stationly.core.session.SessionStore
+import com.stationly.app.ui.dream.DreamSettings
+import com.stationly.core.platform.PushTrace
+import com.stationly.core.session.PendingOps
 import com.stationly.core.activity.ActivityEvents
 import com.stationly.core.activity.ActivityLog
 import com.stationly.core.activity.ActivityUploader
 import com.stationly.core.service.NetworkModule
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Clock
 
@@ -31,7 +38,52 @@ object ActivityBridge {
      * write, and the app can be launched straight into a settings screen by a
      * widget tap.
      */
-    fun start() = UserStateSync.start()
+    fun start() {
+        UserStateSync.start()
+
+        // Point the per-account stores at whoever is ALREADY signed in.
+        //
+        // `resetForNewSession()` binds this at login and logout, but an ordinary
+        // cold launch of an already-signed-in app crosses neither boundary — so
+        // without this the scope stayed null, the dream settings read their
+        // UNSCOPED keys, and a user's saved arrangement looked reset on every
+        // launch. Exactly the failure the theme hit for the same reason.
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+            runCatching { DreamSettings.bindAccount(SessionStore.uid()) }
+        }
+
+        // Replay anything a previous session could not tell the server.
+        //
+        // Scoped to whoever is signed in RIGHT NOW, and a no-op when nobody is:
+        // `/user/logout` is bearer-gated and rejects a mismatched uid, so an
+        // unscoped replay at launch would 401 every op and burn its attempt. The
+        // call that usually does the work is the one after a successful login in
+        // `LoginViewModel`; this one covers an already-signed-in cold launch.
+        //
+        // Two producers, both of which used to lose the call outright: a
+        // sign-out with no network, and the forced auth-expiry path, which ends
+        // a session locally and never had a live token to call the backend with.
+        // Both left the account holding a subscription and this device sitting
+        // in the push audience of a session nobody was in.
+        //
+        // Launch is the right moment: the network is usually up and, in the
+        // forced-expiry case, the user has signed in again so a token exists.
+        // Replay is idempotent and path-addressed, so a stale op cannot touch a
+        // session that has since moved to another account.
+        // Detached on purpose: `start()` is called from `AppDelegate` on the main
+        // thread at launch and must not block it on a network call.
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+            runCatching {
+                val replayed = PendingOps.replay(NetworkModule.sduiApi, SessionStore.uid(), DeviceIdentity.deviceId())
+                if (replayed > 0) PushTrace.log("pendingops:replayed=$replayed")
+            }
+        }
+        // The socket tier's client half. Installed here because this is already
+        // the app-start hook Swift calls, and because `UserSyncBridge` lives in
+        // iosMain where `LiveStreamManager` is visible — `UserStateSync` is
+        // common code and cannot reach either.
+        UserSyncBridge.installStreamHandler()
+    }
 
     // ── App lifecycle ───────────────────────────────────────────────────────
 

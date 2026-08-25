@@ -10,7 +10,9 @@ import com.stationly.core.model.UserSelection
 import com.stationly.core.model.sdui.UserProfileResponse
 import com.stationly.core.model.user.Board
 import com.stationly.core.model.user.WidgetPlacement
+import com.stationly.app.platform.DeviceIdentity
 import com.stationly.core.platform.Platform
+import com.stationly.core.session.SessionStore
 import com.stationly.core.repository.UserSettings
 import com.stationly.core.repository.UserStateRepository
 import com.stationly.core.service.NetworkModule
@@ -50,7 +52,15 @@ object UserStateSync {
     const val ACCOUNT_REMOVED_FLAG = "account_removed_notice"
 
     val repository: UserStateRepository by lazy {
-        UserStateRepository(NetworkModule.sduiApi, Platform.sqlStorage)
+        UserStateRepository(
+            NetworkModule.sduiApi,
+            Platform.sqlStorage,
+            // Handed down because `core` cannot reach `DeviceIdentity` — it needs
+            // the iOS App Group and Android's own prefs file, so it lives here.
+            // It is what lets the server's `user.sync` fan-out skip this device
+            // after this device is the one that made the change.
+            DeviceIdentity.deviceId(),
+        )
     }
 
     /**
@@ -100,6 +110,12 @@ object UserStateSync {
      * "the session ended" is never signalled by the state simply going away.
      */
     suspend fun resetForNewSession() {
+        // Point the per-account stores at whoever is signed in NOW, before
+        // anything reads them. Called on both edges — logout and the login
+        // restore — because both are session boundaries and a store left bound
+        // to the previous account hands their arrangement to the next person.
+        DreamSettings.bindAccount(SessionStore.uid())
+
         // Drops the in-memory copy and re-reads for whoever is signed in now.
         // It does NOT wipe the disk: that is what makes signing back in on this
         // device restore the arrangement rather than reset it.

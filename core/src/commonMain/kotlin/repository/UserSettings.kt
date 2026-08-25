@@ -1,4 +1,5 @@
 package com.stationly.core.repository
+import com.stationly.core.session.SessionStore
 
 import com.stationly.core.model.user.BoardConfig
 import com.stationly.core.model.user.HomeLayout
@@ -364,5 +365,15 @@ object UserSettings {
         Unit
     }
 
-    private const val UID_KEY = "firebase_user_uid"
+    /**
+     * The signed-in account id.
+     *
+     * ⚠️ NOT its own string. [SessionStore] is the one declaration of every
+     * identity key, and this used to be one of TWELVE spellings of the same
+     * literal across four modules and two languages — which is how two readers
+     * came to disagree about whether anyone was signed in, in one process.
+     * Referencing it keeps this file's local name (every call site below reads
+     * better for it) without adding a thirteenth place for the string to drift.
+     */
+    private val UID_KEY = SessionStore.Key.UID.storageKey
 }

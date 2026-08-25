@@ -510,6 +510,15 @@ class AuthBridge {
         // this says the ending is ours. Every deliberate teardown reaches
         // Firebase through here, so this one line covers all of them.
         expectingSignOut = true
+        // Forget that this device was ever registered for push.
+        //
+        // FIRST, and unconditionally, because everything below it can fail and
+        // this must not be skipped when something does. The backend deletes this
+        // device's row as part of the sign-out, so a cached "already registered"
+        // signature would suppress the re-registration on the next sign-in and
+        // leave the device with no push address at all. See
+        // `DevicePushCoordinator.release()` for the full sequence.
+        DevicePushCoordinator.release()
         try? Auth.auth().signOut()
         GIDSignIn.sharedInstance.signOut()
         clearUserInfo()
@@ -808,6 +817,39 @@ class AuthBridge {
         // only reader and it is gone (2026-08-23). It stays in `clearUserInfo`
         // below so devices that already wrote it are swept on the next sign-out.
         ud.synchronize()
+
+        // ── Re-register for push, because a sign-in is the ONLY moment that
+        //    reliably needs it and the only one nothing was watching ──
+        //
+        // The pair to `DevicePushCoordinator.release()` in `logout()`. Sign-out
+        // deletes this device's row on the backend; sign-in recreates it through
+        // `startSession` and deliberately writes NO token fields, because only
+        // `/device/register` may write those. So between those two events the
+        // device is signed in, visible in its account, and completely
+        // unreachable — a state that produces no error anywhere, because a
+        // token-less device is not a failure, it simply never matches an
+        // audience.
+        //
+        // Nothing was closing that window. `register()` has three call sites —
+        // the APNs token callback (launch only), `didBecomeActive`, and an
+        // account change inside that same foreground handler — and a sign-out
+        // followed by a sign-in without backgrounding the app hits NONE of them.
+        // MEASURED on the connected iPhone: after `POST /user/logout` the server
+        // log showed the sign-in's `/user/sync/profile` and not one
+        // `/device/register`, and the recreated row had no `appToken`,
+        // `widgetToken` or `environment`.
+        //
+        // Clearing the stale signature in `logout()` was necessary and is not
+        // sufficient: it makes the NEXT registration go through instead of being
+        // elided as unchanged, but something still has to ask for one.
+        //
+        // Cheap to call from here even though this also runs on every auth-state
+        // restore and every token refresh: `register()` skips a POST whose body
+        // is unchanged, so after the first one following a session change every
+        // other call costs a dictionary comparison. That is exactly the division
+        // of labour the signature cache is for — `release()` decides when it is
+        // stale, this decides when to ask.
+        DevicePushCoordinator.register()
     }
 
     private func clearUserInfo() {
