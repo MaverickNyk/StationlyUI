@@ -1,10 +1,8 @@
 package com.stationly.app.ui.summary.components
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -12,49 +10,36 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.TrendingDown
 import androidx.compose.material.icons.automirrored.outlined.TrendingUp
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Warning
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import com.stationly.app.ui.common.LocalOpenUrl
 import com.stationly.app.ui.theme.LocalThemeTokens
-import com.stationly.app.ui.theme.TflAmber
 import com.stationly.app.ui.util.rememberMinuteTick
-import com.stationly.core.util.StationlyFormatters
-import com.stationly.core.util.TflLineColors
+import com.stationly.core.util.LineStatusRanker
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.Instant
@@ -69,7 +54,7 @@ import kotlinx.datetime.toLocalDateTime
 /**
  * Compose-Multiplatform port of the Android
  * `ui/summary/components/ExploreSection.kt`. Two cards under the boards:
- *   - network status (disruption count → opens a per-line status dialog)
+ *   - network status (disruption count → opens a per-line status sheet)
  *   - TfL fares (peak / off-peak with a "until HH:mm" countdown)
  *
  * Every label is SDUI-driven through the same `strings` (homeConfig) map and
@@ -79,10 +64,10 @@ import kotlinx.datetime.toLocalDateTime
  * has no `java.time`).
  */
 private val LONDON: TimeZone = TimeZone.of("Europe/London")
-private val MORNING_PEAK_START: LocalTime = LocalTime(6, 30)
-private val MORNING_PEAK_END:   LocalTime = LocalTime(9, 30)
-private val EVENING_PEAK_START: LocalTime = LocalTime(16, 0)
-private val EVENING_PEAK_END:   LocalTime = LocalTime(19, 0)
+internal val MORNING_PEAK_START: LocalTime = LocalTime(6, 30)
+internal val MORNING_PEAK_END:   LocalTime = LocalTime(9, 30)
+internal val EVENING_PEAK_START: LocalTime = LocalTime(16, 0)
+internal val EVENING_PEAK_END:   LocalTime = LocalTime(19, 0)
 
 // UK Bank Holidays (England & Wales) — fallback when the homeConfig
 // "explore.fares.bankHolidays" CSV is empty. Source: https://www.gov.uk/bank-holidays
@@ -93,16 +78,21 @@ private val FALLBACK_UK_BANK_HOLIDAYS: Set<LocalDate> = listOf(
     "2027-08-30", "2027-12-27", "2027-12-28",
 ).map(LocalDate::parse).toSet()
 
-private data class FareState(val isPeak: Boolean, val untilLabel: String)
+internal data class FareState(val isPeak: Boolean, val untilLabel: String)
 
 @Composable
 fun StationExploreSection(
     lineStatuses: Map<String, String> = emptyMap(),
-    strings: Map<String, String> = emptyMap()
+    strings: Map<String, String> = emptyMap(),
+    modifier: Modifier = Modifier,
 ) {
-    val disruptions = remember(lineStatuses) {
-        lineStatuses.values.count { !it.trim().lowercase().startsWith("good service") }
-    }
+    // Parsed ONCE, here, and shared by the card and the sheet behind it — see
+    // [NetworkStatus]. The card used to run its own `startsWith("good
+    // service")` count, so one closure shared by four sub-surface lines
+    // announced "4 Disruptions" over a sheet that then showed one event; the
+    // fix made them agree but did the same grouping and sorting twice.
+    val status = remember(lineStatuses, strings) { buildNetworkStatus(lineStatuses, strings) }
+    val summary = remember(status, strings) { networkSummary(status, strings) }
 
     val nowMs by rememberMinuteTick()
     val bankHolidays = remember(strings["explore.fares.bankHolidays"]) {
@@ -117,79 +107,93 @@ fun StationExploreSection(
         )
     }
 
-    var showDialog by remember { mutableStateOf(false) }
-    var showStatusDialog by remember { mutableStateOf(false) }
+    var showFares by remember { mutableStateOf(false) }
+    var showStatus by remember { mutableStateOf(false) }
+
+    // Derived from the theme, so it is stable between theme changes — it was
+    // recomputing a luminance every minute tick along with everything else in
+    // this section.
+    val background = MaterialTheme.colorScheme.background
+    val isDark = remember(background) { background.luminance() < 0.5f }
+
+    val tokens = LocalThemeTokens.current
 
     // NO "Network" heading. On a home screen whose whole point is fitting one
     // viewport, a label costs a line of height to name two cards that already
     // say what they are — a warning triangle over "2 Disruptions" needs no
     // header. The height it frees goes to the board.
-    Column {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(IntrinsicSize.Min),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            val disruptionLabel = strings["explore.disruptions_label"] ?: "Disruption"
-            ExploreCard(
-                icon = if (disruptions == 0) Icons.Outlined.CheckCircle else Icons.Outlined.Warning,
-                title = if (disruptions == 0) strings["explore.good_service"] ?: "Good Service"
-                        else "$disruptions $disruptionLabel${if (disruptions > 1) "s" else ""}",
-                subtitle = if (disruptions == 0) strings["explore.good_service_sub"] ?: "All lines running normally"
-                           else strings["explore.disruptions_sub"] ?: "Delays on network",
-                accentColor = if (disruptions == 0) LocalThemeTokens.current.live
-                              else LocalThemeTokens.current.error,
-                onClick = if (lineStatuses.isNotEmpty()) { { showStatusDialog = true } } else null,
-                modifier = Modifier.weight(1f).fillMaxHeight()
-            )
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        ExploreCard(
+            // Three states, not two. A closure and a minor delay used to
+            // share one red triangle, which is the opposite of the rule the
+            // rest of the app follows: amber means a train is still coming.
+            icon = when (summary.tone) {
+                LineStatusRanker.Tone.GREEN -> Icons.Outlined.CheckCircle
+                LineStatusRanker.Tone.AMBER -> Icons.Outlined.Info
+                LineStatusRanker.Tone.RED   -> Icons.Outlined.Warning
+            },
+            title = summary.title,
+            subtitle = summary.subtitle,
+            accentColor = networkAccent(summary.tone),
+            // Tappable as soon as there is anything to show. It used to be
+            // inert while `lineStatuses` was empty — which is exactly the
+            // moment on a cold launch when a user taps it — and a dead card
+            // reads as a broken one.
+            onClick = if (summary.hasData) { { showStatus = true } } else null,
+            modifier = Modifier.weight(1f).fillMaxHeight()
+        )
 
-            val fareTitle = if (fareState.isPeak)
-                strings["explore.fares.peak.title"] ?: "Peak Hours"
-            else
-                strings["explore.fares.offpeak.title"] ?: "Off-Peak"
+        val fareTitle = if (fareState.isPeak)
+            strings["explore.fares.peak.title"] ?: "Peak Hours"
+        else
+            strings["explore.fares.offpeak.title"] ?: "Off-Peak"
 
-            // Short form, because the subtitle now gets ONE line.
-            //
-            // "Cheaper fares · until tomorrow 06:30" wrapped to two lines and
-            // made the card taller than it needed to be. The "cheaper/pricier"
-            // half is already carried by the title ("Off-Peak") and the arrow
-            // icon, so dropping it loses nothing — the fact worth keeping is the
-            // time it changes. The full explanation is one tap away in the fare
-            // dialog.
-            //
-            // New keys rather than the old `*_prefix` ones: a backend still
-            // serving the long prefix would re-introduce the wrap.
-            val farePrefix = if (fareState.isPeak)
-                strings["explore.fares.peak.subtitle_short"] ?: "Until "
-            else
-                strings["explore.fares.offpeak.subtitle_short"] ?: "Until "
+        // Short form, because the subtitle now gets ONE line.
+        //
+        // "Cheaper fares · until tomorrow 06:30" wrapped to two lines and
+        // made the card taller than it needed to be. The "cheaper/pricier"
+        // half is already carried by the title ("Off-Peak") and the arrow
+        // icon, so dropping it loses nothing — the fact worth keeping is the
+        // time it changes. The full explanation is one tap away in the fare
+        // sheet.
+        //
+        // New keys rather than the old `*_prefix` ones: a backend still
+        // serving the long prefix would re-introduce the wrap.
+        val farePrefix = if (fareState.isPeak)
+            strings["explore.fares.peak.subtitle_short"] ?: "Until "
+        else
+            strings["explore.fares.offpeak.subtitle_short"] ?: "Until "
 
-            ExploreCard(
-                icon = if (fareState.isPeak) Icons.AutoMirrored.Outlined.TrendingUp else Icons.AutoMirrored.Outlined.TrendingDown,
-                title = fareTitle,
-                subtitle = farePrefix + fareState.untilLabel,
-                accentColor = if (fareState.isPeak) LocalThemeTokens.current.error
-                              else LocalThemeTokens.current.live,
-                onClick = { showDialog = true },
-                modifier = Modifier.weight(1f).fillMaxHeight()
-            )
-        }
-    }
-
-    if (showDialog) {
-        FareInfoDialog(
-            isPeak = fareState.isPeak,
-            strings = strings,
-            onDismiss = { showDialog = false }
+        ExploreCard(
+            icon = if (fareState.isPeak) Icons.AutoMirrored.Outlined.TrendingUp
+                   else Icons.AutoMirrored.Outlined.TrendingDown,
+            title = fareTitle,
+            subtitle = farePrefix + fareState.untilLabel,
+            accentColor = if (fareState.isPeak) tokens.error else tokens.live,
+            onClick = { showFares = true },
+            modifier = Modifier.weight(1f).fillMaxHeight()
         )
     }
 
-    if (showStatusDialog) {
-        LineStatusDialog(
-            lineStatuses = lineStatuses,
+    if (showFares) {
+        FareSheet(
+            fareState = fareState,
             strings = strings,
-            onDismiss = { showStatusDialog = false }
+            onDismiss = { showFares = false }
+        )
+    }
+
+    if (showStatus) {
+        LineStatusSheet(
+            status = status,
+            strings = strings,
+            isDark = isDark,
+            onDismiss = { showStatus = false }
         )
     }
 }
@@ -204,7 +208,11 @@ private fun ExploreCard(
     onClick: (() -> Unit)? = null,
 ) {
     Surface(
-        modifier = if (onClick != null) modifier.clickable(onClick = onClick) else modifier,
+        modifier = if (onClick != null) {
+            modifier.clickable(role = Role.Button, onClick = onClick)
+        } else {
+            modifier
+        },
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.06f))
@@ -213,32 +221,47 @@ private fun ExploreCard(
         // has to fit one viewport, so every dp it gives up is a dp the
         // departures get. The icon and title carry the meaning; the padding was
         // just air.
+        //
+        // ── On weight ──
+        // The title was `bodyMedium` at `FontWeight.Bold`, which put the pair
+        // of cards at nearly the same visual weight as the departure rows
+        // above them. They are not that important: they are two secondary
+        // facts under the board, and shouting them made the screen feel like
+        // it had three headlines competing. Title steps down to Medium at a
+        // fixed 13sp, and the ACCENT carries the urgency instead — colour is
+        // the cheaper signal, and it is already saying the same thing.
+        //
+        // Sizes are literal rather than typography roles because both cards
+        // must agree to the dp: they share a row height, so a role that
+        // resolves differently under an SDUI text scale would make one card
+        // taller than its twin.
         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             Icon(
                 icon,
                 contentDescription = null,
                 tint = accentColor,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(14.dp)
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = title,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                fontSize = 13.sp,
+                lineHeight = 17.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(1.dp))
+            Spacer(Modifier.height(2.dp))
             Text(
                 text = subtitle,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelSmall,
-                lineHeight = MaterialTheme.typography.labelSmall.lineHeight,
+                fontSize = 11.sp,
+                lineHeight = 14.sp,
                 // ONE line, always. A wrapping subtitle silently changes the
                 // card's height, and both cards share a row height — so one of
                 // them wrapping made the pair taller. Truncated here, in full in
-                // the dialog behind the tap.
+                // the sheet behind the tap.
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -246,301 +269,18 @@ private fun ExploreCard(
     }
 }
 
-@Composable
-private fun FareInfoDialog(
-    isPeak: Boolean,
-    strings: Map<String, String>,
-    onDismiss: () -> Unit,
-) {
-    val openUrl = LocalOpenUrl.current
-    val accent = if (isPeak) LocalThemeTokens.current.error else LocalThemeTokens.current.live
-
-    val title = if (isPeak)
-        strings["explore.fares.dialog.title.peak"] ?: "Rush hour for your wallet too."
-    else
-        strings["explore.fares.dialog.title.offpeak"] ?: "You're riding cheap."
-
-    val body = if (isPeak)
-        strings["explore.fares.dialog.body.peak"]
-            ?: "Tap in now and you pay TfL's peak fare. Prices drop at 09:30, or 19:00 in the evening, and weekends are always off-peak.\n\nPeak windows are Mon–Fri, 06:30–09:30 and 16:00–19:00. Same trains either side, just a few quid lighter outside the window."
-    else
-        strings["explore.fares.dialog.body.offpeak"]
-            ?: "London's letting you off easy. Every Tube tap is at the off-peak rate right now.\n\nPeak fares only apply Mon–Fri, 06:30–09:30 and 16:00–19:00. Weekends and bank holidays are off-peak all day. Same trains, less money. Stationly approves."
-
-    val linkLabel = strings["explore.fares.dialog.link"] ?: "See TfL fares"
-    val dismissLabel = strings["explore.fares.dialog.dismiss"] ?: "Got it"
-    val tflUrl = strings["explore.fares.tflUrl"]
-        ?: "https://tfl.gov.uk/fares/find-fares/tube-and-rail-fares"
-
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            tonalElevation = 0.dp
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Box(
-                    modifier = Modifier.size(56.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = accent.copy(alpha = 0.14f),
-                        modifier = Modifier.matchParentSize()
-                    ) {}
-                    Icon(
-                        imageVector = if (isPeak) Icons.AutoMirrored.Outlined.TrendingUp
-                                      else Icons.AutoMirrored.Outlined.TrendingDown,
-                        contentDescription = null,
-                        tint = accent,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
-                Text(
-                    title,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    textAlign = TextAlign.Center
-                )
-                Text(
-                    body,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(Modifier.height(4.dp))
-                Button(
-                    onClick = { openUrl(tflUrl, "TfL Fares"); onDismiss() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor   = MaterialTheme.colorScheme.onPrimary,
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().height(50.dp)
-                ) {
-                    Text(linkLabel, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                }
-                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        dismissLabel,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.40f),
-                        fontSize = 14.sp,
-                    )
-                }
-            }
-        }
-    }
-}
-
-private data class LineStatusEntry(
-    val key: String,
-    val displayLine: String,
-    val mode: String,
-    val severity: String,
-    val reason: String,
-    val isGood: Boolean,
-)
-
-private fun parseLineStatuses(
-    raw: Map<String, String>,
-    strings: Map<String, String>,
-): List<LineStatusEntry> =
-    raw.entries
-        .map { (key, value) ->
-            val parts = key.split("_", limit = 2)
-            val mode = parts.getOrNull(0).orEmpty()
-            val line = parts.getOrNull(1).orEmpty()
-            val severity = if (value.contains(":")) value.substringBefore(":").trim() else value.trim()
-            val reason = if (value.contains(":")) value.substringAfter(":").trim() else ""
-            // Use the shared formatLinePrefix so the dialog stays in lockstep
-            // with the widget / dream labels driven by the same SDUI templates.
-            val displayLine = StationlyFormatters
-                .formatLinePrefix(mode, line, strings)
-                .ifEmpty { line.replaceFirstChar { it.uppercase() } }
-            val modeLabel = StationlyFormatters.formatModeName(mode, strings)
-            LineStatusEntry(
-                key = key,
-                displayLine = displayLine,
-                mode = modeLabel,
-                severity = severity,
-                reason = reason,
-                isGood = severity.lowercase().startsWith("good service"),
-            )
-        }
-        .sortedWith(compareBy({ it.isGood }, { it.displayLine.lowercase() }))
-
-@Composable
-private fun LineStatusDialog(
-    lineStatuses: Map<String, String>,
-    strings: Map<String, String>,
-    onDismiss: () -> Unit,
-) {
-    val entries = remember(lineStatuses, strings) { parseLineStatuses(lineStatuses, strings) }
-    val disruptedCount = entries.count { !it.isGood }
-    val allGood = disruptedCount == 0
-    val accent = if (allGood) LocalThemeTokens.current.live else LocalThemeTokens.current.error
-
-    val title = if (allGood)
-        strings["explore.status.dialog.title.good"] ?: "All running normally"
-    else
-        strings["explore.status.dialog.title.disrupted"]
-            ?: ("$disruptedCount " + (if (disruptedCount > 1) "lines are" else "line is") + " disrupted")
-
-    val body = if (allGood)
-        strings["explore.status.dialog.body.good"]
-            ?: "Every line you're watching is on time. We'll flag changes the moment TfL does."
-    else
-        strings["explore.status.dialog.body.disrupted"]
-            ?: "Here's the live picture from TfL across the lines you follow."
-
-    val dismissLabel = strings["explore.status.dialog.dismiss"] ?: "Got it"
-
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            tonalElevation = 0.dp,
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Box(
-                    modifier = Modifier.size(56.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = accent.copy(alpha = 0.14f),
-                        modifier = Modifier.matchParentSize(),
-                    ) {}
-                    Icon(
-                        imageVector = if (allGood) Icons.Outlined.CheckCircle else Icons.Outlined.Warning,
-                        contentDescription = null,
-                        tint = accent,
-                        modifier = Modifier.size(28.dp),
-                    )
-                }
-                Text(
-                    title,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    textAlign = TextAlign.Center,
-                )
-                Text(
-                    body,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    textAlign = TextAlign.Center,
-                )
-                if (entries.isNotEmpty()) {
-                    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 320.dp)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        entries.forEach { entry ->
-                            LineStatusRow(entry = entry, isDark = isDark)
-                        }
-                    }
-                }
-                Spacer(Modifier.height(4.dp))
-                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        dismissLabel,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.40f),
-                        fontSize = 14.sp,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LineStatusRow(entry: LineStatusEntry, isDark: Boolean) {
-    val lineColor = lineColorForTheme(entry.key.substringAfter('_', missingDelimiterValue = ""))
-    val statusColor = if (entry.isGood) LocalThemeTokens.current.live else LocalThemeTokens.current.error
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surface,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .clip(CircleShape)
-                        .background(lineColor),
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    entry.displayLine,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(8.dp))
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = statusColor.copy(alpha = 0.14f),
-                ) {
-                    Text(
-                        entry.severity,
-                        color = statusColor,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp,
-                        letterSpacing = 0.2.sp,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                    )
-                }
-            }
-
-            if (entry.reason.isNotBlank()) {
-                Text(
-                    entry.reason,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f),
-                    fontSize = 13.sp,
-                    lineHeight = 18.sp,
-                    textAlign = TextAlign.Start,
-                )
-            }
-        }
-    }
-}
+// ── Fare-window maths (kotlinx.datetime; Android original used java.time) ──
 
 /**
- * Line-identity colour for the status dialog dot. Reuses the compose
- * `TFL_LINE_COLORS` map (same package, defined in Board.kt) first, then falls
- * back to the shared `core` hex palette, then brand amber for bus / unknown.
+ * How far ahead the "next peak-charging day" search will walk.
+ *
+ * A guard, not a rule. The bank-holiday set is SDUI-supplied, and a CSV that
+ * happened to list every date in a fortnight would have spun this loop on the
+ * main thread forever — a frozen home screen with no error and no way out.
+ * Two weeks is well beyond the longest real run of non-charging days
+ * (Christmas), and giving up lands on a plain weekday rather than hanging.
  */
-private fun lineColorForTheme(lineId: String): Color {
-    if (lineId.isBlank()) return TflAmber
-    TFL_LINE_COLORS[lineId.lowercase()]?.let { return it }
-    TflLineColors.hexFor(lineId)?.let { hex ->
-        return Color(("ff" + hex.removePrefix("#")).toLong(16))
-    }
-    return TflAmber
-}
-
-// ── Fare-window maths (kotlinx.datetime; Android original used java.time) ──
+private const val MAX_DAYS_TO_NEXT_PEAK = 14
 
 private fun computeFareState(
     now: LocalDateTime,
@@ -564,8 +304,10 @@ private fun computeFareState(
         else -> {
             // Weekend, bank holiday, or weekday after 19:00 → next peak-charging day at 06:30.
             var d = date.plus(1, DateTimeUnit.DAY)
-            while (!isPeakChargingDay(d, bankHolidays)) {
+            var walked = 1
+            while (!isPeakChargingDay(d, bankHolidays) && walked < MAX_DAYS_TO_NEXT_PEAK) {
                 d = d.plus(1, DateTimeUnit.DAY)
+                walked++
             }
             LocalDateTime(d, MORNING_PEAK_START)
         }
@@ -582,11 +324,16 @@ private fun isPeakChargingDay(date: LocalDate, bankHolidays: Set<LocalDate>): Bo
 
 private fun parseBankHolidays(csv: String?): Set<LocalDate> {
     if (csv.isNullOrBlank()) return FALLBACK_UK_BANK_HOLIDAYS
-    return csv.splitToSequence(',')
+    val parsed = csv.splitToSequence(',')
         .map { it.trim() }
         .filter { it.isNotEmpty() }
         .mapNotNull { runCatching { LocalDate.parse(it) }.getOrNull() }
         .toSet()
+    // A CSV that is present but yields nothing — a format change, a typo, a
+    // placeholder — used to silently produce an EMPTY set, which makes every
+    // bank holiday a peak-charging day. Falling back to the baked-in list is
+    // wrong far less often than trusting a string we could not read.
+    return parsed.ifEmpty { FALLBACK_UK_BANK_HOLIDAYS }
 }
 
 private fun formatUntilLabel(now: LocalDateTime, change: LocalDateTime): String {
@@ -599,7 +346,7 @@ private fun formatUntilLabel(now: LocalDateTime, change: LocalDateTime): String 
     }
 }
 
-private fun formatHhMm(time: LocalTime): String {
+internal fun formatHhMm(time: LocalTime): String {
     val h = time.hour.toString().padStart(2, '0')
     val m = time.minute.toString().padStart(2, '0')
     return "$h:$m"
@@ -613,5 +360,4 @@ private fun shortDayName(day: DayOfWeek): String = when (day) {
     DayOfWeek.FRIDAY    -> "Fri"
     DayOfWeek.SATURDAY  -> "Sat"
     DayOfWeek.SUNDAY    -> "Sun"
-    else                -> day.name.take(3)
 }
