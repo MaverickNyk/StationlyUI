@@ -18,6 +18,7 @@ import androidx.navigation.compose.rememberNavController
 import com.stationly.app.ui.dream.DreamHost
 import com.stationly.app.ui.dream.DreamSettingsScreen
 import com.stationly.app.ui.summary.BoardFocus
+import com.stationly.app.ui.support.SupportMoment
 import com.stationly.app.ui.login.LoginScreen
 import com.stationly.app.ui.login.PlatformAuthProvider
 import com.stationly.app.ui.profile.ProfileScreen
@@ -310,6 +311,12 @@ fun AppNavigation(
                     pendingEditStation?.let { (stationId, _, _) ->
                         BoardFocus.restore(stationId)
                     }
+                    // A brand NEW board is the one moment the app has earned
+                    // the right to ask for anything. An edit is not: changing
+                    // the lines on a board you already have is maintenance, and
+                    // congratulating someone for it reads as the app applauding
+                    // its own use.
+                    if (pendingEditStation == null) SupportMoment.boardAdded()
                     navController.navigate("summary") {
                         popUpTo("summary") { inclusive = true }
                     }

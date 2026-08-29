@@ -20,6 +20,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.rounded.ArrowBackIosNew
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.Public
@@ -45,6 +46,10 @@ import com.stationly.app.platform.appVersionName
 import com.stationly.app.ui.common.LoadingOverlay
 import com.stationly.app.ui.common.StationlySpinner
 import com.stationly.app.ui.common.LocalOpenUrl
+import com.stationly.app.ui.support.LocalSupport
+import com.stationly.app.ui.support.SupportProfileCard
+import com.stationly.app.ui.support.SupporterAvatarBadge
+import com.stationly.app.ui.support.SupporterPill
 import com.stationly.app.ui.login.PlatformAuthProvider
 import com.stationly.app.ui.theme.DisplayFamily
 import com.stationly.app.ui.theme.LocalThemeTokens
@@ -118,6 +123,18 @@ fun ProfileScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val homeConfig = uiState.homeConfig
 
+    // Profile fetches home-config independently of the home screen, and is
+    // reachable on a cold launch without ever having shown one. Feeding it here
+    // too is what makes the support card correct on first open rather than on
+    // second.
+    val supportVm = LocalSupport.current
+    LaunchedEffect(homeConfig) { supportVm?.onHomeConfig(homeConfig) }
+    // Collected HERE, not inside the list: `item {}` bodies run in
+    // LazyListScope, which is not a composable scope, so a collect inside one
+    // would not compile — and hoisting it also means the list content lambda
+    // reads plain values rather than re-collecting on every scroll.
+    val supportState = supportVm?.uiState?.collectAsStateWithLifecycle()?.value
+
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
     var showEditNameDialog by remember { mutableStateOf(false) }
 
@@ -156,6 +173,12 @@ fun ProfileScreen(
                         loading = uiState.isIdentityLoading,
                         email = uiState.email,
                         photoUrl = uiState.photoUrl,
+                        // Passed rather than read inside: the state is already
+                        // collected above for the support card, and collecting
+                        // it twice on one screen would be two subscriptions to
+                        // the same flow.
+                        isSupporter = supportState?.isSupporter == true,
+                        supporterLabel = supportState?.config?.badge?.label ?: "Supporter",
                         onEditName = { showEditNameDialog = true }
                     )
                 }
@@ -172,6 +195,36 @@ fun ProfileScreen(
                 // and two entrances to one destination is one too many. The SDUI
                 // keys `profile.screensaver.title` / `.subtitle` are no longer
                 // read by anything.
+
+                // ── Support ──────────────────────────────────────────
+                //
+                // ABOVE "About Stationly" on purpose. About is where the app
+                // explains itself; this is where the person reading that
+                // explanation can act on it, and putting it underneath would
+                // bury the one thing on this screen that is a request rather
+                // than a setting.
+                //
+                // Rendered only when there is something to render: a payable
+                // config, or a badge to show. A support card with no checkout
+                // behind it is worse than none.
+                if (supportVm != null && supportState != null && supportState.showProfileCard) {
+                    item {
+                        Spacer(Modifier.height(4.dp))
+                        SectionHeader(
+                            supportState.strings["support_money.profile.section"] ?: "Support Stationly",
+                            Icons.Rounded.Favorite,
+                        )
+                    }
+                    item {
+                        SupportProfileCard(
+                            config = supportState.config,
+                            strings = supportState.strings,
+                            isSupporter = supportState.isSupporter,
+                            contributionCount = supportState.contributionCount,
+                            onOpen = { supportVm.openSheet() },
+                        )
+                    }
+                }
 
                 item {
                     Spacer(Modifier.height(4.dp))
@@ -363,6 +416,8 @@ private fun ProfileHeaderCard(
     loading: Boolean,
     email: String,
     photoUrl: String?,
+    isSupporter: Boolean,
+    supporterLabel: String,
     onEditName: () -> Unit
 ) {
     Surface(color = Surface1, shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, White08)) {
@@ -386,6 +441,24 @@ private fun ProfileHeaderCard(
                         }
                     }
                 }
+                // The same mark as the home screen's top bar, at the size this
+                // avatar can carry. It sits INSIDE the amber ring's 96dp box so
+                // it reads as attached to the photo rather than floating beside
+                // it, and the ring colour is the card's own surface so it cuts a
+                // clean hole in whatever is behind it.
+                SupporterAvatarBadge(
+                    visible = isSupporter,
+                    size = 30.dp,
+                    ringColor = Surface1,
+                    modifier = Modifier.align(Alignment.BottomEnd),
+                )
+            }
+            // Named, once, under the avatar. The mark alone says "something",
+            // and a first-time supporter has no way to learn what unless the
+            // word appears beside it at least somewhere on this screen.
+            if (isSupporter) {
+                Spacer(Modifier.height(10.dp))
+                SupporterPill(label = supporterLabel)
             }
             Spacer(Modifier.height(16.dp))
             if (loading) {

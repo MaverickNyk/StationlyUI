@@ -22,7 +22,15 @@ import com.stationly.app.ui.common.LoadingOverlay
 import com.stationly.app.ui.common.LocalOpenUrl
 import com.stationly.app.ui.common.OpenUrl
 import com.stationly.app.ui.login.PlatformAuthProvider
+import com.stationly.app.ui.support.SupportReturn
+import com.stationly.app.ui.support.dismissCheckout
+import com.stationly.app.ui.support.SupportSheet
+import com.stationly.app.ui.support.SupportThanksOverlay
+import com.stationly.app.ui.support.SupportViewModel
+import com.stationly.app.ui.support.LocalSupport
 import com.stationly.app.ui.theme.StationlyThemeHost
+import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 /**
  * A link open in Stationly's own browser.
@@ -115,8 +123,38 @@ fun App(
      */
     val busyLabel by AppBusy.label.collectAsState()
 
+    /**
+     * The support feature's state, held at the ROOT rather than per screen.
+     *
+     * Three things force it up here. The thank-you has to survive the user
+     * tapping through to Profile mid-celebration. The checkout return arrives
+     * from a platform callback that knows nothing about which screen is showing.
+     * And the banner's decision — may we ask at all — is read by the home screen
+     * but written by the profile card, which is a different subtree.
+     */
+    val supportViewModel: SupportViewModel = viewModel {
+        SupportViewModel(uidProvider = { authProvider.currentUserUid() })
+    }
+    val support by supportViewModel.uiState.collectAsState()
+
+    // A return from checkout, raised by the platform's deep-link callback.
+    val pendingThanks by SupportReturn.thanks.collectAsState()
+    LaunchedEffect(pendingThanks?.nonce) {
+        pendingThanks?.let {
+            // FIRST. The deep link activates the app but leaves the checkout
+            // sheet presented over it, so everything below this line would
+            // otherwise happen behind Safari, invisibly.
+            dismissCheckout()
+            supportViewModel.onCheckoutReturned(it)
+            SupportReturn.consume()
+        }
+    }
+
     StationlyThemeHost {
-        CompositionLocalProvider(LocalOpenUrl provides openUrl) {
+        CompositionLocalProvider(
+            LocalOpenUrl provides openUrl,
+            LocalSupport provides supportViewModel,
+        ) {
             Box(Modifier.fillMaxSize()) {
                 AppNavigation(
                     authProvider    = authProvider,
@@ -142,6 +180,32 @@ fun App(
                         )
                     }
                 }
+
+                // ── Support ──────────────────────────────────────────────
+                //
+                // Both live at the root, above every screen and above the
+                // in-app browser, because both outlive the screen that raised
+                // them: the sheet is opened from Profile and from the home
+                // banner, and the thank-you must not be cancelled by whatever
+                // navigation the user does while it is playing.
+                if (support.sheetVisible) {
+                    SupportSheet(
+                        config = support.config,
+                        strings = support.strings,
+                        contributionCount = support.contributionCount,
+                        onPay = { tier -> supportViewModel.payTier(tier) },
+                        onDismiss = { supportViewModel.closeSheet() },
+                    )
+                }
+
+                SupportThanksOverlay(
+                    visible = support.thanksAmountMinor != null,
+                    config = support.config,
+                    strings = support.strings,
+                    amountMinor = support.thanksAmountMinor ?: 0,
+                    contributionCount = support.contributionCount,
+                    onDismiss = { supportViewModel.onThanksDismissed() },
+                )
             }
         }
     }

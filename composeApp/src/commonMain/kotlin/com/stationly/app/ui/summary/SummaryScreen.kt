@@ -101,6 +101,11 @@ import com.stationly.app.ui.common.AnnouncementBanner
 import com.stationly.app.ui.common.AppBusy
 import com.stationly.app.ui.common.NotificationPermissionEffect
 import com.stationly.app.ui.common.OfflineBanner
+import com.stationly.app.ui.support.LocalSupport
+import com.stationly.app.ui.support.SupportBanner
+import com.stationly.app.ui.support.SupportMoment
+import com.stationly.app.ui.support.SupporterAvatarBadge
+import com.stationly.app.ui.support.formatMoney
 import com.stationly.app.ui.summary.components.BoardSection
 import com.stationly.app.ui.summary.components.StationBoard
 import com.stationly.app.ui.summary.components.EmptyStationsState
@@ -826,6 +831,45 @@ fun SummaryScreen(
                 onDismiss = { viewModel.clearError() }
             )
 
+            // ── Support, after a board lands ─────────────────────────────
+            //
+            // Bottom-aligned and floating, so it never enters the measured
+            // chrome group above and never resizes the board. See the note on
+            // `SupportBanner` for why that matters here specifically.
+            val support = LocalSupport.current
+            val supportState = support?.uiState?.collectAsStateWithLifecycle()?.value
+            LaunchedEffect(homeConfig) { support?.onHomeConfig(homeConfig) }
+
+            // Derived once, and used by both the threshold check and the
+            // banner's own copy. One card is one STATION, so someone tracking
+            // three lines at one stop has one board, not three.
+            val boardCount = remember(selections) {
+                selections.map { it.groupingId }.distinct().size
+            }
+
+            val boardAdded by SupportMoment.boardAdded.collectAsStateWithLifecycle()
+            LaunchedEffect(boardAdded?.nonce) {
+                if (boardAdded != null) {
+                    support?.onBoardAdded(boardCount)
+                    SupportMoment.consumeBoardAdded()
+                }
+            }
+
+            if (support != null && supportState != null) {
+                SupportBanner(
+                    visible = supportState.bannerVisible,
+                    icon = supportState.config.icon,
+                    strings = supportState.strings,
+                    boardCount = boardCount,
+                    amountLabel = supportState.config.defaultTier
+                        ?.let { formatMoney(it.amountMinor, supportState.config.currency) }
+                        ?: "",
+                    onSupport = { support.openSheet() },
+                    onDismiss = { support.onBannerDismissed() },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
+
             // Bottom decorative glow
             Box(
                 modifier = Modifier
@@ -878,27 +922,60 @@ private fun SummaryTopBar(
             }
         },
         navigationIcon = {
+            // The supporter mark rides the avatar the user already has, rather
+            // than adding a permanent element to a top bar with three controls
+            // in it. Read from the composition local here instead of threaded
+            // down as a parameter: the top bar is composed near the top of the
+            // screen and the support state is collected near the bottom, and
+            // hoisting the collection that far up would recompose the whole
+            // screen on every change to a badge that lives in one corner.
+            //
+            // `show_on_home` is the server's switch, so the mark can be turned
+            // off without a release if it ever reads as bragging.
+            val supportVm = LocalSupport.current
+            val supportState = supportVm?.uiState?.collectAsStateWithLifecycle()?.value
+            val showBadge = supportState?.isSupporter == true &&
+                supportState.config.badge.showOnHome
+
             IconButton(onClick = onNavigateToProfile, modifier = Modifier.padding(start = 8.dp)) {
-                if (photoUrl != null) {
-                    coil3.compose.AsyncImage(
-                        model = photoUrl,
-                        contentDescription = "Profile",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(onBackground.copy(alpha = 0.05f), CircleShape)
-                    )
-                } else {
-                    Surface(
-                        shape = CircleShape,
-                        color = onBackground.copy(alpha = 0.05f),
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(userInitial, color = primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Box(contentAlignment = Alignment.Center) {
+                    if (photoUrl != null) {
+                        coil3.compose.AsyncImage(
+                            model = photoUrl,
+                            contentDescription = "Profile",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(onBackground.copy(alpha = 0.05f), CircleShape)
+                        )
+                    } else {
+                        Surface(
+                            shape = CircleShape,
+                            color = onBackground.copy(alpha = 0.05f),
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(userInitial, color = primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            }
                         }
                     }
+                    // The ring is the top bar's own background, so the disc
+                    // reads as sitting ON the avatar rather than as part of
+                    // whatever a Google profile picture has in that corner.
+                    //
+                    // NO OFFSET. `IconButton` clips its content to a circle for
+                    // the ripple, and the bottom-end corner is already the
+                    // furthest point from that circle's centre that any content
+                    // reaches. The old `offset(2.dp, 2.dp)` pushed the badge's
+                    // outer edge past the clip, which sheared the side off the
+                    // heart. See `SupporterAvatarBadge`.
+                    SupporterAvatarBadge(
+                        visible = showBadge,
+                        size = 15.dp,
+                        ringColor = MaterialTheme.colorScheme.background,
+                        modifier = Modifier.align(Alignment.BottomEnd),
+                    )
                 }
             }
         },

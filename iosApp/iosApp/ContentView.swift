@@ -165,6 +165,35 @@ struct ContentView: View {
                     return
                 }
                 #endif
+                // ── Back from checkout ──
+                //
+                // `https://…/api/v1/support-money/return` bounced the browser
+                // here: Stripe's redirect only accepts https, so the backend
+                // serves a page that immediately jumps to this scheme. The
+                // query values are the browser's, not Stripe's, so they decide
+                // what the thank-you SAYS and nothing else — the authoritative
+                // record is the signature-verified webhook, written server-side.
+                //
+                // Handed to `SupportReturn` rather than through
+                // `ComposeHostView`, for the same reason as a widget tap: the
+                // constructor route reaches a cold start only, and this arrives
+                // at an app that is not merely alive but was never backgrounded
+                // — SFSafariViewController was presented over it.
+                if url.host == "support-money" {
+                    let q = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+                    let value: (String) -> String? = { name in
+                        q?.first(where: { $0.name == name })?.value
+                    }
+                    deepLinkLog.notice("support return tier=\(value("tier") ?? "-", privacy: .public)")
+                    PushTraceSwift.log("deeplink support-money tier=\(value("tier") ?? "-")")
+                    SupportReturn.shared.deliver(
+                        amount: value("amount"),
+                        tier: value("tier"),
+                        sessionId: value("session_id")
+                    )
+                    return
+                }
+
                 guard url.host == "home",
                       let station = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                           .queryItems?.first(where: { $0.name == "station" })?.value,

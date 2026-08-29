@@ -413,6 +413,61 @@ data class UserProfileResponse(
      * client holding zero simply fetches once — the safe direction.
      */
     val stateRev: Long = 0L,
+    /**
+     * Voluntary-contribution status, or null for an account that has never
+     * contributed.
+     *
+     * ## Why this lives in `core` at all
+     * The support feature was built to avoid this module on purpose: its whole
+     * payload rides `home-config` as a JSON string precisely so the module the
+     * frozen Android app depends on would not have to change. That held while
+     * the badge was device-local. It stops holding the moment the badge has to
+     * be the same on every device the account is signed in to, because the only
+     * thing every device already fetches and trusts is this response.
+     *
+     * The change is additive and costs Android nothing: it is one optional
+     * field with a default, referenced by no Android code, so that module
+     * compiles unchanged and an older client simply ignores a key it has never
+     * heard of.
+     */
+    val supportMoney: SupportMoneyView? = null,
+)
+
+/**
+ * What the server says about this account's contributions.
+ *
+ * ## One boolean, decided once, by the side that owns the number
+ * [isActiveSupporter] is not derived here and must not be: the badge window is
+ * a server setting (`SUPPORT_MONEY_BADGE_DURATION_DAYS`), and a client applying
+ * its own copy of it would disagree with the server the moment an operator moved
+ * it. So the window is never sent. The client renders the boolean.
+ *
+ * ## There is no history here and there is not going to be
+ * [entries] carries the single most recent contribution, or nothing. The server
+ * keeps every row so payments can be reconciled against Stripe; the client is
+ * given one, because one is all the badge is measured from. An array rather than
+ * a nullable object so the shape does not change when it is empty.
+ */
+@Serializable
+data class SupportMoneyView(
+    /** Is the Supporter mark showing right now? The only field the UI branches on. */
+    val isActiveSupporter: Boolean = false,
+    /** Lifetime contributions. Powers "you've done this {n} times" copy only. */
+    val count: Int = 0,
+    /** The most recent contribution, or empty. Never more than one. */
+    val entries: List<SupportMoneyEntry> = emptyList(),
+)
+
+/** One contribution, as the server serves it. */
+@Serializable
+data class SupportMoneyEntry(
+    /** The Stripe Checkout Session id. Present so a support query can be traced; never displayed. */
+    val txnId: String = "",
+    /** Epoch ms the contribution landed. */
+    val atMs: Long = 0L,
+    /** Minor units. */
+    val amountMinor: Int = 0,
+    val currency: String = "GBP",
 )
 
 /** Body of `POST /user/sync/boards`. */
