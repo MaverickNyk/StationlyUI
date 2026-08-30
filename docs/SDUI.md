@@ -462,8 +462,11 @@ value travelled rather than the test agreeing with itself.
 
 **Use `:core:testDebugUnitTest`**, not `allTests`, which dies on wasmJs.
 
-**Not visually confirmed:** the four widget configuration panels. This phone has
-no CLI screenshot path, so they want a human eye.
+**Visually confirmed on device 2026-08-31:** the four widget configuration
+panels (signed out, no stations, choose a station, removed station), by hand.
+This phone has no CLI screenshot path, so that check cannot be automated — a
+future change to `widget.state.*` or to `EmptyWidgetView` needs the same manual
+pass.
 
 ---
 
