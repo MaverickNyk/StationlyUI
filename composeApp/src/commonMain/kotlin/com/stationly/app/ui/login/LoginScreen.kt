@@ -865,7 +865,17 @@ private fun ResetConfirmContent(
     uiState: LoginUiState,
     onInputChanged: (String, String) -> Unit,
     onSubmit: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    /**
+     * The password rule, from the view model rather than repeated here.
+     *
+     * This form used to carry its own `length < 6` and its own message. Once the
+     * rule became something the backend can move, two copies meant the submit
+     * path would honour a served length while the form in front of the user kept
+     * refusing at six — the field saying one thing and the button doing another.
+     */
+    passwordMinLength: Int,
+    passwordTooShort: String,
 ) {
     var newPassword     by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
@@ -880,7 +890,7 @@ private fun ResetConfirmContent(
     fun validate(): Boolean {
         val errs = mutableMapOf<String, String>()
         if (newPassword.isEmpty())       errs["new"]     = "Please enter a new password"
-        else if (newPassword.length < 6) errs["new"]     = "Password must be at least 6 characters"
+        else if (newPassword.length < passwordMinLength) errs["new"] = passwordTooShort
         if (confirmPassword.isEmpty())   errs["confirm"] = "Please confirm your password"
         else if (newPassword != confirmPassword) errs["confirm"] = "Passwords don't match"
         fieldErrors = errs
@@ -1063,7 +1073,9 @@ fun LoginScreen(
                     if (uiState.error != null) viewModel.clearError()
                 },
                 onSubmit = { viewModel.confirmPasswordReset(onNavigateToLogin) },
-                onBack = { viewModel.clearFormState(); onNavigateToLogin() }
+                onBack = { viewModel.clearFormState(); onNavigateToLogin() },
+                passwordMinLength = viewModel.passwordMinLength,
+                passwordTooShort = viewModel.passwordTooShortMessage
             )
         }
 

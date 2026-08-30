@@ -34,20 +34,11 @@ fun rememberTickedPredictions(predictions: List<PredictionDisplay>): List<Predic
 }
 
 /**
- * How long after a train's `targetEpochMs` before we consider it departed
- * and drop it from the visible board.
- *
- * Kept as an alias so existing call sites read unchanged; [BoardTicker] owns the
- * value, and the Swift widget mirrors it there.
- */
-const val DEPARTED_GRACE_MS: Long = BoardTicker.DEPARTED_GRACE_MS
-
-/**
  * Filter+tick step shared by [rememberTickedPredictions] and any non-Compose
  * caller:
  *
- *   1. Drop predictions whose targetEpochMs is more than [DEPARTED_GRACE_MS]
- *      in the past.
+ *   1. Drop predictions whose targetEpochMs is more than the policy's departed
+ *      grace period in the past.
  *   2. Re-derive each surviving row's eta from targetEpochMs against [nowMs].
  *   3. Per-platform monotonic bump — two trains on the same platform cannot
  *      share a label; if the rounding collides them the later one shifts up

@@ -1,5 +1,8 @@
 package com.stationly.core.util
 
+import com.stationly.core.config.BoardPolicy
+import com.stationly.core.config.BoardPolicyStore
+
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.user.BoardConfig
 import com.stationly.core.model.user.BoardPin
@@ -108,8 +111,16 @@ object MultiLineBoardProcessor {
      * this cap and the board re-applies it per block, so there is no point in
      * the two differing. Mirrored by hand as `WidgetRefreshService.perPlatformCap`
      * in Swift for the widget's own REST refresh — change both together.
+     *
+     * ## One name, deliberately
+     * This was briefly a pair — a `ROW_RESERVE` constant beside a `rowReserve`
+     * getter — and that is a trap rather than a convenience: both compile at
+     * every call site, they read almost identically, and picking the constant
+     * silently ignores whatever the backend served. The compiled default now
+     * lives in [BoardPolicy.rowReserve] with the rest of the board policy, and
+     * this is the only way to ask.
      */
-    const val ROW_RESERVE = 10
+    val rowReserve: Int get() = BoardPolicyStore.current.rowReserve
 
     /**
      * One tracked line/direction at this station, plus its departures.
@@ -182,7 +193,7 @@ object MultiLineBoardProcessor {
             val destination: String,
             val eta: String,
             /**
-             * A retained already-departed train — see [BoardTicker.DEPARTED_LABEL].
+             * A retained already-departed train — see [BoardPolicy.departedLabel].
              *
              * Carried as a flag rather than left for the renderer to infer from
              * the label, so "has it left" stays a single decision made in
@@ -437,10 +448,15 @@ object MultiLineBoardProcessor {
      * There is no user-chosen sort in here any more, and [BoardConfig]
      * carries the argument for why not.
      */
-    private fun groupOrder(isBus: Boolean, prefs: BoardConfig, nowMs: Long?): Comparator<Block> =
+    private fun groupOrder(
+        isBus: Boolean,
+        prefs: BoardConfig,
+        nowMs: Long?,
+        policy: BoardPolicy,
+    ): Comparator<Block> =
         unassignedLast(isBus)
             .thenBy { if (isPinned(it, isBus, prefs.pin)) 0 else 1 }
-            .thenBy { block -> soonestArrival(block, nowMs) }
+            .thenBy { block -> soonestArrival(block, nowMs, policy) }
 
     /**
      * When this block's next train arrives, for ordering — ignoring the ones
@@ -457,10 +473,10 @@ object MultiLineBoardProcessor {
      * [nowMs] null means "do not judge" — the pre-[BoardTicker] behaviour, kept
      * for callers that have already shed their departed rows.
      */
-    private fun soonestArrival(block: Block, nowMs: Long?): Long {
+    private fun soonestArrival(block: Block, nowMs: Long?, policy: BoardPolicy): Long {
         val targets = block.value.mapNotNull { (p, _) -> p.targetEpochMs }
         if (nowMs == null) return targets.minOrNull() ?: Long.MAX_VALUE
-        val cutoff = nowMs - BoardTicker.DEPARTED_GRACE_MS
+        val cutoff = nowMs - policy.departedGraceMs
         return targets.filter { it >= cutoff }.minOrNull() ?: Long.MAX_VALUE
     }
 
@@ -583,7 +599,11 @@ object MultiLineBoardProcessor {
      *   the wire. Anything below 1 means "draw them all", which is what a caller
      *   that already capped at grouping time wants.
      */
-    fun rowsFrom(groups: List<Group>, rowCap: Int = 0): List<Row> {
+    fun rowsFrom(
+        groups: List<Group>,
+        rowCap: Int = 0,
+        policy: BoardPolicy = BoardPolicyStore.current,
+    ): List<Row> {
         // NOT padded to the floor: a board with nothing on it at all is the
         // caller's to describe ("No departures right now"), and three blank rows
         // would pre-empt that with something that looks like a broken board.
@@ -623,7 +643,7 @@ object MultiLineBoardProcessor {
                         } else "",
                         destination = departure.prediction.destination,
                         eta = departure.prediction.eta,
-                        departed = BoardTicker.isGone(departure.prediction),
+                        departed = BoardTicker.isGone(departure.prediction, policy),
                     )
                 )
                 departureCount++
@@ -796,6 +816,12 @@ object MultiLineBoardProcessor {
          * before it gets here.
          */
         nowMs: Long? = null,
+        /**
+         * The board rules in force. Only the ordering reads it, and only for the
+         * grace period that decides whether a block's soonest train has already
+         * left — see [soonestArrival].
+         */
+        policy: BoardPolicy = BoardPolicyStore.current,
     ): List<Group> {
         // Flatten first, keeping each departure's feed so the row can name its
         // line and the header can collect the group's lines and directions.
@@ -804,7 +830,7 @@ object MultiLineBoardProcessor {
 
         return all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus) }
             .entries
-            .sortedWith(groupOrder(isBus, prefs, nowMs))
+            .sortedWith(groupOrder(isBus, prefs, nowMs, policy))
             .map { (key, entries) ->
                 val sorted = entries.sortedBy { (p, _) -> StationlyFormatters.arrivalSortKey(p) }
                 val directions = sorted.mapTo(mutableSetOf()) { (_, feed) -> feed.direction }

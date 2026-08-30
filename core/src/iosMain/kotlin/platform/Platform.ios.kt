@@ -3,6 +3,9 @@ package com.stationly.core.platform
 import com.stationly.core.session.PendingOps
 
 import com.stationly.core.config.AppConfig
+import com.stationly.core.config.BoardPolicyStore
+import com.stationly.core.config.ConfigKeys
+import com.stationly.core.config.RemoteConfig
 import com.stationly.core.model.PredictionsPayload
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.UserSelection
@@ -337,7 +340,7 @@ private const val GOOD_SERVICE = "Good Service"
  * Read here so the widget's fallback copy can honour SDUI overrides without
  * putting a network call on a board write — see [IosWidgetManager.publishFallbackCopy].
  */
-private const val HOME_CONFIG_CACHE_KEY = "home_config_strings_cache"
+private val HOME_CONFIG_CACHE_KEY = ConfigKeys.HOME_CONFIG_CACHE_KEY
 
 class IosWidgetManager : WidgetManager {
 
@@ -648,7 +651,7 @@ class IosWidgetManager : WidgetManager {
         }
         val groups = MultiLineBoardProcessor.buildGroups(
             feeds, isBus, prefs,
-            rowCap = MultiLineBoardProcessor.ROW_RESERVE,
+            rowCap = MultiLineBoardProcessor.rowReserve,
             // Block order is fixed HERE, at write time, and the extension never
             // re-orders (that would move pages under the user's arrows). So the
             // one thing it has to get right is not leading the board with a
@@ -983,6 +986,11 @@ class IosWidgetManager : WidgetManager {
 
         val strings = decodeHomeConfig(raw)
 
+        // Resolved rather than read field by field, so the widget's copy is the
+        // identical object the app is rendering with — clamps, the freshness
+        // coupling and all. See BoardPolicyStore.resolve.
+        val policy = BoardPolicyStore.resolve(strings)
+
         // Every kind, resolved once.
         //
         // ⚠️ `substituteAge = false`. These are TEMPLATES, not resolved states:
@@ -1013,6 +1021,36 @@ class IosWidgetManager : WidgetManager {
                 BoardFallbackDefaults.LATE_NIGHT_END),
             earlyMorningEndMin = minutesOfDay(strings["board.fallback.earlyMorningEnd"],
                 BoardFallbackDefaults.EARLY_MORNING_END),
+
+            // The tick rules, from the SAME map and already clamped by
+            // BoardPolicyStore. Not re-read from `strings` here: a second
+            // resolution is a second chance to clamp differently, and the whole
+            // point of the store is that the app and its widget cannot end up
+            // ticking the same board by different rules.
+            departedGraceMs = policy.departedGraceMs,
+            retentionMinAgeMs = policy.retentionMinAgeMs,
+            departedLabel = policy.departedLabel,
+            freshMs = policy.freshMs,
+            staleMs = policy.staleMs,
+
+            // The four "this widget has no board" states. Resolved here rather
+            // than in the extension for the same reason as everything else in
+            // this table: the widget never fetches, so whatever it knows the app
+            // put there. See WidgetStateCopy for the wording rules.
+            configCopy = WidgetStateCopy.STATES.associateWith { state ->
+                WidgetFallbackCopy(
+                    title = RemoteConfig.text(
+                        strings, WidgetStateCopy.keyFor(state, "title"),
+                        default = WidgetStateCopy.defaultTitle(state), maxLen = 40,
+                    ),
+                    detail = listOf(
+                        RemoteConfig.text(
+                            strings, WidgetStateCopy.keyFor(state, "detail"),
+                            default = WidgetStateCopy.defaultDetail(state), maxLen = 90,
+                        ),
+                    ),
+                )
+            },
         )
 
         encode(WidgetFallbackTable.serializer(), table)?.let {

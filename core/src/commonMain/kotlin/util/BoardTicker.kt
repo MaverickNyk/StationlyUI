@@ -1,5 +1,7 @@
 package com.stationly.core.util
 
+import com.stationly.core.config.BoardPolicy
+import com.stationly.core.config.BoardPolicyStore
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.util.MultiLineBoardProcessor.Group
 import com.stationly.core.util.MultiLineBoardProcessor.GroupedDeparture
@@ -27,7 +29,7 @@ import com.stationly.core.util.MultiLineBoardProcessor.GroupedDeparture
  * design:
  *
  * ```
- * raw departures (SQL, ROW_RESERVE deep)
+ * raw departures (SQL, rowReserve deep)
  *   → MultiLineBoardProcessor.buildGroups   grouping · block order · headers
  *   → BoardTicker.tick                      shed · retain · bump · cap
  *   → rows
@@ -48,46 +50,17 @@ import com.stationly.core.util.MultiLineBoardProcessor.GroupedDeparture
 object BoardTicker {
 
     /**
-     * How long after its arrival time a train stays on the board.
+     * The numbers this file used to hold now live in [BoardPolicy], because they
+     * are judgements the backend can retune without an app release — see that
+     * file for what each one is and why it has the value it has.
      *
-     * 30s — the dwell of a tube train at a London platform, i.e. what the
-     * physical indicator does: the "Due" line stays up while the train sits with
-     * its doors open.
+     * Every entry point below takes a policy as a DEFAULTED parameter rather
+     * than reading [BoardPolicyStore] inline. That is deliberate and it is what
+     * keeps this file testable: the tick has to be a pure function of (rows,
+     * now, policy) or its test suite has to reach into global state to say what
+     * a board should read. Callers that have no opinion get the resolved policy;
+     * tests hand one in.
      */
-    const val DEPARTED_GRACE_MS: Long = 30_000L
-
-    /**
-     * How old the payload must be before a departed row is worth holding.
-     *
-     * "Gone" means "this board is stale, refresh me". Retaining unconditionally
-     * makes it mean "this platform is quiet", which is a different and much less
-     * useful statement — and it produces rows reading "Gone" immediately after a
-     * successful refresh, because a fresh payload legitimately contains trains
-     * that have already left (TfL reports them, and SQL holds the previous
-     * fetch's rows too).
-     *
-     * So: fresh payload, no retention — a platform showing two trains instead of
-     * three is the truth, and the board says so by being short rather than by
-     * lying. Old payload, hold the last known departures — there the label is
-     * accurate, and it is the only signal the user gets that they are looking at
-     * history.
-     *
-     * 60s because that is already what "fresh" means on this board: it is the
-     * footer's amber threshold in [StaleColor]. A second definition of freshness
-     * with a different number is exactly the drift that leaves two parts of one
-     * board disagreeing about the same payload.
-     */
-    const val RETENTION_MIN_AGE_MS: Long = 60_000L
-
-    /**
-     * The label a retained departed train carries.
-     *
-     * "Gone" over "Departed" on purpose: the ETA column is the widest-label
-     * column and it sets where the destination truncates, so four characters
-     * keeps long station names intact where eight would clip them. It also
-     * matches the rhythm of "Due" — both are states, not durations.
-     */
-    const val DEPARTED_LABEL: String = "Gone"
 
     /**
      * Whether this row is a retained already-departed train.
@@ -95,10 +68,18 @@ object BoardTicker {
      * Read off the LABEL rather than re-derived from `targetEpochMs`, so the
      * "has it left" decision lives in exactly one place (this file, where the
      * grace period and the retention rules are). A second copy in a renderer
-     * would drift the first time either constant moved. Same rule as Swift's
+     * would drift the first time either moved. Same rule as Swift's
      * `DepartureRow.hasDeparted`.
+     *
+     * Takes the policy because the label is now configurable: compared against a
+     * stale default, a board relabelled by config would report every retained
+     * row as live, and the renderer would count "Left" rows down as though their
+     * trains were still coming.
      */
-    fun isGone(prediction: PredictionDisplay): Boolean = prediction.eta == DEPARTED_LABEL
+    fun isGone(
+        prediction: PredictionDisplay,
+        policy: BoardPolicy = BoardPolicyStore.current,
+    ): Boolean = prediction.eta == policy.departedLabel
 
     /**
      * The board re-derived for [nowMs] — the only entry point a surface should
@@ -126,7 +107,7 @@ object BoardTicker {
      * either way.
      *
      * @param payloadAgeMs how old the data behind [groups] is. Gates retention —
-     *   see [RETENTION_MIN_AGE_MS]. Pass 0 to never retain.
+     *   see [BoardPolicy.retentionMinAgeMs]. Pass 0 to never retain.
      * @param displayRows how many rows each block will SHOW. Not applied here —
      *   it is the retention target. Retained rows sort to the top of their
      *   block, so holding more of them than the renderer will draw would push
@@ -137,6 +118,7 @@ object BoardTicker {
         nowMs: Long,
         payloadAgeMs: Long,
         displayRows: Int,
+        policy: BoardPolicy = BoardPolicyStore.current,
     ): List<Group> {
         if (groups.isEmpty()) return groups
 
@@ -144,13 +126,13 @@ object BoardTicker {
         // PAYLOAD rather than of any one block: every block here was written by
         // the same fetch and is therefore exactly as old as every other.
         val keepAtLeast =
-            if (displayRows > 0 && payloadAgeMs >= RETENTION_MIN_AGE_MS) displayRows else 0
+            if (displayRows > 0 && payloadAgeMs >= policy.retentionMinAgeMs) displayRows else 0
 
         return groups.mapNotNull { group ->
             // Retention is a per-BLOCK question even though its gate is global:
             // a busy Platform 1 with six upcoming trains says nothing about
             // whether a quiet Platform 2 should hold its last departures.
-            val ticked = tickBlock(group.departures, nowMs, keepAtLeast)
+            val ticked = tickBlock(group.departures, nowMs, keepAtLeast, policy)
             if (ticked.isEmpty()) null else group.copy(departures = ticked)
         }
     }
@@ -167,18 +149,22 @@ object BoardTicker {
         rows: List<PredictionDisplay>,
         nowMs: Long,
         keepAtLeast: Int = 0,
+        policy: BoardPolicy = BoardPolicyStore.current,
     ): List<PredictionDisplay> =
-        tickBlock(rows.map { GroupedDeparture(prediction = it, line = "", lineShort = "") }, nowMs, keepAtLeast)
-            .map { it.prediction }
+        tickBlock(
+            rows.map { GroupedDeparture(prediction = it, line = "", lineShort = "") },
+            nowMs, keepAtLeast, policy,
+        ).map { it.prediction }
 
     /** One block's rows at [nowMs], with its own shortfall backfilled. */
     private fun tickBlock(
         rows: List<GroupedDeparture>,
         nowMs: Long,
         keepAtLeast: Int,
+        policy: BoardPolicy,
     ): List<GroupedDeparture> {
         if (rows.isEmpty()) return rows
-        val cutoff = nowMs - DEPARTED_GRACE_MS
+        val cutoff = nowMs - policy.departedGraceMs
 
         // Rows with no target cannot be judged, so they count as live and pass
         // through untouched — a malformed timestamp must never delete a row.
@@ -201,7 +187,7 @@ object BoardTicker {
             emptyList()
         }
 
-        return bump(retained + live, nowMs)
+        return bump(retained + live, nowMs, policy)
     }
 
     /**
@@ -218,14 +204,18 @@ object BoardTicker {
      * exists to remove. They also sit OUT of the bump, so a train that has
      * already left can never shift a real one's label.
      */
-    private fun bump(rows: List<GroupedDeparture>, nowMs: Long): List<GroupedDeparture> {
-        val cutoff = nowMs - DEPARTED_GRACE_MS
+    private fun bump(
+        rows: List<GroupedDeparture>,
+        nowMs: Long,
+        policy: BoardPolicy,
+    ): List<GroupedDeparture> {
+        val cutoff = nowMs - policy.departedGraceMs
         fun hasLeft(row: GroupedDeparture): Boolean {
             val target = row.prediction.targetEpochMs ?: return false
             return target < cutoff
         }
 
-        val gone = rows.filter(::hasLeft).map { it.relabelled(DEPARTED_LABEL, isDue = false) }
+        val gone = rows.filter(::hasLeft).map { it.relabelled(policy.departedLabel, isDue = false) }
         val remaining = rows.filterNot(::hasLeft)
 
         if (remaining.size <= 1) {

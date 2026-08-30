@@ -1,5 +1,6 @@
 package util
 
+import com.stationly.core.config.BoardPolicy
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.user.BoardConfig
 import com.stationly.core.util.BoardTicker
@@ -60,7 +61,7 @@ class BoardTickerTest {
         return BoardTicker.tick(
             groups = MultiLineBoardProcessor.buildGroups(
                 feeds, isBus, prefs,
-                rowCap = MultiLineBoardProcessor.ROW_RESERVE,
+                rowCap = MultiLineBoardProcessor.rowReserve,
                 nowMs = nowMs,
             ),
             nowMs = nowMs,
@@ -191,7 +192,7 @@ class BoardTickerTest {
     @Test
     fun `retention starts exactly at the freshness threshold`() {
         val now = justAfterDeparture(3)
-        val onTheEdge = now - BoardTicker.RETENTION_MIN_AGE_MS
+        val onTheEdge = now - BoardPolicy.DEFAULT.retentionMinAgeMs
         assertTrue(
             boardAt(fiveDepartures, now, payloadWrittenAt = onTheEdge).any { it.second == "Gone" },
             "a payload exactly RETENTION_MIN_AGE_MS old is old enough to hold its departures",
@@ -297,7 +298,7 @@ class BoardTickerTest {
         val groups = BoardTicker.tick(
             groups = MultiLineBoardProcessor.buildGroups(
                 feeds, isBus = false, prefs = BoardConfig(),
-                rowCap = MultiLineBoardProcessor.ROW_RESERVE, nowMs = now,
+                rowCap = MultiLineBoardProcessor.rowReserve, nowMs = now,
             ),
             nowMs = now, payloadAgeMs = now - t0, displayRows = 3,
         )

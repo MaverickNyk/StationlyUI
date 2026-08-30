@@ -114,6 +114,7 @@ import com.stationly.core.model.UserSelection
 import com.stationly.core.util.LineShortNames
 import com.stationly.core.util.LineStatusRanker
 import com.stationly.core.model.user.BoardConfig
+import com.stationly.core.config.BoardPolicyStore
 import com.stationly.core.util.BoardTicker
 import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.StationlyFormatters
@@ -400,8 +401,21 @@ fun StationBoard(
     // needs it: the blocks, the collapsed header's legs, and the panel.
     val isBus = MultiLineBoardProcessor.isBus(mode)
 
+    // The board rules in force, read ONCE for this composition rather than at
+    // each of the four call sites below.
+    //
+    // Not a micro-optimisation — it is a correctness requirement. The store can
+    // adopt a new policy the moment a home-config fetch returns, and these four
+    // steps have to agree with each other: rows are LABELLED by the tick and
+    // then FILTERED by their label. Read separately, a refresh landing between
+    // the two would have the tick write "Gone" while the filter looked for
+    // "Left", and every retained row would be handed to the hero as a live
+    // train. One value for one pass; the next minute tick picks up the change
+    // for all of them together.
+    val policy = BoardPolicyStore.current
+
     // Footer freshness is the most recent update across the card's lines, and
-    // also what gates the "Gone" retention — see BoardTicker.RETENTION_MIN_AGE_MS.
+    // also what gates the "Gone" retention — see BoardPolicy.retentionMinAgeMs.
     val lastUpdated = remember(sections) { sections.maxOf { it.lastUpdated } }
 
     // ── The board, at this minute ──
@@ -424,8 +438,9 @@ fun StationBoard(
                 feeds = sections.toRawFeeds(),
                 isBus = isBus,
                 prefs = boardPrefs,
-                rowCap = MultiLineBoardProcessor.ROW_RESERVE,
+                rowCap = MultiLineBoardProcessor.rowReserve,
                 nowMs = nowMin,
+                policy = policy,
             ),
             nowMs = nowMin,
             // A board that has never updated has no age to speak of — treat it
@@ -433,6 +448,7 @@ fun StationBoard(
             // resurrecting rows that were never there.
             payloadAgeMs = if (lastUpdated <= 0L) 0L else (nowMin - lastUpdated).coerceAtLeast(0L),
             displayRows = boardPrefs.rowCap,
+            policy = policy,
         )
     }
 
@@ -440,7 +456,7 @@ fun StationBoard(
     // see BoardTicker.tick. The blocks keep their reserves so the hero below can
     // still find a line's next train even when the board has no room to draw it.
     val unifiedRows = remember(tickedGroups, boardPrefs) {
-        MultiLineBoardProcessor.rowsFrom(tickedGroups, rowCap = boardPrefs.rowCap)
+        MultiLineBoardProcessor.rowsFrom(tickedGroups, rowCap = boardPrefs.rowCap, policy = policy)
     }
 
     // Each line's live departures, put back where they came from — see
@@ -449,7 +465,7 @@ fun StationBoard(
     val liveByBoard = remember(tickedGroups) {
         tickedGroups.asSequence()
             .flatMap { it.departures.asSequence() }
-            .filterNot { BoardTicker.isGone(it.prediction) }
+            .filterNot { BoardTicker.isGone(it.prediction, policy) }
             .groupBy { it.boardKey }
             .mapValues { (_, rows) ->
                 StationlyFormatters.sortPredictions(rows.map { it.prediction })

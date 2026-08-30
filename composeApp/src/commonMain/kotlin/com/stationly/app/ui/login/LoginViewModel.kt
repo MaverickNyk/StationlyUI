@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.stationly.app.platform.DeviceIdentity
 import com.stationly.app.sync.UserStateSync
+import com.stationly.app.ui.util.HomeConfigCache
 import com.stationly.core.activity.ActivityEvents
 import com.stationly.core.activity.ActivityLog
 import com.stationly.core.session.PendingOps
@@ -48,7 +49,37 @@ class LoginViewModel(
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
 
+    /**
+     * The words this flow uses, from the SDUI config map — see [AuthStrings].
+     *
+     * Read through a property rather than captured once, because it is replaced
+     * when the config arrives and every message below is composed at the moment
+     * it is shown. Starts at the compiled defaults, which is the correct answer
+     * on a cold install and an offline launch alike.
+     */
+    private var strings: AuthStrings = AuthStrings.DEFAULT
+
+    /**
+     * The raw config map behind [strings], for the auth screens that render SDUI
+     * copy of their own rather than error text.
+     *
+     * A StateFlow because a screen has to REDRAW when the config lands, and a
+     * plain field cannot tell it to. `VerifyEmailScreen` used to fetch
+     * `getHomeConfig()` itself, which meant the auth flow made the same request
+     * twice within a second of itself — once here for the error wording and once
+     * there for the screen's labels — and each half could be looking at a
+     * different payload.
+     */
+    private val _configStrings = MutableStateFlow<Map<String, String>>(emptyMap())
+    val configStrings: StateFlow<Map<String, String>> = _configStrings.asStateFlow()
+
     init {
+        // Wording first, so anything raised below is already using the served
+        // copy where there is any. Both are launched rather than awaited — the
+        // notice and the config are independent, and a slow config fetch must
+        // not hold up an explanation the user is owed immediately.
+        loadStrings()
+
         // Tell the user WHY they are looking at a sign-in screen.
         //
         // An account deleted on another device signs this one out on its own,
@@ -64,13 +95,58 @@ class LoginViewModel(
             val removed = runCatching { Platform.storageManager.loadDurable(flag) }.getOrNull()
             if (removed == "1") {
                 runCatching { Platform.storageManager.removeDurable(flag) }
+                // `strings` is read HERE, not captured above: this coroutine and
+                // loadStrings' race, and whichever wins, the notice should show
+                // the best wording available at the moment it is raised.
                 _uiState.value = _uiState.value.copy(
-                    accountRemovedNotice =
-                        "Your account was deleted on another device, so you've been signed out here."
+                    accountRemovedNotice = strings.accountRemoved
                 )
             }
         }
     }
+
+    /**
+     * Load the config map this screen's wording comes from.
+     *
+     * Cache first, network second, and the order matters here more than it does
+     * on the home screen: this is the FIRST screen a new install shows, so
+     * waiting for a fetch would mean every new user sees the compiled copy no
+     * matter what the backend says — which is most of the reason for serving it.
+     *
+     * Failures are silent by design. A login screen that cannot reach the config
+     * endpoint has strictly more useful things to tell the user than that, and
+     * [AuthStrings] falls back to the compiled words on its own.
+     */
+    private fun loadStrings() {
+        viewModelScope.launch {
+            runCatching { HomeConfigCache.load() }
+                .getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { strings = AuthStrings(it); _configStrings.value = it }
+            runCatching { sduiApi.getHomeConfig().strings }
+                .getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let {
+                    strings = AuthStrings(it)
+                    _configStrings.value = it
+                    // Seed the shared cache too. The login screen is often the
+                    // first thing to fetch this on a new install, and leaving it
+                    // unsaved would make the home screen fetch the identical
+                    // payload again seconds later.
+                    HomeConfigCache.save(it)
+                }
+        }
+    }
+
+    /**
+     * The password rule, for the screens that validate inline before submitting.
+     *
+     * Exposed rather than duplicated: `LoginScreen` used to carry its own
+     * `password.length < 6` and its own message, so a served length would have
+     * moved the check in this file and left the form still refusing at six.
+     */
+    val passwordMinLength: Int get() = strings.passwordMinLength
+    val passwordTooShortMessage: String get() = strings.passwordTooShort
 
     fun loadLayout(screenType: String) {
         // If layout already loaded for same screen type, just reset form state
@@ -94,7 +170,7 @@ class LoginViewModel(
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false, isBackendOffline = true,
-                    error = "Could not connect to Stationly servers."
+                    error = strings.backendUnreachable
                 )
             }
         }
@@ -163,7 +239,7 @@ class LoginViewModel(
                 "reset-confirm" -> {
                     val code = resetOobCode ?: _uiState.value.resetOobCode ?: ""
                     if (code.isBlank()) {
-                        _uiState.value = _uiState.value.copy(isAuthenticating = false, error = "Invalid reset link")
+                        _uiState.value = _uiState.value.copy(isAuthenticating = false, error = strings.resetLinkInvalid)
                         return@launch
                     }
                     authProvider.confirmPasswordReset(code, password)
@@ -404,8 +480,7 @@ class LoginViewModel(
             runCatching { authProvider.signOut() }
             _uiState.value = _uiState.value.copy(
                 isAuthenticating = false,
-                error = "We couldn't reach our servers to finish signing you in. " +
-                        "Please check your connection and try again."
+                error = strings.syncRollback
             )
             return false
         }
@@ -413,7 +488,7 @@ class LoginViewModel(
 
     fun onForgotPasswordSubmit(email: String, onSent: () -> Unit) {
         if (email.isBlank()) {
-            _uiState.value = _uiState.value.copy(error = "Enter your email to receive a reset link.")
+            _uiState.value = _uiState.value.copy(error = strings.resetEmailRequired)
             return
         }
         viewModelScope.launch {
@@ -427,7 +502,7 @@ class LoginViewModel(
             } catch (_: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isAuthenticating = false,
-                    error = "Could not send reset link. Please try again."
+                    error = strings.resetSendFailed
                 )
             }
         }
@@ -436,8 +511,8 @@ class LoginViewModel(
     fun confirmPasswordReset(onSuccess: () -> Unit) {
         val oobCode  = _uiState.value.resetOobCode ?: return
         val password = _uiState.value.inputs["newPassword"] ?: ""
-        if (password.length < 6) {
-            _uiState.value = _uiState.value.copy(error = "Password must be at least 6 characters.")
+        if (password.length < strings.passwordMinLength) {
+            _uiState.value = _uiState.value.copy(error = strings.passwordTooShort)
             return
         }
         viewModelScope.launch {
@@ -454,8 +529,8 @@ class LoginViewModel(
                     val msg = when {
                         e.message?.contains("expired") == true ||
                         e.message?.contains("invalid") == true ->
-                            "This reset link has expired. Please request a new one."
-                        else -> "Could not reset password. Please try again."
+                            strings.resetLinkExpired
+                        else -> strings.resetFailed
                     }
                     _uiState.value = _uiState.value.copy(isAuthenticating = false, error = msg)
                 }
@@ -463,20 +538,29 @@ class LoginViewModel(
         }
     }
 
+    /**
+     * A raw provider error turned into something a person can act on.
+     *
+     * The MATCHING stays here and is not configurable, deliberately: which
+     * Firebase code means "wrong password" is a fact about Firebase, and a
+     * server able to re-point that at the "no such account" text could only make
+     * the app lie about what happened. The server owns the wording — see
+     * [AuthStrings] — and this owns which wording applies.
+     *
+     * The `else` branch still prefers the raw provider text over the generic
+     * line when there is any: an unrecognised error we pass through is at least
+     * true, while "Something went wrong" tells a user nothing they had not
+     * already worked out.
+     */
     private fun friendlyAuthError(raw: String): String = when {
         raw.containsAny("wrong-password", "invalid-credential", "INVALID_LOGIN_CREDENTIALS") ->
-            "Incorrect email or password. Try again or reset your password."
-        raw.containsAny("user-not-found", "no user record") ->
-            "No account found with this email. Create an account to get started."
-        raw.containsAny("email-already-in-use") ->
-            "This email is already registered. Sign in instead."
-        raw.containsAny("weak-password") ->
-            "Please use a stronger password (at least 6 characters)."
-        raw.containsAny("too-many-requests") ->
-            "Too many failed attempts. Please wait a moment and try again."
-        raw.containsAny("network") ->
-            "No internet connection. Check your connection and try again."
-        else -> raw.ifBlank { "Something went wrong. Please try again." }
+            strings.wrongPassword
+        raw.containsAny("user-not-found", "no user record") -> strings.userNotFound
+        raw.containsAny("email-already-in-use")             -> strings.emailInUse
+        raw.containsAny("weak-password")                    -> strings.weakPassword
+        raw.containsAny("too-many-requests")                -> strings.tooManyRequests
+        raw.containsAny("network")                          -> strings.noNetwork
+        else -> raw.ifBlank { strings.generic }
     }
 
     fun togglePasswordVisibility(field: String) {
@@ -491,7 +575,7 @@ class LoginViewModel(
             if (!authProvider.isLoggedIn()) {
                 _uiState.value = _uiState.value.copy(
                     isAuthenticating = false,
-                    error = "Your session expired. Please sign in again."
+                    error = strings.sessionExpired
                 )
                 return@launch
             }
@@ -508,7 +592,7 @@ class LoginViewModel(
             } else {
                 _uiState.value = _uiState.value.copy(
                     isAuthenticating = false,
-                    error = "Still not verified. Tap the link in the email and try again."
+                    error = strings.stillUnverified
                 )
             }
         }
@@ -542,7 +626,7 @@ class LoginViewModel(
                     .onSuccess { _uiState.value = _uiState.value.copy(error = null) }
                     .onFailure {
                         _uiState.value = _uiState.value.copy(
-                            error = "Couldn't resend right now. Please try again in a minute."
+                            error = strings.resendFailed
                         )
                     }
             }

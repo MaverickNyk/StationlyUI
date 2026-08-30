@@ -135,4 +135,17 @@ struct DepartureEntry: TimelineEntry {
     /// read and a `Calendar` lookup back on the archiving path, per entry, per
     /// widget, for a table that only needs reading once per build.
     var fallback: BoardFallbackResult? = nil
+
+    /// What to say when this widget has no board at all — signed out, no
+    /// stations, never configured, or configured for a station since removed.
+    ///
+    /// Carried on the entry rather than read in the view, because the view runs
+    /// inside WidgetKit's archiving pass: reading the App Group and decoding the
+    /// table there would do it once per entry per widget to produce the identical
+    /// four sentences. Resolved once per timeline build alongside `fallback`,
+    /// which is read from the same table for the same reason.
+    ///
+    /// Unlike `fallback` this is NOT per-entry — a widget that has no station at
+    /// 08:00 still has none at 08:40 — so one value covers the batch.
+    var configCopy: [String: BoardFallbackCopy] = BoardFallbackTable.configDefaults
 }

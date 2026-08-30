@@ -315,7 +315,12 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         // Built ONCE for the batch: the table is read once and the payload's
         // status is split once, because only the clock and the row count move
         // between entries. See `BoardFallbackResolver`.
-        let fallback = BoardFallbackResolver(data, table: AppGroupStorage.shared.readFallbackTable())
+        // ONE read of the published table for the whole batch: it also carries
+        // the tick rules now, and both halves are properties of the payload
+        // rather than of any entry.
+        let table = AppGroupStorage.shared.readFallbackTable()
+        let fallback = BoardFallbackResolver(data, table: table)
+        let tickPolicy = table.tickPolicy
 
         /// One entry, with its rows ticked to its own minute and its empty-board
         /// message chosen on its own clock.
@@ -325,12 +330,14 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
         /// "Service ended for tonight" by 00:02, and a payload that is fresh at
         /// the first entry is stale by the seventh.
         func entry(at date: Date) -> DepartureEntry {
-            let ticked = data.ticked(at: date, keepAtLeast: slotsPerPlatform)
+            let ticked = data.ticked(at: date, keepAtLeast: slotsPerPlatform, policy: tickPolicy)
             return DepartureEntry(
                 date: date,
                 widgetData: ticked,
                 render: render,
-                fallback: fallback.result(hasDepartures: ticked.hasDepartures, at: date))
+                fallback: fallback.result(hasDepartures: ticked.hasDepartures, at: date),
+                configCopy: table.configCopy.isEmpty ? BoardFallbackTable.configDefaults
+                                                     : table.configCopy)
         }
 
         var entries: [DepartureEntry] = [entry(at: now)]

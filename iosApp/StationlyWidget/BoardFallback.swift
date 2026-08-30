@@ -60,6 +60,33 @@ struct BoardFallbackCopy: Decodable, Equatable {
     var detailLine: String { detail.first ?? "" }
 }
 
+/// How the board counts down, as the app resolved it.
+///
+/// Split out of the table so the tick layer takes what it uses and nothing else:
+/// `ticked(at:)` runs per timeline entry and has no business holding a copy
+/// dictionary. Mirrors Kotlin `BoardPolicy` — change one, change both.
+struct BoardTickPolicy: Equatable {
+    var departedGraceMs: Double = 30_000
+    var retentionMinAgeMs: Double = 60_000
+    var departedLabel: String = "Gone"
+
+    /// What ships in the binary, and what an unpublished table falls back to.
+    static let compiled = BoardTickPolicy()
+}
+
+/// The two boundaries of the "ago" chronometer's colour ladder.
+///
+/// `freshMs` is deliberately the same number as `BoardTickPolicy.retentionMinAgeMs`:
+/// the timer going grey and the rows going "Gone" are one statement about one
+/// payload. Kotlin's `BoardPolicyStore.resolve` is what keeps the pair together
+/// when only one of them is served.
+struct StaleLadder: Equatable {
+    var freshMs: Double = 60_000
+    var staleMs: Double = 180_000
+
+    static let compiled = StaleLadder()
+}
+
 /// The published table: every message, and the thresholds that select between
 /// them.
 struct BoardFallbackTable: Decodable {
@@ -70,6 +97,63 @@ struct BoardFallbackTable: Decodable {
     var lateNightStartMin: Int = 0
     var lateNightEndMin: Int = 270
     var earlyMorningEndMin: Int = 360
+
+    // ── Board policy ───────────────────────────────────────────────────────
+    //
+    // The tick rules, riding along with the copy because they come from the same
+    // home-config map, are published by the same function and are read at the
+    // same moment — once per timeline build. Kotlin's `WidgetFallbackTable`
+    // carries the matching fields; `BoardPolicy` in `core/config` is where each
+    // one is argued.
+    //
+    // Defaulted like everything else here, so an extension running against a
+    // table published before these existed keeps the compiled values rather than
+    // decoding to zeros — a `departedGraceMs` of 0 would shed every train the
+    // instant it was due.
+    var departedGraceMs: Double = 30_000
+    var retentionMinAgeMs: Double = 60_000
+    var departedLabel: String = "Gone"
+    var freshMs: Double = 60_000
+    var staleMs: Double = 180_000
+
+    /// What a widget says when it has no board to draw for a CONFIGURATION
+    /// reason, keyed by `WidgetData.EmptyReason`'s state name.
+    ///
+    /// Separate from `copy` above, which covers a board that exists and is empty.
+    /// These four cover a widget with no board at all. They ride the same table
+    /// — one publish, one decode, one read per timeline build — but stay a
+    /// separate map so a board state can never answer for a configuration one.
+    var configCopy: [String: BoardFallbackCopy] = [:]
+
+    /// The copy for one configuration state, falling through to the compiled
+    /// words when the app has not published a table yet.
+    func config(for state: String) -> BoardFallbackCopy {
+        configCopy[state] ?? Self.configDefaults[state]
+            ?? BoardFallbackCopy(title: "", detail: [])
+    }
+
+    /// Transcribed from Kotlin `WidgetStateCopy`, which is also where the wording
+    /// rules behind them are argued. Reached only on a device whose app has never
+    /// written the table — a fresh install, or a widget added before the app was
+    /// first opened, which is precisely when `needsStation` is most likely.
+    static let configDefaults: [String: BoardFallbackCopy] = [
+        "SIGNED_OUT":    BoardFallbackCopy(title: "Signed out",      detail: ["Open Stationly to sign in"]),
+        "NO_STATIONS":   BoardFallbackCopy(title: "No stations yet", detail: ["Open Stationly to add one"]),
+        "NEEDS_STATION": BoardFallbackCopy(title: "Choose a station",
+                                           detail: ["Touch and hold, then tap Edit Widget"]),
+        "REMOVED":       BoardFallbackCopy(title: "Station removed",
+                                           detail: ["Not in your stations. Touch and hold, then tap Edit Widget"]),
+    ]
+
+    /// The tick rules alone, for the layer that only needs those.
+    var tickPolicy: BoardTickPolicy {
+        BoardTickPolicy(departedGraceMs: departedGraceMs,
+                        retentionMinAgeMs: retentionMinAgeMs,
+                        departedLabel: departedLabel)
+    }
+
+    /// The freshness ladder alone, for the "ago" chronometer.
+    var staleLadder: StaleLadder { StaleLadder(freshMs: freshMs, staleMs: staleMs) }
 
     // ── Last resort ──
     //
@@ -106,6 +190,13 @@ struct BoardFallbackResult: Equatable {
     let kind: BoardFallbackKind
     let title: String
     let detail: String
+
+    /// The chronometer's boundaries, carried from the published table.
+    ///
+    /// Here rather than read from the table at the view, because the view has
+    /// the result and not the table — and because this type already answers
+    /// `freshnessMatters`, which is the same question one level up.
+    let staleLadder: StaleLadder
 
     /// Whether the freshness colour ladder applies to the "ago" timer.
     ///
@@ -245,7 +336,8 @@ struct BoardFallbackResolver {
         let stored = table.copy(for: kind)
         return BoardFallbackResult(kind: kind,
                                    title: stored.title,
-                                   detail: transform(stored.detailLine))
+                                   detail: transform(stored.detailLine),
+                                   staleLadder: table.staleLadder)
     }
 
     // MARK: - Time

@@ -204,7 +204,7 @@ data class WidgetBoard(
      *
      * ## Why it is on the wire rather than applied before sending
      * [WidgetGroup.predictions] carries RESERVES, not display depth
-     * (`MultiLineBoardProcessor.ROW_RESERVE`): the extension re-derives its
+     * (`MultiLineBoardProcessor.rowReserve`): the extension re-derives its
      * labels every minute from one timeline, so trimming to what fits would
      * leave it nothing to shift up as trains depart. The cap therefore has to be
      * applied on the far side, at render — which means the far side has to be
@@ -302,4 +302,109 @@ data class WidgetFallbackTable(
     val lateNightStartMin: Int = 0,
     val lateNightEndMin: Int = 270,
     val earlyMorningEndMin: Int = 360,
+
+    // ── Board policy ───────────────────────────────────────────────────────
+    //
+    // The same `BoardPolicy` the app renders with, carried here because the
+    // extension is a separate process that never calls the network: everything
+    // it knows, the app republished. Riding along in THIS table rather than in a
+    // key of its own is deliberate — both halves are resolved from one
+    // home-config map, published by one memoised function, and read once per
+    // timeline build. A second key would mean a second write, a second decode,
+    // and the standing possibility of the two disagreeing about which fetch they
+    // came from.
+    //
+    // Every field is defaulted on both sides, so an extension running against an
+    // older published table simply keeps the compiled values rather than
+    // decoding to nothing.
+
+    /** Milliseconds past its arrival a train stays on the board. */
+    val departedGraceMs: Long = 30_000L,
+    /** Payload age past which departed rows are held rather than dropped. */
+    val retentionMinAgeMs: Long = 60_000L,
+    /** What a retained departed row reads. Sizes the ETA column — keep it short. */
+    val departedLabel: String = "Gone",
+    /** Chronometer amber → grey, in ms of payload age. */
+    val freshMs: Long = 60_000L,
+    /** Chronometer grey → red, in ms of payload age. */
+    val staleMs: Long = 180_000L,
+
+    /**
+     * What a widget says when it has no board to draw for a CONFIGURATION
+     * reason, keyed by [WidgetStateCopy] state name.
+     *
+     * Distinct from [copy] above, which covers a board that exists and is empty
+     * ("Service ended for tonight"). These four cover a widget that has no board
+     * at all: signed out, no stations, never configured, or configured for a
+     * station the user has since removed.
+     *
+     * They travel in the same table for the same reason the tick policy does —
+     * one publish, one decode, one read per timeline build — but they are a
+     * separate map because they are a total switch over a DIFFERENT enum, and
+     * merging the two would let a board state silently answer for a
+     * configuration one.
+     */
+    val configCopy: Map<String, WidgetFallbackCopy> = emptyMap(),
 )
+
+/**
+ * The four states a widget can be in with no board to show, and what it says in
+ * each.
+ *
+ * ## Why these were the last hardcoded strings on the widget
+ * The board's own fallback copy has been server-driven since the table existed.
+ * These four were not, and they are the ones a CONFUSED user reads: every other
+ * message on the widget is seen by someone whose widget is working. These are
+ * seen by someone whose widget is blank and who has to be told, in about six
+ * words, which of four different things to do about it.
+ *
+ * ## The wording rules that produced the defaults
+ * Kept here rather than in the renderer because they are the argument for the
+ * strings, and whoever retunes them from the backend should be able to find it.
+ *
+ *  - **No apology and no alarm.** `NEEDS_STATION` in particular is a setup step,
+ *    not an error, and it can appear on several widgets at once — adding the
+ *    first station after a spell with none un-masks every stale configuration
+ *    together, which is exactly when alarmed wording reads as a broken app.
+ *  - **Name the whole gesture.** "Touch and hold, then tap Edit Widget", because
+ *    touch-and-hold alone only opens the jiggle menu and someone who has never
+ *    configured a widget has no reason to know there is a second step.
+ *  - **The phone's words, not ours.** "Touch and hold" rather than "long press";
+ *    "Edit Widget" exactly as the menu spells it.
+ */
+object WidgetStateCopy {
+    /** State names, matching Swift's `WidgetData.EmptyReason` cases. */
+    const val SIGNED_OUT = "SIGNED_OUT"
+    const val NO_STATIONS = "NO_STATIONS"
+    const val NEEDS_STATION = "NEEDS_STATION"
+    const val REMOVED = "REMOVED"
+
+    val STATES = listOf(SIGNED_OUT, NO_STATIONS, NEEDS_STATION, REMOVED)
+
+    /**
+     * Compiled defaults, and the SDUI key each one is overridden by.
+     *
+     * `REMOVED`'s title is only reached when the removed station has no name to
+     * show — normally its own name takes that slot, because that is what tells
+     * the user which of several widgets needs attention without opening any of
+     * them.
+     */
+    fun keyFor(state: String, part: String): String =
+        "widget.state.${state.lowercase()}.$part"
+
+    fun defaultTitle(state: String): String = when (state) {
+        SIGNED_OUT -> "Signed out"
+        NO_STATIONS -> "No stations yet"
+        NEEDS_STATION -> "Choose a station"
+        REMOVED -> "Station removed"
+        else -> ""
+    }
+
+    fun defaultDetail(state: String): String = when (state) {
+        SIGNED_OUT -> "Open Stationly to sign in"
+        NO_STATIONS -> "Open Stationly to add one"
+        NEEDS_STATION -> "Touch and hold, then tap Edit Widget"
+        REMOVED -> "Not in your stations. Touch and hold, then tap Edit Widget"
+        else -> ""
+    }
+}

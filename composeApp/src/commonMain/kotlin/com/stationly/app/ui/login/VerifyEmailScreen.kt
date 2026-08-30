@@ -31,6 +31,7 @@ import com.stationly.app.resources.Res
 import com.stationly.app.resources.stationly_logo
 import com.stationly.app.ui.common.LocalOpenUrl
 import com.stationly.app.ui.common.StationlySpinner
+import com.stationly.core.config.RemoteConfig
 import com.stationly.core.platform.Platform
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -44,6 +45,14 @@ private val White80   @Composable get() = MaterialTheme.colorScheme.onBackground
 private val White50   @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.50f)
 
 private const val PREF_LAST_VERIFY_SENT_AT = "last_verify_send_at"
+/**
+ * How long the resend button stays disabled, when the backend has not said.
+ *
+ * A rate limit rather than a feel decision — it exists to stop someone hammering
+ * the send endpoint, and the tolerable number is whatever the mail provider will
+ * take, which is learned in production. Served as
+ * `auth.verify.resend_cooldown_sec`; this is the compiled floor.
+ */
 private const val RESEND_COOLDOWN_SEC = 60
 
 /**
@@ -67,16 +76,37 @@ fun VerifyEmailScreen(
     val scopeForPersist = rememberCoroutineScope()
     val openUrl = LocalOpenUrl.current
     
+    // Sourced from the view model, which already loads it for the auth error
+    // wording — see LoginViewModel.configStrings. This screen used to fetch
+    // `getHomeConfig()` itself, so entering the auth flow made the same request
+    // twice within a second of itself and the two halves could disagree about
+    // which payload they were rendering.
+    //
+    // Hoisted above everything that reads it: the persisted-cooldown effect
+    // below needs `cooldownSec`, which is resolved from this.
+    val strings by viewModel.configStrings.collectAsStateWithLifecycle()
+
+    // Clamped, because this one gates a BUTTON: a served zero would make the
+    // cooldown vanish and hand the user an unlimited send loop, while a served
+    // hour would leave them staring at a disabled control with no way forward.
+    val cooldownSec = RemoteConfig.int(
+        strings, "auth.verify.resend_cooldown_sec",
+        default = RESEND_COOLDOWN_SEC, min = 10, max = 600,
+    )
+
     // Cooldown is derived from a persisted timestamp — survives force-stop / process death.
     var resendCooldown by remember { mutableStateOf(0) }
-    
-    // On first composition, load any persisted cooldown.
-    LaunchedEffect(Unit) {
+
+    // On first composition, and again if a served cooldown arrives after it,
+    // restore whatever is left of the wait. Keyed on `cooldownSec` because the
+    // config lands a moment after the first frame: keyed on Unit, a served value
+    // would be adopted only from the NEXT visit to this screen.
+    LaunchedEffect(cooldownSec) {
         val lastSentAt = Platform.storageManager
             .loadString(PREF_LAST_VERIFY_SENT_AT)?.toLongOrNull() ?: 0L
         val elapsedSec = ((Clock.System.now().toEpochMilliseconds() - lastSentAt) / 1000).toInt()
-        if (elapsedSec in 0..RESEND_COOLDOWN_SEC) {
-            resendCooldown = RESEND_COOLDOWN_SEC - elapsedSec
+        if (elapsedSec in 0..cooldownSec) {
+            resendCooldown = cooldownSec - elapsedSec
         }
     }
 
@@ -92,13 +122,6 @@ fun VerifyEmailScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Sourced from sdui home-config
-    var strings by remember { mutableStateOf(emptyMap<String, String>()) }
-    LaunchedEffect(Unit) {
-        runCatching {
-            com.stationly.core.service.NetworkModule.sduiApi.getHomeConfig()
-        }.getOrNull()?.strings?.let { strings = it }
-    }
     fun str(key: String, default: String): String = strings[key] ?: default
 
     // Cooldown ticker
@@ -242,7 +265,7 @@ fun VerifyEmailScreen(
                     Modifier
                         .clickable {
                             viewModel.resendVerificationEmail()
-                            resendCooldown = RESEND_COOLDOWN_SEC
+                            resendCooldown = cooldownSec
                             scopeForPersist.launch {
                                 Platform.storageManager
                                     .saveString(PREF_LAST_VERIFY_SENT_AT, Clock.System.now().toEpochMilliseconds().toString())

@@ -120,9 +120,19 @@ struct DepartureRow: Codable, Identifiable {
     /// repeated, while a bus row without its number is a bare place name.
     let lineShort: String
 
+    /// Set by the tick when it relabels a row it is HOLDING after departure.
+    ///
+    /// Local-only and not part of the wire format: it is a conclusion the tick
+    /// reaches, not something KMP sends. Mirrors the `departed` flag Kotlin's
+    /// `MultiLineBoardProcessor.rowsFrom` stamps on its own rows for the same
+    /// renderer, and it replaced a comparison against a hardcoded "Gone" — once
+    /// the label became something the backend can change, a view testing for the
+    /// literal would silently stop dimming retained rows the day it did.
+    let departed: Bool
+
     // Memberwise init (used for previews / placeholders)
     init(destination: String, platform: String, eta: String, isDue: Bool, stopLetter: String?,
-         targetEpochMs: Double? = nil, lineShort: String = "") {
+         targetEpochMs: Double? = nil, lineShort: String = "", departed: Bool = false) {
         self.id            = UUID()
         self.destination   = destination
         self.platform      = platform
@@ -131,6 +141,7 @@ struct DepartureRow: Codable, Identifiable {
         self.stopLetter    = stopLetter
         self.targetEpochMs = targetEpochMs
         self.lineShort     = lineShort
+        self.departed      = departed
     }
 
     // Only JSON-encode the fields that actually appear in the KMP output.
@@ -151,26 +162,27 @@ struct DepartureRow: Codable, Identifiable {
         // Absent on a board written by an older build, which is a normal state
         // for the window between installing this one and the next push.
         self.lineShort     = try container.decodeIfPresent(String.self, forKey: .lineShort) ?? ""
+        // A decoded row has not been ticked yet, so it cannot be holding a
+        // departure — the tick is what decides that, and it runs after this.
+        self.departed      = false
     }
 
-    /// Label for a train that has already left but is being held on the board
-    /// (see `WidgetData.ticked`). Single source of truth so the renderer can
-    /// recognise the state without duplicating the string.
-    static let departedLabel = "Gone"
-
     /// True when this row is a retained already-departed train, so the view
-    /// can dim it. Derived from the label rather than re-deriving from
-    /// `targetEpochMs`, which keeps the "is it departed" decision in ONE
-    /// place (`ticked`) — the grace period and retention rules live there,
-    /// and a second copy in the view would inevitably drift.
-    var hasDeparted: Bool { eta == Self.departedLabel }
+    /// can dim it.
+    ///
+    /// The "is it departed" decision stays in exactly ONE place — `ticked`,
+    /// where the grace period and the retention rules are — and this is how it
+    /// travels to the renderer. A view that re-derived it from `targetEpochMs`,
+    /// or matched the label text, would be a second copy of that decision and
+    /// would drift the first time either moved.
+    var hasDeparted: Bool { departed }
 
     /// Copy with a re-derived label (id intentionally regenerated — it's
     /// local-only ForEach identity, not wire data).
-    func relabelled(eta: String, isDue: Bool) -> DepartureRow {
+    func relabelled(eta: String, isDue: Bool, departed: Bool = false) -> DepartureRow {
         DepartureRow(destination: destination, platform: platform, eta: eta,
                      isDue: isDue, stopLetter: stopLetter, targetEpochMs: targetEpochMs,
-                     lineShort: lineShort)
+                     lineShort: lineShort, departed: departed)
     }
 }
 
@@ -458,6 +470,20 @@ struct WidgetData {
         case needsStation
         /// The station it was configured for is no longer tracked.
         case removed(station: String)
+
+        /// The key this state's copy is published under — see Kotlin
+        /// `WidgetStateCopy`. A raw string rather than a synthesised one because
+        /// it crosses a process boundary into a table written by a different
+        /// language: a rename on either side has to be a deliberate edit in both,
+        /// not something a Swift refactor can do on its own.
+        var stateName: String {
+            switch self {
+            case .signedOut:    return "SIGNED_OUT"
+            case .noStations:   return "NO_STATIONS"
+            case .needsStation: return "NEEDS_STATION"
+            case .removed:      return "REMOVED"
+            }
+        }
     }
 
     /// Which state this board is in, as one word, for the on-device trace.
@@ -869,34 +895,15 @@ struct WidgetData {
     // that entry's wall-clock date, so the pre-rendered per-minute entries
     // count down ("5 min" → "4 min"), shed departed trains, and shift the
     // queue — with zero WidgetKit refresh-budget cost and no network.
-    // Keep the three constants in lockstep with Android:
-    //   departed grace 30 s (DEPARTED_GRACE_MS) · "Due" < 60 s · isDue < 30 s.
-
-    static let departedGraceMs: Double = 30_000
-
-    /// How old a payload must be before a departed row is worth holding.
-    ///
-    /// ## Why retention has to be conditional at all
-    /// "Gone" means "this board is stale, refresh me". Backfilling
-    /// unconditionally made it mean "this platform is quiet", which is a
-    /// different and much less useful statement — and it produced the reported
-    /// bug: rows reading "Gone" immediately after a successful refresh. A
-    /// payload can legitimately arrive containing trains that have already left
-    /// (TfL reports them, and SQL holds the previous fetch's rows), so a fresh
-    /// board with a shortfall would resurrect them and label the newest data the
-    /// app has as departed.
-    ///
-    /// Fresh payload, no backfill: the platform showing two trains instead of
-    /// three is the truth, and the board says so by being short rather than by
-    /// lying. Old payload, hold the last known departures: there the label is
-    /// accurate and it is the only signal the user gets that the widget is
-    /// showing history.
-    ///
-    /// 60s because that is already what "fresh" means on this board — it is the
-    /// footer's amber threshold in `LiveAgo.staleColor`. A second definition of
-    /// freshness with a different number is the kind of drift that leaves two
-    /// parts of one widget disagreeing about the same payload.
-    static let retentionMinAgeMs: Double = 60_000
+    // The grace period, the retention gate and the "Gone" label are no longer
+    // constants here: they are `BoardPolicy` in `core/config`, resolved by the
+    // app from the SDUI home-config map and republished into the App Group with
+    // the fallback copy table. This target reads them off `BoardTickPolicy` and
+    // decides nothing.
+    //
+    // What is still hardcoded, and must stay so, is the arithmetic underneath
+    // them: "Due" below 60s and floor rounding above it. That is the definition
+    // of a minute rather than a judgement about one — see `minutes(_:nowMs:)`.
 
     /// The board re-derived for the given instant: ETAs counted down, departed
     /// trains shed, the queue shifted.
@@ -910,21 +917,24 @@ struct WidgetData {
     /// `keepAtLeast` is the row slots the caller can display, and it only takes
     /// effect once the payload is at least [retentionMinAgeMs] old — see there.
     /// Pass 0 to never retain.
-    func ticked(at date: Date, keepAtLeast minRows: Int = 0) -> WidgetData {
+    func ticked(at date: Date,
+                keepAtLeast minRows: Int = 0,
+                policy: BoardTickPolicy = .compiled) -> WidgetData {
         guard !groups.isEmpty else { return self }
         let nowMs = date.timeIntervalSince1970 * 1000.0
 
         // Decided once for the whole board, because it is a property of the
         // PAYLOAD rather than of any block: every block here was written by the
         // same fetch and is therefore exactly as old as every other.
-        let retain = minRows > 0 && ageMs(at: date) >= Self.retentionMinAgeMs
+        let retain = minRows > 0 && ageMs(at: date) >= policy.retentionMinAgeMs
 
         // Retention is then a per-BLOCK question: a busy Platform 1 with six
         // upcoming trains says nothing about whether a quiet Platform 2 should
         // hold its last departures. Deciding it globally let one crowded
         // platform suppress "Gone" rows on every other one.
         let tickedGroups = groups.compactMap { group -> BoardGroup? in
-            let rows = Self.tickGroup(group.rows, nowMs: nowMs, keepAtLeast: retain ? minRows : 0)
+            let rows = Self.tickGroup(group.rows, nowMs: nowMs,
+                                      keepAtLeast: retain ? minRows : 0, policy: policy)
             return rows.isEmpty ? nil : group.with(rows: rows)
         }
 
@@ -947,8 +957,9 @@ struct WidgetData {
     /// One block's rows at `nowMs`, with its own shortfall backfilled.
     private static func tickGroup(_ rows: [DepartureRow],
                                   nowMs: Double,
-                                  keepAtLeast minRows: Int) -> [DepartureRow] {
-        let cutoff = nowMs - departedGraceMs
+                                  keepAtLeast minRows: Int,
+                                  policy: BoardTickPolicy) -> [DepartureRow] {
+        let cutoff = nowMs - policy.departedGraceMs
 
         // Split departed from live. Null-target rows can't be judged, so they
         // count as live and pass through untouched.
@@ -972,11 +983,13 @@ struct WidgetData {
 
         // bumpGroup applies the monotonic label bump — two trains in one block
         // can't share a label ("Due, Due" → "Due, 1 min").
-        return bumpGroup(retained + live, nowMs: nowMs)
+        return bumpGroup(retained + live, nowMs: nowMs, policy: policy)
     }
 
-    private static func bumpGroup(_ group: [DepartureRow], nowMs: Double) -> [DepartureRow] {
-        let cutoff = nowMs - departedGraceMs
+    private static func bumpGroup(_ group: [DepartureRow],
+                                  nowMs: Double,
+                                  policy: BoardTickPolicy) -> [DepartureRow] {
+        let cutoff = nowMs - policy.departedGraceMs
         func isDeparted(_ row: DepartureRow) -> Bool {
             guard let t = row.targetEpochMs else { return false }
             return t < cutoff
@@ -992,7 +1005,7 @@ struct WidgetData {
         // keeps long station names intact where 8 would clip them. It also
         // matches the rhythm of "Due" — both are states, not durations.
         let departedRows = group.filter(isDeparted).map {
-            $0.relabelled(eta: DepartureRow.departedLabel, isDue: false)
+            $0.relabelled(eta: policy.departedLabel, isDue: false, departed: true)
         }
         let group = group.filter { !isDeparted($0) }
 

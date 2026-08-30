@@ -1,5 +1,6 @@
 package com.stationly.app.ui.util
 
+import com.stationly.core.config.ConfigKeys
 import com.stationly.core.platform.Platform
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -15,7 +16,8 @@ import kotlinx.serialization.json.Json
  * good cache.
  */
 object HomeConfigCache {
-    private const val KEY = "home_config_strings_cache"
+    /** The one definition lives in `core`, so a rename cannot split the cache. */
+    private val KEY = ConfigKeys.HOME_CONFIG_CACHE_KEY
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun load(): Map<String, String> = runCatching {

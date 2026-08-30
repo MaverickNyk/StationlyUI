@@ -3,6 +3,7 @@ package com.stationly.core.platform
 import com.stationly.core.model.WidgetState
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.service.NetworkModule
+import com.stationly.core.config.BoardPolicyStore
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -49,6 +50,14 @@ object BackgroundBoardRefresher {
         runCatching {
             val selections = Platform.sqlStorage.getAllSelections()
             if (selections.isEmpty()) return@runCatching false
+
+            // A background slice runs with no UI above it, so nothing has
+            // resolved the served board rules for this process — and ingest
+            // reads one of them (`rowReserve`) to decide how deep to write SQL.
+            // Without this a background refresh would write at the COMPILED
+            // depth while the foreground app writes at the served one, and a
+            // board's reserves would depend on which path last touched it.
+            BoardPolicyStore.loadFromCache()
 
             val result = repository.refreshBoards(selections)
 

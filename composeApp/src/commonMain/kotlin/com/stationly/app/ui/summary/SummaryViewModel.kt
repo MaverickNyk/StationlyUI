@@ -12,6 +12,7 @@ import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.FormatDeparturesUseCase
 import com.stationly.core.usecase.StationLifecycleUseCase
+import com.stationly.core.config.BoardPolicyStore
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.core.util.FreshData
 import com.stationly.core.util.FreshDataNotifier
@@ -273,7 +274,7 @@ class SummaryViewModel(
                 // is 3 per platform — and that quietly broke the board's ability
                 // to tick. `SyncPredictionsUseCase` stores 8 per platform
                 // precisely so the countdown has trains behind the visible ones
-                // to shift up as they depart (see MultiLineBoardProcessor.ROW_RESERVE);
+                // to shift up as they depart (see MultiLineBoardProcessor.rowReserve);
                 // trimming to 3 here threw the reserves away before the board
                 // ever saw them, so a card went 3 rows → 2 → 1 → empty over three
                 // minutes and stayed empty until the next push. The widget reads
@@ -568,12 +569,25 @@ class SummaryViewModel(
         if (_homeConfig.value.isEmpty()) {
             com.stationly.app.ui.util.HomeConfigCache.load()
                 .takeIf { it.isNotEmpty() }
-                ?.let { _homeConfig.value = it }
+                ?.let {
+                    _homeConfig.value = it
+                    // Ingest starts on the first stream frame, which can beat
+                    // this request home. Adopting the CACHE first means SQL is
+                    // written at the served reserve depth from the outset rather
+                    // than at the compiled one for the first few frames — see
+                    // BoardPolicyStore.
+                    BoardPolicyStore.refresh(it)
+                }
         }
         try {
             val config = NetworkModule.sduiApi.getHomeConfig().strings
             _homeConfig.value = config
             com.stationly.app.ui.util.HomeConfigCache.save(config)
+            // The board's own rules travel in the same map as its copy — grace,
+            // retention, the "Gone" label, reserve depth, the freshness ladder
+            // and the status severity order. Resolved and clamped once here;
+            // every surface reads BoardPolicyStore.current from now on.
+            BoardPolicyStore.refresh(config)
             // SDUI force-update gate (Android parity). Was declared but never
             // set on iOS, so UpdateNudgeDialog could never appear however low
             // the installed version was.

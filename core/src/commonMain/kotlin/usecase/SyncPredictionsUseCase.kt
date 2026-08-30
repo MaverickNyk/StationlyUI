@@ -102,14 +102,15 @@ class SyncPredictionsUseCase(
         //    Capped at the RESERVE depth, not the display depth: the tick layer
         //    needs a buffer of upcoming trains to shift into the visible rows as
         //    the top one departs, and the board applies the user's own
-        //    `rowsPerPlatform` at render. See MultiLineBoardProcessor.ROW_RESERVE
+        //    `rowsPerPlatform` at render. See MultiLineBoardProcessor.rowReserve,
+        //    which is the served depth when the backend has set one.
         //    for the measurement behind the number — it is deliberately above
         //    what TfL actually returns per platform, so nothing is trimmed here
         //    in practice.
         val processedPredictions = if (allowedDestIds.isEmpty()) {
             GlobalBoardProcessor.processPredictions(
                 predictions = formattedPredictions,
-                perPlatformCap = MultiLineBoardProcessor.ROW_RESERVE,
+                perPlatformCap = MultiLineBoardProcessor.rowReserve,
             )
         } else {
             // Cap matching and excluded rows SEPARATELY.
@@ -125,11 +126,11 @@ class SyncPredictionsUseCase(
             // change be re-applied on device without waiting for a refetch.
             val matching = GlobalBoardProcessor.processPredictions(
                 predictions = formattedPredictions.filter { it.matchesFilter },
-                perPlatformCap = MultiLineBoardProcessor.ROW_RESERVE,
+                perPlatformCap = MultiLineBoardProcessor.rowReserve,
             )
             val excluded = GlobalBoardProcessor.processPredictions(
                 predictions = formattedPredictions.filterNot { it.matchesFilter },
-                perPlatformCap = MultiLineBoardProcessor.ROW_RESERVE,
+                perPlatformCap = MultiLineBoardProcessor.rowReserve,
             )
             matching + excluded
         }

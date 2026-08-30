@@ -31,7 +31,8 @@ struct DepartureBoardEntryView: View {
             } else {
                 BoardWidgetView(data: entry.widgetData, clock: entry.date,
                                 metrics: metrics, render: entry.render,
-                                fallback: entry.fallback)
+                                fallback: entry.fallback,
+                                configCopy: entry.configCopy)
             }
         }
         // ── Where a tap on the board goes ──
@@ -632,6 +633,9 @@ private struct LiveAgo: View {
     /// Whether the freshness ladder applies — see [staleColor]. False while the
     /// network is closed, where an ageing reading is correct rather than wrong.
     var freshnessMatters: Bool = true
+    /// The ladder's two boundaries, as the app published them. Defaulted to the
+    /// compiled pair so a call site that has no table in hand still renders.
+    var staleLadder: StaleLadder = .compiled
     var body: some View {
         Group {
             if data.hasTimestamp {
@@ -702,10 +706,19 @@ private struct LiveAgo: View {
     private var staleColor: Color {
         guard data.hasTimestamp else { return WidgetTheme.amber.opacity(0.85) }
         guard freshnessMatters else { return WidgetTheme.amber }
-        let age = entryDate.timeIntervalSince(data.lastUpdated)
-        if age < 60  { return Color(red: 1.000, green: 0.702, blue: 0.000) } // #FFB300 amber
-        if age < 180 { return Color(red: 0.533, green: 0.533, blue: 0.533) } // #888888 grey
-        return         Color(red: 1.000, green: 0.231, blue: 0.188)          // #FF3B30 red
+        // Boundaries from the published table, not two more literals here — the
+        // app's own footer reads the same pair out of `StaleColor`, and the
+        // point of a shared ladder is that a glance at either surface means the
+        // same thing. The palette stays hardcoded: the colours are the signal's
+        // vocabulary, not a threshold anyone tunes.
+        let ageMs = entryDate.timeIntervalSince(data.lastUpdated) * 1000
+        if ageMs < staleLadder.freshMs {
+            return Color(red: 1.000, green: 0.702, blue: 0.000)  // #FFB300 amber
+        }
+        if ageMs < staleLadder.staleMs {
+            return Color(red: 0.533, green: 0.533, blue: 0.533)  // #888888 grey
+        }
+        return Color(red: 1.000, green: 0.231, blue: 0.188)      // #FF3B30 red
     }
 }
 
@@ -1406,6 +1419,8 @@ struct DotMatrixFooter: View {
     let m: BoardMetrics
     /// Forwarded to the "ago" timer — see `LiveAgo.staleColor`.
     var freshnessMatters: Bool = true
+    /// Forwarded with it: the same published pair the app's footer reads.
+    var staleLadder: StaleLadder = .compiled
     var body: some View {
         // Bottom cell: the corner mask intrudes ~9–12pt at the logo/ago height
         // (iOS 26 corner radii are generous) — 20pt of side breathing keeps the
@@ -1439,7 +1454,8 @@ struct DotMatrixFooter: View {
                 // may take, and both of those are now `BoardMetrics`' answer.
                 LiveAgo(data: data, entryDate: clock, fontSize: m.ago,
                         alignment: m.showsClock ? .trailing : .center,
-                        maxWidth: m.agoWidth, freshnessMatters: freshnessMatters)
+                        maxWidth: m.agoWidth, freshnessMatters: freshnessMatters,
+                        staleLadder: staleLadder)
                     .frame(maxWidth: m.showsClock ? .infinity : nil,
                            alignment: .trailing)
                 if !m.showsClock {
@@ -1483,11 +1499,14 @@ struct BoardWidgetView: View {
     /// clock when the timeline was built. Nil when there are departures to show.
     /// See `BoardFallbackResolver`.
     var fallback: BoardFallbackResult? = nil
+    /// The four configuration states' wording, from the same published table as
+    /// `fallback` and resolved in the same pass — see `DepartureEntry.configCopy`.
+    var configCopy: [String: BoardFallbackCopy] = BoardFallbackTable.configDefaults
 
     var body: some View {
         Group {
             if let reason = data.emptyReason {
-                EmptyWidgetView(m: metrics, reason: reason)
+                EmptyWidgetView(m: metrics, reason: reason, copy: configCopy)
             } else {
                 board
             }
@@ -1553,7 +1572,8 @@ struct BoardWidgetView: View {
                     // `BoardMetrics.footerFlexible` for why a floor alone
                     // doesn't hand the departure rows anything.
                     DotMatrixFooter(data: data, clock: clock, m: metrics,
-                                    freshnessMatters: fallback?.freshnessMatters ?? true)
+                                    freshnessMatters: fallback?.freshnessMatters ?? true,
+                                    staleLadder: fallback?.staleLadder ?? .compiled)
                         .frame(minHeight: metrics.footerMinHeight,
                                maxHeight: metrics.footerFlexible
                                    ? nil : metrics.footerMinHeight)
@@ -1999,10 +2019,20 @@ struct EmptyWidgetView: View {
     /// this widget" running beside the one that does the work.
     let m: BoardMetrics
     /// Which of the four empty states this is. One value rather than a flag per
-    /// state: the copy below is a total switch over it, so a state added later
-    /// cannot silently inherit another one's wording. See
-    /// `WidgetData.EmptyReason`, which is also where their precedence lives.
+    /// state: the copy is a total switch over it, so a state added later cannot
+    /// silently inherit another one's wording. See `WidgetData.EmptyReason`,
+    /// which is also where their precedence lives.
     let reason: WidgetData.EmptyReason
+    /// The published wording for each state, resolved once per timeline build and
+    /// handed down — see `DepartureEntry.configCopy`. Defaulted so a preview or a
+    /// call site with no table still renders words.
+    var copy: [String: BoardFallbackCopy] = BoardFallbackTable.configDefaults
+
+    /// This state's published copy, or the compiled words behind it.
+    private var stateCopy: BoardFallbackCopy {
+        copy[reason.stateName] ?? BoardFallbackTable.configDefaults[reason.stateName]
+            ?? BoardFallbackCopy(title: "", detail: [])
+    }
 
     /// The header line, where the station name goes on a live board: WHAT this
     /// state is, in three words or fewer.
@@ -2018,12 +2048,13 @@ struct EmptyWidgetView: View {
     /// configuration with an id and no entity around it, and a blank header reads
     /// as a rendering fault.
     private var title: String {
-        switch reason {
-        case .removed(let station): return station.isEmpty ? "Station removed" : station
-        case .needsStation:         return "Choose a station"
-        case .signedOut:            return "Signed out"
-        case .noStations:           return "No stations yet"
-        }
+        // The removed station's own NAME still wins, and that is not something the
+        // backend can take away: it is what tells a user which of several widgets
+        // needs attention without opening any of them. The published string is the
+        // fallback for the case iOS hands over a configuration with an id and no
+        // entity around it, where a blank header would read as a rendering fault.
+        if case .removed(let station) = reason, !station.isEmpty { return station }
+        return stateCopy.title
     }
 
     /// What to do about it. Plain sentences, no dashes, nothing that reads as
@@ -2053,12 +2084,7 @@ struct EmptyWidgetView: View {
     /// without it. The header carries the state at every size now, so the small
     /// panel says the same thing as the large one and simply wraps it.
     private var message: String {
-        switch reason {
-        case .signedOut:    return "Open Stationly to sign in"
-        case .noStations:   return "Open Stationly to add one"
-        case .needsStation: return "Touch and hold, then tap Edit Widget"
-        case .removed:      return "Not in your stations. Touch and hold, then tap Edit Widget"
-        }
+        stateCopy.detailLine
     }
 
     /// The maker mark, at twice the mode roundel this family draws: 28 / 36 / 44.

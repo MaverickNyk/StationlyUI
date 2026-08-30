@@ -1,5 +1,8 @@
 package com.stationly.core.util
 
+import com.stationly.core.config.BoardPolicy
+import com.stationly.core.config.BoardPolicyStore
+
 /**
  * Picks and orders the line statuses a multi-line board shows in its ONE status
  * strip.
@@ -31,27 +34,24 @@ object LineStatusRanker {
      * be a new disruption type than a new flavour of "everything is fine", and
      * burying it would be the worse failure.
      */
-    private val SEVERITY_ORDER: List<String> = listOf(
-        "Closed",
-        "Suspended",
-        "Part Suspended",
-        "Planned Closure",
-        "Part Closure",
-        "Part Closed",
-        "Severe Delays",
-        "Service Closed",
-        "Not Running",
-        "Reduced Service",
-        "Bus Service",
-        "Diverted",
-        "Minor Delays",
-        "Change of frequency",
-        "Special Service",
-        "Exit Only",
-        "No Step Free Access",
-        "Issues Reported",
-        "Information",
-    )
+    /**
+     * Severity order, worst first. Mirrors TfL's own `statusSeverity` ordering
+     * rather than inventing one, so our idea of "worse" matches the source's.
+     *
+     * The list now lives in [BoardPolicy.severityOrder], because it changes when
+     * TfL changes it and that should not need an App Store release; the compiled
+     * copy in [BoardPolicy.DEFAULT_SEVERITY_ORDER] is what ships and what a
+     * served list overrides.
+     *
+     * Matched case-insensitively on the severity TEXT because that is what we
+     * actually hold: the board stores a formatted "Severity : Reason" string,
+     * not the numeric code. Anything unrecognised sorts just BELOW the known
+     * disruptions and above Good Service — an unknown severity is more likely to
+     * be a new disruption type than a new flavour of "everything is fine", and
+     * burying it would be the worse failure. That is also what makes a served
+     * list safe: a truncated one degrades to "shown but ranked low", never to
+     * "hidden".
+     */
 
     private const val UNKNOWN_RANK = 1_000
     private const val GOOD_RANK = 2_000
@@ -62,11 +62,11 @@ object LineStatusRanker {
         severity?.trim()?.lowercase() in GOOD_SEVERITIES
 
     /** Lower is worse. Unknown severities sort above Good Service — see above. */
-    fun rankOf(severity: String?): Int {
+    fun rankOf(severity: String?, policy: BoardPolicy = BoardPolicyStore.current): Int {
         val s = severity?.trim().orEmpty()
         if (s.isEmpty()) return GOOD_RANK
         if (isGoodService(s)) return GOOD_RANK
-        val index = SEVERITY_ORDER.indexOfFirst { it.equals(s, ignoreCase = true) }
+        val index = policy.severityOrder.indexOfFirst { it.equals(s, ignoreCase = true) }
         return if (index >= 0) index else UNKNOWN_RANK
     }
 
@@ -74,8 +74,8 @@ object LineStatusRanker {
      * Traffic-light tone for a line's status, for the indicator dot on a line
      * pill and the hero's accent.
      *
-     * Three buckets, derived from the same [SEVERITY_ORDER] the rotation uses, so
-     * a dot can never disagree with the status text below it.
+     * Three buckets, derived from the same ordering the rotation uses, so a dot
+     * can never disagree with the status text below it.
      *
      * [AMBER] is the interesting boundary: delays and reduced service still mean
      * a train is coming, so they are not red. Red is reserved for "you cannot
@@ -84,16 +84,20 @@ object LineStatusRanker {
      */
     enum class Tone { GREEN, AMBER, RED }
 
-    /** Severities at or worse than this rank are [Tone.RED]. */
-    private val RED_SEVERITIES = setOf(
-        "closed", "suspended", "part suspended", "planned closure",
-        "part closure", "part closed", "service closed", "not running",
-    )
-
-    fun toneOf(severity: String?): Tone {
+    /**
+     * Which severities are red now lives in [BoardPolicy.redSeverities], served
+     * from the same backend table as the ordering above and the display names in
+     * `LineStatusSheet`.
+     *
+     * It was a third hand-kept list here — a subset of [BoardPolicy.severityOrder]
+     * maintained separately, in a different file from the words it had to agree
+     * with, in a different language from the backend that decides them. TfL
+     * renames its own severities from time to time and nothing caught a miss.
+     */
+    fun toneOf(severity: String?, policy: BoardPolicy = BoardPolicyStore.current): Tone {
         val s = severity?.trim()?.lowercase().orEmpty()
         if (s.isEmpty() || isGoodService(s)) return Tone.GREEN
-        if (s in RED_SEVERITIES) return Tone.RED
+        if (s in policy.redSeverities) return Tone.RED
         return Tone.AMBER
     }
 
