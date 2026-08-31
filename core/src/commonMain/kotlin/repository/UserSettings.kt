@@ -138,6 +138,24 @@ object UserSettings {
     val widgets: StateFlow<Map<String, WidgetPlacement>> = _widgets.asStateFlow()
 
     /**
+     * How many widgets are on the home screen, counting instances.
+     *
+     * [widgets] cannot answer this and must not be asked to: it is keyed by
+     * board and its families are `distinct()`, so two medium widgets on the
+     * same station collapse into one entry there. That collapse is right for
+     * the question that map exists to answer, "is this board on the home
+     * screen", and wrong for a count, which is why the total travels beside it
+     * rather than being derived from it.
+     *
+     * Zero until the first probe of the process, which is also what a device
+     * with no widgets reports. The two are indistinguishable here on purpose:
+     * a screen that renders a count has nothing useful to say about the
+     * difference, and the probe runs on launch.
+     */
+    private val _widgetTotal = MutableStateFlow(0)
+    val widgetTotal: StateFlow<Int> = _widgetTotal.asStateFlow()
+
+    /**
      * Whether the first read has finished, so a screen can tell "the user has no
      * settings" apart from "we have not looked yet".
      *
@@ -197,6 +215,7 @@ object UserSettings {
                 ?.let { name -> HomeLayout.entries.firstOrNull { it.name == name } }
         }.getOrNull() ?: HomeLayout.LIST
         _widgets.value = emptyMap()
+        _widgetTotal.value = 0
         _loaded.value = true
     }
 
@@ -253,8 +272,9 @@ object UserSettings {
      * board whose widget has gone. Callers must not invoke this when the probe
      * FAILED — see [WidgetPlacement].
      */
-    fun widgetsObserved(placements: Map<String, WidgetPlacement>) {
+    fun widgetsObserved(placements: Map<String, WidgetPlacement>, total: Int) {
         _widgets.value = placements
+        _widgetTotal.value = total
     }
 
     fun widgetOf(boardId: String): WidgetPlacement = _widgets.value[boardId] ?: WidgetPlacement()
@@ -295,6 +315,7 @@ object UserSettings {
         _configs.value = emptyMap()
         _layout.value = HomeLayout.LIST
         _widgets.value = emptyMap()
+        _widgetTotal.value = 0
         _loaded.value = false
     }
 
@@ -317,6 +338,7 @@ object UserSettings {
         _configs.value = emptyMap()
         _layout.value = HomeLayout.LIST
         _widgets.value = emptyMap()
+        _widgetTotal.value = 0
         _loaded.value = false
         switchUser()
     }

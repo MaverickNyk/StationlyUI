@@ -267,12 +267,15 @@ object UserStateSync {
      * "the user has no widgets", and reporting a transient failure that way
      * would read as them removing every widget at once.
      */
-    fun widgetsObserved(byBoard: Map<String, List<String>>) {
+    fun widgetsObserved(byBoard: Map<String, List<String>>, total: Int) {
         val now = Clock.System.now().toEpochMilliseconds()
         UserSettings.widgetsObserved(
             byBoard.mapValues { (_, families) ->
                 WidgetPlacement(placed = true, families = families.distinct(), observedAt = now)
             },
+            // Carried separately rather than summed from the map above, which
+            // has already lost it. See `UserSettings.widgetTotal`.
+            total = total,
         )
     }
 }

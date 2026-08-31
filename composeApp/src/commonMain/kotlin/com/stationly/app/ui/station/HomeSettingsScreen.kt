@@ -22,6 +22,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.BrightnessAuto
 import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -80,6 +81,7 @@ import kotlinx.coroutines.launch
 fun HomeSettingsScreen(
     onBack: () -> Unit,
     onOpenScreensaver: () -> Unit,
+    onOpenWidgetGuide: () -> Unit,
     /** Straight through to that station's own settings — see [StationOrderCard]. */
     onOpenStationSettings: (stationId: String, mode: String, stationName: String) -> Unit = { _, _, _ -> },
 ) {
@@ -249,6 +251,17 @@ fun HomeSettingsScreen(
                     title = "Screensaver",
                     subtitle = "Live departures while charging",
                     onClick = onOpenScreensaver,
+                )
+                SettingsDivider()
+                // A row, not a banner on the home screen. The "add a widget"
+                // promo was removed on 2026-08-23 for asking without being
+                // asked; the guide is the same subject reached the other way
+                // round. See `WidgetGuideScreen`.
+                SettingsActionRow(
+                    icon = Icons.Rounded.GridView,
+                    title = "Widgets",
+                    subtitle = "Boards on your Home Screen",
+                    onClick = onOpenWidgetGuide,
                 )
                 SettingsDivider()
                 SettingsActionRow(

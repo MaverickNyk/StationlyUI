@@ -29,6 +29,15 @@ interface SduiApiService {
     suspend fun getRegisterLayout(): SduiAppScreen
     suspend fun getForgotPasswordLayout(): SduiAppScreen
     suspend fun getAboutLayout(): SduiAppScreen
+
+    /**
+     * The widget guide screen, served by `GET /sdui/app/widget-guide`.
+     *
+     * Unlike every other layout here, a failure is NOT fatal to the screen:
+     * `WidgetGuideDefaults` ships the same guide compiled in, so a cold offline
+     * launch still explains the widget. See `docs/SDUI.md` §3, test 3.
+     */
+    suspend fun getWidgetGuideLayout(): SduiAppScreen
     suspend fun getHomeAnnouncement(): SduiAppScreen
     suspend fun getHomeConfig(): SduiStrings
     /**
@@ -199,6 +208,10 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
 
     override suspend fun getAboutLayout(): SduiAppScreen {
         return client.get("$baseUrl/sdui/app/about").body()
+    }
+
+    override suspend fun getWidgetGuideLayout(): SduiAppScreen {
+        return client.get("$baseUrl/sdui/app/widget-guide").body()
     }
 
     override suspend fun getHomeAnnouncement(): SduiAppScreen {

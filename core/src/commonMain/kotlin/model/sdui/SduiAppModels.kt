@@ -19,7 +19,25 @@ data class SduiValidation(
 /**
  * Conditional visibility rule.
  * A component with a condition is hidden until the condition is satisfied.
- * operator: "not_empty" | "equals" | "empty"
+ *
+ * ## Two kinds of thing a condition can depend on
+ * [dependsOn] originally named a FORM FIELD ("show the submit button once the
+ * email input is not empty"), and that is still what the auth screens evaluate
+ * it against. The widget guide needs the same rule against DEVICE FACTS
+ * instead ("only show the add-a-widget steps on an OS that has the widget"),
+ * so the evaluator takes a plain string map and the caller decides what fills
+ * it: form inputs on the auth screens, `SduiFacts` on the guide.
+ *
+ * That is why this type gained no new field. A second condition type would have
+ * meant a second evaluator, and the two would have drifted the moment one grew
+ * an operator the other lacked.
+ *
+ * operator: "not_empty" | "empty" | "equals" | "not_equals" | "gte" | "lte"
+ *
+ * The numeric operators compare as numbers and are FALSE when either side is
+ * not a number, so a fact the client does not publish hides its block rather
+ * than showing it. An unknown OS version must not be told to add a widget it
+ * may not be able to see.
  */
 @Serializable
 data class SduiCondition(
@@ -56,7 +74,7 @@ sealed class SduiAppComponent {
     ) : SduiAppComponent()
 
     @Serializable
-    @SerialName("image") 
+    @SerialName("image")
     data class Image(
         override val id: String,
         val imageUrl: String,
@@ -64,7 +82,19 @@ sealed class SduiAppComponent {
         val style: String? = null,
         val textAlign: String? = null,
         val width: Int? = null,
-        val height: Int? = null
+        val height: Int? = null,
+        /**
+         * Width ÷ height. When set, the box is reserved at this ratio before the
+         * image arrives and nothing on the screen jumps when it lands. Null lets
+         * the image size itself, which is right only for something small and
+         * inline.
+         */
+        val aspectRatio: Float? = null,
+        /** Corner radius in dp. */
+        val corner: Int = 0,
+        /** `fit` (whole image, letterboxed) or `fill` (cropped to the box). */
+        val fit: String = "fit",
+        val condition: SduiCondition? = null
     ) : SduiAppComponent()
     
     @Serializable
@@ -73,7 +103,8 @@ sealed class SduiAppComponent {
         override val id: String,
         val text: String,
         val style: String = "body",
-        val textAlign: String? = null
+        val textAlign: String? = null,
+        val condition: SduiCondition? = null
     ) : SduiAppComponent()
 
     @Serializable
@@ -122,7 +153,8 @@ sealed class SduiAppComponent {
         val title: String? = null,
         val body: String? = null,
         val style: String? = null,
-        val components: List<SduiAppComponent> = emptyList()
+        val components: List<SduiAppComponent> = emptyList(),
+        val condition: SduiCondition? = null
     ) : SduiAppComponent()
 
     /** A named section grouping child components */
@@ -131,7 +163,8 @@ sealed class SduiAppComponent {
     data class Section(
         override val id: String,
         val title: String? = null,
-        val components: List<SduiAppComponent> = emptyList()
+        val components: List<SduiAppComponent> = emptyList(),
+        val condition: SduiCondition? = null
     ) : SduiAppComponent()
 
     /** A tappable row that opens a URL */
@@ -142,20 +175,23 @@ sealed class SduiAppComponent {
         val title: String,
         val subtitle: String? = null,
         val url: String,
-        val icon: String? = null
+        val icon: String? = null,
+        val condition: SduiCondition? = null
     ) : SduiAppComponent()
 
     @Serializable
     @SerialName("divider")
     data class Divider(
-        override val id: String? = null
+        override val id: String? = null,
+        val condition: SduiCondition? = null
     ) : SduiAppComponent()
 
     @Serializable
     @SerialName("spacer")
     data class Spacer(
         override val id: String? = null,
-        val size: Int = 8
+        val size: Int = 8,
+        val condition: SduiCondition? = null
     ) : SduiAppComponent()
 
     /** A dismissible announcement banner shown on the home screen */
@@ -169,7 +205,219 @@ sealed class SduiAppComponent {
         val dismissKey: String? = null,
         val url: String? = null
     ) : SduiAppComponent()
+
+    // ── Native slots ────────────────────────────────────────────────────────
+    //
+    // Two components the server places but cannot write as prose: a recording
+    // of the gesture, and a count of what the reader already has on their home
+    // screen. Everything else on the guide is text the backend fully authors.
+    //
+    // The alternative considered and rejected was an HTML block in a WKWebView.
+    // It does not follow the theme tokens, cannot read the widget count the app
+    // already holds, and shows nothing at all on the offline launch where
+    // somebody is most likely to be looking for help. `PlatformWebView` remains
+    // available if long-tail help copy ever wants a page of its own; the guide
+    // itself is not that.
+
+    /**
+     * A picture or a short looping recording of the gesture being performed.
+     *
+     * ## Why frames and not a .gif
+     * Coil decodes GIFs on Android only; on iOS `coil-gif` has no decoder, so a
+     * `.gif` URL would arrive as a still first frame or nothing at all. Shipping
+     * one would have meant bridging ImageIO from Kotlin/Native to build an
+     * animated `UIImage`, for a file format that also compresses worse than the
+     * frames it is made of.
+     *
+     * So the wire carries [frames], an ordered list of ordinary image URLs that
+     * every platform can already load, advanced by the client at [frameMs]. The
+     * authoring flow is unchanged: record a GIF, run `scripts/demo_frames.py`,
+     * paste the JSON it prints.
+     *
+     * Set [url] alone for a still. Set [frames] for a demo. If both are set the
+     * frames win and [url] is the poster shown until they load, which is what
+     * keeps the block from being a blank rectangle on a slow connection.
+     *
+     * [aspectRatio] is width/height and is REQUIRED to be right: the box is
+     * reserved before the first image arrives, and a wrong ratio makes the whole
+     * screen jump when it does.
+     */
+    @Serializable
+    @SerialName("demo")
+    data class Demo(
+        override val id: String,
+        val url: String? = null,
+        val frames: List<String> = emptyList(),
+        val frameMs: Int = 120,
+        val loop: Boolean = true,
+        val aspectRatio: Float = 1f,
+        val caption: String? = null,
+        /**
+         * Corner radius in dp. A screenshot that already has rounded corners
+         * baked into its pixels needs this to MATCH, or the box clips a second
+         * curve inside the first and the result reads as a mistake. 14 is the
+         * app's own card radius and the right default for a bare recording.
+         */
+        val corner: Int = 14,
+        /** `fit` (whole frame, letterboxed) or `fill` (cropped to the box). */
+        val fit: String = "fit",
+        /**
+         * Hex fill behind the media, e.g. `#000000`. A widget screenshot is a
+         * black panel, so letterboxing it against the default translucent grey
+         * puts a visible frame around something that should look like it is
+         * simply sitting there. Blank keeps the neutral loading ground.
+         */
+        val background: String? = null,
+        val condition: SduiCondition? = null
+    ) : SduiAppComponent()
+
+    // ── Layout containers ───────────────────────────────────────────────────
+    //
+    // `Card` and `Section` group things but only ever stack them. These two are
+    // what make the payload's LAYOUT server-driven rather than just its
+    // contents: the backend can put three shots side by side, or two cards in a
+    // grid, and change that arrangement without a release.
+
+    /**
+     * Children laid out horizontally.
+     *
+     * A child with a [weight] above zero takes that share of the leftover
+     * width; children with no weight size themselves first. All-unweighted is
+     * therefore a plain row, and equal weights are equal columns.
+     */
+    @Serializable
+    @SerialName("row")
+    data class Row(
+        override val id: String,
+        val components: List<SduiAppComponent> = emptyList(),
+        val weights: List<Float> = emptyList(),
+        val gap: Int = 12,
+        /** `top` | `center` | `bottom` */
+        val align: String = "top",
+        val condition: SduiCondition? = null
+    ) : SduiAppComponent()
+
+    /**
+     * Children in a fixed number of equal columns, wrapping onto as many rows as
+     * it takes.
+     *
+     * Not a lazy grid: a guide screen has a handful of items and already sits in
+     * a scrolling column, and nesting a lazy grid inside one is the classic
+     * infinite-height crash.
+     */
+    @Serializable
+    @SerialName("grid")
+    data class Grid(
+        override val id: String,
+        val columns: Int = 2,
+        val components: List<SduiAppComponent> = emptyList(),
+        val gap: Int = 12,
+        val condition: SduiCondition? = null
+    ) : SduiAppComponent()
+
+    /**
+     * Two or more panes behind a segmented control, one visible at a time.
+     *
+     * The reason this exists rather than more sections down one page: the guide
+     * answers two unrelated questions, "how do I get one" and "how do I get
+     * several", and only one of them is ever the reader's. Stacked as sections,
+     * the second is a wall of text below the answer somebody came for. As tabs,
+     * the wrong one costs nothing.
+     *
+     * Tab state is client-side and resets on leaving the screen. A remembered
+     * tab would mean somebody who once read about stacking lands there next time
+     * with the add instructions hidden.
+     */
+    @Serializable
+    @SerialName("tabs")
+    data class Tabs(
+        override val id: String,
+        val tabs: List<SduiTab> = emptyList(),
+        val condition: SduiCondition? = null
+    ) : SduiAppComponent()
+
+    /**
+     * A numbered walkthrough, each step optionally carrying its own picture.
+     *
+     * Not a [Card] of [Text]s: the numbering is the content. A gesture performed
+     * on the HOME SCREEN, with the app closed, has to be memorised in order
+     * before the reader leaves, and an unordered paragraph does not survive the
+     * trip out of the app.
+     */
+    @Serializable
+    @SerialName("steps")
+    data class Steps(
+        override val id: String,
+        val title: String? = null,
+        val steps: List<SduiStep> = emptyList(),
+        val condition: SduiCondition? = null
+    ) : SduiAppComponent()
+
+    /**
+     * One line of the reader's current state, e.g. "2 widgets on your Home
+     * Screen".
+     *
+     * The client substitutes `{count}` into whichever of the three templates
+     * matches, so the backend controls the wording and the grammar without
+     * knowing the number. This is what keeps the guide from reading as an
+     * advert: it opens by telling the user what they already have rather than by
+     * asking them for something.
+     *
+     * [fact] names an entry in the same map the conditions resolve against.
+     * see `SduiFacts`.
+     */
+    @Serializable
+    @SerialName("stat_row")
+    data class StatRow(
+        override val id: String,
+        val fact: String,
+        val zero: String,
+        val one: String,
+        val many: String,
+        val icon: String? = null,
+        val condition: SduiCondition? = null
+    ) : SduiAppComponent()
 }
+
+/**
+ * One numbered step of an [SduiAppComponent.Steps] walkthrough.
+ *
+ * The media fields are the same contract as [SduiAppComponent.Demo] and for the
+ * same reason. See its docstring for why frames rather than a `.gif`.
+ */
+@Serializable
+data class SduiStep(
+    val title: String,
+    val body: String? = null,
+    /**
+     * An icon name from `SduiIcons`, replacing the step number.
+     *
+     * A number says "third of four"; an icon says what the step IS, and the two
+     * carry different halves of the same instruction. The icon wins here because
+     * the reader performs these steps on the Home Screen with the app closed,
+     * where a remembered shape survives better than a remembered ordinal. The
+     * connecting rule still carries the sequence. Unset falls back to the
+     * number, so a payload that names no icons is still a numbered list.
+     */
+    val icon: String? = null,
+    /** Hex tint for the marker, e.g. `#4CAF50`. Defaults to the board amber. */
+    val tint: String? = null,
+    val url: String? = null,
+    val frames: List<String> = emptyList(),
+    val frameMs: Int = 120,
+    val aspectRatio: Float = 1f,
+    val corner: Int = 14,
+    val fit: String = "fit",
+    val background: String? = null
+)
+
+/** One pane of an [SduiAppComponent.Tabs]. */
+@Serializable
+data class SduiTab(
+    val title: String,
+    val icon: String? = null,
+    val components: List<SduiAppComponent> = emptyList()
+)
 
 /**
  * Flat string-map returned by /sdui/app/home-config.

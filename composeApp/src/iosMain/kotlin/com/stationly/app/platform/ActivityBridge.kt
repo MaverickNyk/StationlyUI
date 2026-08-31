@@ -162,6 +162,11 @@ object ActivityBridge {
                 val station = parts.getOrNull(1)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
                 station to (parts.getOrNull(0).orEmpty())
             }.groupBy({ it.first }, { it.second }),
+            // The list length, NOT the size of the map above. `descriptors` is
+            // one entry per placed widget; grouping by station and dropping
+            // duplicate families is what the board-level answer wants and what
+            // a count must not be taken from.
+            total = descriptors.size,
         )
 
         // First observation of a session establishes the baseline. Treating it

@@ -188,4 +188,15 @@ object ActivityEvents {
     const val WIDGET_REMOVED = "widget.removed"
     /** Props: `count` — total widgets installed, emitted when it changes. */
     const val WIDGET_COUNT = "widget.count"
+
+    /**
+     * The widget guide was opened. Props: `count`, widgets already placed.
+     *
+     * The pair is the whole point of recording it. Opens with `count = 0` are
+     * people trying to get their first widget, and the share of them followed by
+     * a [WIDGET_ADDED] is the only measure of whether the guide works. Opens
+     * with a count above zero are a different question being asked, usually why
+     * the board looks stale, and should not be averaged in with the first.
+     */
+    const val WIDGET_GUIDE_OPENED = "widget.guide_opened"
 }

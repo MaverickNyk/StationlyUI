@@ -26,4 +26,13 @@ object ConfigKeys {
      * inside a board write.
      */
     const val HOME_CONFIG_CACHE_KEY = "home_config_strings_cache"
+
+    /**
+     * Where the last successful widget-guide layout is cached on device.
+     *
+     * The guide is the one screen whose whole job is to help somebody who is
+     * stuck, and being stuck correlates with being offline. It reads the cache
+     * first, the network second, and `WidgetGuideDefaults` if it has neither.
+     */
+    const val WIDGET_GUIDE_CACHE_KEY = "widget_guide_layout_cache"
 }

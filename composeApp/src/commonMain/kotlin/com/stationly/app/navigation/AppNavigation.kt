@@ -25,6 +25,7 @@ import com.stationly.app.ui.profile.ProfileScreen
 import com.stationly.app.ui.selection.SelectionScreen
 import com.stationly.app.ui.station.HomeSettingsScreen
 import com.stationly.app.ui.station.StationSettingsScreen
+import com.stationly.app.ui.widgets.WidgetGuideScreen
 import com.stationly.app.ui.summary.SummaryScreen
 
 @Composable
@@ -246,6 +247,7 @@ fun AppNavigation(
             HomeSettingsScreen(
                 onBack = { navController.popBackStack() },
                 onOpenScreensaver = { navController.navigate("dream/settings") },
+                onOpenWidgetGuide = { navController.navigate("widget-guide") },
                 // Pushed ON TOP of home settings rather than replacing it: the
                 // station list is where the user was, and back should return
                 // them to it — same rule as the settings → line picker → back
@@ -255,6 +257,10 @@ fun AppNavigation(
                     navigateFrom("home/settings", "station/settings")
                 },
             )
+        }
+
+        composable("widget-guide") {
+            WidgetGuideScreen(onBack = { navController.popBackStack() })
         }
 
         composable("station/settings") {
