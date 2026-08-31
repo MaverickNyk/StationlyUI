@@ -42,6 +42,11 @@ object BoardPolicyStore {
     var current: BoardPolicy = BoardPolicy.DEFAULT
         private set
 
+    /** Reset policy back to default for test isolation. */
+    fun resetForTest() {
+        current = BoardPolicy.DEFAULT
+    }
+
     /** Adopt a freshly-fetched config map. Called after the home-config sync. */
     fun refresh(strings: Map<String, String>) {
         if (strings.isEmpty()) return
@@ -63,7 +68,7 @@ object BoardPolicyStore {
      * decided the two mean different things, and the config is allowed to say
      * so.
      */
-    internal fun resolve(strings: Map<String, String>): BoardPolicy {
+    fun resolve(strings: Map<String, String>): BoardPolicy {
         val fresh = RemoteConfig.long(
             strings, BoardPolicy.KEY_FRESH,
             default = BoardPolicy.DEFAULT.freshMs, min = 15_000L, max = 600_000L,
@@ -139,6 +144,34 @@ object BoardPolicyStore {
             weatherRefreshIntervalMs = RemoteConfig.long(
                 strings, BoardPolicy.KEY_WEATHER_REFRESH_INTERVAL,
                 default = BoardPolicy.DEFAULT.weatherRefreshIntervalMs, min = 300_000L, max = 7_200_000L,
+            ),
+            maxBoards = RemoteConfig.int(
+                strings, BoardPolicy.KEY_BOARDS_MAX,
+                default = BoardPolicy.DEFAULT.maxBoards, min = 1, max = 12,
+            ),
+            boardsLimitTitle = RemoteConfig.text(
+                strings, BoardPolicy.KEY_BOARDS_REACHED_TITLE,
+                default = BoardPolicy.DEFAULT.boardsLimitTitle, maxLen = 60,
+            ),
+            boardsLimitMessage = RemoteConfig.text(
+                strings, BoardPolicy.KEY_BOARDS_REACHED_MESSAGE,
+                default = BoardPolicy.DEFAULT.boardsLimitMessage, maxLen = 300,
+            ),
+            boardsLimitCta = RemoteConfig.text(
+                strings, BoardPolicy.KEY_BOARDS_REACHED_CTA,
+                default = BoardPolicy.DEFAULT.boardsLimitCta, maxLen = 40,
+            ),
+            maxLinesPerStation = RemoteConfig.int(
+                strings, BoardPolicy.KEY_LINES_PER_BOARD_MAX,
+                default = BoardPolicy.DEFAULT.maxLinesPerStation, min = 1, max = 10,
+            ),
+            linesLimitTitle = RemoteConfig.text(
+                strings, BoardPolicy.KEY_LINES_REACHED_TITLE,
+                default = BoardPolicy.DEFAULT.linesLimitTitle, maxLen = 60,
+            ),
+            linesLimitMessage = RemoteConfig.text(
+                strings, BoardPolicy.KEY_LINES_REACHED_MESSAGE,
+                default = BoardPolicy.DEFAULT.linesLimitMessage, maxLen = 300,
             ),
         )
     }

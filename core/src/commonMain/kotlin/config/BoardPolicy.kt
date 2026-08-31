@@ -124,6 +124,29 @@ data class BoardPolicy(
     val explorePeakHorizonDays: Int = 14,
     /** Interval between periodic weather station refreshes. */
     val weatherRefreshIntervalMs: Long = 30L * 60 * 1000L,
+    /** Max station boards allowed per user. Clamped 1..12. */
+    val maxBoards: Int = 4,
+    /** Title shown on modal alert/sheet when station quota is reached. */
+    val boardsLimitTitle: String = "Station Limit Reached",
+    /** Message shown on modal alert/sheet when station quota is reached. */
+    val boardsLimitMessage: String = "You have used your full quota of 4 stations. Please delete an existing station to add a new one.",
+    /** CTA button text on station limit modal. */
+    val boardsLimitCta: String = "Got it",
+    /**
+     * Max distinct lines allowed per station board. Clamped 1..10.
+     *
+     * The ONLY per-station limit. There is deliberately no separate cap on
+     * (line, direction) rows: a TfL line runs inbound and outbound and nothing
+     * else, so four lines is at most eight rows on its own. A second ceiling
+     * counted in rows could only ever fire before this one and would refuse a
+     * user who had picked three lines and ticked both ways on each — a board
+     * the line limit says is legal.
+     */
+    val maxLinesPerStation: Int = 4,
+    /** Title on the line-limit modal. */
+    val linesLimitTitle: String = "Line Limit Reached",
+    /** Inline message when line limit is reached. */
+    val linesLimitMessage: String = "Maximum of 4 lines reached for this station. Untick a line to select another.",
 ) {
     companion object {
         /**
@@ -188,6 +211,19 @@ data class BoardPolicy(
         const val KEY_SUPPORT_FETCH_INTERVAL = "support.fetch.min_interval_ms"
         const val KEY_EXPLORE_PEAK_HORIZON = "explore.fares.max_days_to_peak"
         const val KEY_WEATHER_REFRESH_INTERVAL = "weather.refresh_interval_ms"
+
+        // ── Limits & Quotas Keys ──
+        const val KEY_BOARDS_MAX = "limits.boards.max"
+        const val KEY_BOARDS_REACHED_TITLE = "limits.boards.reached.title"
+        const val KEY_BOARDS_REACHED_MESSAGE = "limits.boards.reached.message"
+        const val KEY_BOARDS_REACHED_CTA = "limits.boards.reached.cta"
+        const val KEY_LINES_PER_BOARD_MAX = "limits.lines_per_board.max"
+        const val KEY_LINES_REACHED_TITLE = "limits.lines.reached.title"
+        const val KEY_LINES_REACHED_MESSAGE = "limits.lines.reached.message"
+        // `limits.rows_per_board.max` and `limits.rows.reached.message` are
+        // still served, and are deliberately NOT read here — see
+        // [maxLinesPerStation]. Left standing on the backend rather than
+        // deleted, per the additive-only config rule.
 
         /** Longest label the ETA column can take without squeezing destinations. */
         const val MAX_LABEL_LEN = 6

@@ -76,8 +76,10 @@ import androidx.compose.material.icons.rounded.RocketLaunch
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material.icons.rounded.Train
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.Button
+import com.stationly.core.config.BoardPolicyStore
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -124,6 +126,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.stationly.app.ui.common.ServiceUnavailableScreen
 import com.stationly.app.ui.common.StationlySpinner
+import com.stationly.app.ui.summary.components.LineLimitSheet
+import com.stationly.app.ui.summary.components.StationLimitSheet
 import com.stationly.app.ui.summary.components.lineColorForTheme
 import com.stationly.app.ui.theme.isDarkTheme
 import com.stationly.core.model.FilterMode
@@ -259,8 +263,6 @@ fun SelectionScreen(
     val directionsByLine by viewModel.directionsByLine.collectAsStateWithLifecycle()
     val loadingDirections by viewModel.loadingDirections.collectAsStateWithLifecycle()
     val failedDirections by viewModel.failedDirections.collectAsStateWithLifecycle()
-    val pickedRowCount by viewModel.pickedRowCount.collectAsStateWithLifecycle()
-    val atCap by viewModel.isAtCap.collectAsStateWithLifecycle()
     val selectionComplete by viewModel.isSelectionComplete.collectAsStateWithLifecycle()
     val boardFilters by viewModel.boardFilters.collectAsStateWithLifecycle()
     val expandedLine by viewModel.expandedLine.collectAsStateWithLifecycle()
@@ -390,8 +392,6 @@ fun SelectionScreen(
                         directionsByLine  = directionsByLine,
                         loadingDirections = loadingDirections,
                         failedDirections  = failedDirections,
-                        rowCount          = pickedRowCount,
-                        atCap             = atCap,
                         loadingLines      = dropdownData["line"] == null && "line" !in st.failedFetches,
                         errLines          = "line" in st.failedFetches,
                         primary           = primary,
@@ -491,6 +491,15 @@ fun SelectionScreen(
                 onDismiss              = onNavigateBack
             )
         }
+
+        StationLimitSheet(
+            visible = st.showStationLimitDialog,
+            onDismiss = { viewModel.dismissStationLimitDialog() },
+        )
+        LineLimitSheet(
+            visible = st.showLineLimitDialog,
+            onDismiss = { viewModel.dismissLineLimitDialog() },
+        )
     }
 }
 
@@ -835,8 +844,6 @@ private fun LineDirectionScreen(
     directionsByLine: Map<String, List<SduiDropdownOption>>,
     loadingDirections: Set<String>,
     failedDirections: Set<String>,
-    rowCount: Int,
-    atCap: Boolean,
     loadingLines: Boolean,
     errLines: Boolean,
     primary: Color,
@@ -931,8 +938,17 @@ private fun LineDirectionScreen(
                 item {
                     // "Select all" turns an interchange from one tap per line
                     // into one tap total — King's Cross alone serves six.
+                    val maxLines = BoardPolicyStore.current.maxLinesPerStation
+                    val currentLineCount = linePicks.keys.size
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         SectionHeader("Lines")
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "$currentLineCount / $maxLines",
+                            color = if (currentLineCount >= maxLines) primary else White55,
+                            fontSize = 12.sp,
+                            fontWeight = if (currentLineCount >= maxLines) FontWeight.Bold else FontWeight.Medium
+                        )
                         Spacer(Modifier.weight(1f))
                         if (lines.size > 1) {
                             val allPicked = lines.all { it.id in linePicks }
@@ -950,122 +966,124 @@ private fun LineDirectionScreen(
                 }
 
                 items(lines, key = { it.id }) { line ->
-                    val isChecked = line.id in linePicks
-                    val isExpanded = expandedLine == line.id
-                    OptRow(
-                        line, isChecked, primary, null, mode,
-                        multiSelect = true,
-                        // Rows already saved on this station's card are marked
-                        // so a returning user can tell at a glance what the board
-                        // holds, instead of reading a prefilled tick as
-                        // something they just did.
-                        onBoard = line.id in existingPicks
-                    ) {
-                        // A chosen-but-collapsed line EXPANDS on tap rather than
-                        // unticking. With the accordion the row is the only large
-                        // target on screen, and having it silently discard a line
-                        // the user had already configured (directions + filter)
-                        // is a far worse mistake than an extra tap to remove one.
-                        if (isChecked && !isExpanded) onExpandLine(line.id) else onToggleLine(line)
-                    }
+                    Column(Modifier.fillMaxWidth()) {
+                        val isChecked = line.id in linePicks
+                        val isExpanded = expandedLine == line.id
+                        OptRow(
+                            line, isChecked, primary, null, mode,
+                            multiSelect = true,
+                            // Rows already saved on this station's card are marked
+                            // so a returning user can tell at a glance what the board
+                            // holds, instead of reading a prefilled tick as
+                            // something they just did.
+                            onBoard = line.id in existingPicks
+                        ) {
+                            // A chosen-but-collapsed line EXPANDS on tap rather than
+                            // unticking. With the accordion the row is the only large
+                            // target on screen, and having it silently discard a line
+                            // the user had already configured (directions + filter)
+                            // is a far worse mistake than an extra tap to remove one.
+                            if (isChecked && !isExpanded) onExpandLine(line.id) else onToggleLine(line)
+                        }
 
-                    // Inline direction picker expands below EACH checked line.
-                    // Each line owns its own direction list — Circle's
-                    // inner/outer rail and Jubilee's north/south are different
-                    // vocabularies, so there is no shared "Direction" step.
-                    // Collapsed summary for a line that is chosen but not being
-                    // worked on. It has to state WHAT is chosen — a bare collapsed
-                    // row would leave the user unable to see their own answers
-                    // without reopening each line one at a time.
-                    AnimatedVisibility(
-                        visible = isChecked && !isExpanded,
-                        enter = expandVertically(tween(220)) + fadeIn(tween(180)),
-                        exit  = shrinkVertically(tween(160)) + fadeOut(tween(120))
-                    ) {
-                        CollapsedLineSummary(
-                            picks = linePicks[line.id] ?: emptySet(),
-                            directions = directionsByLine[line.id],
-                            filters = boardFilters,
-                            lineId = line.id,
-                            modeId = mode,
-                            primary = primary,
-                            onClick = { onExpandLine(line.id) },
-                        )
-                    }
+                        // Inline direction picker expands below EACH checked line.
+                        // Each line owns its own direction list — Circle's
+                        // inner/outer rail and Jubilee's north/south are different
+                        // vocabularies, so there is no shared "Direction" step.
+                        // Collapsed summary for a line that is chosen but not being
+                        // worked on. It has to state WHAT is chosen — a bare collapsed
+                        // row would leave the user unable to see their own answers
+                        // without reopening each line one at a time.
+                        AnimatedVisibility(
+                            visible = isChecked && !isExpanded,
+                            enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+                            exit  = shrinkVertically(tween(160)) + fadeOut(tween(120))
+                        ) {
+                            CollapsedLineSummary(
+                                picks = linePicks[line.id] ?: emptySet(),
+                                directions = directionsByLine[line.id],
+                                filters = boardFilters,
+                                lineId = line.id,
+                                modeId = mode,
+                                primary = primary,
+                                onClick = { onExpandLine(line.id) },
+                            )
+                        }
 
-                    AnimatedVisibility(
-                        visible = isExpanded,
-                        enter = expandVertically(tween(280)) + fadeIn(tween(220)),
-                        exit  = shrinkVertically(tween(200)) + fadeOut(tween(150))
-                    ) {
-                        Column(Modifier.padding(start = 8.dp, top = 10.dp)) {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                SectionHeader("Direction")
-                                Spacer(Modifier.weight(1f))
-                                // "Both ways" is the single most common
-                                // multi-pick — trains each way at one platform —
-                                // and is otherwise a tap per direction.
-                                val opts = directionsByLine[line.id]
-                                if (opts != null && opts.size > 1) {
-                                    val picked = linePicks[line.id] ?: emptySet()
-                                    val allPicked = opts.all { it.id in picked }
-                                    TextButton(
-                                        onClick = { onToggleAllDirs(line.id) },
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                                    ) {
-                                        Text(
-                                            if (allPicked) "Clear" else "Both ways",
-                                            color = primary, fontSize = 12.sp, fontWeight = FontWeight.Bold
-                                        )
+                        AnimatedVisibility(
+                            visible = isExpanded,
+                            enter = expandVertically(tween(280)) + fadeIn(tween(220)),
+                            exit  = shrinkVertically(tween(200)) + fadeOut(tween(150))
+                        ) {
+                            Column(Modifier.padding(start = 8.dp, top = 10.dp)) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    SectionHeader("Direction")
+                                    Spacer(Modifier.weight(1f))
+                                    // "Both ways" is the single most common
+                                    // multi-pick — trains each way at one platform —
+                                    // and is otherwise a tap per direction.
+                                    val opts = directionsByLine[line.id]
+                                    if (opts != null && opts.size > 1) {
+                                        val picked = linePicks[line.id] ?: emptySet()
+                                        val allPicked = opts.all { it.id in picked }
+                                        TextButton(
+                                            onClick = { onToggleAllDirs(line.id) },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                        ) {
+                                            Text(
+                                                if (allPicked) "Clear" else "Both ways",
+                                                color = primary, fontSize = 12.sp, fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                     }
                                 }
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            when {
-                                line.id in failedDirections ->
-                                    InlineErr("Couldn't load directions", primary) {
-                                        onRetryDirections(line.id)
-                                    }
-
-                                line.id in loadingDirections ||
-                                    directionsByLine[line.id] == null ->
-                                    Box(Modifier.fillMaxWidth().height(56.dp), Alignment.Center) {
-                                        StationlySpinner(size = 22.dp, color = primary)
-                                    }
-
-                                // Directions side by side, two per row, each
-                                // independently checkable — both directions of a
-                                // line is a valid choice and yields two boards.
-                                else -> directionsByLine[line.id]!!.chunked(2).forEach { pair ->
-                                    // IntrinsicSize.Max + fillMaxHeight makes both
-                                    // cards in a row match the taller one. Without
-                                    // it a direction with more destinations grows
-                                    // and its neighbour sits short, which reads as
-                                    // a rendering fault rather than a difference in
-                                    // content.
-                                    Row(
-                                        Modifier.fillMaxWidth().height(IntrinsicSize.Max),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        pair.forEach { dir ->
-                                            DirChoiceCard(
-                                                opt = dir,
-                                                sel = dir.id in (linePicks[line.id] ?: emptySet()),
-                                                primary = primary,
-                                                layout = layout,
-                                                modifier = Modifier.weight(1f).fillMaxHeight(),
-                                                filter = boardFilters[
-                                                    SelectionViewModel.boardFilterKey(line.id, dir.id)
-                                                ] ?: BoardFilter(),
-                                                modeId = mode,
-                                                onOpenFilter = { onOpenFilter(line, dir) },
-                                            ) { onToggleDir(line.id, dir) }
+                                Spacer(Modifier.height(8.dp))
+                                when {
+                                    line.id in failedDirections ->
+                                        InlineErr("Couldn't load directions", primary) {
+                                            onRetryDirections(line.id)
                                         }
-                                        // Keep a lone card at half width instead
-                                        // of letting it stretch across the row.
-                                        if (pair.size == 1) Spacer(Modifier.weight(1f))
+
+                                    line.id in loadingDirections ||
+                                        directionsByLine[line.id] == null ->
+                                        Box(Modifier.fillMaxWidth().height(56.dp), Alignment.Center) {
+                                            StationlySpinner(size = 22.dp, color = primary)
+                                        }
+
+                                    // Directions side by side, two per row, each
+                                    // independently checkable — both directions of a
+                                    // line is a valid choice and yields two boards.
+                                    else -> directionsByLine[line.id]!!.chunked(2).forEach { pair ->
+                                        // IntrinsicSize.Max + fillMaxHeight makes both
+                                        // cards in a row match the taller one. Without
+                                        // it a direction with more destinations grows
+                                        // and its neighbour sits short, which reads as
+                                        // a rendering fault rather than a difference in
+                                        // content.
+                                        Row(
+                                            Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            pair.forEach { dir ->
+                                                DirChoiceCard(
+                                                    opt = dir,
+                                                    sel = dir.id in (linePicks[line.id] ?: emptySet()),
+                                                    primary = primary,
+                                                    layout = layout,
+                                                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                                                    filter = boardFilters[
+                                                        SelectionViewModel.boardFilterKey(line.id, dir.id)
+                                                    ] ?: BoardFilter(),
+                                                    modeId = mode,
+                                                    onOpenFilter = { onOpenFilter(line, dir) },
+                                                ) { onToggleDir(line.id, dir) }
+                                            }
+                                            // Keep a lone card at half width instead
+                                            // of letting it stretch across the row.
+                                            if (pair.size == 1) Spacer(Modifier.weight(1f))
+                                        }
+                                        Spacer(Modifier.height(8.dp))
                                     }
-                                    Spacer(Modifier.height(8.dp))
                                 }
                             }
                         }
@@ -1073,72 +1091,6 @@ private fun LineDirectionScreen(
                 }
 
                 item { Spacer(Modifier.height(20.dp)) }
-            }
-        }
-
-        // Pinned summary. With several lines expanded the picks scroll well off
-        // screen, so without this the only way to check what you have built is
-        // to scroll back up through every expanded direction block.
-        if (rowCount > 0) {
-            PickSummaryBar(
-                rowCount = rowCount,
-                atCap = atCap,
-                linePicks = linePicks,
-                lines = lines,
-                primary = primary
-            )
-        }
-    }
-}
-
-/**
- * One-line readout of the board being assembled: which lines, and how many
- * (line, direction) rows against the cap.
- *
- * The count is the honest unit here — "2 lines" hides that both-ways doubles
- * the sections on the card, and the cap is counted in rows, not lines.
- */
-@Composable
-private fun PickSummaryBar(
-    rowCount: Int,
-    atCap: Boolean,
-    linePicks: Map<String, Set<String>>,
-    lines: List<SduiDropdownOption>,
-    primary: Color,
-) {
-    val names = remember(linePicks, lines) {
-        linePicks.keys.mapNotNull { id -> lines.find { it.id == id }?.label }
-    }
-    Surface(
-        color = Surface1,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 8.dp),
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, White08)
-    ) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    summariseDestinations(names),
-                    color = White90, fontSize = 12.sp, fontWeight = FontWeight.Medium,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    "$rowCount / ${SelectionViewModel.MAX_ROWS_PER_STATION}",
-                    color = if (atCap) primary else White55,
-                    fontSize = 12.sp,
-                    fontWeight = if (atCap) FontWeight.Bold else FontWeight.Medium
-                )
-            }
-            // A tap that hits the cap is silently rejected, so the reason has to
-            // be on screen — this is the only feedback besides the error haptic.
-            if (atCap) {
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    "Board full. Untick one to add another",
-                    color = White55, fontSize = 10.sp
-                )
             }
         }
     }

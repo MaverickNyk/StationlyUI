@@ -8,5 +8,6 @@ data class SummaryUiState(
     val activeStationId: String? = null,
     val activeLineId: String? = null,
     val userInitial: String = "?",
-    val photoUrl: String? = null
+    val photoUrl: String? = null,
+    val showStationLimitDialog: Boolean = false
 )

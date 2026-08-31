@@ -7,11 +7,11 @@ A key marked `android` is read by the production client and can never be
 dropped. The Android column is a floor, not a complete list — that tree is
 ahead of the shipped binary, which only the Play Console can tell you about.
 
-- keys served: **289**
-- read by iOS: **185**
+- keys served: **296**
+- read by iOS: **195**
 - read by Android: **106**
-- served and read by at least one client: **218**
-- read but never served (client keeps its fallback): **8**
+- served and read by at least one client: **225**
+- read but never served (client keeps its fallback): **11**
 - served but read by neither (retained under the additive rule): **71**
 
 | Key | Served | iOS | Android |
@@ -53,6 +53,7 @@ ahead of the shipped binary, which only the Play Console can tell you about.
 | `auth.verify.resend_cooldown_sec` | yes | yes | — |
 | `auth.verify.subtitle` | yes | yes | yes |
 | `auth.verify.title` | yes | yes | yes |
+| `board.count` | — | yes | — |
 | `board.fallback.connecting.detail` | yes | yes | yes |
 | `board.fallback.connecting.title` | yes | yes | yes |
 | `board.fallback.disrupted.detail` | yes | yes | yes |
@@ -206,6 +207,13 @@ ahead of the shipped binary, which only the Play Console can tell you about.
 | `home.promo.widget.show` | yes | — | yes |
 | `home.promo.widget.subtitle` | yes | — | yes |
 | `home.promo.widget.title` | yes | — | yes |
+| `limits.boards.max` | yes | yes | — |
+| `limits.boards.reached.cta` | yes | yes | — |
+| `limits.boards.reached.message` | yes | yes | — |
+| `limits.boards.reached.title` | yes | yes | — |
+| `limits.lines.reached.message` | yes | yes | — |
+| `limits.lines.reached.title` | yes | yes | — |
+| `limits.lines_per_board.max` | yes | yes | — |
 | `line.color.` | — | yes | — |
 | `line.color.bakerloo` | yes | — | — |
 | `line.color.cable-car` | yes | — | — |
@@ -304,6 +312,7 @@ ahead of the shipped binary, which only the Play Console can tell you about.
 | `support_money.thanks.close` | yes | yes | — |
 | `topbar.live_label` | yes | — | — |
 | `weather.refresh_interval_ms` | yes | yes | — |
+| `widget.count` | — | yes | — |
 | `widget.refresh` | — | yes | — |
 | `widget.state.needs_station.detail` | yes | yes | — |
 | `widget.state.needs_station.title` | yes | yes | — |
@@ -313,3 +322,4 @@ ahead of the shipped binary, which only the Play Console can tell you about.
 | `widget.state.removed.title` | yes | yes | — |
 | `widget.state.signed_out.detail` | yes | yes | — |
 | `widget.state.signed_out.title` | yes | yes | — |
+| `widget.supported` | — | yes | — |

@@ -235,4 +235,73 @@ class BoardPolicyTest {
         assertEquals(60, tooHigh.explorePeakHorizonDays)
         assertEquals(7_200_000L, tooHigh.weatherRefreshIntervalMs)
     }
+
+    // ── Limits and quotas ────────────────────────────────────────────────
+
+    @Test
+    fun `limits and quota thresholds default to compiled values`() {
+        val policy = BoardPolicy.DEFAULT
+        assertEquals(4, policy.maxBoards)
+        assertEquals("Station Limit Reached", policy.boardsLimitTitle)
+        assertEquals("You have used your full quota of 4 stations. Please delete an existing station to add a new one.", policy.boardsLimitMessage)
+        assertEquals("Got it", policy.boardsLimitCta)
+        assertEquals(4, policy.maxLinesPerStation)
+        assertEquals("Line Limit Reached", policy.linesLimitTitle)
+        assertEquals("Maximum of 4 lines reached for this station. Untick a line to select another.", policy.linesLimitMessage)
+    }
+
+    @Test
+    fun `limits adopt served values`() {
+        val resolved = BoardPolicyStore.resolve(
+            mapOf(
+                BoardPolicy.KEY_BOARDS_MAX to "6",
+                BoardPolicy.KEY_BOARDS_REACHED_TITLE to "Max Stations",
+                BoardPolicy.KEY_BOARDS_REACHED_MESSAGE to "Delete a station first.",
+                BoardPolicy.KEY_BOARDS_REACHED_CTA to "Understood",
+                BoardPolicy.KEY_LINES_PER_BOARD_MAX to "5",
+                BoardPolicy.KEY_LINES_REACHED_TITLE to "Too Many Lines",
+                BoardPolicy.KEY_LINES_REACHED_MESSAGE to "Line cap hit.",
+                // `limits.rows_per_board.*` is still served and deliberately
+                // ignored — directions are not quota'd. See BoardPolicy.
+                "limits.rows_per_board.max" to "10",
+            ),
+        )
+        assertEquals(6, resolved.maxBoards)
+        assertEquals("Max Stations", resolved.boardsLimitTitle)
+        assertEquals("Delete a station first.", resolved.boardsLimitMessage)
+        assertEquals("Understood", resolved.boardsLimitCta)
+        assertEquals(5, resolved.maxLinesPerStation)
+        assertEquals("Too Many Lines", resolved.linesLimitTitle)
+        assertEquals("Line cap hit.", resolved.linesLimitMessage)
+    }
+
+    @Test
+    fun `limits clamp out-of-range values`() {
+        val tooLow = BoardPolicyStore.resolve(
+            mapOf(
+                BoardPolicy.KEY_BOARDS_MAX to "-1",
+                BoardPolicy.KEY_LINES_PER_BOARD_MAX to "0",
+            ),
+        )
+        assertEquals(1, tooLow.maxBoards)
+        assertEquals(1, tooLow.maxLinesPerStation)
+
+        val tooHigh = BoardPolicyStore.resolve(
+            mapOf(
+                BoardPolicy.KEY_BOARDS_MAX to "50",
+                BoardPolicy.KEY_LINES_PER_BOARD_MAX to "100",
+            ),
+        )
+        assertEquals(12, tooHigh.maxBoards)
+        assertEquals(10, tooHigh.maxLinesPerStation)
+    }
+
+    @Test
+    fun `a served row cap is ignored — directions are not quota'd`() {
+        // The key is still served by the backend, per the additive-only config
+        // rule. Reading it back would resurrect a ceiling that can only refuse
+        // boards the line limit calls legal.
+        val resolved = BoardPolicyStore.resolve(mapOf("limits.rows_per_board.max" to "2"))
+        assertEquals(BoardPolicy.DEFAULT.maxLinesPerStation, resolved.maxLinesPerStation)
+    }
 }

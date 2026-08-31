@@ -17,6 +17,7 @@ import com.stationly.core.model.sdui.SduiAppScreen
 import com.stationly.core.model.sdui.SduiDropdownOption
 import com.stationly.core.config.AppConfig
 import com.stationly.core.config.BoardPolicyStore
+import com.stationly.core.config.BoardQuota
 import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SelectionRepository
@@ -64,16 +65,13 @@ class SelectionViewModel(
     private val jsonFormat = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     companion object {
-        /**
-         * Hard ceiling on (line, direction) rows for ONE station card.
-         *
-         * Not a monetisation limit — a technical one. Every row is a live stream
-         * subscription plus a section on a card that has to stay readable on an
-         * iPhone 11. With "select all lines" and "both ways" one tap away, a
-         * King's Cross-sized interchange would otherwise let a user build a
-         * 20-subscription board by accident.
-         */
-        const val MAX_ROWS_PER_STATION = 8
+        // A `MAX_ROWS_PER_STATION = 8` const used to live here, capping
+        // (line, direction) rows on one station card. It is gone, and nothing
+        // replaced it: a line runs inbound and outbound and nothing else, so
+        // `BoardPolicy.maxLinesPerStation` already bounds a card at twice
+        // itself. A second ceiling counted in rows could only ever fire first,
+        // refusing three lines with both ways ticked — a board the line limit
+        // calls legal.
 
         /** Prefix for the per-line direction-fetch failure keys in `failedFetches`. */
         private const val DIRECTION_FAIL_PREFIX = "direction_"
@@ -213,16 +211,6 @@ class SelectionViewModel(
                 .mapTo(mutableSetOf()) { it.removePrefix(DIRECTION_FAIL_PREFIX) }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
-
-    /** How many board rows the current picks would produce — one per (line, direction). */
-    val pickedRowCount: StateFlow<Int> = _linePicks
-        .map { picks -> picks.values.sumOf { it.size } }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
-
-    /** True once the station has as many rows as one card is allowed to hold. */
-    val isAtCap: StateFlow<Boolean> = pickedRowCount
-        .map { it >= MAX_ROWS_PER_STATION }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /** True once at least one line is checked AND every checked line has >=1 direction. */
     val isSelectionComplete: StateFlow<Boolean> = _linePicks
@@ -510,8 +498,20 @@ class SelectionViewModel(
     }
 
     fun onDropdownSelected(componentId: String, value: String) {
+        if (value.isBlank()) { performHaptic(HapticType.TAP); removeSelection(componentId); return }
+
+        // BEFORE the haptic and before ANY state is touched. The `when` below
+        // calls clearLinePicks(), so a refusal that ran after it would wipe the
+        // lines the user had already chosen and only then tell them no. The
+        // station step is also the last point where refusing is free — past it
+        // they pick lines and directions, and a refusal at save time throws all
+        // of that away.
+        if (componentId == "station" && !BoardQuota.canAddStation(heldStationIds(), value)) {
+            performHaptic(HapticType.ERROR)
+            _uiState.value = _uiState.value.copy(showStationLimitDialog = true)
+            return
+        }
         performHaptic(HapticType.TAP)
-        if (value.isBlank()) { removeSelection(componentId); return }
 
         val newSelections = _selections.value.toMutableMap()
         val newDropdownData = _dropdownData.value.toMutableMap()
@@ -631,8 +631,14 @@ class SelectionViewModel(
      * direction control is populated by the time the row finishes expanding.
      */
     fun toggleLine(lineId: String) {
-        performHaptic(HapticType.TAP)
         val current = _linePicks.value
+        // Only ADDING spends a slot. Unticking at the cap has to stay free, or a
+        // user who filled the station has no way back out of it.
+        if (lineId !in current && !BoardQuota.canAddLine(current.size)) {
+            refuseLine()
+            return
+        }
+        performHaptic(HapticType.TAP)
         // Ticking a line makes it the one being worked on; unticking closes it.
         _expandedLine.value = if (lineId in current) null else lineId
         if (lineId in current) {
@@ -663,7 +669,6 @@ class SelectionViewModel(
     fun toggleDirection(lineId: String, directionId: String) {
         val current = _linePicks.value[lineId] ?: return
         val adding = directionId !in current
-        if (adding && !claimRowBudget(1)) return
         performHaptic(HapticType.TAP)
         val updated = if (adding) current + directionId else current - directionId
         _linePicks.value = _linePicks.value.toMutableMap().also { it[lineId] = updated }
@@ -680,13 +685,7 @@ class SelectionViewModel(
         val options = _directionsByLine.value[lineId] ?: return
         val current = _linePicks.value[lineId] ?: return
         val allIds = options.mapTo(LinkedHashSet()) { it.id }
-        val next = if (current.containsAll(allIds)) {
-            emptySet()
-        } else {
-            val added = allIds.size - current.size
-            if (!claimRowBudget(added)) return
-            allIds
-        }
+        val next = if (current.containsAll(allIds)) emptySet() else allIds
         performHaptic(HapticType.TAP)
         _linePicks.value = _linePicks.value.toMutableMap().also { it[lineId] = next }
     }
@@ -699,24 +698,44 @@ class SelectionViewModel(
      * Toggles off if every line is already checked.
      */
     fun toggleAllLines(lines: List<SduiDropdownOption>) {
-        performHaptic(HapticType.TAP)
         if (lines.all { it.id in _linePicks.value }) {
+            performHaptic(HapticType.TAP)
             _linePicks.value = emptyMap()
             return
         }
         val picks = LinkedHashMap(_linePicks.value)
-        lines.forEach { line ->
-            if (line.id !in picks) {
-                picks[line.id] = emptySet()
-                val known = _directionsByLine.value[line.id]
-                if (known == null) fetchDirectionsFor(line.id) else autoSelectSoleDirection(line.id, known)
-            }
+        // Fills UP TO the cap rather than refusing the whole gesture. At a
+        // six-line interchange "select all" that did nothing because six is more
+        // than four would read as a broken button; four lines plus the modal
+        // saying why the other two are missing is the honest answer.
+        var refused = false
+        val added = mutableListOf<String>()
+        for (line in lines) {
+            if (line.id in picks) continue
+            if (!BoardQuota.canAddLine(picks.size)) { refused = true; continue }
+            picks[line.id] = emptySet()
+            added += line.id
         }
+        if (refused) refuseLine() else performHaptic(HapticType.TAP)
+
+        // COMMIT BEFORE RESOLVING. autoSelectSoleDirection routes through
+        // toggleDirection, which reads `_linePicks.value[lineId]` — while
+        // `picks` was still a local copy that read null and the auto-tick
+        // silently did nothing, so a one-way line ticked by "Select all" was
+        // left incomplete and the CTA stayed disabled.
         _linePicks.value = picks
+        added.forEach { id ->
+            val known = _directionsByLine.value[id]
+            if (known == null) fetchDirectionsFor(id) else autoSelectSoleDirection(id, known)
+        }
+
+        // Read back off the state, not off `picks` — the auto-tick above may
+        // have completed some of these lines since it was built.
+        val settled = _linePicks.value
         // Open the first line that still needs a direction, so "select all" ends
         // somewhere actionable instead of on a list of collapsed, incomplete rows.
-        _expandedLine.value = picks.entries.firstOrNull { it.value.isEmpty() }?.key
-            ?: picks.keys.firstOrNull()
+        _expandedLine.value = settled.entries.firstOrNull { it.value.isEmpty() }?.key
+            ?: settled.keys.firstOrNull()
     }
 
     private fun autoSelectSoleDirection(lineId: String, options: List<SduiDropdownOption>) {
@@ -726,21 +745,28 @@ class SelectionViewModel(
     }
 
     /**
-     * Gate on [MAX_ROWS_PER_STATION]. Returns false when [additional] rows would
-     * overflow the card, so the caller aborts instead of building a board that
-     * cannot be rendered or streamed.
+     * The hubs the user already owns a card for.
      *
-     * Deliberately does NOT set `uiState.error`: that field is only rendered by
-     * the backend-offline overlay, so the message would be invisible here AND
-     * would resurface later as the offline screen's copy. The cap is surfaced by
-     * the summary bar's counter and hint instead — a rejected tap answers itself
-     * on screen rather than through a toast.
+     * Read off the repository rather than the summary's collected list because
+     * this screen has no view of that, and empty is the correct reading before
+     * [repoReady] completes: a user with no boards loaded yet cannot be over a
+     * quota, and the save path re-checks against a settled repository anyway.
      */
-    private fun claimRowBudget(additional: Int): Boolean {
-        val current = _linePicks.value.values.sumOf { it.size }
-        if (current + additional <= MAX_ROWS_PER_STATION) return true
+    private fun heldStationIds(): List<String> =
+        selectionRepository.selections.value.map { it.groupingId }
+
+    /** One refusal of a line tap: the error haptic and the modal. */
+    private fun refuseLine() {
         performHaptic(HapticType.ERROR)
-        return false
+        _uiState.value = _uiState.value.copy(showLineLimitDialog = true)
+    }
+
+    fun dismissStationLimitDialog() {
+        _uiState.value = _uiState.value.copy(showStationLimitDialog = false)
+    }
+
+    fun dismissLineLimitDialog() {
+        _uiState.value = _uiState.value.copy(showLineLimitDialog = false)
     }
 
     /**
@@ -1129,6 +1155,19 @@ class SelectionViewModel(
             _uiState.value = state.copy(isLoading = true, isSaving = true)
             try {
                 repoReady?.join()
+                // The backstop. The station step already refused an over-quota
+                // pick, but it had to answer before the repository had finished
+                // loading; this is the same question asked once the answer is
+                // settled, and it is the last one before rows reach SQL.
+                if (!BoardQuota.canAddStation(heldStationIds(), stationId)) {
+                    performHaptic(HapticType.ERROR)
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        isSaving = false,
+                        showStationLimitDialog = true,
+                    )
+                    return@launch
+                }
                 // One board per (line, direction). A line with both directions
                 // checked yields two boards, which is exactly how they render:
                 // two stacked sections under the same station card.

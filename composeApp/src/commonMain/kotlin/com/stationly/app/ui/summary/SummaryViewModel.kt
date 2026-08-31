@@ -13,6 +13,7 @@ import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.FormatDeparturesUseCase
 import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.config.SduiConfig
+import com.stationly.core.config.BoardQuota
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.core.util.FreshData
 import com.stationly.core.util.FreshDataNotifier
@@ -495,6 +496,33 @@ class SummaryViewModel(
                 scheduleAutoRetry()
             }
         }
+    }
+
+    /**
+     * The "+" in the top bar.
+     *
+     * The quota is checked HERE rather than in the selection flow because the
+     * navigation is the thing being refused: once `navigate("selection")` runs,
+     * this screen is torn down and any sheet it was about to raise goes with it.
+     * A refusal has to happen before the tap turns into a destination, not after.
+     *
+     * Reads `_selections` directly. It is the same flow the screen collects to
+     * draw the cards, so there is exactly one count and no way for the gate and
+     * the eye to disagree.
+     */
+    fun onAddBoardClicked(onProceed: () -> Unit) {
+        if (BoardQuota.canAddStation(_selections.value.map { it.groupingId })) {
+            // No success haptic: the "+" never had one, and a refusal reads as a
+            // refusal only if the accepted tap stays silent.
+            onProceed()
+        } else {
+            performHaptic(HapticType.ERROR)
+            _uiState.value = _uiState.value.copy(showStationLimitDialog = true)
+        }
+    }
+
+    fun dismissStationLimitDialog() {
+        _uiState.value = _uiState.value.copy(showStationLimitDialog = false)
     }
 
     private suspend fun loadUserInitial() {

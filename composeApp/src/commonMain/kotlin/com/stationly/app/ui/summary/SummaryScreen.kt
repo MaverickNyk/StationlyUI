@@ -110,7 +110,9 @@ import com.stationly.app.ui.summary.components.BoardSection
 import com.stationly.app.ui.summary.components.StationBoard
 import com.stationly.app.ui.summary.components.EmptyStationsState
 import com.stationly.app.ui.summary.components.StationExploreSection
+import com.stationly.app.ui.summary.components.StationLimitSheet
 import com.stationly.app.ui.theme.DisplayFamily
+import com.stationly.core.config.BoardQuota
 import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.app.ui.theme.TflAmber
 import com.stationly.core.model.user.BoardConfig
@@ -189,7 +191,7 @@ fun SummaryScreen(
         topBar = {
             SummaryTopBar(
                 onNavigateToProfile = onNavigateToProfile,
-                onAddStation = onNavigateToSelection,
+                onAddStation = { viewModel.onAddBoardClicked(onNavigateToSelection) },
                 onOpenHomeSettings = onOpenHomeSettings,
                 userInitial = uiState.userInitial,
                 photoUrl = uiState.photoUrl,
@@ -831,7 +833,7 @@ fun SummaryScreen(
             // banner's own copy. One card is one STATION, so someone tracking
             // three lines at one stop has one board, not three.
             val boardCount = remember(selections) {
-                selections.map { it.groupingId }.distinct().size
+                BoardQuota.stationCount(selections.map { it.groupingId })
             }
 
             val boardAdded by SupportMoment.boardAdded.collectAsStateWithLifecycle()
@@ -868,6 +870,11 @@ fun SummaryScreen(
                             colors = listOf(Color.Transparent, TflAmber.copy(alpha = 0.03f))
                         )
                     )
+            )
+
+            StationLimitSheet(
+                visible = uiState.showStationLimitDialog,
+                onDismiss = { viewModel.dismissStationLimitDialog() },
             )
             } // end padded content box
 
