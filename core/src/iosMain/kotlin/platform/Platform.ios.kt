@@ -5,6 +5,7 @@ import com.stationly.core.session.PendingOps
 import com.stationly.core.config.AppConfig
 import com.stationly.core.config.BoardPolicyStore
 import com.stationly.core.config.ConfigKeys
+import com.stationly.core.config.LinePalette
 import com.stationly.core.config.RemoteConfig
 import com.stationly.core.model.PredictionsPayload
 import com.stationly.core.model.PredictionDisplay
@@ -990,6 +991,7 @@ class IosWidgetManager : WidgetManager {
         // identical object the app is rendering with — clamps, the freshness
         // coupling and all. See BoardPolicyStore.resolve.
         val policy = BoardPolicyStore.resolve(strings)
+        val palette = LinePalette.resolve(strings)
 
         // Every kind, resolved once.
         //
@@ -1037,6 +1039,11 @@ class IosWidgetManager : WidgetManager {
             // than in the extension for the same reason as everything else in
             // this table: the widget never fetches, so whatever it knows the app
             // put there. See WidgetStateCopy for the wording rules.
+            // The palette the board's station strip uses, so the widget's
+            // roundel is the same colour rather than a fourth copy of it.
+            modeColors = palette.modes,
+            modeColorDefault = palette.modeDefault,
+
             configCopy = WidgetStateCopy.STATES.associateWith { state ->
                 WidgetFallbackCopy(
                     title = RemoteConfig.text(

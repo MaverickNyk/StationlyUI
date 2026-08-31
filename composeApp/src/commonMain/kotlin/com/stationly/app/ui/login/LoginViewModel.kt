@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.stationly.app.platform.DeviceIdentity
 import com.stationly.app.sync.UserStateSync
 import com.stationly.app.ui.util.HomeConfigCache
+import com.stationly.core.config.SduiConfig
 import com.stationly.core.activity.ActivityEvents
 import com.stationly.core.activity.ActivityLog
 import com.stationly.core.session.PendingOps
@@ -122,13 +123,21 @@ class LoginViewModel(
             runCatching { HomeConfigCache.load() }
                 .getOrNull()
                 ?.takeIf { it.isNotEmpty() }
-                ?.let { strings = AuthStrings(it); _configStrings.value = it }
+                ?.let {
+                    strings = AuthStrings(it)
+                    _configStrings.value = it
+                    // The auth screen is often the FIRST fetch on a cold install,
+                    // so the board is painted from whatever it adopts here long
+                    // before the home screen runs its own.
+                    SduiConfig.refresh(it)
+                }
             runCatching { sduiApi.getHomeConfig().strings }
                 .getOrNull()
                 ?.takeIf { it.isNotEmpty() }
                 ?.let {
                     strings = AuthStrings(it)
                     _configStrings.value = it
+                    SduiConfig.refresh(it)
                     // Seed the shared cache too. The login screen is often the
                     // first thing to fetch this on a new install, and leaving it
                     // unsaved would make the home screen fetch the identical

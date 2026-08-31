@@ -345,6 +345,18 @@ data class WidgetFallbackTable(
      * configuration one.
      */
     val configCopy: Map<String, WidgetFallbackCopy> = emptyMap(),
+
+    /**
+     * Roundel tint per transport mode, as `#RRGGBB` — see
+     * [com.stationly.core.config.LinePalette].
+     *
+     * The widget draws the same roundel as the board's station strip, so it has
+     * to be the same table. `WidgetTheme.modeColor` was the fourth hand-kept copy
+     * of these five values; it now reads this and decides nothing.
+     */
+    val modeColors: Map<String, String> = emptyMap(),
+    /** Tint for a mode nobody has mapped. TfL corporate red. */
+    val modeColorDefault: String = "#DC241F",
 )
 
 /**

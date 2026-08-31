@@ -7,12 +7,12 @@ A key marked `android` is read by the production client and can never be
 dropped. The Android column is a floor, not a complete list — that tree is
 ahead of the shipped binary, which only the Play Console can tell you about.
 
-- keys served: **239**
-- read by iOS: **180**
+- keys served: **287**
+- read by iOS: **191**
 - read by Android: **106**
-- served and read by at least one client: **211**
-- read but never served (client keeps its fallback): **4**
-- served but read by neither (retained under the additive rule): **28**
+- served and read by at least one client: **218**
+- read but never served (client keeps its fallback): **8**
+- served but read by neither (retained under the additive rule): **69**
 
 | Key | Served | iOS | Android |
 |---|---|---|---|
@@ -73,6 +73,7 @@ ahead of the shipped binary, which only the Play Console can tell you about.
 | `board.good_service_sub` | — | yes | — |
 | `board.hero.min_label` | yes | yes | — |
 | `board.hero.no_departures` | yes | yes | — |
+| `board.hero.urgency_min` | yes | yes | — |
 | `board.stale.freshMs` | yes | yes | — |
 | `board.stale.staleMs` | yes | yes | — |
 | `board.status.redSeverities` | yes | yes | — |
@@ -115,6 +116,7 @@ ahead of the shipped binary, which only the Play Console can tell you about.
 | `explore.fares.dialog.link` | yes | yes | yes |
 | `explore.fares.dialog.title.offpeak` | yes | — | yes |
 | `explore.fares.dialog.title.peak` | yes | — | yes |
+| `explore.fares.max_days_to_peak` | yes | yes | — |
 | `explore.fares.offpeak.subtitle_prefix` | yes | — | yes |
 | `explore.fares.offpeak.subtitle_short` | yes | yes | — |
 | `explore.fares.offpeak.title` | yes | yes | yes |
@@ -202,6 +204,52 @@ ahead of the shipped binary, which only the Play Console can tell you about.
 | `home.promo.widget.show` | yes | — | yes |
 | `home.promo.widget.subtitle` | yes | — | yes |
 | `home.promo.widget.title` | yes | — | yes |
+| `line.color.` | — | yes | — |
+| `line.color.bakerloo` | yes | — | — |
+| `line.color.cable-car` | yes | — | — |
+| `line.color.central` | yes | — | — |
+| `line.color.circle` | yes | — | — |
+| `line.color.dark.` | — | yes | — |
+| `line.color.dark.bakerloo` | yes | — | — |
+| `line.color.dark.district` | yes | — | — |
+| `line.color.dark.elizabeth` | yes | — | — |
+| `line.color.dark.metropolitan` | yes | — | — |
+| `line.color.dark.mildmay` | yes | — | — |
+| `line.color.dark.northern` | yes | — | — |
+| `line.color.dark.piccadilly` | yes | — | — |
+| `line.color.dark.suffragette` | yes | — | — |
+| `line.color.dark.weaver` | yes | — | — |
+| `line.color.district` | yes | — | — |
+| `line.color.dlr` | yes | — | — |
+| `line.color.elizabeth` | yes | — | — |
+| `line.color.hammersmith-city` | yes | — | — |
+| `line.color.jubilee` | yes | — | — |
+| `line.color.liberty` | yes | — | — |
+| `line.color.light.` | — | yes | — |
+| `line.color.light.jubilee` | yes | — | — |
+| `line.color.light.liberty` | yes | — | — |
+| `line.color.light.northern` | yes | — | — |
+| `line.color.lioness` | yes | — | — |
+| `line.color.metropolitan` | yes | — | — |
+| `line.color.mildmay` | yes | — | — |
+| `line.color.northern` | yes | — | — |
+| `line.color.piccadilly` | yes | — | — |
+| `line.color.suffragette` | yes | — | — |
+| `line.color.tram` | yes | — | — |
+| `line.color.victoria` | yes | — | — |
+| `line.color.waterloo-city` | yes | — | — |
+| `line.color.weaver` | yes | — | — |
+| `line.color.windrush` | yes | — | — |
+| `mode.color.` | — | yes | — |
+| `mode.color.bus` | yes | — | — |
+| `mode.color.default` | yes | yes | — |
+| `mode.color.dlr` | yes | — | — |
+| `mode.color.elizabeth` | yes | — | — |
+| `mode.color.elizabeth-line` | yes | — | — |
+| `mode.color.overground` | yes | — | — |
+| `mode.color.tram` | yes | — | — |
+| `mode.color.tube` | yes | — | — |
+| `mode.color.underground` | yes | — | — |
 | `profile.about.title` | yes | yes | yes |
 | `profile.delete_account.bullets` | yes | yes | yes |
 | `profile.delete_account.cancel` | yes | yes | yes |
@@ -219,6 +267,7 @@ ahead of the shipped binary, which only the Play Console can tell you about.
 | `profile.stations.empty_subtitle` | yes | — | yes |
 | `profile.stations.empty_title` | yes | — | yes |
 | `profile.stations.title` | yes | — | yes |
+| `selection.dropdown.cache_ttl_ms` | yes | yes | — |
 | `station.label.bus` | yes | yes | — |
 | `station.label.default` | yes | yes | — |
 | `station.label.dlr` | yes | yes | — |
@@ -234,6 +283,8 @@ ahead of the shipped binary, which only the Play Console can tell you about.
 | `station.mode.river-bus` | yes | yes | — |
 | `station.mode.tram` | yes | yes | — |
 | `station.mode.tube` | yes | yes | — |
+| `station.route_text.max_age_ms` | yes | yes | — |
+| `support.fetch.min_interval_ms` | yes | yes | — |
 | `support_money.card.json` | yes | yes | — |
 | `support_money.profile.body` | yes | yes | — |
 | `support_money.profile.body.supporter` | yes | yes | — |
@@ -250,6 +301,7 @@ ahead of the shipped binary, which only the Play Console can tell you about.
 | `support_money.sheet.repeat` | yes | yes | — |
 | `support_money.thanks.close` | yes | yes | — |
 | `topbar.live_label` | yes | — | — |
+| `weather.refresh_interval_ms` | yes | yes | — |
 | `widget.refresh` | — | yes | — |
 | `widget.state.needs_station.detail` | yes | yes | — |
 | `widget.state.needs_station.title` | yes | yes | — |

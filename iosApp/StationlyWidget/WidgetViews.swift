@@ -32,7 +32,8 @@ struct DepartureBoardEntryView: View {
                 BoardWidgetView(data: entry.widgetData, clock: entry.date,
                                 metrics: metrics, render: entry.render,
                                 fallback: entry.fallback,
-                                configCopy: entry.configCopy)
+                                configCopy: entry.configCopy,
+                                palette: entry.palette)
             }
         }
         // ── Where a tap on the board goes ──
@@ -566,6 +567,10 @@ struct TflRoundelMark: View {
 struct ModeIconView: View {
     let mode: String
     var size: CGFloat = 18
+    /// The published mode palette, so the drawn-roundel fallback is the same
+    /// colour the in-app station strip uses. Defaulted for previews and for a
+    /// device whose app has not written a table yet.
+    var palette: ModePalette = .compiled
     var body: some View {
         if let ui = ModeIconProvider.icon(mode) {
             // Height-anchored like Android's fitCenter lockup: the TfL
@@ -583,7 +588,7 @@ struct ModeIconView: View {
     }
     private var tint: Color {
         if let t = ModeIconProvider.tint(mode) { return Color(t) }
-        return WidgetTheme.modeColor(mode)
+        return WidgetTheme.modeColor(mode, palette: palette)
     }
 }
 
@@ -731,6 +736,8 @@ private struct LiveAgo: View {
 struct DotMatrixHeader: View {
     let data: WidgetData
     let m: BoardMetrics
+    /// Forwarded to the roundel — see `ModeIconView.palette`.
+    var palette: ModePalette = .compiled
     /// Forwarded to the refresh control so its retry glyph comes from the entry
     /// rather than from an App Group read inside `body`.
     var refreshFailed: Bool = false
@@ -764,7 +771,7 @@ struct DotMatrixHeader: View {
                         .frame(width: m.refreshSlot, height: 1)
                 }
                 HStack(spacing: 8) {
-                    ModeIconView(mode: data.mode, size: m.icon)
+                    ModeIconView(mode: data.mode, size: m.icon, palette: palette)
                     // ── Truncates; never shrinks ──
                     //
                     // This was `minimumScaleFactor(0.65)`, which meant the
@@ -1502,6 +1509,8 @@ struct BoardWidgetView: View {
     /// The four configuration states' wording, from the same published table as
     /// `fallback` and resolved in the same pass — see `DepartureEntry.configCopy`.
     var configCopy: [String: BoardFallbackCopy] = BoardFallbackTable.configDefaults
+    /// Mode roundel tints, from the same published table as `configCopy`.
+    var palette: ModePalette = .compiled
 
     var body: some View {
         Group {
@@ -1523,7 +1532,8 @@ struct BoardWidgetView: View {
         let cells = rowCells(sections.first, slots: slots)
         return GeometryReader { geo in
             VStack(spacing: 2) {
-                DotMatrixHeader(data: data, m: metrics, refreshFailed: render.refreshFailed,
+                DotMatrixHeader(data: data, m: metrics, palette: palette,
+                                refreshFailed: render.refreshFailed,
                                 clock: clock)
                     .frame(minHeight: metrics.headerMinHeight)
 

@@ -177,9 +177,8 @@ internal fun NextTrainHero(
     val brandHi      = themeColors.brandAccent
     val etaBase      = if (isLightCanvas) brandHi else lineColor
     val etaColor = when {
-        isDue          -> brandHi
-        countdown == 1 -> brandHi
-        else           -> etaBase
+        isDue || countdown <= com.stationly.core.config.BoardPolicyStore.current.heroUrgencyMin -> brandHi
+        else                                                                                    -> etaBase
     }
 
     // Slow live-dot pulse only, so the card breathes without flickering.

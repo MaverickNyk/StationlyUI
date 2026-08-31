@@ -337,7 +337,8 @@ struct DepartureBoardProvider: AppIntentTimelineProvider {
                 render: render,
                 fallback: fallback.result(hasDepartures: ticked.hasDepartures, at: date),
                 configCopy: table.configCopy.isEmpty ? BoardFallbackTable.configDefaults
-                                                     : table.configCopy)
+                                                     : table.configCopy,
+                palette: table.modeColors.isEmpty ? .compiled : table.palette)
         }
 
         var entries: [DepartureEntry] = [entry(at: now)]

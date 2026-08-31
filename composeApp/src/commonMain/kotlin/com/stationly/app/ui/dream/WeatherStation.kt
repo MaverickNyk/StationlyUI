@@ -2,6 +2,7 @@ package com.stationly.app.ui.dream
 
 import com.stationly.app.platform.fetchMetNoForecast
 import com.stationly.app.platform.lastKnownLatLon
+import com.stationly.core.config.BoardPolicyStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -51,7 +52,8 @@ object WeatherStation {
     private var pollJob: Job? = null
     private var lastFetchMs: Long = 0L
 
-    private const val REFRESH_INTERVAL_MS = 30L * 60L * 1000L  // 30 min
+    private val refreshIntervalMs: Long
+        get() = BoardPolicyStore.current.weatherRefreshIntervalMs
     private const val USER_AGENT =
         "Stationly/1.0 (https://stationly.co.uk; contact@stationly.co.uk)"
 
@@ -61,19 +63,20 @@ object WeatherStation {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** Start the 30-minute polling loop. Safe to call repeatedly. */
+    /** Start the polling loop. Safe to call repeatedly. */
     fun start() {
         if (pollJob?.isActive == true) return
         pollJob = scope.launch {
             while (true) {
-                // Cache for 30 minutes — we re-enter `start()` on every
+                val interval = refreshIntervalMs
+                // Cache for the configured interval — we re-enter `start()` on every
                 // re-composition of the dream, so this guard prevents
                 // needless calls.
                 val sinceLast = Clock.System.now().toEpochMilliseconds() - lastFetchMs
-                if (sinceLast > REFRESH_INTERVAL_MS || _temperatureC.value == null) {
+                if (sinceLast > interval || _temperatureC.value == null) {
                     refreshOnce()
                 }
-                delay(REFRESH_INTERVAL_MS)
+                delay(interval)
             }
         }
     }

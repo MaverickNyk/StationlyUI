@@ -165,4 +165,74 @@ class BoardPolicyTest {
         )
         assertEquals(LineStatusRanker.Tone.GREEN, LineStatusRanker.toneOf("Good Service", absurd))
     }
+
+    // ── Operational thresholds ───────────────────────────────────────────
+
+    @Test
+    fun `operational thresholds default to compiled values`() {
+        val policy = BoardPolicy.DEFAULT
+        assertEquals(1, policy.heroUrgencyMin)
+        assertEquals(86_400_000L, policy.dropdownCacheTtlMs)
+        assertEquals(1_209_600_000L, policy.routeTextMaxAgeMs)
+        assertEquals(60_000L, policy.supportFetchIntervalMs)
+        assertEquals(14, policy.explorePeakHorizonDays)
+        assertEquals(1_800_000L, policy.weatherRefreshIntervalMs)
+    }
+
+    @Test
+    fun `operational thresholds adopt served values`() {
+        val resolved = BoardPolicyStore.resolve(
+            mapOf(
+                BoardPolicy.KEY_HERO_URGENCY_MIN to "2",
+                BoardPolicy.KEY_DROPDOWN_CACHE_TTL to "43200000",
+                BoardPolicy.KEY_ROUTE_TEXT_MAX_AGE to "604800000",
+                BoardPolicy.KEY_SUPPORT_FETCH_INTERVAL to "30000",
+                BoardPolicy.KEY_EXPLORE_PEAK_HORIZON to "21",
+                BoardPolicy.KEY_WEATHER_REFRESH_INTERVAL to "900000",
+            ),
+        )
+        assertEquals(2, resolved.heroUrgencyMin)
+        assertEquals(43_200_000L, resolved.dropdownCacheTtlMs)
+        assertEquals(604_800_000L, resolved.routeTextMaxAgeMs)
+        assertEquals(30_000L, resolved.supportFetchIntervalMs)
+        assertEquals(21, resolved.explorePeakHorizonDays)
+        assertEquals(900_000L, resolved.weatherRefreshIntervalMs)
+    }
+
+    @Test
+    fun `operational thresholds clamp out-of-range values`() {
+        val tooLow = BoardPolicyStore.resolve(
+            mapOf(
+                BoardPolicy.KEY_HERO_URGENCY_MIN to "-5",
+                BoardPolicy.KEY_DROPDOWN_CACHE_TTL to "1000",
+                BoardPolicy.KEY_ROUTE_TEXT_MAX_AGE to "1000",
+                BoardPolicy.KEY_SUPPORT_FETCH_INTERVAL to "500",
+                BoardPolicy.KEY_EXPLORE_PEAK_HORIZON to "0",
+                BoardPolicy.KEY_WEATHER_REFRESH_INTERVAL to "10000",
+            ),
+        )
+        assertEquals(0, tooLow.heroUrgencyMin)
+        assertEquals(3_600_000L, tooLow.dropdownCacheTtlMs)
+        assertEquals(86_400_000L, tooLow.routeTextMaxAgeMs)
+        assertEquals(5_000L, tooLow.supportFetchIntervalMs)
+        assertEquals(1, tooLow.explorePeakHorizonDays)
+        assertEquals(300_000L, tooLow.weatherRefreshIntervalMs)
+
+        val tooHigh = BoardPolicyStore.resolve(
+            mapOf(
+                BoardPolicy.KEY_HERO_URGENCY_MIN to "100",
+                BoardPolicy.KEY_DROPDOWN_CACHE_TTL to "9999999999",
+                BoardPolicy.KEY_ROUTE_TEXT_MAX_AGE to "99999999999",
+                BoardPolicy.KEY_SUPPORT_FETCH_INTERVAL to "99999999",
+                BoardPolicy.KEY_EXPLORE_PEAK_HORIZON to "365",
+                BoardPolicy.KEY_WEATHER_REFRESH_INTERVAL to "99999999",
+            ),
+        )
+        assertEquals(10, tooHigh.heroUrgencyMin)
+        assertEquals(604_800_000L, tooHigh.dropdownCacheTtlMs)
+        assertEquals(7_776_000_000L, tooHigh.routeTextMaxAgeMs)
+        assertEquals(600_000L, tooHigh.supportFetchIntervalMs)
+        assertEquals(60, tooHigh.explorePeakHorizonDays)
+        assertEquals(7_200_000L, tooHigh.weatherRefreshIntervalMs)
+    }
 }

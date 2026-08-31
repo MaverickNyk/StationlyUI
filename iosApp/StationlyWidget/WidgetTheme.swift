@@ -81,13 +81,36 @@ enum WidgetTheme {
 
     // MARK: - Mode roundel tints (mirror the in-app board's modeRoundelColor)
 
-    static func modeColor(_ mode: String) -> Color {
-        switch mode.lowercased() {
-        case "dlr":                          return Color(red: 0.000, green: 0.643, blue: 0.655) // #00A4A7
-        case "overground":                   return Color(red: 0.933, green: 0.486, blue: 0.055) // #EE7C0E
-        case "elizabeth", "elizabeth-line":  return Color(red: 0.412, green: 0.314, blue: 0.631) // #6950A1
-        case "tram":                         return Color(red: 0.518, green: 0.722, blue: 0.090) // #84B817
-        default:                             return Color(red: 0.863, green: 0.141, blue: 0.122) // #DC241F tube/bus
-        }
+    /// `#RRGGBB` to a `Color`, or nil when it is not that.
+    ///
+    /// The palette crosses the App Group as hex strings because that is the one
+    /// shape Kotlin and Swift already agree about — see `LinePalette`. Returning
+    /// nil rather than a guess keeps a malformed value from painting something
+    /// arbitrary; the callers fall back to a known colour.
+    static func color(hex: String) -> Color? {
+        var s = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
+        return Color(red: Double((v >> 16) & 0xFF) / 255.0,
+                     green: Double((v >> 8) & 0xFF) / 255.0,
+                     blue: Double(v & 0xFF) / 255.0)
+    }
+
+    /// Roundel tint per transport mode.
+    ///
+    /// This used to be a hardcoded switch — the fourth copy of the same five
+    /// values, beside three in Kotlin and one on the backend. It now reads the
+    /// palette the app publishes into the App Group, so the widget's roundel and
+    /// the in-app station strip cannot be two shades of the same thing.
+    ///
+    /// The default argument is the compiled palette, so a preview or a call site
+    /// with no published table still renders.
+    static func modeColor(_ mode: String, palette: ModePalette = .compiled) -> Color {
+        // Two fallbacks deep on purpose: a malformed served hex falls to the
+        // palette's own fallback, and a malformed fallback falls to the compiled
+        // red. A roundel is the widget's most recognisable mark — it must never
+        // render as nothing because someone typed a colour wrong.
+        color(hex: palette.hex(for: mode))
+            ?? color(hex: ModePalette.compiled.fallback)
+            ?? Color(red: 0.863, green: 0.141, blue: 0.122)
     }
 }

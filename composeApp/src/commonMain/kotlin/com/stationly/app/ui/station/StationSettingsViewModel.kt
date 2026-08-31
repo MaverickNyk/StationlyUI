@@ -20,6 +20,7 @@ import com.stationly.core.model.sdui.SduiDropdownOption
 import com.stationly.core.service.NetworkModule
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import com.stationly.core.config.BoardPolicyStore
 import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.core.model.user.BoardConfig
@@ -356,9 +357,9 @@ class StationSettingsViewModel(
                 // sit there indefinitely.
                 //
                 // Cheap, because it goes through the same cache-first path: a
-                // re-resolve inside the dropdown cache's own 24-hour window
+                // re-resolve inside the dropdown cache's own window
                 // costs one storage read and no network.
-                unresolved || now - board.routeResolvedAt > ROUTE_TEXT_MAX_AGE_MS
+                unresolved || now - board.routeResolvedAt > BoardPolicyStore.current.routeTextMaxAgeMs
             }
         if (stale.isEmpty()) return
 
@@ -454,7 +455,7 @@ class StationSettingsViewModel(
         val tsKey = "${cacheKey}_ts"
         val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
         val cachedAt = Platform.storageManager.loadString(tsKey)?.toLongOrNull() ?: 0L
-        if (now - cachedAt < DROPDOWN_CACHE_MS) {
+        if (now - cachedAt < BoardPolicyStore.current.dropdownCacheTtlMs) {
             Platform.storageManager.loadString(cacheKey)
                 ?.let { raw ->
                     runCatching { dropdownJson.decodeFromString(dropdownListSerializer, raw) }
@@ -651,20 +652,6 @@ class StationSettingsViewModel(
     private companion object {
         /** Written by `SelectionViewModel.loadCachedLayout`; read, never written, here. */
         const val LAYOUT_CACHE_KEY = "cached_app_layout"
-
-        /** The same 24-hour contract the line picker's dropdown cache uses. */
-        const val DROPDOWN_CACHE_MS = 24L * 60 * 60 * 1000
-
-        /**
-         * How long a board's route TEXT is trusted before it is re-resolved.
-         *
-         * Two weeks. Long enough that the common case is a pure cache read and
-         * nothing re-fetches, short enough that a renamed destination or a
-         * rerouted branch corrects itself without the user editing anything.
-         * This governs display text only — the filter's own allow-list is a
-         * separate question, still open as item 9 in PENDING_BRANCH_WORK.md.
-         */
-        const val ROUTE_TEXT_MAX_AGE_MS = 14L * 24 * 60 * 60 * 1000
 
         /**
          * Lenient for the same reason every other SDUI decode is: the payload is

@@ -112,6 +112,18 @@ data class BoardPolicy(
      * not something to depend on.
      */
     val redSeverities: Set<String> = DEFAULT_RED_SEVERITIES,
+    /** Displayed countdown minutes <= this triggers the hero urgent state (amber border / dream pulse). */
+    val heroUrgencyMin: Int = 1,
+    /** Line picker's dropdown option cache TTL. */
+    val dropdownCacheTtlMs: Long = 24L * 60 * 60 * 1000L,
+    /** How long a board's route text is trusted before re-resolving. */
+    val routeTextMaxAgeMs: Long = 14L * 24 * 60 * 60 * 1000L,
+    /** Minimum interval between non-forced supporter status fetches. */
+    val supportFetchIntervalMs: Long = 60_000L,
+    /** Maximum forward walk days for the next peak fare window search. */
+    val explorePeakHorizonDays: Int = 14,
+    /** Interval between periodic weather station refreshes. */
+    val weatherRefreshIntervalMs: Long = 30L * 60 * 1000L,
 ) {
     companion object {
         /**
@@ -170,6 +182,12 @@ data class BoardPolicy(
         const val KEY_STALE      = "board.stale.staleMs"
         const val KEY_SEVERITY   = "board.status.severityOrder"
         const val KEY_RED_SEVERITY = "board.status.redSeverities"
+        const val KEY_HERO_URGENCY_MIN = "board.hero.urgency_min"
+        const val KEY_DROPDOWN_CACHE_TTL = "selection.dropdown.cache_ttl_ms"
+        const val KEY_ROUTE_TEXT_MAX_AGE = "station.route_text.max_age_ms"
+        const val KEY_SUPPORT_FETCH_INTERVAL = "support.fetch.min_interval_ms"
+        const val KEY_EXPLORE_PEAK_HORIZON = "explore.fares.max_days_to_peak"
+        const val KEY_WEATHER_REFRESH_INTERVAL = "weather.refresh_interval_ms"
 
         /** Longest label the ETA column can take without squeezing destinations. */
         const val MAX_LABEL_LEN = 6

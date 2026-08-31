@@ -115,6 +115,7 @@ import com.stationly.core.util.LineShortNames
 import com.stationly.core.util.LineStatusRanker
 import com.stationly.core.model.user.BoardConfig
 import com.stationly.core.config.BoardPolicyStore
+import com.stationly.core.config.LinePaletteStore
 import com.stationly.core.util.BoardTicker
 import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.StationlyFormatters
@@ -142,38 +143,35 @@ private val StationlyRed = Color(0xFFE32017)
 /** Status amber for the "delayed but running" pill dot — see LineStatusRanker.Tone. */
 private val StatusAmber = Color(0xFFFFA000)
 
-val TFL_LINE_COLORS = mapOf(
-    "bakerloo" to Color(0xFFB36305), "central" to Color(0xFFE32017),
-    "circle" to Color(0xFFFFD300), "district" to Color(0xFF00782A),
-    "hammersmith-city" to Color(0xFFF3A9BB), "jubilee" to Color(0xFFA0A5A9),
-    "metropolitan" to Color(0xFF9B0056), "northern" to Color(0xFF888888),
-    "piccadilly" to Color(0xFF003688), "victoria" to Color(0xFF0098D4),
-    "waterloo-city" to Color(0xFF95CDBA), "dlr" to Color(0xFF00A4A7),
-    "elizabeth" to Color(0xFF6950A1), "lioness" to Color(0xFFE2A12B),
-    "mildmay" to Color(0xFF1A6DB4), "windrush" to Color(0xFFE2231A),
-    "weaver" to Color(0xFF7B2D8B), "suffragette" to Color(0xFF00843D),
-    "liberty" to Color(0xFF6B717E), "tram" to Color(0xFF84B817),
-    "cable-car" to Color(0xFFE21836),
-)
+/**
+ * The colour a line is drawn in on THIS theme.
+ *
+ * The three hex maps that used to sit here — a base plus a dark and a light
+ * override — are now [LinePalette] in `core/config`, resolved from the served
+ * config and shared with `TflLineColors` (Android's notification chip) and the
+ * widget. They were one of four copies of the same values; see that file for
+ * what the diff between them actually showed.
+ *
+ * Parsed per call rather than cached: it is a handful of six-digit strings on a
+ * path that already recomposes on a minute tick, and a cache would need
+ * invalidating the moment a served palette arrived.
+ *
+ * `TflAmber` when the line is unknown — a board with an uncoloured pill on it
+ * reads as broken, and amber is the board's own voice.
+ */
+fun lineColorForTheme(line: String?, isDark: Boolean): Color =
+    LinePaletteStore.current.hexForTheme(line, isDark)?.let(::parseLineHex) ?: TflAmber
 
-private val TFL_LINE_COLORS_DARK = mapOf(
-    "piccadilly" to Color(0xFF3B7AE0), "suffragette" to Color(0xFF1FB54E),
-    "metropolitan" to Color(0xFFD14990), "weaver" to Color(0xFFB069BE),
-    "mildmay" to Color(0xFF4C95D8), "district" to Color(0xFF2BB55D),
-    "bakerloo" to Color(0xFFD17F2A), "elizabeth" to Color(0xFF9482D0),
-)
-
-private val TFL_LINE_COLORS_LIGHT = mapOf(
-    "northern" to Color(0xFF6E6A66), "jubilee" to Color(0xFF7A7E83),
-    "liberty" to Color(0xFF5A6068),
-)
-
-fun lineColorForTheme(line: String?, isDark: Boolean): Color {
-    val key = line?.lowercase() ?: return TflAmber
-    if (isDark) TFL_LINE_COLORS_DARK[key]?.let { return it }
-    if (!isDark) TFL_LINE_COLORS_LIGHT[key]?.let { return it }
-    return TFL_LINE_COLORS[key] ?: TflAmber
-}
+/**
+ * `#RRGGBB` to a [Color], or null when it is not that.
+ *
+ * [LinePalette.resolve] already rejects anything malformed, so this is the
+ * second gate rather than the first: it covers the compiled defaults too, and it
+ * means a bad value can never reach the renderer as a crash.
+ */
+private fun parseLineHex(hex: String): Color? = runCatching {
+    Color(hex.removePrefix("#").toLong(16) or 0xFF000000L)
+}.getOrNull()
 
 /**
  * Split a TfL "Severity: Reason" line-status string into its two parts —
@@ -191,16 +189,15 @@ private fun splitLineStatus(lineStatus: String?): Pair<String?, String?> {
     }
 }
 
-/** TfL roundel tint per transport mode (used on the dot-matrix station strip). */
-private fun modeRoundelColor(mode: String): Color = when (mode.lowercase()) {
-    "tube", "underground" -> Color(0xFFDC241F)
-    "bus"                 -> Color(0xFFDC241F)
-    "dlr"                 -> Color(0xFF00A4A7)
-    "overground"          -> Color(0xFFEE7C0E)
-    "elizabeth", "elizabeth-line" -> Color(0xFF6950A1)
-    "tram"                -> Color(0xFF84B817)
-    else                  -> Color(0xFFDC241F)
-}
+/**
+ * TfL roundel tint per transport MODE, for the dot-matrix station strip.
+ *
+ * From [LinePalette] like the line colours, and the same table the widget reads
+ * out of the App Group — the strip and the widget draw the same roundel and must
+ * not be two shades of it.
+ */
+private fun modeRoundelColor(mode: String): Color =
+    parseLineHex(LinePaletteStore.current.modeHex(mode)) ?: StationlyRed
 
 /**
  * One tracked (line, direction) at a station, plus everything needed to draw it.
@@ -554,7 +551,7 @@ fun StationBoard(
     // Reads what the hero DISPLAYS, not the raw timestamp, so the border and the
     // number the user is looking at can never disagree. See displayedMinutes.
     val isUrgent = heroPrediction != null &&
-        StationlyFormatters.displayedMinutes(heroPrediction) <= 1
+        StationlyFormatters.displayedMinutes(heroPrediction) <= policy.heroUrgencyMin
 
     // ── Outer column: chrome on the themed canvas, only the dot-matrix is dark ──
     //

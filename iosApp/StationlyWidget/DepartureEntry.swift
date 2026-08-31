@@ -148,4 +148,10 @@ struct DepartureEntry: TimelineEntry {
     /// Unlike `fallback` this is NOT per-entry — a widget that has no station at
     /// 08:00 still has none at 08:40 — so one value covers the batch.
     var configCopy: [String: BoardFallbackCopy] = BoardFallbackTable.configDefaults
+
+    /// Mode roundel tints, resolved once per timeline build alongside
+    /// `configCopy` and for the same reason — the view runs inside WidgetKit's
+    /// archiving pass, where an App Group read per entry would decode the same
+    /// eight colours twenty times over.
+    var palette: ModePalette = .compiled
 }

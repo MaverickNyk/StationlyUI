@@ -12,7 +12,7 @@ import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.FormatDeparturesUseCase
 import com.stationly.core.usecase.StationLifecycleUseCase
-import com.stationly.core.config.BoardPolicyStore
+import com.stationly.core.config.SduiConfig
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.core.util.FreshData
 import com.stationly.core.util.FreshDataNotifier
@@ -576,7 +576,7 @@ class SummaryViewModel(
                     // written at the served reserve depth from the outset rather
                     // than at the compiled one for the first few frames — see
                     // BoardPolicyStore.
-                    BoardPolicyStore.refresh(it)
+                    SduiConfig.refresh(it)
                 }
         }
         try {
@@ -587,7 +587,7 @@ class SummaryViewModel(
             // retention, the "Gone" label, reserve depth, the freshness ladder
             // and the status severity order. Resolved and clamped once here;
             // every surface reads BoardPolicyStore.current from now on.
-            BoardPolicyStore.refresh(config)
+            SduiConfig.refresh(config)
             // SDUI force-update gate (Android parity). Was declared but never
             // set on iOS, so UpdateNudgeDialog could never appear however low
             // the installed version was.

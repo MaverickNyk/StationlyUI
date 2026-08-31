@@ -1,7 +1,6 @@
 package com.stationly.core.config
 
 import com.stationly.core.model.user.BoardConfig
-import com.stationly.core.platform.Platform
 
 /**
  * The one resolved [BoardPolicy] the app reads, and the only place the SDUI map
@@ -47,25 +46,6 @@ object BoardPolicyStore {
     fun refresh(strings: Map<String, String>) {
         if (strings.isEmpty()) return
         current = resolve(strings)
-    }
-
-    /**
-     * Adopt the last cached config, for the paths that run before any fetch.
-     *
-     * Ingest starts on the first stream frame, which can beat the home-config
-     * request home. Without this the first minutes of a session would write SQL
-     * at the compiled reserve and then quietly switch depth mid-session.
-     */
-    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
-
-    suspend fun loadFromCache() {
-        val raw = runCatching {
-            Platform.storageManager.loadString(ConfigKeys.HOME_CONFIG_CACHE_KEY)
-        }.getOrNull() ?: return
-        val decoded = runCatching {
-            json.decodeFromString<Map<String, String>>(raw)
-        }.getOrNull() ?: return
-        refresh(decoded)
     }
 
     /**
@@ -136,6 +116,30 @@ object BoardPolicyStore {
                 strings, BoardPolicy.KEY_RED_SEVERITY,
                 default = BoardPolicy.DEFAULT_RED_SEVERITIES.toList(),
             ).map { it.lowercase() }.toSet(),
+            heroUrgencyMin = RemoteConfig.int(
+                strings, BoardPolicy.KEY_HERO_URGENCY_MIN,
+                default = BoardPolicy.DEFAULT.heroUrgencyMin, min = 0, max = 10,
+            ),
+            dropdownCacheTtlMs = RemoteConfig.long(
+                strings, BoardPolicy.KEY_DROPDOWN_CACHE_TTL,
+                default = BoardPolicy.DEFAULT.dropdownCacheTtlMs, min = 3_600_000L, max = 604_800_000L,
+            ),
+            routeTextMaxAgeMs = RemoteConfig.long(
+                strings, BoardPolicy.KEY_ROUTE_TEXT_MAX_AGE,
+                default = BoardPolicy.DEFAULT.routeTextMaxAgeMs, min = 86_400_000L, max = 7_776_000_000L,
+            ),
+            supportFetchIntervalMs = RemoteConfig.long(
+                strings, BoardPolicy.KEY_SUPPORT_FETCH_INTERVAL,
+                default = BoardPolicy.DEFAULT.supportFetchIntervalMs, min = 5_000L, max = 600_000L,
+            ),
+            explorePeakHorizonDays = RemoteConfig.int(
+                strings, BoardPolicy.KEY_EXPLORE_PEAK_HORIZON,
+                default = BoardPolicy.DEFAULT.explorePeakHorizonDays, min = 1, max = 60,
+            ),
+            weatherRefreshIntervalMs = RemoteConfig.long(
+                strings, BoardPolicy.KEY_WEATHER_REFRESH_INTERVAL,
+                default = BoardPolicy.DEFAULT.weatherRefreshIntervalMs, min = 300_000L, max = 7_200_000L,
+            ),
         )
     }
 }

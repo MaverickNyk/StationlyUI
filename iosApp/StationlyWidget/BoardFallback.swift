@@ -60,6 +60,31 @@ struct BoardFallbackCopy: Decodable, Equatable {
     var detailLine: String { detail.first ?? "" }
 }
 
+/// Roundel tints per transport mode, as the app resolved them.
+///
+/// Transcribed defaults, reached only on a device whose app has not published a
+/// table yet. Mirrors Kotlin `LinePalette.DEFAULT_MODES`.
+struct ModePalette: Equatable {
+    var colors: [String: String] = [
+        "tube": "#DC241F", "underground": "#DC241F", "bus": "#DC241F",
+        "dlr": "#00A4A7", "overground": "#EE7C0E",
+        "elizabeth": "#6950A1", "elizabeth-line": "#6950A1", "tram": "#84B817",
+    ]
+    var fallback: String = "#DC241F"
+
+    static let compiled = ModePalette()
+
+    /// The hex for a mode, never nil — an unmapped mode gets the fallback.
+    ///
+    /// Deliberately returns a STRING, not a `Color`. This file is the widget's
+    /// mirror of `core/util/BoardFallback.kt` and imports Foundation only; the
+    /// colour parse lives with the rest of the palette in `WidgetTheme`, which
+    /// is the file that already owns SwiftUI types.
+    func hex(for mode: String) -> String {
+        colors[mode.lowercased()] ?? fallback
+    }
+}
+
 /// How the board counts down, as the app resolved it.
 ///
 /// Split out of the table so the tick layer takes what it uses and nothing else:
@@ -124,6 +149,20 @@ struct BoardFallbackTable: Decodable {
     /// — one publish, one decode, one read per timeline build — but stay a
     /// separate map so a board state can never answer for a configuration one.
     var configCopy: [String: BoardFallbackCopy] = [:]
+
+    /// Roundel tint per transport mode, as `#RRGGBB`, from Kotlin `LinePalette`.
+    ///
+    /// The widget draws the same roundel as the board's station strip, so it has
+    /// to be the same table. `WidgetTheme.modeColor` used to hold its own copy of
+    /// these five values — the fourth in the app.
+    var modeColors: [String: String] = [:]
+    /// Tint for a mode nobody has mapped. TfL corporate red.
+    var modeColorDefault: String = "#DC241F"
+
+    /// The mode palette, or the compiled one when no table has been published.
+    var palette: ModePalette {
+        ModePalette(colors: modeColors, fallback: modeColorDefault)
+    }
 
     /// The copy for one configuration state, falling through to the compiled
     /// words when the app has not published a table yet.

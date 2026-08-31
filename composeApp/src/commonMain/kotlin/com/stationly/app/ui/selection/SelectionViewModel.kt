@@ -16,6 +16,7 @@ import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.model.sdui.SduiAppScreen
 import com.stationly.core.model.sdui.SduiDropdownOption
 import com.stationly.core.config.AppConfig
+import com.stationly.core.config.BoardPolicyStore
 import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SelectionRepository
@@ -773,7 +774,7 @@ class SelectionViewModel(
                 val cachedJson = storageManager.loadString(cacheKey)
                 val cachedTs = storageManager.loadString(tsKey)?.toLongOrNull() ?: 0L
                 val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
-                if (cachedJson != null && now - cachedTs < 24 * 60 * 60 * 1000L) {
+                if (cachedJson != null && isDropdownCacheFresh(cachedTs, now)) {
                     try {
                         val cached = jsonFormat.decodeFromString<List<SduiDropdownOption>>(cachedJson)
                         _directionsByLine.value = _directionsByLine.value + (lineId to cached)
@@ -1439,10 +1440,9 @@ class SelectionViewModel(
                 val cachedTsStr = storageManager.loadString(tsKey)
                 val cachedTs = cachedTsStr?.toLongOrNull() ?: 0L
                 val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
-                val cacheAgeMs = now - cachedTs
-                val cacheValid = cachedJson != null && cacheAgeMs < 24 * 60 * 60 * 1000L
+                val cacheValid = cachedJson != null && isDropdownCacheFresh(cachedTs, now)
 
-                if (cacheValid && cachedJson != null) {
+                if (cacheValid) {
                     try {
                         val cached = jsonFormat.decodeFromString<List<SduiDropdownOption>>(cachedJson)
                         val cur = _dropdownData.value.toMutableMap()
@@ -1492,4 +1492,7 @@ class SelectionViewModel(
             if (_uiState.value.isBackendOffline) retryLoad()
         }
     }
+
+    private fun isDropdownCacheFresh(cachedTs: Long, now: Long): Boolean =
+        now - cachedTs < BoardPolicyStore.current.dropdownCacheTtlMs
 }

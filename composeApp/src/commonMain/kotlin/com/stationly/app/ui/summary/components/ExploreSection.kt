@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.stationly.app.ui.theme.LocalThemeTokens
 import com.stationly.app.ui.util.rememberMinuteTick
+import com.stationly.core.config.BoardPolicyStore
 import com.stationly.core.util.LineStatusRanker
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
@@ -280,11 +281,10 @@ private fun ExploreCard(
  * Two weeks is well beyond the longest real run of non-charging days
  * (Christmas), and giving up lands on a plain weekday rather than hanging.
  */
-private const val MAX_DAYS_TO_NEXT_PEAK = 14
-
 private fun computeFareState(
     now: LocalDateTime,
     bankHolidays: Set<LocalDate>,
+    maxDaysToPeak: Int = BoardPolicyStore.current.explorePeakHorizonDays,
 ): FareState {
     val time = now.time
     val date = now.date
@@ -305,7 +305,7 @@ private fun computeFareState(
             // Weekend, bank holiday, or weekday after 19:00 → next peak-charging day at 06:30.
             var d = date.plus(1, DateTimeUnit.DAY)
             var walked = 1
-            while (!isPeakChargingDay(d, bankHolidays) && walked < MAX_DAYS_TO_NEXT_PEAK) {
+            while (!isPeakChargingDay(d, bankHolidays) && walked < maxDaysToPeak) {
                 d = d.plus(1, DateTimeUnit.DAY)
                 walked++
             }

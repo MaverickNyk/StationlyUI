@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.stationly.app.platform.HapticType
 import com.stationly.app.platform.performHaptic
+import com.stationly.core.config.BoardPolicyStore
 import com.stationly.core.model.sdui.SupportMoneyView
 import com.stationly.core.service.NetworkModule
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -127,7 +128,8 @@ data class SupportUiState(
 internal fun nowMs(): Long = Clock.System.now().toEpochMilliseconds()
 
 /** Ordinary screen entries refetch at most this often. An account CHANGE ignores it. */
-private const val FETCH_MIN_INTERVAL_MS = 60_000L
+private val fetchMinIntervalMs: Long
+    get() = BoardPolicyStore.current.supportFetchIntervalMs
 
 /** How long to wait for the auth bridge to publish a uid before deciding nobody is signed in. */
 private const val UID_WAIT_TIMEOUT_MS = 3_000L
@@ -234,7 +236,7 @@ class SupportViewModel(
                         bound
                     }
                     _uiState.value = _uiState.value.copy(server = null, local = local)
-                } else if (!force && nowMs() - lastFetchMs < FETCH_MIN_INTERVAL_MS) {
+                } else if (!force && nowMs() - lastFetchMs < fetchMinIntervalMs) {
                     return@withLock
                 }
 
