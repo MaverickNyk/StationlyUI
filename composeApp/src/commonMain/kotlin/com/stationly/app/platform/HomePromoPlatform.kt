@@ -33,9 +33,12 @@ expect suspend fun requestNotificationAuthorization(): Boolean
 /** Deep-link to this app's own notification settings page. */
 expect fun openAppNotificationSettings()
 
-/**
- * Installed app version, as the marketing version string ("1.0", "1.2.3").
- * Feeds the SDUI `app.minVersion` force-update gate, which compares against
- * this with [com.stationly.app.ui.util.isVersionBelow].
- */
-expect fun appVersionName(): String
+// ── `appVersionName()` was here ──────────────────────────────────────────
+//
+// Replaced by `Platform.appVersion()` in `core`. It had to move down a module
+// because the version is now read on the NETWORK path — every request carries
+// it in `X-Stationly-Client` — and `core` cannot see `composeApp`.
+//
+// The duplicate was also wrong in one direction: the Android actual returned a
+// hardcoded "0", so the About card showed "v0" on Android and any comparison
+// against it read as the oldest possible build.

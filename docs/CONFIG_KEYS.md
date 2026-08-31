@@ -7,21 +7,23 @@ A key marked `android` is read by the production client and can never be
 dropped. The Android column is a floor, not a complete list — that tree is
 ahead of the shipped binary, which only the Play Console can tell you about.
 
-- keys served: **287**
-- read by iOS: **191**
+- keys served: **289**
+- read by iOS: **185**
 - read by Android: **106**
 - served and read by at least one client: **218**
 - read but never served (client keeps its fallback): **8**
-- served but read by neither (retained under the additive rule): **69**
+- served but read by neither (retained under the additive rule): **71**
 
 | Key | Served | iOS | Android |
 |---|---|---|---|
-| `app.minVersion` | yes | yes | yes |
-| `app.storeUrl` | yes | yes | yes |
-| `app.update.cta` | yes | yes | yes |
-| `app.update.dismiss` | yes | yes | yes |
-| `app.update.message` | yes | yes | yes |
-| `app.update.title` | yes | yes | yes |
+| `app.ios.storeUrl` | yes | — | — |
+| `app.ios.storeUrlWeb` | yes | — | — |
+| `app.minVersion` | yes | — | yes |
+| `app.storeUrl` | yes | — | yes |
+| `app.update.cta` | yes | — | yes |
+| `app.update.dismiss` | yes | — | yes |
+| `app.update.message` | yes | — | yes |
+| `app.update.title` | yes | — | yes |
 | `auth.error.backend_unreachable` | yes | yes | — |
 | `auth.error.email_in_use` | yes | yes | — |
 | `auth.error.generic` | yes | yes | — |

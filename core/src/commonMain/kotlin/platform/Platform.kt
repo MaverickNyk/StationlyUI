@@ -123,6 +123,33 @@ expect object Platform {
     fun getBaseUrl(): String
 
     /**
+     * The MARKETING version — "1.2.0" — not the build number.
+     *
+     * `CFBundleShortVersionString` on iOS, `versionName` on Android. This is the
+     * value the whole update policy is written against: it is what
+     * `AppReleaseService` compares against its floors, what the client sends in
+     * `X-Stationly-Client`, and what the user sees on the App Store listing.
+     *
+     * Never blank — an implementation that cannot read it returns "0", which
+     * compares below every real floor and is the honest answer rather than a
+     * crash. Note the direction that costs: a "0" is treated as ancient, so the
+     * actuals below must not fail casually. Both read a value the OS guarantees
+     * is present for an installed app.
+     */
+    fun appVersion(): String
+
+    /**
+     * The BUILD number — `CFBundleVersion` / `versionCode`. Diagnostic only.
+     *
+     * Deliberately NOT gated on. It is unique per upload rather than per
+     * release, it means different things on the two platforms, and TestFlight
+     * builds share a marketing version across many of them. It travels in the
+     * client header so a support conversation can identify an exact binary,
+     * and nothing decides anything with it.
+     */
+    fun appBuild(): String
+
+    /**
      * A bearer token that is still valid when the caller uses it — not merely
      * the last one this device happened to see.
      *

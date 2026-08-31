@@ -128,6 +128,26 @@ object ActivityEvents {
      * is not.
      */
     const val AUTH_401_SURVIVED = "auth.401_survived"
+
+    /**
+     * Props: `path`, `min`, `installed`. The backend refused this build (426).
+     *
+     * The one row that explains an app showing a blocking update screen. It
+     * matters because the alternative account of that screen — a mis-set floor
+     * in the served policy — looks identical from the outside, and the two have
+     * opposite fixes: a real 426 means the deployed gate is doing its job, while
+     * a block with no row behind it means the client blocked ITSELF off a
+     * document, and the floor is what needs correcting.
+     *
+     * `installed` is recorded alongside `min` because "which build was refused"
+     * is the first question in any support conversation that starts with "the
+     * app tells me to update and the App Store has nothing".
+     */
+    const val APP_UPGRADE_REQUIRED = "app.upgrade_required"
+
+    /** Props: `to` — the version nudged toward. One row per nudge SHOWN, not
+     *  per evaluation, so the rate limiter's behaviour is visible in the data. */
+    const val APP_UPDATE_NUDGED = "app.update_nudged"
     /** Props: `reason` — which `user.sync` push arrived. */
     const val SYNC_RECONCILED = "sync.reconciled"
     /** Props: `stage`, `reason`. The one event that exists for diagnosis. */

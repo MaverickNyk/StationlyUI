@@ -11,4 +11,3 @@ actual suspend fun requestNotificationAuthorization(): Boolean = true
 
 actual fun openAppNotificationSettings() { /* no-op — android/ opens Settings */ }
 
-actual fun appVersionName(): String = "0"

@@ -94,8 +94,13 @@ class SummaryViewModel(
     private val _homeConfig = MutableStateFlow<Map<String, String>>(emptyMap())
     val homeConfig: StateFlow<Map<String, String>> = _homeConfig.asStateFlow()
 
-    private val _forceUpdate = MutableStateFlow(false)
-    val forceUpdate: StateFlow<Boolean> = _forceUpdate.asStateFlow()
+    // ── No force-update state here any more ──────────────────────────────
+    //
+    // The gate moved to `ReleaseGate` (core) and renders from `App`, because a
+    // verdict about the INSTALL cannot live on one screen: this version only
+    // ever fired on home, so a launch into a board, a widget tap or a deep link
+    // never reached it. It also had no memory, so "Maybe Later" was a
+    // `remember` in `SummaryScreen` and lasted until the user navigated away.
 
     private val _showNotificationDeniedBanner = MutableStateFlow(false)
     val showNotificationDeniedBanner: StateFlow<Boolean> = _showNotificationDeniedBanner.asStateFlow()
@@ -588,15 +593,6 @@ class SummaryViewModel(
             // and the status severity order. Resolved and clamped once here;
             // every surface reads BoardPolicyStore.current from now on.
             SduiConfig.refresh(config)
-            // SDUI force-update gate (Android parity). Was declared but never
-            // set on iOS, so UpdateNudgeDialog could never appear however low
-            // the installed version was.
-            config["app.minVersion"]?.let { minVer ->
-                _forceUpdate.value = com.stationly.app.ui.util.isVersionBelow(
-                    com.stationly.app.platform.appVersionName(),
-                    minVer,
-                )
-            }
         } catch (_: Exception) {}
     }
 

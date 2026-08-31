@@ -42,7 +42,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.stationly.app.platform.appVersionName
 import com.stationly.app.ui.common.LoadingOverlay
 import com.stationly.app.ui.common.StationlySpinner
 import com.stationly.app.ui.common.LocalOpenUrl
@@ -533,7 +532,7 @@ private fun AboutCard(card: SduiAppComponent.Card) {
                     // Read once. It cannot change while the process is
                     // alive, and this sits inside a list item that recomposes
                     // with the rest of the About card.
-                    val version = remember { appVersionName() }
+                    val version = remember { com.stationly.core.platform.Platform.appVersion() }
                     InfoChip("v$version")
                     InfoChip("TfL Powered")
                     InfoChip("Made in London")

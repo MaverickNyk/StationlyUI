@@ -201,6 +201,21 @@ actual object Platform {
     }
 
     actual fun getPlatformName(): String = "Android"
+
+    /**
+     * Read from the installed package rather than `BuildConfig`, because `core`
+     * is a shared module and has no `BuildConfig` of the app that includes it.
+     * `PackageManager` is the same value the Play Store compares against.
+     */
+    actual fun appVersion(): String = runCatching {
+        appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
+    }.getOrNull()?.takeIf { it.isNotBlank() } ?: "0"
+
+    actual fun appBuild(): String = runCatching {
+        @Suppress("DEPRECATION")
+        appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionCode.toString()
+    }.getOrNull() ?: "0"
+
     actual fun getApiKey(): String = apiKey
     actual fun getEnvironment(): AppEnvironment = environment
     actual fun getBaseUrl(): String = com.stationly.core.config.AppConfig.apiBaseUrl

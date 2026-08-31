@@ -20,7 +20,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.Clock
+import com.stationly.core.config.ReleaseGate
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Shared Network Module
@@ -60,6 +63,10 @@ object NetworkModule {
             // Classifies 401s. Installed AFTER StationlyAuth so the bearer it
             // attaches is already on the request this can see and replace.
             install(authExpiryGuard(PlatformAuthExpiryActions))
+
+            // Catches 426 Upgrade Required from ANY endpoint — the one path the
+            // hard update gate actually rests on. See [upgradeRequiredGuard].
+            install(upgradeRequiredGuard)
 
             expectSuccess = false
         }
@@ -171,6 +178,28 @@ object NetworkModule {
      * back in.
      */
     private const val FORCED_LOGOUT_DEDUPE_MS = 30_000L
+
+    /**
+     * The backend refused this build (426). Records it on the SAME scope the
+     * forced-logout row uses.
+     *
+     * A second module-level `CoroutineScope` was the first version of this, and
+     * it was a duplicate of [authExpiryScope] with the same lifetime, the same
+     * dispatcher and the same one job. Two scopes doing one thing is two places
+     * to leak and two things to reason about at teardown.
+     */
+    internal fun noteUpgradeRequired(path: String, minimumVersion: String) {
+        authExpiryScope.launch {
+            ActivityLog.recordBlocking(
+                ActivityEvents.APP_UPGRADE_REQUIRED,
+                mapOf(
+                    "path" to path,
+                    "min" to minimumVersion,
+                    "installed" to Platform.appVersion(),
+                ),
+            )
+        }
+    }
 
     /** Recorded when a 401 was NOT allowed to end the session. See
      *  [AuthExpiryGuard] — this is the line that shows the guard doing its job,
@@ -403,6 +432,97 @@ internal fun authExpiryGuard(
         }
         retried
     }
+}
+
+/**
+ * Turns a 426 from any endpoint into a blocking update verdict.
+ *
+ * ## Why the gate rests on this and not on the config document
+ * The client also evaluates `/sdui/app/release-policy` locally, and for a
+ * healthy client that is enough. It is not enough for the case the gate exists
+ * for, because a document-only gate has three holes:
+ *
+ *  1. **It is one screen.** The check it replaces ran on the home screen after
+ *     a config fetch, so a launch into a board, a widget tap or a deep link
+ *     never reached it.
+ *  2. **It can be cached away.** Offline, the client falls back to its last
+ *     cached document, which predates the floor being raised.
+ *  3. **It asks the broken build to police itself.** A floor is raised
+ *     precisely when an old build is doing something the server cannot cope
+ *     with. Trusting that build to evaluate a document correctly and stop is
+ *     trusting the thing already concluded to be wrong.
+ *
+ * A 426 has none of those. It reaches every route, cannot come from a cache,
+ * and needs no cooperation — the request simply does not succeed.
+ *
+ * ## Read, then handed back untouched
+ * Same shape as [authExpiryGuard] and for the same reason: `bodyAsText()`
+ * consumes the content channel, so the response is buffered with `save()` first
+ * and the caller still receives a complete, re-readable one. The caller's own
+ * error handling then runs as it always did — this guard changes what the app
+ * SHOWS, never what a call site receives.
+ *
+ * ## Never a sign-out
+ * Deliberately a status the auth stack does not use. A gate that borrowed 401
+ * or 403 would collide with [authExpiryGuard], which ends sessions on some
+ * 401s, and an old build would start logging people out as a side effect of
+ * being old.
+ */
+internal val upgradeRequiredGuard = createClientPlugin("StationlyUpgradeRequiredGuard") {
+    on(Send) { request ->
+        val call = proceed(request)
+        if (call.response.status != HttpStatusCode.UpgradeRequired) return@on call
+
+        // Buffered so reading the body here does not take it from the caller.
+        // Paid only on 426, which is a small JSON error and, in a correct
+        // deployment, never happens at all.
+        val buffered = runCatching { call.save() }.getOrNull()
+        val settled = buffered ?: call
+        val body = buffered?.let { runCatching { it.response.bodyAsText() }.getOrNull() }
+
+        // Parsed leniently. The client must react to a 426 from a backend older
+        // or newer than itself, and a strict decode that threw on an unexpected
+        // shape would drop the one signal that cannot be missed. A body that
+        // cannot be read at all still blocks — the STATUS is the fact, the body
+        // only supplies the words and the links — and `ReleaseGate` falls back
+        // to the cached document, then drops the block entirely if it ends up
+        // with nowhere to send the user.
+        val rejection = parseUpgradeRejection(body)
+
+        ReleaseGate.onUpgradeRequired(rejection)
+        NetworkModule.noteUpgradeRequired(
+            path = call.request.url.encodedPath,
+            minimumVersion = rejection.minimumVersion.orEmpty(),
+        )
+
+        settled
+    }
+}
+
+/**
+ * The fields of a 426 body, or nulls.
+ *
+ * Extracted from the plugin so it is reachable from a test — the plugin itself
+ * needs a live engine, and every branch worth asserting here is a malformed
+ * body, which a correct backend never sends. Blank and wrongly-typed values
+ * collapse to null so that every consumer downstream is one `?:`.
+ */
+internal fun parseUpgradeRejection(body: String?): ReleaseGate.UpgradeRejection {
+    val fields = body?.let {
+        runCatching { NetworkModule.json.decodeFromString<Map<String, JsonElement>>(it) }.getOrNull()
+    } ?: return ReleaseGate.UpgradeRejection()
+
+    fun str(key: String): String? =
+        (fields[key] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+
+    return ReleaseGate.UpgradeRejection(
+        storeUrl = str("storeUrl"),
+        storeUrlWeb = str("storeUrlWeb"),
+        minimumVersion = str("minimumVersion"),
+        title = str("title"),
+        message = str("message"),
+        cta = str("cta"),
+    )
 }
 
 /**

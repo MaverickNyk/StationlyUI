@@ -71,11 +71,3 @@ actual fun openAppNotificationSettings() {
     val url = NSURL.URLWithString(UIApplicationOpenSettingsURLString) ?: return
     UIApplication.sharedApplication.openURL(url, emptyMap<Any?, Any?>(), null)
 }
-
-/**
- * `CFBundleShortVersionString` is the marketing version (MARKETING_VERSION in
- * project.yml) — the same shape as Android's `BuildConfig.VERSION_NAME`, so
- * the shared `app.minVersion` comparison works unchanged across platforms.
- */
-actual fun appVersionName(): String =
-    NSBundle.mainBundle.objectForInfoDictionaryKey("CFBundleShortVersionString") as? String ?: "0"

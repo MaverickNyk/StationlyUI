@@ -146,7 +146,6 @@ fun SummaryScreen(
     val stationUpdates by viewModel.stationUpdates.collectAsStateWithLifecycle()
     val announcement by viewModel.announcement.collectAsStateWithLifecycle()
     val homeConfig by viewModel.homeConfig.collectAsStateWithLifecycle()
-    val forceUpdate by viewModel.forceUpdate.collectAsStateWithLifecycle()
     val showNotificationDeniedBanner by viewModel.showNotificationDeniedBanner.collectAsStateWithLifecycle()
     val pendingExpansion by BoardExpansion.pending.collectAsStateWithLifecycle()
     val boardConfigs by viewModel.boardConfigs.collectAsStateWithLifecycle()
@@ -813,18 +812,6 @@ fun SummaryScreen(
                 }
             }
 
-            var updateDismissed by remember { mutableStateOf(false) }
-            if (forceUpdate && !updateDismissed) {
-                UpdateNudgeDialog(
-                    title = homeConfig["app.update.title"] ?: "New update available",
-                    message = homeConfig["app.update.message"] ?: "Update Stationly for the latest features and improvements.",
-                    cta = homeConfig["app.update.cta"] ?: "Update Now",
-                    dismiss = homeConfig["app.update.dismiss"] ?: "Maybe Later",
-                    storeUrl = homeConfig["app.storeUrl"] ?: "https://apps.apple.com/app/stationly",
-                    onDismiss = { updateDismissed = true }
-                )
-            }
-
             OfflineBanner(
                 visible = uiState.isBackendOffline,
                 onRetry = { viewModel.retryLoad() },
@@ -1140,69 +1127,14 @@ private fun NotificationDeniedBanner(
     )
 }
 
-@Composable
-private fun UpdateNudgeDialog(
-    title: String,
-    message: String,
-    cta: String,
-    dismiss: String,
-    storeUrl: String,
-    onDismiss: () -> Unit
-) {
-    val uriHandler = LocalUriHandler.current
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                com.stationly.app.ui.common.StationlyLogo(size = 52.dp)
-                Text(
-                    title,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    textAlign = TextAlign.Center
-                )
-                Text(
-                    message,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(Modifier.height(4.dp))
-                Button(
-                    onClick = { uriHandler.openUri(storeUrl); onDismiss() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().height(50.dp)
-                ) {
-                    Text(cta, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                }
-                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                    Text(dismiss, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.40f), fontSize = 14.sp)
-                }
-            }
-        }
-    }
-}
+// ── The update nudge used to live here ───────────────────────────────────
+//
+// Moved to `ui/update/UpdateSurfaces.kt`, rendered from `App`. It could only
+// ever fire on this screen, its "Maybe Later" was a `remember` that reset on
+// the next navigation back to home, and its store URL came from `app.storeUrl`
+// — a Play Store link, served to both platforms, which sent iPhone users to
+// Google Play.
 
-/**
- * ANDROID ONLY — the pre-existing indicator, kept verbatim so Android's pull is
- * untouched by the iOS work. A thin amber ring that fills as you pull, then
- * becomes an indeterminate spinner while refreshing. iOS now uses
- * [IosActivityRefreshIndicator] instead; do not "unify" these two without
- * deciding to change Android on purpose.
- */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BoxScope.CupertinoRefreshIndicator(
     state: androidx.compose.material3.pulltorefresh.PullToRefreshState,

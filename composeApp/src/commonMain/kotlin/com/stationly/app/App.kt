@@ -29,7 +29,10 @@ import com.stationly.app.ui.support.SupportThanksOverlay
 import com.stationly.app.ui.support.SupportViewModel
 import com.stationly.app.ui.support.LocalSupport
 import com.stationly.app.ui.theme.StationlyThemeHost
+import com.stationly.app.ui.update.UpdateSurfaces
 import androidx.compose.runtime.LaunchedEffect
+import com.stationly.core.config.ReleaseGate
+import com.stationly.core.service.NetworkModule
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 /**
@@ -137,6 +140,28 @@ fun App(
     }
     val support by supportViewModel.uiState.collectAsState()
 
+    /**
+     * Resolve the update verdict, from the ROOT rather than from a screen.
+     *
+     * Here because the verdict is a property of the install and every entry
+     * point has to be covered: the old check ran in `SummaryViewModel`, so a
+     * launch straight into a board, a widget tap or a deep link never reached
+     * it. `App` is the one composable all of those pass through.
+     *
+     * Cache first, then network. The cached document makes a cold launch decide
+     * immediately rather than after a round trip, and it is the only answer
+     * available offline. A failed fetch leaves the cached verdict standing and
+     * is deliberately silent — "we could not ask" is not evidence of anything,
+     * and the hard gate does not depend on this call succeeding anyway: a build
+     * the backend refuses to serve gets a 426 on its next request whatever this
+     * document says.
+     */
+    LaunchedEffect(Unit) {
+        ReleaseGate.loadFromCache()
+        runCatching { NetworkModule.sduiApi.getReleasePolicy() }
+            .onSuccess { ReleaseGate.adopt(it) }
+    }
+
     // A return from checkout, raised by the platform's deep-link callback.
     val pendingThanks by SupportReturn.thanks.collectAsState()
     LaunchedEffect(pendingThanks?.nonce) {
@@ -206,6 +231,14 @@ fun App(
                     contributionCount = support.contributionCount,
                     onDismiss = { supportViewModel.onThanksDismissed() },
                 )
+
+                // ── Update gate ──────────────────────────────────────────
+                //
+                // LAST, so it composes above everything: every destination, the
+                // in-app browser, the support sheet and the thank-you. A block
+                // that anything can draw over is not a block, and the surfaces
+                // above are exactly the ones that outlive a screen.
+                UpdateSurfaces()
             }
         }
     }

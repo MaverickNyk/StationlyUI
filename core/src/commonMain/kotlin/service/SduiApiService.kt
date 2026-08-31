@@ -48,6 +48,16 @@ interface SduiApiService {
      * request every time a widget wants to know what to do.
      */
     suspend fun getRefreshPolicy(): RefreshPolicy
+
+    /**
+     * Per-platform version floors and store links — see
+     * [com.stationly.core.model.release.ReleasePolicy].
+     *
+     * Deliberately EXEMPT from the server's own version gate, so a client that
+     * has just been refused with a 426 can still fetch the document that
+     * explains the refusal and says where to go.
+     */
+    suspend fun getReleasePolicy(): com.stationly.core.model.release.ReleasePolicy
     suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption>
     suspend fun getNearbyStations(lat: Double, lon: Double, mode: String? = null): List<SduiDropdownOption>
 
@@ -205,6 +215,10 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
 
     override suspend fun getRefreshPolicy(): RefreshPolicy {
         return client.get("$baseUrl/sdui/app/refresh-policy").body()
+    }
+
+    override suspend fun getReleasePolicy(): com.stationly.core.model.release.ReleasePolicy {
+        return client.get("$baseUrl/sdui/app/release-policy").body()
     }
 
     override suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption> {

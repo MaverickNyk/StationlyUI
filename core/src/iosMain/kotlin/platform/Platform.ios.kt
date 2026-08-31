@@ -1443,6 +1443,24 @@ actual object Platform {
         get() = _sqlStorage ?: SqlStorage(createDatabase(DriverFactory())).also { _sqlStorage = it }
 
     actual fun getPlatformName(): String = "iOS"
+
+    /**
+     * `CFBundleShortVersionString` is `MARKETING_VERSION` from
+     * `iosApp/Config/Base.xcconfig`, the same string the App Store listing
+     * shows. `CFBundleVersion` is `CURRENT_PROJECT_VERSION`, unique per upload.
+     *
+     * Note the widget extension carries its own copy of both, set from the same
+     * xcconfig — so a widget process asking these questions gets the same
+     * answers as the app, which is what the gate needs.
+     */
+    actual fun appVersion(): String =
+        (NSBundle.mainBundle.objectForInfoDictionaryKey("CFBundleShortVersionString") as? String)
+            ?.takeIf { it.isNotBlank() } ?: "0"
+
+    actual fun appBuild(): String =
+        (NSBundle.mainBundle.objectForInfoDictionaryKey("CFBundleVersion") as? String)
+            ?.takeIf { it.isNotBlank() } ?: "0"
+
     actual fun getApiKey(): String       = IOS_API_KEY
     actual fun getEnvironment(): AppEnvironment = IOS_ENVIRONMENT
     actual fun getBaseUrl(): String = com.stationly.core.config.AppConfig.apiBaseUrl
