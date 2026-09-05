@@ -9,16 +9,17 @@
 ```
 SPRINT:            1 — safety net + database
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S002 (2026-09-05) — AV2-1.2 lock the v1 contract
+LAST SESSION:      S003 (2026-09-05) — AV2-1.3 capture v1's golden outputs
 GATE:              GREEN — and it now runs in CI, not just locally
-                   :core:testDebugUnitTest                  PASS  (383 tests)
+                   :core:testDebugUnitTest                  PASS  (394 tests)
                    :composeApp:testDebugUnitTest            PASS
                    :android:app:testStagingDebugUnitTest    PASS  (4 tests, new)
                    :android:app:compileStagingDebugKotlin   PASS
                    :composeApp:compileDebugKotlinAndroid    PASS
+                   :composeApp:assembleComposeAppDebugXCFramework  PASS  (C2, ~20 min)
 WORKING TREE:      clean
 BLOCKED ON OWNER:  Q3 blocks EPIC-06 · Q4 keeps :android:app out of CI
-NEXT UP:           AV2-1.3
+NEXT UP:           AV2-2.1  ← EPIC-01 complete; this is the risky one
 ```
 
 ---
@@ -61,7 +62,6 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 | Story | Epic | Title | Size |
 |---|---|---|---|
 | AV2-2.1 | 02 | Reinstate migrations | L |
-| AV2-1.3 | 01 | Capture v1's golden outputs | M |
 
 ### 🅘 In Progress — WIP limit 2
 
@@ -87,6 +87,7 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 |---|---|---|---|
 | AV2-1.1 | S001 | 2026-09-05 | GREEN |
 | AV2-1.2 | S002 | 2026-09-05 | GREEN |
+| AV2-1.3 | S003 | 2026-09-05 | GREEN |
 
 ---
 
@@ -127,7 +128,7 @@ the users, 03 is the foundation 04 builds on.
 
 | Epic | Stories | Done | Points | Done |
 |---|---|---|---|---|
-| 01 Safety net | 3 | **2** | 9 | **6** |
+| 01 Safety net | 3 | **3** ✅ | 9 | **9** |
 | 02 Database | 3 | 0 | 11 | 0 |
 | 03 Host cutover | 5 | 0 | 21 | 0 |
 | 04 Data plane | 4 | 0 | 18 | 0 |
@@ -135,7 +136,7 @@ the users, 03 is the foundation 04 builds on.
 | 06 Dream | 2 | 0 | 6 | 0 |
 | 07 Release surfaces | 3 | 0 | 10 | 0 |
 | 08 Rollout | 3 | 0 | 11 | 0 |
-| **Total** | **27** | **2** | **102** | **6** |
+| **Total** | **27** | **3** | **102** | **9** |
 
 Sizes: `S`=2, `M`=3, `L`=5, `XL`=8. One point is roughly one focused hour, so a
 5h session is a `L` with room to close out, or an `XL` that will need two.

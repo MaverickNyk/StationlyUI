@@ -1,0 +1,66 @@
+{
+  "_comment": [
+    "What FormatDeparturesUseCase turns a prediction set into. Offsets rather",
+    "than absolute timestamps, because formatETA is relative to Clock.System.now()",
+    "— an absolute fixture would decay into a different expectation every day.",
+    "",
+    "AndroidWidgetManager.formatForWidget is NOT the formatter. It returns a",
+    "hardcoded 'Loading...' placeholder and always has; the real formatting runs",
+    "in FormatDeparturesUseCase, called from DepartureWidgetProvider. Recorded",
+    "here so AV2-5.3 does not wire the widget to the placeholder by following",
+    "the interface name."
+  ],
+  "cases": [
+    {
+      "name": "ordering is by arrival time, not by the formatted string",
+      "note": "THE regression this pins. Sorting on the eta STRING orders lexicographically — '1 min' < '10 min' < '2 min' < 'Due' — and combined with take(3) the widget showed the wrong three trains in the wrong order.",
+      "predictionsMinutesFromNow": [10, 2, 1, 0],
+      "expectedEtas": ["Due", "1 min", "2 min"],
+      "expectedCount": 3,
+      "_countNote": "take(3). A fourth train is formatted and then dropped."
+    },
+    {
+      "name": "under a minute is Due",
+      "predictionsMinutesFromNow": [0],
+      "expectedEtas": ["Due"]
+    },
+    {
+      "name": "station suffixes are stripped from the destination",
+      "destinationsIn": [
+        "Brixton Underground Station",
+        "Lewisham DLR Station",
+        "Stratford Rail Station",
+        "Morden"
+      ],
+      "destinationsOut": ["Brixton", "Lewisham", "Stratford", "Morden"]
+    },
+    {
+      "name": "a long destination is truncated at 22 plus an ellipsis",
+      "destinationsIn": ["Heathrow Terminals 2 & 3 via Hatton Cross"],
+      "destinationsOut": ["Heathrow Terminals 2 &..."],
+      "_rule": "over 25 characters -> take(22) + '...'. Note the 22 is a raw character count with no word-boundary awareness, so a truncation can end mid-word or, as here, on a dangling ampersand. Recorded because it looks like a bug and is not one — it is what v1 shows today."
+    },
+    {
+      "name": "a filter that matches nothing fails OPEN",
+      "note": "The widget has no empty state to explain itself with, so a filter matching nothing must show the unfiltered list rather than leave a silently blank widget.",
+      "predictionDestIds": ["940GZZLUMDN", "940GZZLUKNG"],
+      "filterDestinationIds": ["940GZZLUNOTHING"],
+      "expectedCount": 2
+    },
+    {
+      "name": "a blank destId is admitted by any filter",
+      "note": "TfL sends 'Check Front of Train' and depot moves that map to no station. A plain `in` test would drop them from the widget while the board still showed them.",
+      "predictionDestIds": ["", "940GZZLUMDN"],
+      "filterDestinationIds": ["940GZZLUMDN"],
+      "expectedCount": 2
+    }
+  ],
+  "carriedThrough": {
+    "stationName": "from the selection, not the payload",
+    "lineName": "the selection's line id",
+    "direction": "the selection's direction",
+    "mode": "the selection's mode",
+    "status": null,
+    "_statusNote": "always null out of this use case; line status is applied later from the repository"
+  }
+}

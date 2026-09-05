@@ -18,6 +18,50 @@ Template:
 
 ---
 
+## S003 — 2026-09-05 — AV2-1.3 "Capture v1's golden outputs" · **EPIC-01 complete**
+**Outcome:** DONE
+**Gate:** GREEN — `:core` 394 tests (11 new), XCFramework assembles
+**Commits:** see branch head
+
+**Did:** Four fixtures under `docs/android-v2/fixtures/v1/` and `V1GoldenTest`
+reading them. Captured while a v1 build still exists to capture from — after
+AV2-3.5 the only source is git history.
+
+**Learned:**
+
+1. **`AndroidWidgetManager.formatForWidget` is a placeholder.** It returns a
+   hardcoded `"Loading..."` and always has. `FormatDeparturesUseCase` is the
+   real formatter, called from `DepartureWidgetProvider`. Anyone wiring the v2
+   widget by following the `WidgetManager` interface name would wire it to
+   nothing. Flagged in EPIC-05.
+2. **A v1 blob folds to a board per POLE.** No `parentStationId`, so `groupingId`
+   falls back to `station`. That is what the user's phone shows today, not
+   corruption — AV2-4.3 must not "repair" it.
+3. **The destination truncation ends mid-token**: a raw 22-char cut, so
+   `"Heathrow Terminals 2 & 3 via Hatton Cross"` becomes
+   `"Heathrow Terminals 2 &..."`, dangling ampersand and all. My fixture guessed
+   otherwise and the test corrected me — which is the fixtures doing their job on
+   day one.
+
+**Scope note:** as in S002, the story had nothing to point at for the deep-link
+table. It was a `when` over `android.net.Uri` in `MainActivity` (deleted by
+AV2-3.5), with iOS keeping its own copy. It is now
+`core/.../model/deeplink/DeepLink.kt`, and **the scheme is a parameter** — the
+iOS per-environment bug encoded so it cannot recur. Two test stories have now
+each needed one small extraction. That is a pattern, not a coincidence: v1 put
+shared logic in ViewModels and Activities, so anything worth pinning has to be
+lifted out before it can be pinned.
+
+**Next agent needs to know:** EPIC-01 is complete and **AV2-2.1 is next — the
+riskiest story in the programme**. Read `analysis/MIGRATION.md` §1 in full and
+regenerate the schema delta rather than trusting any written list, including the
+one in that document. The `.sq` banner's own list is missing 14 of the 21 items.
+
+And the tripwire from S001 fires here: `SchemaHarnessTest` asserts schema
+version `1`; adding `migrations/1.sqm` makes it `2`. Bump it, do not delete it.
+
+---
+
 ## S002 — 2026-09-05 — AV2-1.2 "Lock the v1 contract"
 **Outcome:** DONE
 **Gate:** GREEN — `:core` 383 tests (9 new), XCFramework assembles
