@@ -13,7 +13,7 @@ locked by a test; v1's golden outputs are checked in as fixtures.
 
 ---
 
-## AV2-1.1 — The gate, in CI · `M` · **Ready**
+## AV2-1.1 — The gate, in CI · `M` · **Done** (S001)
 
 **Depends on:** — **Reads:** [`TEST_STRATEGY.md`](../analysis/TEST_STRATEGY.md) §0, §5
 **Files:** `.github/workflows/`, `core/build.gradle.kts`, `android/app/build.gradle.kts`
@@ -24,26 +24,57 @@ run somewhere other than the agent's own machine, or it becomes a step people
 believe they ran.
 
 ### Tasks
-- [ ] **a.** Add a GitHub Actions job running the four gate tasks on every PR
+- [x] **a.** Add a GitHub Actions job running the four gate tasks on every PR
       targeting `dev_android_bring_to_v2`.
-- [ ] **b.** Add the `core/src/androidUnitTest` source set with
+- [x] **b.** Add the `core/src/androidUnitTest` source set with
       `app.cash.sqldelight:sqlite-driver` as `testImplementation`. JDBC, JVM, no
       device and no Robolectric. EPIC-02 cannot be tested without it.
-- [ ] **c.** Prove (b) with one trivial test that opens an in-memory database and
+- [x] **c.** Prove (b) with one trivial test that opens an in-memory database and
       runs `Schema.create`.
-- [ ] **d.** Add a unit-test source set to `android/app`. It has none.
-- [ ] **e.** Record the exact gate command in `README.md` if it drifts from what
+- [x] **d.** Add a unit-test source set to `android/app`. It has none.
+- [x] **e.** Record the exact gate command in `README.md` if it drifts from what
       is written there.
 
 ### Acceptance criteria
-- [ ] A PR into this branch runs the gate and can fail on it.
-- [ ] `./gradlew :core:testDebugUnitTest` still passes and now includes the
-      androidUnitTest source set.
-- [ ] The workflow does **not** use `allTests` — it dies on `wasmJs`, and the iOS
+- [x] A PR into this branch runs the gate and can fail on it. *(shared half unconditionally; the `:android:app` half unlocks with a secret — see the handoff note)*
+- [x] `./gradlew :core:testDebugUnitTest` still passes and now includes the
+      androidUnitTest source set. 374 tests.
+- [x] The workflow does **not** use `allTests` — it dies on `wasmJs`, and the iOS
       test target will not compile the existing comma-named test functions.
 
-### Handoff notes
-_(none yet)_
+### Handoff notes — S001, 2026-09-05
+
+**Done.** `.github/workflows/android-v2-gate.yml`, the `core/src/androidUnitTest`
+source set on the SQLDelight JDBC driver, `SchemaHarnessTest` (2 tests),
+`android/app`'s first unit test (`BackendErrorUtilTest`, 4 tests). Gate green.
+
+**⚠️ CI cannot compile `:android:app`, and this needs the owner.**
+`google-services.json` is gitignored and untracked, and the
+`com.google.gms.google-services` plugin fails outright without it. The workflow
+therefore runs the shared half unconditionally and the `:android:app` half only
+when a repository secret `GOOGLE_SERVICES_STAGING_B64` exists — it emits a
+**GitHub warning annotation** when it does not, so the job cannot pass quietly
+while implying coverage it does not have.
+
+To close it: `base64 -i android/app/src/staging/google-services.json | pbcopy`
+and add it as that secret. Use the **staging** file; the prod one points at the
+production Firebase project and has no business on a runner. Nothing else
+changes — the steps are already written and conditional.
+
+**A tripwire was planted, on purpose.** `SchemaHarnessTest.the schema version
+matches the migration count` asserts version `1`. AV2-2.1 adds `migrations/1.sqm`
+and **will fail this test**. That is the design: SQLDelight derives the version
+from the migration count, so the assertion is what catches a `.sq` changed
+without a matching `.sqm`. AV2-2.1 task (g) says to bump it to `2` in the same
+commit. Do not delete the test to make it pass.
+
+**Also added:** an `ios-contract` job on macOS running
+`:composeApp:assembleComposeAppDebugXCFramework`. It was not in the story, and
+it is the C2 contract's only real check — Xcode links a stale framework happily,
+so a green iOS build proves nothing on its own. It needs no secret.
+
+**Not done, and deliberately:** no test for the workflow itself. It is verified
+by running, and its first real run is the first PR.
 
 ---
 

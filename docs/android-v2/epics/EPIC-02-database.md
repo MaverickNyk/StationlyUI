@@ -60,6 +60,10 @@ git show HEAD:core/src/commonMain/sqldelight/com/stationly/db/StationlyDatabase.
       read anyway and FCM repopulates within seconds.
 - [ ] **e.** `CREATE TABLE ActivityEventEntity` and both indexes.
 - [ ] **f.** Leave `LineStatusEntity` alone. It is unchanged.
+- [ ] **g.** Bump the tripwire. `SchemaHarnessTest.the schema version matches the
+      migration count` asserts version `1`; adding `1.sqm` makes it `2` and the
+      test will fail. That is deliberate — bump the expectation in the same
+      commit, and do **not** delete the test to make it pass.
 
 ### Acceptance criteria
 - [ ] `:core` builds; the database version is 2.
