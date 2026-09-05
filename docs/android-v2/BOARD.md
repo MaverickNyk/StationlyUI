@@ -9,7 +9,7 @@
 ```
 SPRINT:            1 — safety net + database
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S003 (2026-09-05) — AV2-1.3 capture v1's golden outputs
+LAST SESSION:      S004 (2026-09-05) — AV2-2.1 reinstate migrations
 GATE:              GREEN — and it now runs in CI, not just locally
                    :core:testDebugUnitTest                  PASS  (394 tests)
                    :composeApp:testDebugUnitTest            PASS
@@ -19,7 +19,8 @@ GATE:              GREEN — and it now runs in CI, not just locally
                    :composeApp:assembleComposeAppDebugXCFramework  PASS  (C2, ~20 min)
 WORKING TREE:      clean
 BLOCKED ON OWNER:  Q3 blocks EPIC-06 · Q4 keeps :android:app out of CI
-NEXT UP:           AV2-2.1  ← EPIC-01 complete; this is the risky one
+                   Q5 iOS testers need telling before this reaches TestFlight
+NEXT UP:           AV2-2.2  ← turn AV2-2.1's hand-verification into tests
 ```
 
 ---
@@ -33,7 +34,6 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Epic | Title | Waiting on |
 |---|---|---|---|
-| AV2-2.2 | 02 | Prove the migration | AV2-2.1 |
 | AV2-2.3 | 02 | Close the drift permanently | AV2-2.2 |
 | AV2-3.1 | 03 | Host the shared UI | AV2-2.2 |
 | AV2-3.2 | 03 | Real actuals, batch A | AV2-3.1 |
@@ -61,7 +61,7 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Epic | Title | Size |
 |---|---|---|---|
-| AV2-2.1 | 02 | Reinstate migrations | L |
+| AV2-2.2 | 02 | Prove the migration | M |
 
 ### 🅘 In Progress — WIP limit 2
 
@@ -88,6 +88,7 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 | AV2-1.1 | S001 | 2026-09-05 | GREEN |
 | AV2-1.2 | S002 | 2026-09-05 | GREEN |
 | AV2-1.3 | S003 | 2026-09-05 | GREEN |
+| AV2-2.1 | S004 | 2026-09-05 | GREEN |
 
 ---
 
@@ -99,6 +100,7 @@ Do not block on these unless a story names one as a dependency. Log and continue
 |---|---|---|---|---|
 | Q1 | Play policy route for tips — Play Billing, or a charity/non-profit exemption for external checkout? | S000 | AV2-7.3 scope only (the surface ships off either way) | OPEN |
 | Q2 | At what remaining-v1-install count do we drop the `stations` dual-write? | S000 | AV2-8.3 | OPEN |
+| Q5 | **iOS TestFlight testers must delete and reinstall once** when the schema-version bump ships. Their databases are stamped version 1 but already hold the v2 schema, so `1.sqm` refuses to run on them (safely — see MIGRATION.md §1.4b). Standing iOS policy already says wipe-on-schema-change and boards restore from the cloud, but these are live testers. Tell them, or hold the bump until the next TestFlight build? | S004 | iOS TestFlight | OPEN |
 | Q4 | Add `GOOGLE_SERVICES_STAGING_B64` as a repo secret so CI can compile and test `:android:app`? The file is gitignored, so CI skips those steps today and says so with a warning annotation. | S001 | `:android:app` coverage in CI | OPEN |
 | Q3 | Does Daydream survive into v2? It is deprecated on newer Android, v1 ships it, and users may rely on it. Two sessions ride on the answer. | S000 | **EPIC-06 entirely** | OPEN |
 
@@ -129,14 +131,14 @@ the users, 03 is the foundation 04 builds on.
 | Epic | Stories | Done | Points | Done |
 |---|---|---|---|---|
 | 01 Safety net | 3 | **3** ✅ | 9 | **9** |
-| 02 Database | 3 | 0 | 11 | 0 |
+| 02 Database | 3 | **1** | 11 | **5** |
 | 03 Host cutover | 5 | 0 | 21 | 0 |
 | 04 Data plane | 4 | 0 | 18 | 0 |
 | 05 Widget | 4 | 0 | 16 | 0 |
 | 06 Dream | 2 | 0 | 6 | 0 |
 | 07 Release surfaces | 3 | 0 | 10 | 0 |
 | 08 Rollout | 3 | 0 | 11 | 0 |
-| **Total** | **27** | **3** | **102** | **9** |
+| **Total** | **27** | **4** | **102** | **14** |
 
 Sizes: `S`=2, `M`=3, `L`=5, `XL`=8. One point is roughly one focused hour, so a
 5h session is a `L` with room to close out, or an `XL` that will need two.

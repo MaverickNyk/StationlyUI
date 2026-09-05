@@ -1,48 +1,53 @@
--- ⚠️ NO MIGRATIONS, DELIBERATELY. Wipe and reinstall instead.
+-- ⚠️ THIS FILE HAS MIGRATIONS AGAIN. Add one for every change.
 --
--- ## The policy, decided 2026-08-23
--- The only thing being built right now is **iOS v1**, which has never shipped.
--- **Android is live (versionCode 2) and is FROZEN** — no new Android release is
--- planned, so nothing in this file can reach an Android user: the schema meets a
--- phone only when an APK ships, and the shipped APK carries its own old copy.
+-- ## The policy that used to be here, and why it expired
+-- Migrations were removed on 2026-08-23 on a single stated premise: **Android is
+-- live (versionCode 2) and is FROZEN** — no new Android release was planned, so
+-- nothing in this file could reach an Android user. On that premise the whole
+-- apparatus was overhead, and it was removed deliberately rather than forgotten.
 --
--- That makes migrations pure overhead. The schema is still moving daily while
--- the iOS app is finished, every `.sqm` is a file to keep in hand-sync with this
--- one, and the only databases in existence are on development devices.
+-- That note named its own expiry condition: *"If you find yourself writing one,
+-- check that premise first — it is the only thing this policy rests on."*
 --
---   **When you change this file, DELETE THE APP AND REINSTALL IT.**
+-- The premise is false as of 2026-09-05. Android v2 is being built on
+-- `dev_android_bring_to_v2`, and every phone with the app installed will run
+-- `migrations/1.sqm`. The note was right about what it depended on; this is that
+-- dependency coming due.
 --
--- `Schema.create` applies this file in full to an empty database, so a fresh
--- install is always correct by construction. Installing OVER an app keeps its
--- container and therefore its old database — that is what crashed the iOS build
--- on 2026-08-23 with "no such column". Delete the app first; boards come back
--- from the cloud on sign-in.
+-- ## The rule now
+-- **Every change to this file needs a numbered migration beside it, in the same
+-- commit.** SQLDelight derives the database version from the migration COUNT —
+-- one migration means version 2 — so a new `.sqm` is what bumps the database.
 --
--- Migrations were briefly reinstated that day to rescue that install and were
--- removed again once it was clear no Android release was coming. If you find
--- yourself writing one, check that premise first — it is the only thing this
--- policy rests on.
+-- `Schema.create` runs ONLY on an empty database. A change made here alone
+-- reaches fresh installs and nothing else, so it fails at runtime on precisely
+-- the devices that have been using the app longest, and never on the freshly
+-- wiped ones a developer tests with. Adding a column WITH a default happens to
+-- survive that (old rows read the default), which is why the omission went
+-- unnoticed through several schema changes and then had to be paid off all at
+-- once in `1.sqm`.
 --
--- ## What this defers, and what it costs
--- An Android database has never seen anything added here since its release. When
--- Android is eventually picked back up it needs ONE migration written against
--- the last released build, and the gap it must cross is everything below. **Keep
--- this list current when you add a column** — it is maintained by hand and is
--- the only record of what an Android upgrade owes.
+-- ## Do not maintain a list of what an upgrade owes. Compute it.
+-- There used to be a hand-written list here of the columns an Android upgrade
+-- had to cross. It named 7 items. The real delta was **21** — missing five
+-- UserSelectionEntity columns, three PredictionEntity columns, and BOTH
+-- primary-key changes. Anyone writing the migration from it would have shipped a
+-- broken one, and it would have surfaced only on real users' phones.
 --
---   CREATE TABLE ActivityEventEntity (…);  plus its index
---   ALTER TABLE UserSelectionEntity ADD COLUMN viaKeys               TEXT NOT NULL DEFAULT '';
---   ALTER TABLE UserSelectionEntity ADD COLUMN patternIds            TEXT NOT NULL DEFAULT '';
---   ALTER TABLE UserSelectionEntity ADD COLUMN patternNames          TEXT NOT NULL DEFAULT '';
---   ALTER TABLE UserSelectionEntity ADD COLUMN directionName         TEXT NOT NULL DEFAULT '';
---   ALTER TABLE UserSelectionEntity ADD COLUMN directionDestinations TEXT NOT NULL DEFAULT '';
---   ALTER TABLE UserSelectionEntity ADD COLUMN directionTowards      TEXT NOT NULL DEFAULT '';
---   ALTER TABLE PredictionEntity    ADD COLUMN viaKey                TEXT;
+-- The list is gone. Ask git instead, which cannot drift:
 --
--- Write it as a table REBUILD, not a list of ALTERs — build the table in its
--- current shape under a temporary name, copy across, drop, rename. That lands on
--- the same result whatever the source database happened to contain, which
--- matters because "version 1" has meant several different schemas over time.
+--   git show <last-released-ref>:core/src/commonMain/sqldelight/com/stationly/db/StationlyDatabase.sq
+--
+-- ## Two things that are NOT obvious and cost a day each
+--  * A primary key cannot be ALTERed in SQLite. Any change to one is a table
+--    REBUILD — create under a temporary name, copy across, drop, rename.
+--  * `res/xml/backup_rules.xml` includes `domain="database"`, so this file
+--    travels through Android Auto Backup. A v1 database can therefore land on a
+--    phone doing a FRESH v2 install from Play, where `Schema.create` never runs.
+--    "Upgrade path" is a larger set than "devices that had v1 installed".
+--
+-- See `docs/android-v2/analysis/MIGRATION.md` for the full reasoning, and
+-- `MigrationTest` for what is actually asserted.
 
 CREATE TABLE UserSelectionEntity (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

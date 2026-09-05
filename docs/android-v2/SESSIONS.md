@@ -18,6 +18,53 @@ Template:
 
 ---
 
+## S004 — 2026-09-05 — AV2-2.1 "Reinstate migrations"
+**Outcome:** DONE
+**Gate:** GREEN
+**Commits:** see branch head
+
+**Did:** Rewrote the `.sq` banner (the premise it rested on is dead, and the
+hand-maintained list that was wrong is replaced by the command that regenerates
+it). Wrote `migrations/1.sqm` as a table rebuild. Bumped the AV2-1.1 tripwire
+1 → 2; it fired exactly as designed.
+
+**Learned — and it changed the migration, not just the notes:**
+
+**"Version 1" means two different schemas.** `StationlyDatabase.Schema` is shared
+by both platforms and its version is the migration count, so the number is
+global. But Android's released devices were created from the OLD `.sq` and iOS's
+TestFlight devices from the CURRENT one — iOS databases are stamped version 1 and
+already contain everything this migration adds.
+
+Left alone, the rebuild would have copied only the eight columns an Android v1
+row has and silently destroyed `parentStationId`, every filter, `viaKeys` and
+`patternIds` on every iOS device, then crashed at the activity table anyway.
+
+There is no pure-SQL migration correct for both shapes. So
+`CREATE TABLE ActivityEventEntity` is now the FIRST statement, and its position
+is the guard: on an iOS-shaped database it throws before a row is touched and the
+transaction rolls back. Verified on both shapes; iOS data comes through
+untouched. MIGRATION.md §1.4b has the reasoning.
+
+**A harness trap worth an hour of somebody's life:** `sqlite3` without `-bail`
+**keeps going after an error**. My first iOS-shape run sailed past the guard,
+destroyed the data, and told me the guard did not work. It does — the harness was
+wrong, and the drivers stop on the first failure. Always `-bail`.
+
+Also verified by hand: `PRAGMA table_info` is identical between `Schema.create`
+and the migration for all five tables, plus both indexes. AV2-2.2 turns that into
+a test rather than discovering it.
+
+**Next agent needs to know:** AV2-2.2, and it gained a task (g) — cover the
+iOS-shaped database. The guard is one statement's position in a file and nothing
+else protects it; a well-meaning reorder silently re-arms the data loss. Do not
+add `IF NOT EXISTS` to that statement, for the same reason.
+
+**Q5 raised:** iOS TestFlight testers on an older build must delete and reinstall
+once when this ships.
+
+---
+
 ## S003 — 2026-09-05 — AV2-1.3 "Capture v1's golden outputs" · **EPIC-01 complete**
 **Outcome:** DONE
 **Gate:** GREEN — `:core` 394 tests (11 new), XCFramework assembles

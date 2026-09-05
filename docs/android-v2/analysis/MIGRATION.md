@@ -87,6 +87,57 @@ the source database contained.
 | `LineStatusEntity` | Untouched. | Unchanged. |
 | `ActivityEventEntity` | **CREATE.** | New. `Schema.create` never runs on an upgraded database, so without this the first enqueue is "no such table" — on the longest-standing installs and never on a dev device. |
 
+### 1.4b "Version 1" means two different schemas, because iOS shares the number
+
+**Found while writing the migration (AV2-2.1). It changes what the migration has
+to be, not just what it does.**
+
+`StationlyDatabase.Schema` is shared by both platforms — `AndroidSqliteDriver`
+and `NativeSqliteDriver` are handed the same object, and its version is derived
+from the migration count. So the number is global, and the two platforms' idea
+of "version 1" diverged:
+
+| | Created from | Contains at version 1 |
+|---|---|---|
+| **Android**, released `versionCode 2` | the `.sq` as it was **then** | 8-column `UserSelectionEntity`, no `direction` in any primary key, no activity table |
+| **iOS**, TestFlight, never publicly shipped | the `.sq` as it is **now** | the full current schema — every column, both new primary keys, the activity table |
+
+iOS ran `Schema.create`, which applies the file in full. Its databases are
+stamped version 1 and have nothing to migrate.
+
+The `.sq` banner predicted exactly this — *"'version 1' has meant several
+different schemas over time"* — and prescribed a table rebuild as the answer. A
+rebuild does survive both shapes structurally, because both have the eight
+columns the copy reads. What it does **not** survive is the data: copying only
+those eight columns silently discards `parentStationId`, every filter, `viaKeys`
+and `patternIds` from an iOS database, and then fails anyway at
+`CREATE TABLE ActivityEventEntity`.
+
+**There is no pure-SQL migration that is correct for both shapes.** SQLite has no
+`ADD COLUMN IF NOT EXISTS` and no way to copy the intersection of two column
+sets. So the migration targets Android's shape — which is its entire purpose —
+and is ordered so that it **fails safely** on the other:
+
+> `CREATE TABLE ActivityEventEntity` is the **first** statement in `1.sqm`, and
+> its position is load-bearing. On an iOS-shaped database it throws
+> `table ActivityEventEntity already exists` before a single row is touched.
+> Both drivers run a migration inside a transaction, so the whole thing rolls
+> back and the database is left exactly as it was.
+
+Verified on both shapes (2026-09-05): an Android v1 database migrates cleanly
+with rows and `id` order preserved; an iOS-shaped database fails on statement one
+with `parentStationId`, `filterMode`, `viaKeys` and `patternIds` **fully intact**
+and no orphan `_v1` table left behind.
+
+⚠️ **Do not "fix" this with `IF NOT EXISTS`.** That turns a loud, safe,
+rolled-back failure into a quiet one that proceeds to delete the user's filters.
+
+**What it costs iOS:** a TestFlight tester on an older build must delete and
+reinstall once. That is already the standing iOS policy for a schema change, it
+has already been exercised once (2026-08-23, the "no such column" crash), and
+boards come back from the cloud on sign-in. Raised as **Q5** because it affects
+people who are testing right now.
+
 ### 1.5 Android Auto Backup widens the blast radius
 
 `res/xml/backup_rules.xml` and `res/xml/data_extraction_rules.xml` both carry:

@@ -17,7 +17,7 @@ phone that never had v1 installed.
 
 ---
 
-## AV2-2.1 — Reinstate migrations · `L` · Backlog
+## AV2-2.1 — Reinstate migrations · `L` · **Done** (S004)
 
 **Depends on:** AV2-1.1 **Reads:** [`MIGRATION.md`](../analysis/MIGRATION.md) §1
 **Files:** `core/src/commonMain/sqldelight/com/stationly/db/StationlyDatabase.sq`,
@@ -43,33 +43,33 @@ git show HEAD:core/src/commonMain/sqldelight/com/stationly/db/StationlyDatabase.
 ```
 
 ### Tasks
-- [ ] **a.** Rewrite the banner. The premise is dead; say so, say why, and either
+- [x] **a.** Rewrite the banner. The premise is dead; say so, say why, and either
       delete the hand-maintained list or replace it with the command that
       regenerates it. A list that drifted once will drift again.
-- [ ] **b.** Write `migrations/1.sqm` as a **table rebuild** — create under a
+- [x] **b.** Write `migrations/1.sqm` as a **table rebuild** — create under a
       temporary name, copy, drop, rename — for `UserSelectionEntity`,
       `PredictionEntity` and `SyncStatusEntity`. Not a list of `ALTER`s.
-- [ ] **c.** Preserve every `UserSelectionEntity` row. New columns take their
+- [x] **c.** Preserve every `UserSelectionEntity` row. New columns take their
       `.sq` defaults; `parentStationId=''` is correct for a pre-hub row and means
       "same as station".
-- [ ] **d.** **Drop** all `PredictionEntity` and `SyncStatusEntity` rows.
+- [x] **d.** **Drop** all `PredictionEntity` and `SyncStatusEntity` rows.
       MIGRATION.md §1.4 says why this is the honest answer and not the lazy one:
       old rows have no `direction`, `direction` is now in the primary key and in
       every board query's `WHERE`, backfilling it is guesswork on a bus hub, and
       the payoff is nil because departures older than ~2 minutes are filtered on
       read anyway and FCM repopulates within seconds.
-- [ ] **e.** `CREATE TABLE ActivityEventEntity` and both indexes.
-- [ ] **f.** Leave `LineStatusEntity` alone. It is unchanged.
-- [ ] **g.** Bump the tripwire. `SchemaHarnessTest.the schema version matches the
+- [x] **e.** `CREATE TABLE ActivityEventEntity` and both indexes.
+- [x] **f.** Leave `LineStatusEntity` alone. It is unchanged.
+- [x] **g.** Bump the tripwire. `SchemaHarnessTest.the schema version matches the
       migration count` asserts version `1`; adding `1.sqm` makes it `2` and the
       test will fail. That is deliberate — bump the expectation in the same
       commit, and do **not** delete the test to make it pass.
 
 ### Acceptance criteria
-- [ ] `:core` builds; the database version is 2.
-- [ ] The `.sqm` and the `.sq` describe the same schema, checked by eye now and
+- [x] `:core` builds; the database version is 2.
+- [x] The `.sqm` and the `.sq` describe the same schema, checked by eye now and
       by the build in AV2-2.3.
-- [ ] The banner no longer contradicts the file it sits on top of.
+- [x] The banner no longer contradicts the file it sits on top of.
 
 ### Explicitly NOT in this story
 The test. It is AV2-2.2, and the split is deliberate: writing a migration and its
@@ -108,6 +108,13 @@ _(none yet)_
       is worth keeping even after AV2-2.3.
 - [ ] **f.** Running the migration twice must fail cleanly rather than corrupt.
       Migrations are not idempotent and should not pretend to be.
+- [ ] **g.** **The iOS-shaped case.** Build a database from the CURRENT `.sq`
+      (which is what `Schema.create` gave every iOS TestFlight device at version
+      1), attempt the migration, and assert it throws **and changes nothing** —
+      `parentStationId`, `filterMode`, `viaKeys` and `patternIds` all intact, no
+      orphan `_v1` table. See MIGRATION.md §1.4b. This was verified by hand in
+      AV2-2.1; it needs to be a test, because the guard is one statement's
+      position in a file and nothing else protects it.
 
 ### Acceptance criteria
 - [ ] The test fails if `1.sqm` is deleted.
