@@ -78,7 +78,7 @@ by running, and its first real run is the first PR.
 
 ---
 
-## AV2-1.2 — Lock the v1 contract · `M` · **Ready**
+## AV2-1.2 — Lock the v1 contract · `M` · **Done** (S002)
 
 **Depends on:** — **Reads:** [`TEST_STRATEGY.md`](../analysis/TEST_STRATEGY.md) §1/C1, [`MIGRATION.md`](../analysis/MIGRATION.md) §2
 **Files:** `core/src/commonTest/kotlin/contract/V1ContractTest.kt`
@@ -90,23 +90,53 @@ the `Board` ⇄ `SubscribedStation` fold being **total in both directions**, and
 nothing proves that today.
 
 ### Tasks
-- [ ] **a.** `Board` list → `SubscribedStation` list → `Board` list round-trips
+- [x] **a.** `Board` list → `SubscribedStation` list → `Board` list round-trips
       without losing a station, a line, a direction or a pole naptan.
-- [ ] **b.** A v1-shaped `PredictionsPayload` (the FCM body v1 sends and
+- [x] **b.** A v1-shaped `PredictionsPayload` (the FCM body v1 sends and
       receives) still deserializes.
-- [ ] **c.** `Board.from(...)` over a v1 flat selection list produces one board
+- [x] **c.** `Board.from(...)` over a v1 flat selection list produces one board
       per `groupingId`, with filters defaulted to `ALL`.
-- [ ] **d.** A bus hub case specifically: two poles under one hub must fold to
+- [x] **d.** A bus hub case specifically: two poles under one hub must fold to
       **one** board with two selections, not two boards.
 
 ### Acceptance criteria
-- [ ] Every test fails if the corresponding production code is deleted. Check
+- [x] Every test fails if the corresponding production code is deleted. Check
       this literally — delete, watch it go red, put it back.
-- [ ] What the flat form cannot carry (the filters) is asserted as *deliberately*
+- [x] What the flat form cannot carry (the filters) is asserted as *deliberately*
       dropped, not silently.
 
-### Handoff notes
-_(none yet)_
+### Handoff notes — S002, 2026-09-05
+
+**Done.** `core/src/commonTest/kotlin/contract/V1ContractTest.kt` — 9 tests, all
+green, and mutation-checked: dropping `parentStationId` in the conversion fails
+3 of them, folding only the first queue per board fails 3.
+
+**⚠️ The story needed a production change, and this is why.** There was no
+`Board → SubscribedStation` conversion anywhere to test. It existed **four
+times, written by hand**: `ProfileViewModel`, `SelectionViewModel`,
+`SummaryViewModel` on the way out, and `UserSyncRepository` on the way back.
+A contract test needs one named thing to point at, so the four became one:
+`core/.../model/user/LegacyStationList.kt`, holding `toSubscribedStations()` and
+`toUserSelections()` as a visible pair. `UserSyncRepository` now calls the
+shared one. The three ViewModels are deleted by AV2-3.5 and were left alone.
+
+**And the reason that mattered more than tidiness: two of the three outbound
+copies dropped `parentStationId`.** `ProfileViewModel.loadStations` and
+`SummaryViewModel`'s delete-sync both build `SubscribedStation` without it. A
+station restored that way groups on its own naptan, so **one bus hub comes back
+as a card per pole, all with the same name**. Only `SelectionViewModel` — the one
+already patched on this branch — carried it. The test now asserts both the
+correct behaviour and the counterfactual, so the field cannot be quietly dropped
+again.
+
+**Already covered elsewhere, so not duplicated here.** `BoardTest` (18 tests)
+covers `Board` ⇄ `UserSelection` — hub folding, pre-hub grouping, filters on the
+right queue. This file covers only what that one does not: the **wire** form v1
+actually reads, and the v1 FCM payload.
+
+**For AV2-4.3:** `toSubscribedStations()` is the dual-write's outbound half, and
+it is now proven total. Its counterpart is not yet called anywhere on the push
+path — wiring it in is AV2-4.3's job, not this one's.
 
 ---
 

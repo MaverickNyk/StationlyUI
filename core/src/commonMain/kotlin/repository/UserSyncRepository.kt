@@ -3,6 +3,7 @@ package com.stationly.core.repository
 import com.stationly.core.model.sdui.*
 import com.stationly.core.service.SduiApiService
 import com.stationly.core.model.UserSelection
+import com.stationly.core.model.user.toUserSelections
 import com.stationly.core.platform.StorageManager
 import com.stationly.core.usecase.StationLifecycleUseCase
 import kotlinx.coroutines.flow.first
@@ -45,23 +46,15 @@ class UserSyncRepository(
             sqlStorage.clearAllData()
             storageManager.clearCache()
             
-            // 3. Restore local selections from the cloud profile
-            profile.stations.forEach { station ->
-                sqlStorage.saveSelection(
-                    UserSelection(
-                        mode = station.mode,
-                        line = station.line,
-                        station = station.id,
-                        // Without this a restore groups bus boards per POLE, so
-                        // one stop comes back as several identically-named cards.
-                        parentStationId = station.parentStationId.orEmpty(),
-                        stationName = station.name,
-                        direction = station.direction,
-                        destinations = emptyList(),
-                        destinationIds = emptyList()
-                    )
-                )
-            }
+            // 3. Restore local selections from the cloud profile.
+            //
+            // The unpacking lives in `toUserSelections` rather than here: it is
+            // one half of a pair with `toSubscribedStations`, and the two were
+            // previously four hand-written copies that disagreed about whether
+            // `parentStationId` was worth carrying. Two of them dropped it, and
+            // a restore without it groups bus boards per POLE — one stop coming
+            // back as several identically-named cards.
+            profile.stations.toUserSelections().forEach { sqlStorage.saveSelection(it) }
             
             profile.stations
         } catch (e: Exception) {
