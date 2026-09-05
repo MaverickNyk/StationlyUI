@@ -61,13 +61,12 @@ class SchemaHarnessTest {
      * `.sq` alone — which reaches fresh installs and nothing else, and then
      * fails at runtime on the phones that have had the app longest.
      *
-     * **When AV2-2.1 adds `migrations/1.sqm`, this assertion goes to 2** and the
-     * migration test in AV2-2.2 takes over the real work. Bumping it is the
-     * point: it forces the version change to be noticed rather than absorbed.
-     * Do not delete this test to make it pass.
+     * Bumped to 2 by AV2-2.1, which added `migrations/1.sqm` — the Android
+     * upgrade. It fired exactly as intended. **Bump it again with the next
+     * migration; do not delete it to make it pass.**
      */
     @Test
     fun `the schema version matches the migration count`() {
-        assertEquals(1L, StationlyDatabase.Schema.version)
+        assertEquals(2L, StationlyDatabase.Schema.version)
     }
 }

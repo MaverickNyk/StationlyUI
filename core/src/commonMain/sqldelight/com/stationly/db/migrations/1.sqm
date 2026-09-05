@@ -1,0 +1,161 @@
+-- Schema version 1 → 2: the Android upgrade.
+--
+-- ## Why this file exists again
+-- Migrations were removed from this database on one stated premise: "Android is
+-- live and is FROZEN — no new Android release is planned, so nothing in the .sq
+-- can reach an Android user." The note that removed them named its own expiry
+-- condition — "if you find yourself writing one, check that premise first" — and
+-- the premise is now false. Android v2 is being built, and every device that has
+-- the app installed will run this file.
+--
+-- ## Why it is a REBUILD and not a list of ALTERs
+-- Two primary keys change. SQLite cannot alter a primary key, so `PredictionEntity`
+-- and `SyncStatusEntity` have to be rebuilt whatever else happens. `UserSelectionEntity`
+-- is rebuilt too, even though its eleven new columns all carry defaults and would
+-- survive `ALTER`: "version 1" has meant several different schemas over time, and a
+-- rebuild lands on the same result whatever the source database actually contained.
+--
+-- ## What is preserved, and what is deliberately dropped
+--   UserSelectionEntity  KEPT. These are the user's boards — the only rows whose
+--                        loss a user would notice. New columns take their .sq
+--                        defaults; `parentStationId = ''` is the correct reading
+--                        of a pre-hub row and means "same as station".
+--   PredictionEntity     DROPPED. Old rows have no `direction`, which is now in
+--                        the primary key and in every board query's WHERE.
+--                        Backfilling it by joining against UserSelectionEntity is
+--                        guesswork on a bus hub, where each direction has its own
+--                        pole. And the payoff is nil: departures older than about
+--                        two minutes are filtered out on read anyway, and FCM or
+--                        the first REST refresh repopulates the table within
+--                        seconds of launch. Dropping is the honest answer.
+--   SyncStatusEntity     DROPPED, for the same reason. The cost is one "X ago"
+--                        reading "just now" immediately after the upgrade.
+--   LineStatusEntity     UNTOUCHED. Unchanged between the two versions.
+--   ActivityEventEntity  CREATED. New table. `Schema.create` never runs on an
+--                        upgraded database, so without this the first enqueue is
+--                        "no such table" — on the longest-standing installs, and
+--                        never on a development device.
+--
+-- ## Keep identical to StationlyDatabase.sq
+-- Until `verifyMigrations` is enabled (AV2-2.3) nothing compares this file to the
+-- .sq by itself. `MigrationTest` asserts that `Schema.create` and `Schema.migrate`
+-- produce identical `PRAGMA table_info` for every table, which is the check that
+-- actually catches drift — but it lives in a test somebody can skip, so: change
+-- one, change the other, in the same commit.
+
+-- ── ActivityEventEntity: new, and FIRST ON PURPOSE ─────────────────────────
+--
+-- ## This statement is also the shape guard, and its order is load-bearing
+-- `version 1` means TWO DIFFERENT SCHEMAS, because the version number is shared
+-- across platforms and the platforms diverged:
+--
+--   * **Android**, released at versionCode 2, created its database from the .sq
+--     as it was THEN — the eight-column `UserSelectionEntity`, no `direction` in
+--     any primary key, no activity table. That is what this file migrates.
+--   * **iOS**, which has never shipped publicly, ran `Schema.create` against the
+--     .sq as it is NOW. Its databases are stamped version 1 but already hold the
+--     full current schema — every column, both new primary keys, and this table.
+--
+-- So an iOS device reaching this migration is migrating a database that has
+-- nothing to migrate. Left to run, the rebuild below would copy only the eight
+-- columns an Android v1 row has and **silently destroy** everything an iOS user
+-- actually has: `parentStationId`, every filter, `viaKeys`, `patternIds`.
+--
+-- Putting this statement first makes that impossible. On an iOS-shaped database
+-- it fails immediately with
+--
+--     table ActivityEventEntity already exists
+--
+-- BEFORE a single row is touched. Both drivers run a migration inside a
+-- transaction (Android's `SQLiteOpenHelper` wraps `onUpgrade`; SQLDelight's
+-- native driver wraps its own), so the failure rolls the whole thing back and
+-- the database is left exactly as it was.
+--
+-- The recovery is the one iOS has had all along and has already used once:
+-- **delete the app and reinstall.** Boards come back from the cloud on sign-in.
+-- If you are reading this because of that error on an iOS device, that is what
+-- happened and that is the fix.
+--
+-- ⚠️ Do NOT "fix" this by adding IF NOT EXISTS. That converts a loud, safe,
+-- rolled-back failure into a quiet one that proceeds to delete the user's
+-- filters. The guard is the point.
+CREATE TABLE ActivityEventEntity (
+    id TEXT NOT NULL PRIMARY KEY,
+    uid TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL,
+    t INTEGER NOT NULL,
+    props TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX activity_by_time ON ActivityEventEntity(t);
+
+-- ── UserSelectionEntity: rebuild, keep every row ───────────────────────────
+-- `id` is copied explicitly rather than left to AUTOINCREMENT. It is insertion
+-- order, and `selectAllSelections` orders by it — three surfaces read "the user's
+-- first station" off that order (the widget's configuration picker, the gallery's
+-- recommendations, and the station a newly added widget takes). Letting the copy
+-- renumber would silently reshuffle all three.
+ALTER TABLE UserSelectionEntity RENAME TO UserSelectionEntity_v1;
+
+CREATE TABLE UserSelectionEntity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mode TEXT NOT NULL,
+    line TEXT NOT NULL,
+    station TEXT NOT NULL,
+    parentStationId TEXT NOT NULL DEFAULT '',
+    stationName TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    destinations TEXT NOT NULL,
+    destinationIds TEXT NOT NULL,
+    filterMode TEXT NOT NULL DEFAULT 'ALL',
+    viaStationId TEXT,
+    viaStationName TEXT,
+    viaKeys TEXT NOT NULL DEFAULT '',
+    patternIds TEXT NOT NULL DEFAULT '',
+    patternNames TEXT NOT NULL DEFAULT '',
+    directionName TEXT NOT NULL DEFAULT '',
+    directionDestinations TEXT NOT NULL DEFAULT '',
+    directionTowards TEXT NOT NULL DEFAULT '',
+    routeResolvedAt INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO UserSelectionEntity (id, mode, line, station, stationName, direction, destinations, destinationIds)
+SELECT id, mode, line, station, stationName, direction, destinations, destinationIds
+FROM UserSelectionEntity_v1;
+
+DROP TABLE UserSelectionEntity_v1;
+
+-- ── PredictionEntity: rebuild, drop every row ──────────────────────────────
+DROP TABLE PredictionEntity;
+
+CREATE TABLE PredictionEntity (
+    stationId TEXT NOT NULL,
+    lineId TEXT NOT NULL,
+    direction TEXT NOT NULL DEFAULT '',
+    destination TEXT NOT NULL,
+    destId TEXT NOT NULL DEFAULT '',
+    viaKey TEXT,
+    matchesFilter INTEGER NOT NULL DEFAULT 1,
+    platform TEXT NOT NULL,
+    eta TEXT NOT NULL,
+    isDue INTEGER NOT NULL DEFAULT 0,
+    stopLetter TEXT,
+    timestamp INTEGER NOT NULL,
+    targetEpochMs INTEGER,
+    PRIMARY KEY (stationId, lineId, direction, destination, platform, eta)
+);
+
+-- Dropped and recreated with the table, since the old one named the old columns.
+CREATE INDEX prediction_lookup ON PredictionEntity(stationId, lineId, direction);
+
+-- ── SyncStatusEntity: rebuild, drop every row ──────────────────────────────
+DROP TABLE SyncStatusEntity;
+
+CREATE TABLE SyncStatusEntity (
+    stationId TEXT NOT NULL,
+    lineId TEXT NOT NULL,
+    direction TEXT NOT NULL DEFAULT '',
+    lastSyncMs INTEGER NOT NULL,
+    PRIMARY KEY (stationId, lineId, direction)
+);
+
