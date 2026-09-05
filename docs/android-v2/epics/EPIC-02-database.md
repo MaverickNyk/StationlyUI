@@ -81,34 +81,34 @@ _(none yet)_
 
 ---
 
-## AV2-2.2 — Prove the migration · `M` · Backlog
+## AV2-2.2 — Prove the migration · `M` · **Done** (S005)
 
 **Depends on:** AV2-2.1 **Reads:** [`TEST_STRATEGY.md`](../analysis/TEST_STRATEGY.md) §1/C3
 **Files:** `core/src/androidUnitTest/kotlin/db/MigrationTest.kt`, a checked-in v1 schema fixture
 
 ### Tasks
-- [ ] **a.** Check in the **v1 schema as literal SQL**, taken from
+- [x] **a.** Check in the **v1 schema as literal SQL**, taken from
       `git show master:...StationlyDatabase.sq`. A fixture, so it cannot drift
       with the live `.sq` — which is the entire failure mode being defended
       against.
-- [ ] **b.** Build a v1 database from it and insert representative rows: a tube
+- [x] **b.** Build a v1 database from it and insert representative rows: a tube
       selection, a bus selection with a distinct pole, predictions on two lines,
       a line status, a sync status.
-- [ ] **c.** Run `StationlyDatabase.Schema.migrate(driver, 1, 2)` and assert:
+- [x] **c.** Run `StationlyDatabase.Schema.migrate(driver, 1, 2)` and assert:
       every `UserSelectionEntity` row survived with the documented defaults;
       `PredictionEntity` and `SyncStatusEntity` are empty and carry the new keys;
       `LineStatusEntity` is untouched; `ActivityEventEntity` accepts an insert;
       both indexes exist.
-- [ ] **d.** Assert the **point** of the key change: inserting the same
+- [x] **d.** Assert the **point** of the key change: inserting the same
       `(station, line, destination, platform, eta)` under two different
       `direction` values produces two rows, not one.
-- [ ] **e.** Assert `Schema.create` on an empty database yields a schema
+- [x] **e.** Assert `Schema.create` on an empty database yields a schema
       **identical** to the migrated one, by comparing `PRAGMA table_info` for
       every table. This is the assertion that catches `.sq`/`.sqm` drift, and it
       is worth keeping even after AV2-2.3.
-- [ ] **f.** Running the migration twice must fail cleanly rather than corrupt.
+- [x] **f.** Running the migration twice must fail cleanly rather than corrupt.
       Migrations are not idempotent and should not pretend to be.
-- [ ] **g.** **The iOS-shaped case.** Build a database from the CURRENT `.sq`
+- [x] **g.** **The iOS-shaped case.** Build a database from the CURRENT `.sq`
       (which is what `Schema.create` gave every iOS TestFlight device at version
       1), attempt the migration, and assert it throws **and changes nothing** —
       `parentStationId`, `filterMode`, `viaKeys` and `patternIds` all intact, no
@@ -117,11 +117,39 @@ _(none yet)_
       position in a file and nothing else protects it.
 
 ### Acceptance criteria
-- [ ] The test fails if `1.sqm` is deleted.
-- [ ] The test fails if a column is added to the `.sq` and not to the `.sqm`.
+- [x] The test fails if `1.sqm` is deleted.
+- [x] The test fails if a column is added to the `.sq` and not to the `.sqm`.
 
-### Handoff notes
-_(none yet)_
+### Handoff notes — S005, 2026-09-05
+
+**Done.** `core/src/androidUnitTest/kotlin/db/MigrationTest.kt` — 9 tests, 1.2s,
+against a real SQLite **file** rather than `:memory:` (the thing under test is
+what happens to a database that already exists on disk). `:core` is at 403 tests.
+
+`docs/android-v2/fixtures/v1/schema-v1.sql` holds the v1 DDL verbatim from
+`master`. Its header says it loudly: **it is a fixture, not a mirror, and must
+never be regenerated from the current `.sq`** — holding still while that file
+moves is the entire point.
+
+**Mutation-checked, and both mutations are the realistic ones:**
+
+| Mutation | Caught by |
+|---|---|
+| Move the `ActivityEventEntity` guard to the END of `1.sqm` — the "tidy-up" somebody will eventually make | *an iOS-shaped database is refused, and nothing in it is touched* |
+| Add a column to the `.sq` and not the `.sqm` — silent drift | *a migrated database is indistinguishable from a created one* |
+
+The first is the important one. The guard is **one statement's position in a
+file**, and now something fails if it moves.
+
+**Worth knowing about the iOS-shape test:** it wraps the migrate call in no
+transaction of its own, and the data still comes through intact. That is not an
+oversight — it is the assertion. The guard being FIRST means nothing destructive
+runs at all, so safety does not depend on the driver's transaction. The real
+drivers add one anyway; the ordering is what makes it safe without one.
+
+**Not done, deliberately:** `verifyMigrations` is AV2-2.3. The equivalence test
+here covers the same drift and should be **kept afterwards** — it tests the
+schema, where the flag tests the build, and the two fail at different times.
 
 ---
 

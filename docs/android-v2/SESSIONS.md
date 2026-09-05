@@ -18,6 +18,47 @@ Template:
 
 ---
 
+## S005 — 2026-09-05 — AV2-2.2 "Prove the migration"
+**Outcome:** DONE
+**Gate:** GREEN — `:core` 403 tests (9 new). No `commonMain` change, so no
+XCFramework run was required.
+**Commits:** see branch head
+
+**Did:** `MigrationTest`, 9 tests, against a real SQLite file rather than
+`:memory:` — the thing under test is what happens to a database that already
+exists on disk. Checked in the v1 DDL as `fixtures/v1/schema-v1.sql`, headed with
+a warning that it is a fixture and not a mirror: it must hold still while the
+live `.sq` moves, or it stops testing anything.
+
+**Mutation-checked with the two mutations somebody will actually make:**
+
+- Moving the `ActivityEventEntity` guard to the end of `1.sqm` — caught by *an
+  iOS-shaped database is refused, and nothing in it is touched*.
+- Adding a column to the `.sq` and not the `.sqm` — caught by *a migrated
+  database is indistinguishable from a created one*.
+
+The first matters most. The guard is one statement's position in a file, and now
+something fails if it moves.
+
+**Learned:** the iOS-shape test needs no transaction of its own and the data
+still survives. That is the assertion, not an oversight — the guard being FIRST
+means nothing destructive executes, so safety does not depend on the driver
+wrapping the migration. The drivers do wrap it; the ordering is what makes it
+safe without one.
+
+**A gradle note:** a `:core:testDebugUnitTest` run took 16m46s here, against 1.2s
+of actual test time. It was daemon lock contention with a background XCFramework
+build, not the tests. If a test run seems to hang, check for a native compile
+holding the daemon before you go looking at your test.
+
+**Next agent needs to know:** EPIC-02 has one story left (AV2-2.3,
+`verifyMigrations`), and AV2-3.1 is also Ready now. AV2-3.1 is the bigger
+unlock — it is the first story where the shared UI actually runs on Android.
+Keep the equivalence test in `MigrationTest` after AV2-2.3 lands: it tests the
+schema where the flag tests the build, and they fail at different times.
+
+---
+
 ## S004 — 2026-09-05 — AV2-2.1 "Reinstate migrations"
 **Outcome:** DONE
 **Gate:** GREEN
