@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "The StationlyPrefs.selections blob as a v1 install holds it, written by",
+    "AndroidStorageManager.saveSelections with Json { ignoreUnknownKeys = true }.",
+    "kotlinx omits properties at their default, so a v1 blob carries ONLY the",
+    "fields v1's UserSelection had. Every field v2 added is absent here, and",
+    "that is the point: this is the shape v2 must still be able to read on the",
+    "morning of the upgrade.",
+    "",
+    "Three rows: a plain tube board, and a bus hub whose two directions resolve",
+    "to different poles (Smithwood Close, route 39 — hub 490012211N, inbound",
+    "from 490008805N, outbound from 490012211N)."
+  ],
+  "blob": "[{\"mode\":\"tube\",\"line\":\"victoria\",\"station\":\"940GZZLUKSX\",\"stationName\":\"King's Cross St. Pancras\",\"direction\":\"southbound\",\"destinations\":[],\"destinationIds\":[]},{\"mode\":\"bus\",\"line\":\"39\",\"station\":\"490008805N\",\"stationName\":\"Smithwood Close\",\"direction\":\"inbound\",\"destinations\":[],\"destinationIds\":[]},{\"mode\":\"bus\",\"line\":\"39\",\"station\":\"490012211N\",\"stationName\":\"Smithwood Close\",\"direction\":\"outbound\",\"destinations\":[],\"destinationIds\":[]}]",
+  "expect": {
+    "count": 3,
+    "everyParentStationIdIsBlank": true,
+    "everyFilterModeIsAll": true,
+    "everyRouteResolvedAtIsZero": true,
+    "boardsAfterFolding": 3,
+    "_boardsNote": "THREE, not two. A v1 blob has no parentStationId, so groupingId falls back to `station` and the bus hub's two poles are two boards. This is v1's own behaviour and is what the user sees today; the hub only becomes one board once a v2 client re-resolves it. AV2-4.3's fold-up must not mistake this for data loss."
+  }
+}

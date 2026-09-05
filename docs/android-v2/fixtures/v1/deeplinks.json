@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "From the v1 AndroidManifest (four intent-filters) and",
+    "MainActivity.handleDeepLink. The scheme is HARDCODED to `stationly` in",
+    "both, on every host — which is the bug iOS shipped and then had to fix:",
+    "a hardcoded scheme silently dropped every staging tap, with nothing",
+    "erroring and taps simply doing nothing. AV2-3.4 makes the scheme",
+    "per-flavour; this table records the routing that must survive that change."
+  ],
+  "v1Scheme": "stationly",
+  "v2Schemes": { "prod": "stationly", "staging": "stationly-staging" },
+  "routes": [
+    { "url": "stationly://home", "route": "Home", "note": "Opens the app. A no-op beyond that in v1." },
+    { "url": "stationly://auth", "route": "PasswordResetComplete", "note": "Named `auth`, means 'the reset finished'. Kept as-is: the name is on published links we do not control." },
+    { "url": "stationly://verified?oobCode=ABC123", "route": "VerifyEmail", "oobCode": "ABC123" },
+    { "url": "stationly://reset?oobCode=XYZ789", "route": "ResetPassword", "oobCode": "XYZ789" },
+    { "url": "stationly://verified", "route": "Unhandled", "note": "No oobCode. v1 checks isNullOrBlank and does nothing — it does NOT navigate to a broken verify screen." },
+    { "url": "stationly://reset?oobCode=", "route": "Unhandled", "note": "Blank oobCode is the same as absent." },
+    { "url": "stationly://unknown", "route": "Unhandled" },
+    { "url": "https://stationly.app/home", "route": "Unhandled", "note": "Wrong scheme. v1 has no http intent-filter at all, so this never reaches the app." },
+    { "url": "stationly-staging://home", "route": "Unhandled", "note": "Under the v1 scheme. This is exactly the tap that vanished on iOS." }
+  ]
+}

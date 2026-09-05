@@ -140,7 +140,7 @@ path — wiring it in is AV2-4.3's job, not this one's.
 
 ---
 
-## AV2-1.3 — Capture v1's golden outputs · `M` · **Ready**
+## AV2-1.3 — Capture v1's golden outputs · `M` · **Done** (S003)
 
 **Depends on:** — **Reads:** [`TEST_STRATEGY.md`](../analysis/TEST_STRATEGY.md) §4
 **Files:** `docs/android-v2/fixtures/v1/`, tests that read them
@@ -151,17 +151,17 @@ from git history. Capture the four outputs whose *meaning* must survive the swap
 while a v1 build still exists to capture them from.
 
 ### Tasks
-- [ ] **a.** The JSON `AndroidStorageManager` writes to `StationlyPrefs.selections`.
-- [ ] **b.** The topic set a given board list produces (`Station_{naptan}`,
+- [x] **a.** The JSON `AndroidStorageManager` writes to `StationlyPrefs.selections`.
+- [x] **b.** The topic set a given board list produces (`Station_{naptan}`,
       `LineStatus_{mode}_{line}`).
-- [ ] **c.** The `WidgetState` a given prediction set produces.
-- [ ] **d.** The deep-link → destination mapping from the v1 manifest and
+- [x] **c.** The `WidgetState` a given prediction set produces.
+- [x] **d.** The deep-link → destination mapping from the v1 manifest and
       `MainActivity.handleDeepLink`.
-- [ ] **e.** Tests that read the fixture files rather than inlining literals.
+- [x] **e.** Tests that read the fixture files rather than inlining literals.
 
 ### Acceptance criteria
-- [ ] Four fixtures exist under `docs/android-v2/fixtures/v1/` and are asserted.
-- [ ] Each fixture carries a one-line header saying what it is and when it was
+- [x] Four fixtures exist under `docs/android-v2/fixtures/v1/` and are asserted.
+- [x] Each fixture carries a one-line header saying what it is and when it was
       captured. These are **characterization data, not aspirations**: when v2
       deliberately changes one, it is updated in the same commit with a note
       saying why. A fixture nobody may change becomes a fixture everybody routes

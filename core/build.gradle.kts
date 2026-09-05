@@ -119,6 +119,17 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    testOptions {
+        unitTests.all {
+            // The v1 golden fixtures live in docs/, not in test resources, and
+            // that is deliberate: they are read by a human deciding whether a
+            // behaviour change is intended at least as often as by this test.
+            // Passing the repo root explicitly beats relying on the test task's
+            // working directory, which is an AGP implementation detail.
+            it.systemProperty("stationly.repoRoot", rootDir.absolutePath)
+        }
+    }
 }
 
 sqldelight {

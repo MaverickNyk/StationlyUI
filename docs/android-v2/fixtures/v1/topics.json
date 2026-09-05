@@ -1,0 +1,61 @@
+{
+  "_comment": [
+    "FCM topics are emitted as Station_{naptan} and LineStatus_{mode}_{line}.",
+    "The shapes are IDENTICAL in v1 and v2, so there is no rename to migrate —",
+    "what changes is who emits them and how many. Recorded so AV2-4.2 can prove",
+    "it did not change the shapes while moving the emission."
+  ],
+  "cases": [
+    {
+      "name": "one tube board",
+      "selections": [
+        { "mode": "tube", "line": "victoria", "station": "940GZZLUKSX", "direction": "southbound" }
+      ],
+      "subscribe": ["Station_940GZZLUKSX", "LineStatus_tube_victoria"]
+    },
+    {
+      "name": "two lines at one station share the station topic",
+      "selections": [
+        { "mode": "tube", "line": "victoria", "station": "940GZZLUKSX", "direction": "southbound" },
+        { "mode": "tube", "line": "northern", "station": "940GZZLUKSX", "direction": "northbound" }
+      ],
+      "subscribe": ["Station_940GZZLUKSX", "LineStatus_tube_victoria", "LineStatus_tube_northern"],
+      "note": "Three distinct topics for two boards. Subscribing per board would re-send Station_940GZZLUKSX twice."
+    },
+    {
+      "name": "a bus hub's two directions are two stops, so two station topics",
+      "selections": [
+        { "mode": "bus", "line": "39", "station": "490008805N", "direction": "inbound" },
+        { "mode": "bus", "line": "39", "station": "490012211N", "direction": "outbound" }
+      ],
+      "subscribe": ["Station_490008805N", "Station_490012211N", "LineStatus_bus_39"],
+      "note": "The topic follows the POLE, not the hub. Departures are fetched per pole, so this is correct and must survive the move to the v2 model."
+    }
+  ],
+  "removalRules": [
+    {
+      "name": "removing one of two boards at a station keeps the station topic",
+      "removing": { "mode": "tube", "line": "victoria", "station": "940GZZLUKSX", "direction": "southbound" },
+      "remaining": [
+        { "mode": "tube", "line": "northern", "station": "940GZZLUKSX", "direction": "northbound" }
+      ],
+      "unsubscribe": ["LineStatus_tube_victoria"],
+      "note": "THE invariant. Station_940GZZLUKSX must NOT be unsubscribed — the northern board still needs it. Unsubscribing it here silently stops departures on a board the user never touched."
+    },
+    {
+      "name": "removing the last board at a station drops both its topics",
+      "removing": { "mode": "tube", "line": "victoria", "station": "940GZZLUKSX", "direction": "southbound" },
+      "remaining": [],
+      "unsubscribe": ["Station_940GZZLUKSX", "LineStatus_tube_victoria"]
+    },
+    {
+      "name": "removing one direction keeps the station topic for the other",
+      "removing": { "mode": "tube", "line": "victoria", "station": "940GZZLUKSX", "direction": "southbound" },
+      "remaining": [
+        { "mode": "tube", "line": "victoria", "station": "940GZZLUKSX", "direction": "northbound" }
+      ],
+      "unsubscribe": [],
+      "note": "Neither topic is scoped to a direction, so tracking both ways of one line means removing one way unsubscribes nothing at all."
+    }
+  ]
+}

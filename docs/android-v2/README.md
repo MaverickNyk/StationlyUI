@@ -91,6 +91,11 @@ Whenever `commonMain` changed, also:
 Not optional and not slow-path: Xcode will happily link a **stale** framework and
 give you a green build that proves nothing.
 
+**It takes ~20 minutes** from cold (measured: 19m 26s on 2026-09-05 — Kotlin/Native
+compiles the whole Compose Multiplatform module for two architectures). So batch
+`commonMain` work and run it **once, at close-out**, rather than after each edit.
+Start it in the background and write your handoff notes while it runs.
+
 Do **not** use `allTests` — it dies on the `wasmJs` target and the iOS test
 target will not compile the existing comma-named test functions.
 
