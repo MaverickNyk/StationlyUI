@@ -48,6 +48,14 @@ jobs:
       - name: Shared unit tests
         run: ./gradlew :core:testDebugUnitTest :composeApp:testDebugUnitTest --no-daemon
 
+      # Named explicitly: SQLDelight does not wire this into `check`. It applies
+      # the migrations to the recorded baseline and compares the result against
+      # `Schema.create`, which is the only check that catches the .sq and the
+      # .sqm drifting apart — a failure that would otherwise appear solely on
+      # UPGRADED installs, never on a fresh one.
+      - name: Migrations match the schema
+        run: ./gradlew :core:verifyCommonMainStationlyDatabaseMigration --no-daemon
+
       - name: Shared UI compiles for Android
         run: ./gradlew :composeApp:compileDebugKotlinAndroid --no-daemon
 

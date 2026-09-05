@@ -126,6 +126,15 @@ FROM UserSelectionEntity_v1;
 DROP TABLE UserSelectionEntity_v1;
 
 -- ── PredictionEntity: rebuild, drop every row ──────────────────────────────
+--
+-- The index is dropped EXPLICITLY, before the table. SQLite would drop it along
+-- with the table, so at runtime this line changes nothing — but SQLDelight's
+-- migration analyzer does not model that, and without it the `CREATE INDEX`
+-- below is rejected as `Duplicate index name prediction_lookup`. It also reads
+-- better: the index is being redefined (it gains `direction`), and saying so is
+-- clearer than relying on a cascade.
+DROP INDEX IF EXISTS prediction_lookup;
+
 DROP TABLE PredictionEntity;
 
 CREATE TABLE PredictionEntity (

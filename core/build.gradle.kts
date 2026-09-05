@@ -149,26 +149,44 @@ sqldelight {
             // that (old rows read the default), which is why the omission went
             // unnoticed for several schema changes.
 
-            // ⚠️ `verifyMigrations` is NOT enabled, and turning it on is not a
-            // one-liner — it was tried and reverted here, so the next person
-            // does not repeat it.
+            // ✅ `verifyMigrations` IS enabled, and this is what it took.
             //
-            // The gap is real: `1.sqm` duplicates its `CREATE TABLE` from
-            // `StationlyDatabase.sq` by hand, nothing compares the two, and the
-            // drift would surface only as a runtime failure on UPGRADED installs
-            // — never on the fresh ones a developer tests with.
+            // It compares a database built by applying the migrations to one
+            // built by `Schema.create`, and fails the build when they differ.
+            // That closes the gap this file used to describe by hand: the
+            // `.sqm` duplicates its DDL from the `.sq`, nothing compared them,
+            // and the drift would have surfaced only as a runtime failure on
+            // UPGRADED installs — never on the fresh ones a developer tests on.
             //
-            // `verifyMigrations.set(true)` makes `:core:build` FAIL with
-            // "Verifying a migration requires a database file to be present",
-            // and the `generate…Schema` task the error points at is not
-            // registered by SQLDelight 2.0.2 in this configuration. Closing it
-            // properly means adding a recorded schema baseline
-            // (`sqldelight/databases/<version>.db`) and checking it in, which is
-            // its own change with its own verification — not something to
-            // smuggle in alongside unrelated work.
+            // ## The bit that is not a one-liner
+            // The task needs a recorded BASELINE at
+            // `src/commonMain/sqldelight/databases/<version>.db`, and without
+            // one it fails with "Verifying a migration requires a database file
+            // to be present. To generate one, use the generate schema Gradle
+            // task" — pointing at a `generate…Schema` task that SQLDelight 2.0.2
+            // does not register in this configuration. That dead end is why an
+            // earlier attempt was reverted.
             //
-            // Until then the `.sqm` and the `.sq` are kept identical BY HAND.
-            // Change one, change the other, in the same commit.
+            // `1.db` is therefore built by hand, and correctly so: it must be
+            // the schema as the LAST RELEASED Android build created it, which is
+            // a fact about a shipped APK rather than about anything in this
+            // tree. It comes from the same checked-in fixture the migration test
+            // uses, so the two can never disagree:
+            //
+            //   sqlite3 core/src/commonMain/sqldelight/databases/1.db \
+            //     < docs/android-v2/fixtures/v1/schema-v1.sql
+            //   sqlite3 core/src/commonMain/sqldelight/databases/1.db \
+            //     "PRAGMA user_version = 1;"
+            //
+            // ## Adding the next migration
+            // Write `2.sqm`, and do NOT touch `1.db`. The baseline is the
+            // starting point of the whole chain, not a snapshot of the present;
+            // regenerating it from the current schema would make the check
+            // vacuous — it would be comparing the schema against itself.
+            //
+            // The task is not wired into `check`, so it is named explicitly in
+            // the gate (see docs/android-v2/README.md).
+            verifyMigrations.set(true)
         }
     }
 }

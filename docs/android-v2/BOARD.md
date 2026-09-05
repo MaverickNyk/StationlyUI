@@ -7,11 +7,12 @@
 ## Live state
 
 ```
-SPRINT:            1 — safety net + database
+SPRINT:            2 — host cutover  (sprint 1 complete: EPIC-01 + EPIC-02)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S005 (2026-09-05) — AV2-2.2 prove the migration
+LAST SESSION:      S006 (2026-09-05) — AV2-2.3 close the drift permanently
 GATE:              GREEN — and it now runs in CI, not just locally
                    :core:testDebugUnitTest                  PASS  (403 tests)
+                   :core:verify…DatabaseMigration           PASS  (new, catches .sq/.sqm drift)
                    :composeApp:testDebugUnitTest            PASS
                    :android:app:testStagingDebugUnitTest    PASS  (4 tests, new)
                    :android:app:compileStagingDebugKotlin   PASS
@@ -20,7 +21,8 @@ GATE:              GREEN — and it now runs in CI, not just locally
 WORKING TREE:      clean
 BLOCKED ON OWNER:  Q3 blocks EPIC-06 · Q4 keeps :android:app out of CI
                    Q5 iOS testers need telling before this reaches TestFlight
-NEXT UP:           AV2-2.3, or AV2-3.1 (both Ready; 3.1 is the bigger unlock)
+NEXT UP:           AV2-3.1  ← EPIC-02 complete; the shared UI now runs on a
+                   database that upgrades
 ```
 
 ---
@@ -59,7 +61,6 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Epic | Title | Size |
 |---|---|---|---|
-| AV2-2.3 | 02 | Close the drift permanently | M |
 | AV2-3.1 | 03 | Host the shared UI | L |
 
 ### 🅘 In Progress — WIP limit 2
@@ -89,6 +90,7 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 | AV2-1.3 | S003 | 2026-09-05 | GREEN |
 | AV2-2.1 | S004 | 2026-09-05 | GREEN |
 | AV2-2.2 | S005 | 2026-09-05 | GREEN |
+| AV2-2.3 | S006 | 2026-09-05 | GREEN |
 
 ---
 
@@ -113,7 +115,7 @@ orders the work.
 
 | Sprint | Stories | Theme | Exit |
 |---|---|---|---|
-| 1 | AV2-1.1 → AV2-2.3 | Safety net + database | A real v1 database migrates without loss, provably, and CI says so |
+| 1 ✅ | AV2-1.1 → AV2-2.3 | Safety net + database | **Done.** A real v1 database migrates without loss, provably, on both schema shapes, and the build fails if the migration and the schema drift apart |
 | 2 | AV2-3.1 → AV2-3.5 | Host cutover | The shared UI **is** the Android app |
 | 3 | AV2-4.1 → AV2-4.4 | Data plane | FCM feeds the v2 board model; cloud state dual-writes |
 | 4 | AV2-5.1 → AV2-5.4, AV2-6.1 → AV2-6.2 | Widget + dream | One widget per station, configurable in-app |
@@ -131,14 +133,14 @@ the users, 03 is the foundation 04 builds on.
 | Epic | Stories | Done | Points | Done |
 |---|---|---|---|---|
 | 01 Safety net | 3 | **3** ✅ | 9 | **9** |
-| 02 Database | 3 | **2** | 11 | **8** |
+| 02 Database | 3 | **3** ✅ | 11 | **11** |
 | 03 Host cutover | 5 | 0 | 21 | 0 |
 | 04 Data plane | 4 | 0 | 18 | 0 |
 | 05 Widget | 4 | 0 | 16 | 0 |
 | 06 Dream | 2 | 0 | 6 | 0 |
 | 07 Release surfaces | 3 | 0 | 10 | 0 |
 | 08 Rollout | 3 | 0 | 11 | 0 |
-| **Total** | **27** | **5** | **102** | **17** |
+| **Total** | **27** | **6** | **102** | **20** |
 
 Sizes: `S`=2, `M`=3, `L`=5, `XL`=8. One point is roughly one focused hour, so a
 5h session is a `L` with room to close out, or an `XL` that will need two.
