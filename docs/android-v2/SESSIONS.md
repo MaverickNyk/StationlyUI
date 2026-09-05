@@ -18,6 +18,84 @@ Template:
 
 ---
 
+## S007 — 2026-09-05 — AV2-3.1 "Host the shared UI" · **first change to the shipped app**
+**Outcome:** PARTIAL → Review (one acceptance criterion needs hardware)
+**Gate:** RED on arrival, GREEN at close
+**Commits:** see branch head
+
+**Did:** Gave the shared Compose Multiplatform UI an Android host.
+`"stagingImplementation"(project(":composeApp"))`, a `V2MainActivity` in
+`src/staging` calling `setContent { App(...) }`, a staging manifest registering it
+as a second launcher, and a test that guards the manifest decisions.
+
+**The gate was red when I opened the board**, which the board did not say. The
+previous session had claimed AV2-3.1 and left
+`stagingImplementation(project(":composeApp"))` in the tree. It does not compile:
+Kotlin DSL generates type-safe accessors only for configurations that exist when
+the script is compiled, and flavour configurations are created *by* this script.
+`"stagingImplementation"(...)` works. **A claim row is not a statement about the
+tree** — the protocol says run the gate on arrival, and this is why.
+
+**Learned — the flavour scoping is measured, not cautious.** I checked the
+resolved classpaths rather than trusting the comment:
+
+    prod     compose.runtime 1.7.0   material3 1.3.0
+    staging  compose.runtime 1.8.0   material3 1.3.2
+
+`compose-bom:2024.09.00` loses to Compose Multiplatform 1.8.0. Plain
+`implementation` would have moved the **live** app's Compose runtime out from
+under `navigation-compose:2.8.0`, which is pinned to Compose 1.7 by a comment
+recording a shipped blank-screen bug.
+
+**⚠️ The flip side, and the next person on staging should know it: v1's own
+screens on a staging build now run on Compose 1.8.0 with nav 2.8.0.** Same class
+of mismatch, other direction. Prod untouched; AV2-3.5 deletes the v1 stack. If v1
+misbehaves on staging during the two-door period, suspect this first.
+
+**Learned — the blank-screen bug has a second, un-fixed half in `commonMain`.**
+Shared `AppNavigation` derives `startDestination` from a plain `val`, so a restore
+after process death can root a saved back stack on a destination that no longer
+matches. v1 fixed exactly this with `rememberSaveable`. I closed the
+logged-in/logged-out flip host-side (`startLoggedIn` goes through
+`onSaveInstanceState`, because the shared code takes it as a *parameter* — Android
+has to save it at the boundary), but the `isEmailProvider()`/`isEmailVerified()`
+branch is still recomputed on every restore. Fixing that means editing
+`commonMain` on a branch shipping to TestFlight, which is outside this story's
+file list. Logged in the epic and in GAP_ANALYSIS §3.3, for AV2-3.5.
+
+**Learned — home-screen pins reference the component name.** AV2-3.5 (a) cannot
+just delete `com.stationly.mobile.MainActivity` and promote `.v2.V2MainActivity`:
+every v1 user with a pinned icon would find it greyed out. Keep the old name as
+the exported launcher, or add an `<activity-alias>`. Written into the epic.
+
+**Two doors, two tasks.** `V2MainActivity` takes its own `taskAffinity`. Sharing
+the default would put both launchers in one task where `singleTask` on either
+clears the other off the top — opening v1 from the drawer would silently destroy
+an open v2 screen, and the tester would debug the wrong thing all afternoon.
+
+**Tested:** `V2HostManifestTest` reads both manifests as files and asserts the
+five things that no compiler would notice going wrong — the v2 host is staging
+only, v1 is still the launcher and still owns all four deep-link hosts, the v2
+host advertises no scheme, it keeps `singleTask` + its own affinity, and the
+staging manifest does not take over the `Application` class (which is the closest
+static proof there is for task (d), since `Platform` exposes no "initialised"
+flag).
+
+**Next agent needs to know:** AV2-3.1 is in **Review**, not Done, for exactly one
+reason — no Android device was attached, so "a staging build opens the shared UI
+and can navigate" is unverified. Everything else is proven: both flavours
+assemble, the prod merged manifest has zero references to the v2 host, and the
+prod dependency graph is unchanged.
+
+**AV2-3.2 is Ready and does not wait on that check.** Four stub actuals, and
+`DeviceIdentity` is the one that matters: it hands out a fresh UUID per process
+today, which breaks device sessions and "logging out releases my subscriptions"
+in ways that look like backend bugs. iOS lost two days to this exact class of
+problem. The real `DeviceIdProvider` already exists in `:android:app` — the work
+is an application-context holder in `composeApp/androidMain` and four delegations.
+
+---
+
 ## S006 — 2026-09-05 — AV2-2.3 "Close the drift permanently" · **EPIC-02 complete**
 **Outcome:** DONE
 **Gate:** GREEN, and it has a new task in it
