@@ -9,9 +9,9 @@
 ```
 SPRINT:            1 — safety net + database
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S004 (2026-09-05) — AV2-2.1 reinstate migrations
+LAST SESSION:      S005 (2026-09-05) — AV2-2.2 prove the migration
 GATE:              GREEN — and it now runs in CI, not just locally
-                   :core:testDebugUnitTest                  PASS  (394 tests)
+                   :core:testDebugUnitTest                  PASS  (403 tests)
                    :composeApp:testDebugUnitTest            PASS
                    :android:app:testStagingDebugUnitTest    PASS  (4 tests, new)
                    :android:app:compileStagingDebugKotlin   PASS
@@ -20,7 +20,7 @@ GATE:              GREEN — and it now runs in CI, not just locally
 WORKING TREE:      clean
 BLOCKED ON OWNER:  Q3 blocks EPIC-06 · Q4 keeps :android:app out of CI
                    Q5 iOS testers need telling before this reaches TestFlight
-NEXT UP:           AV2-2.2  ← turn AV2-2.1's hand-verification into tests
+NEXT UP:           AV2-2.3, or AV2-3.1 (both Ready; 3.1 is the bigger unlock)
 ```
 
 ---
@@ -34,8 +34,6 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Epic | Title | Waiting on |
 |---|---|---|---|
-| AV2-2.3 | 02 | Close the drift permanently | AV2-2.2 |
-| AV2-3.1 | 03 | Host the shared UI | AV2-2.2 |
 | AV2-3.2 | 03 | Real actuals, batch A | AV2-3.1 |
 | AV2-3.3 | 03 | Real actuals, batch B | AV2-3.2 |
 | AV2-3.4 | 03 | Auth and deep links | AV2-3.2 |
@@ -61,7 +59,8 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Epic | Title | Size |
 |---|---|---|---|
-| AV2-2.2 | 02 | Prove the migration | M |
+| AV2-2.3 | 02 | Close the drift permanently | M |
+| AV2-3.1 | 03 | Host the shared UI | L |
 
 ### 🅘 In Progress — WIP limit 2
 
@@ -89,6 +88,7 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 | AV2-1.2 | S002 | 2026-09-05 | GREEN |
 | AV2-1.3 | S003 | 2026-09-05 | GREEN |
 | AV2-2.1 | S004 | 2026-09-05 | GREEN |
+| AV2-2.2 | S005 | 2026-09-05 | GREEN |
 
 ---
 
@@ -131,14 +131,14 @@ the users, 03 is the foundation 04 builds on.
 | Epic | Stories | Done | Points | Done |
 |---|---|---|---|---|
 | 01 Safety net | 3 | **3** ✅ | 9 | **9** |
-| 02 Database | 3 | **1** | 11 | **5** |
+| 02 Database | 3 | **2** | 11 | **8** |
 | 03 Host cutover | 5 | 0 | 21 | 0 |
 | 04 Data plane | 4 | 0 | 18 | 0 |
 | 05 Widget | 4 | 0 | 16 | 0 |
 | 06 Dream | 2 | 0 | 6 | 0 |
 | 07 Release surfaces | 3 | 0 | 10 | 0 |
 | 08 Rollout | 3 | 0 | 11 | 0 |
-| **Total** | **27** | **4** | **102** | **14** |
+| **Total** | **27** | **5** | **102** | **17** |
 
 Sizes: `S`=2, `M`=3, `L`=5, `XL`=8. One point is roughly one focused hour, so a
 5h session is a `L` with room to close out, or an `XL` that will need two.
