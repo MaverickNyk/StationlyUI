@@ -67,6 +67,18 @@ kotlin {
             }
         }
 
+        // The Android actuals are mostly Android APIs, which a JVM unit test
+        // cannot exercise. What it CAN exercise is the handful of decisions
+        // inside them that are not Android at all: a filename that has to match
+        // the shipped app's byte for byte, and a haptic mapping that is pure
+        // taste. Both are invisible to every compiler check and both have a
+        // second implementation in `android/` that they must not drift from.
+        val androidUnitTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+            }
+        }
+
         val iosMain by creating {
             dependsOn(commonMain)
             dependencies {

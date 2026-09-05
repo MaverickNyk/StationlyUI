@@ -9,24 +9,26 @@
 ```
 SPRINT:            2 — host cutover  (sprint 1 complete: EPIC-01 + EPIC-02)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S007 (2026-09-05) — AV2-3.1 host the shared UI
+LAST SESSION:      S008 (2026-09-05) — AV2-3.2 real actuals, batch A
 GATE:              GREEN
                    :core:testDebugUnitTest                  PASS  (403 tests)
                    :core:verify…DatabaseMigration           PASS  (catches .sq/.sqm drift)
-                   :composeApp:testDebugUnitTest            PASS
-                   :android:app:testStagingDebugUnitTest    PASS  (9 tests, +5 manifest)
+                   :composeApp:testDebugUnitTest            PASS  (52 tests, +7 androidUnitTest)
+                   :android:app:testStagingDebugUnitTest    PASS  (12 tests, +3 storage contract)
                    :android:app:compileStagingDebugKotlin   PASS
                    :composeApp:compileDebugKotlinAndroid    PASS
                    :android:app:assembleStaging/ProdDebug   PASS  (S007; prod APK carries
                                                             0 shared-UI classes, staging 326)
-                   :composeApp:assembleComposeAppDebugXCFramework  n/a (commonMain untouched)
+                   :composeApp:assembleComposeAppDebugXCFramework  n/a (commonMain untouched
+                                                            by S007 and S008)
 WORKING TREE:      clean
 BLOCKED ON OWNER:  Q3 blocks EPIC-06 · Q4 keeps :android:app out of CI
                    Q5 iOS testers need telling before this reaches TestFlight
-                   AV2-3.1 in Review: needs ONE on-device check (no Android
-                   device was attached to S007) — see the epic handoff
-NEXT UP:           AV2-3.2  ← the shared UI has a host; now give it real actuals.
-                   `DeviceIdentity` is the one that matters.
+                   AV2-3.1 + AV2-3.2 in Review: both need the SAME on-device
+                   pass (no Android device has been attached) — see the epic
+NEXT UP:           AV2-3.3 and AV2-3.4 are both Ready and INDEPENDENT of each
+                   other. 3.4 is the one a tester notices: sign-in from the
+                   shared LoginScreen does not work at all today.
 ```
 
 ---
@@ -40,8 +42,6 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Epic | Title | Waiting on |
 |---|---|---|---|
-| AV2-3.3 | 03 | Real actuals, batch B | AV2-3.2 |
-| AV2-3.4 | 03 | Auth and deep links | AV2-3.2 |
 | AV2-3.5 | 03 | The cutover | AV2-3.3, AV2-3.4, AV2-1.3 |
 | AV2-4.1 | 04 | FCM at v2 | AV2-3.5 |
 | AV2-4.2 | 04 | Topic lifecycle | AV2-4.1 |
@@ -64,7 +64,8 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Epic | Title | Size |
 |---|---|---|---|
-| AV2-3.2 | 03 | Real actuals, batch A | L |
+| AV2-3.3 | 03 | Real actuals, batch B | M |
+| AV2-3.4 | 03 | Auth and deep links | M |
 
 ### 🅘 In Progress — WIP limit 2
 
@@ -76,6 +77,7 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Session | What to look at |
 |---|---|---|
+| AV2-3.2 | S008 | Same device pass as AV2-3.1, two extra checks. Toggle airplane mode with a board open → the offline banner should appear and clear. And confirm a v1 install opening the shared UI keeps **one** entry in the account's device list, not two — a second entry means the device id was reissued, which is the failure this story exists to prevent. |
 | AV2-3.1 | S007 | Install a staging debug build. There are now **two** launcher icons. Open **Stationly v2** → the shared UI should reach login or summary and navigate. Then open **Stationly Staging** → v1 must still work (it now runs on Compose 1.8; see the handoff). Prod is untouched and proven so at the dependency graph and the merged manifest. |
 
 ### 🅧 Blocked
@@ -137,7 +139,7 @@ the users, 03 is the foundation 04 builds on.
 |---|---|---|---|---|
 | 01 Safety net | 3 | **3** ✅ | 9 | **9** |
 | 02 Database | 3 | **3** ✅ | 11 | **11** |
-| 03 Host cutover | 5 | 0 (1 in review) | 21 | 0 |
+| 03 Host cutover | 5 | 0 (2 in review) | 21 | 0 |
 | 04 Data plane | 4 | 0 | 18 | 0 |
 | 05 Widget | 4 | 0 | 16 | 0 |
 | 06 Dream | 2 | 0 | 6 | 0 |

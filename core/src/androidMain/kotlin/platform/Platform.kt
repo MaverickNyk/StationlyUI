@@ -180,7 +180,26 @@ class AndroidStorageManager(
 
 // Android Platform implementation
 actual object Platform {
-    private lateinit var appContext: Context
+    /**
+     * The process-wide application context, set once by the host's
+     * `Application.onCreate` and never reassigned.
+     *
+     * Public because `:composeApp`'s Android `actual`s need a `Context` and
+     * this is already the one place the app has agreed to keep it — every other
+     * Android platform service in the codebase (`widgetManager`,
+     * `notificationManager`, `storageManager`, `sqlStorage`) is built from it.
+     * A second context holder in `composeApp/androidMain` would be a parallel
+     * mechanism for a job that already has one, with its own initialisation
+     * order to get wrong.
+     *
+     * `private set` because [initialize] is the only legitimate writer. Reading
+     * it before that throws `UninitializedPropertyAccessException` naming this
+     * property, which is the right failure: it means the host skipped
+     * `Platform.initialize`, and nothing downstream can paper over that.
+     */
+    lateinit var appContext: Context
+        private set
+
     private var apiKey: String = ""
     private var environment: AppEnvironment = AppEnvironment.PRODUCTION
 

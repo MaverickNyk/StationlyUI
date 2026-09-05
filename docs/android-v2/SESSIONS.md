@@ -18,6 +18,77 @@ Template:
 
 ---
 
+## S008 — 2026-09-05 — AV2-3.2 "Real actuals, batch A"
+**Outcome:** PARTIAL → Review (two acceptance criteria need hardware)
+**Gate:** GREEN both ends
+**Commits:** see branch head
+
+**Did:** The four stubs became real — connectivity, haptics, mode icons, device
+identity — plus `AndroidAppContext`, which is where they get a `Context` and the
+current Activity.
+
+**Learned — "delegate to the existing implementation" is not possible, and that
+is the whole story.** `:composeApp` cannot import `:android:app`; the dependency
+runs the other way. So delegation means agreeing on a *file name*: the same
+`SharedPreferences("StationlyDevice")` → `device_id`, the same
+`filesDir/mode_icons/<safeName>.png`. Two implementations, one directory, no
+compiler watching.
+
+Every failure in that arrangement is silent. A changed prefs file issues every
+v1 user a NEW device id, and the backend releases a subscription only when the
+last device signs out — so the old session becomes a ghost logout can never
+clear. A changed icon directory is quieter still: the shared UI re-downloads
+into a second set of files and **the home-screen widget keeps rendering from the
+first**, untinted. Neither errors on either side.
+
+`V1V2StorageContractTest` reads those constants off both classes by reflection
+and compares them, then runs `ModeIconCache.safeName` against
+`modeIconFileName` over the real mode names. It lives in `:android:app` because
+that is the only module that can see both — and only on staging, which is where
+the shared UI is. AV2-3.5 deletes the v1 halves and this test with them.
+
+**`ModeIconStore.sync` still writes `tints.json`, though nothing in the shared
+interface reads tints.** v1's widget does. Do not tidy it out before AV2-3.5.
+
+**Learned — haptics through a View, not `Vibrator`, and the reason is not
+style.** `View.performHapticFeedback` respects the user's touch-feedback setting
+and needs no `VIBRATE` permission, so adopting the shared UI adds no permission
+to an app that is already live. The cost is needing an Activity, which is why
+`AndroidAppContext` tracks one — weakly, cleared on pause. AV2-3.3 and AV2-3.4
+both need that Activity anyway, so it is built once rather than three times.
+
+**Two files outside the story's list, both logged in the epic.** `core`'s Android
+`Platform.appContext` went `private lateinit` → `lateinit … private set` (one
+line; the alternative was a second context holder with its own initialisation
+order to forget, in an app that already has exactly one place for this).
+And `composeApp/build.gradle.kts` gained an `androidUnitTest` source set, plus a
+new `composeApp/src/androidMain/AndroidManifest.xml` declaring the two
+permissions the Android actuals need — which merges to nothing today, because
+`:android:app` already declares both, and that is the point.
+
+**`commonMain` was untouched by both S007 and S008**, so the 20-minute
+XCFramework assemble was correctly skipped twice. Check `git status` before
+assuming you owe it.
+
+**Next agent needs to know:** AV2-3.3 and AV2-3.4 are both Ready, both `M`, and
+independent of each other — either order.
+
+**Take AV2-3.4 first if a tester is waiting.** It is the one a human notices:
+`signInWithGoogleInteractive()` currently returns a failure carrying the string
+"Use the Google Sign-In button to continue." — v1's flow talking about a button
+the shared `LoginScreen` does not have. So sign-in from the v2 door does not
+work at all. Its other half, the per-flavour deep-link scheme, is the bug iOS
+shipped: a hardcoded `"stationly"` silently dropped every staging link, and
+`V2HostManifestTest` currently asserts the v2 host advertises no scheme at all —
+that assertion is yours to update, deliberately, not to delete.
+
+**Two device checks are now queued and they are the same trip.** AV2-3.1 needs
+"the shared UI opens and navigates"; AV2-3.2 needs the offline banner and — the
+one that matters — a v1 install opening the shared UI keeping ONE entry in the
+account's device list rather than gaining a second.
+
+---
+
 ## S007 — 2026-09-05 — AV2-3.1 "Host the shared UI" · **first change to the shipped app**
 **Outcome:** PARTIAL → Review (one acceptance criterion needs hardware)
 **Gate:** RED on arrival, GREEN at close

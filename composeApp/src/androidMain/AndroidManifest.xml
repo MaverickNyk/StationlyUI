@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    :composeApp declares the permissions its own Android `actual`s need, rather
+    than relying on whichever host happens to include it. `:android:app` already
+    declares both of these, so today this merges to nothing — which is the
+    point: the library should not depend on that coincidence continuing.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- AndroidConnectivityMonitor: ConnectivityManager's default-network
+         callback, which drives the offline banner. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- ModeIconStore downloads roundels; SduiSmartImage loads remote images. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- No VIBRATE. Haptics go through View.performHapticFeedback, which needs
+         no permission and respects the user's touch-feedback setting. See
+         AndroidHapticFeedback.kt. -->
+
+</manifest>
