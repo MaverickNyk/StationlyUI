@@ -18,6 +18,43 @@ Template:
 
 ---
 
+## S002 — 2026-09-05 — AV2-1.2 "Lock the v1 contract"
+**Outcome:** DONE
+**Gate:** GREEN — `:core` 383 tests (9 new), XCFramework assembles
+**Commits:** see branch head
+
+**Did:** Wrote `V1ContractTest` — the flat `stations` wire form both ways, and
+the v1 FCM payload. Mutation-checked both halves rather than trusting a green
+run: dropping `parentStationId` fails 3 tests, folding only the first queue per
+board fails 3.
+
+**Learned — and this one is a live bug, not a note:**
+
+There was **no** `Board → SubscribedStation` conversion to test. It existed four
+times, hand-written: three ViewModels outbound, `UserSyncRepository` inbound.
+**Two of the three outbound copies drop `parentStationId`** —
+`ProfileViewModel.loadStations` and `SummaryViewModel`'s delete-sync. A station
+restored without it groups on its own naptan, so one bus hub comes back as a
+card per pole with the same name on every one.
+
+This is a v1 bug that is live today, and it is a direct hazard to AV2-4.3: the
+dual-write's whole purpose is that a v1 device sees a degraded-but-*correct*
+view, and a split hub is not correct. The four copies are now one —
+`model/user/LegacyStationList.kt` — and `UserSyncRepository` calls it. The three
+ViewModels are deleted by AV2-3.5, so they were left alone rather than patched.
+
+**Scope note:** this test story made a production change. A contract test needs
+one named thing to point at, and there wasn't one. Flagging it because the
+protocol says work outside a story's file list is a finding, not a licence.
+
+**Next agent needs to know:** AV2-1.3 is next and it is the last thing standing
+between here and the database work. It captures v1's golden outputs **while a v1
+build still exists to capture them from** — after AV2-3.5 deletes the v1 UI, the
+only source is git history. `BoardTest` already covers `Board` ⇄ `UserSelection`
+thoroughly (18 tests); do not re-cover it.
+
+---
+
 ## S001 — 2026-09-05 — AV2-1.1 "The gate, in CI"
 **Outcome:** DONE
 **Gate:** GREEN — `:core` 374 tests, `:composeApp` pass, `:android:app` 4 tests
