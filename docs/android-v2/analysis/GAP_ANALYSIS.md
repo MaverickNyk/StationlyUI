@@ -166,14 +166,14 @@ correctly stays unavailable on Android.
 
 | Capability | Status | Note |
 |---|---|---|
-| Hosting `App(authProvider, startLoggedIn, deepLinkOobCode)` | `ABSENT` | The whole contract is that one signature. iOS's host is 20 lines (`MainViewController.kt`); Android's is an `Activity` calling `setContent`. |
-| `:android:app` → `:composeApp` dependency | `ABSENT` | Today `:android:app` depends only on `:core`. |
-| Navigation | `DIVERGENT` | `MainActivity.kt` (443L) owns an AndroidX `NavHost` with 9 destinations. `AppNavigation.kt` in `:composeApp` replaces it. The `singleTask` + `onNewIntent` reasoning in the manifest comment is load-bearing — carry it over. |
+| Hosting `App(authProvider, startLoggedIn, deepLinkOobCode)` | `SHARED` on staging | AV2-3.1. `V2MainActivity` (`android/app/src/staging/`) is the Android half of that signature. Staging only, a second launcher; `MainActivity` is still the shipped app. |
+| `:android:app` → `:composeApp` dependency | `SHARED` on staging | AV2-3.1, via `"stagingImplementation"`. **Not `implementation`:** it moves Compose 1.7.0 → 1.8.0 and material3 1.3.0 → 1.3.2 for whatever flavour it is on, and `navigation-compose:2.8.0` is pinned to Compose 1.7. AV2-3.5 promotes it alongside deleting the v1 nav stack. Side effect to know: **v1's screens on a staging build now run on Compose 1.8.0.** |
+| Navigation | `DIVERGENT` | `MainActivity.kt` (443L) owns an AndroidX `NavHost` with 9 destinations. `AppNavigation.kt` in `:composeApp` replaces it. The `singleTask` + `onNewIntent` reasoning in the manifest comment is load-bearing — carried over to `V2MainActivity` in AV2-3.1, which additionally takes its own `taskAffinity` so the two doors cannot clear each other's back stacks. **Open:** shared `AppNavigation` derives `startDestination` from a plain `val`, so a restore after process death can root a saved back stack on the wrong destination — v1's shipped blank screen. AV2-3.1 saved `startLoggedIn` host-side; the `isEmailProvider()`/`isEmailVerified()` branch is still recomputed. Needs `rememberSaveable` in `commonMain` — AV2-3.5. |
 | Deep links | `DIVERGENT` | Manifest hardcodes `scheme="stationly"` for `auth`/`reset`/`home`/`verified`. iOS learned the hard way that the scheme must be per-environment. See [`ios-deeplink-scheme-per-env`]. Staging needs `stationly-staging` via a flavor manifest. |
 | Splash, edge-to-edge, staging banner, theme | `DIVERGENT` | v1 has `Theme.Stationly.Splash`, `enableEdgeToEdge()`, `StagingBanner.kt`. `:composeApp` has its own `StationlyThemeHost`. Reconcile, do not run both. |
 | Typography | `DIVERGENT` | v1 uses downloadable Google Fonts (`ui-text-google-fonts`, Inter Tight, `font_certs.xml`); `:composeApp` uses `compose.components.resources`. Two font pipelines in one app is a bug waiting to happen. |
 | Interactive Google Sign-In | `ABSENT` | See §3.2. `play-services-auth` is already a dependency of both modules. |
-| `Platform.initialize` before first composition | `SHARED` | `StationlyApplication.onCreate` already does it. Keep it. |
+| `Platform.initialize` before first composition | `SHARED` | `StationlyApplication.onCreate` already does it. Keep it. Guarded by `V2HostManifestTest`: a staging `<application android:name>` would silently replace the class and is now a test failure. |
 
 ### 3.4 The data plane — where Android is *stronger* than iOS
 

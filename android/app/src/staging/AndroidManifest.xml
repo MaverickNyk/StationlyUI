@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Staging-only manifest additions.
+
+    This file exists to register ONE thing: the second door into the app.
+    It deliberately declares no <application> attributes, so a staging build
+    keeps `.StationlyApplication` from the main manifest — and with it the
+    `Platform.initialize` call that has to complete before anything composes.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+
+        <!-- The v2 host: `setContent { App(...) }` over the shared Compose
+             Multiplatform UI. Staging only, and temporary — AV2-3.5 makes it
+             the one and only launcher and deletes v1's MainActivity.
+
+             Until then BOTH are launchers, which is the point: the shared UI
+             can be opened and driven on a real device while the shipped app
+             sits untouched one icon away.
+
+             - launchMode="singleTask": inherited from MainActivity, where the
+               reasoning is load-bearing and written out in full. Under the
+               default "standard" mode a relaunch spawns a new task instead of
+               resuming; tasks pile up (three observed simultaneously) and a
+               restored instance comes back with an empty NavHost back stack —
+               a blank screen. One instance, one task, every launch funnelled
+               through onNewIntent.
+             - taskAffinity: its OWN, so the two doors live in two separate
+               tasks. Sharing the default affinity would put them in one stack,
+               where singleTask on either one clears the other off the top:
+               opening v1 from the drawer would silently destroy an open v2
+               screen, and the tester would be debugging the wrong thing.
+             - No intent-filter for `stationly://`. MainActivity still owns
+               every deep link, and two activities advertising the same scheme
+               would put a disambiguation dialog in front of the user on every
+               tap. AV2-3.4 moves them here, per-flavour — staging's scheme is
+               `stationly-staging`, which iOS learned the hard way. -->
+        <activity
+            android:name=".v2.V2MainActivity"
+            android:exported="true"
+            android:label="@string/v2_launcher_label"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.stationly.mobile.v2"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Stationly.Splash">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+
+</manifest>

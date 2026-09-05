@@ -9,20 +9,24 @@
 ```
 SPRINT:            2 — host cutover  (sprint 1 complete: EPIC-01 + EPIC-02)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S006 (2026-09-05) — AV2-2.3 close the drift permanently
-GATE:              GREEN — and it now runs in CI, not just locally
+LAST SESSION:      S007 (2026-09-05) — AV2-3.1 host the shared UI
+GATE:              GREEN
                    :core:testDebugUnitTest                  PASS  (403 tests)
-                   :core:verify…DatabaseMigration           PASS  (new, catches .sq/.sqm drift)
+                   :core:verify…DatabaseMigration           PASS  (catches .sq/.sqm drift)
                    :composeApp:testDebugUnitTest            PASS
-                   :android:app:testStagingDebugUnitTest    PASS  (4 tests, new)
+                   :android:app:testStagingDebugUnitTest    PASS  (9 tests, +5 manifest)
                    :android:app:compileStagingDebugKotlin   PASS
                    :composeApp:compileDebugKotlinAndroid    PASS
-                   :composeApp:assembleComposeAppDebugXCFramework  PASS  (C2, ~20 min)
+                   :android:app:assembleStaging/ProdDebug   PASS  (S007; prod APK carries
+                                                            0 shared-UI classes, staging 326)
+                   :composeApp:assembleComposeAppDebugXCFramework  n/a (commonMain untouched)
 WORKING TREE:      clean
 BLOCKED ON OWNER:  Q3 blocks EPIC-06 · Q4 keeps :android:app out of CI
                    Q5 iOS testers need telling before this reaches TestFlight
-NEXT UP:           AV2-3.1  ← EPIC-02 complete; the shared UI now runs on a
-                   database that upgrades
+                   AV2-3.1 in Review: needs ONE on-device check (no Android
+                   device was attached to S007) — see the epic handoff
+NEXT UP:           AV2-3.2  ← the shared UI has a host; now give it real actuals.
+                   `DeviceIdentity` is the one that matters.
 ```
 
 ---
@@ -36,7 +40,6 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Epic | Title | Waiting on |
 |---|---|---|---|
-| AV2-3.2 | 03 | Real actuals, batch A | AV2-3.1 |
 | AV2-3.3 | 03 | Real actuals, batch B | AV2-3.2 |
 | AV2-3.4 | 03 | Auth and deep links | AV2-3.2 |
 | AV2-3.5 | 03 | The cutover | AV2-3.3, AV2-3.4, AV2-1.3 |
@@ -61,7 +64,7 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Epic | Title | Size |
 |---|---|---|---|
-| AV2-3.1 | 03 | Host the shared UI | L |
+| AV2-3.2 | 03 | Real actuals, batch A | L |
 
 ### 🅘 In Progress — WIP limit 2
 
@@ -73,7 +76,7 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Session | What to look at |
 |---|---|---|
-| _(none)_ | | |
+| AV2-3.1 | S007 | Install a staging debug build. There are now **two** launcher icons. Open **Stationly v2** → the shared UI should reach login or summary and navigate. Then open **Stationly Staging** → v1 must still work (it now runs on Compose 1.8; see the handoff). Prod is untouched and proven so at the dependency graph and the merged manifest. |
 
 ### 🅧 Blocked
 
@@ -134,7 +137,7 @@ the users, 03 is the foundation 04 builds on.
 |---|---|---|---|---|
 | 01 Safety net | 3 | **3** ✅ | 9 | **9** |
 | 02 Database | 3 | **3** ✅ | 11 | **11** |
-| 03 Host cutover | 5 | 0 | 21 | 0 |
+| 03 Host cutover | 5 | 0 (1 in review) | 21 | 0 |
 | 04 Data plane | 4 | 0 | 18 | 0 |
 | 05 Widget | 4 | 0 | 16 | 0 |
 | 06 Dream | 2 | 0 | 6 | 0 |
