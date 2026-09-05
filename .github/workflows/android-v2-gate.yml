@@ -1,0 +1,118 @@
+name: Android v2 gate
+
+# The gate from docs/android-v2/README.md. This programme swaps an entire UI
+# layer and migrates a database under live users, and until this workflow
+# existed nothing but a developer's own machine would have said so — the repo's
+# other workflows open promotion PRs and deploy; none of them run a test.
+on:
+  pull_request:
+    branches: [dev_android_bring_to_v2]
+  push:
+    branches: [dev_android_bring_to_v2]
+  workflow_dispatch:
+
+concurrency:
+  group: android-v2-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Shared logic + Android compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # `sdk.dir` is not needed (the runner exports ANDROID_HOME), and both
+      # STATIONLY_API_KEY properties fall back to "" in the build script. The
+      # prod signing config is already guarded by a `?.let` on the keystore
+      # path, so its absence is not an error either. The file itself must exist
+      # because the build reads it unconditionally.
+      - name: Stub local.properties
+        run: touch local.properties
+
+      # ── The half of the gate that always runs ───────────────────────────
+      # :core and :composeApp are where the shared logic lives, and they are
+      # the two modules an Android change can break for iOS. Neither needs
+      # Firebase config to build.
+      - name: Shared unit tests
+        run: ./gradlew :core:testDebugUnitTest :composeApp:testDebugUnitTest --no-daemon
+
+      - name: Shared UI compiles for Android
+        run: ./gradlew :composeApp:compileDebugKotlinAndroid --no-daemon
+
+      # ── The half that needs a secret ────────────────────────────────────
+      # `google-services.json` is gitignored, so :android:app cannot be built
+      # on a runner without it — the google-services plugin fails outright.
+      #
+      # Rather than leave the Android app permanently outside the gate, the
+      # step is conditional: add the STAGING build's google-services.json to
+      # the repository as a base64 secret named GOOGLE_SERVICES_STAGING_B64 and
+      # these steps start running with no further change. Until then the job
+      # says plainly that it skipped them, instead of passing quietly and
+      # implying a coverage it does not have.
+      #
+      # Use the STAGING file. The prod one points at the production Firebase
+      # project and has no business on a CI runner.
+      - name: Restore google-services.json (staging)
+        id: gservices
+        env:
+          B64: ${{ secrets.GOOGLE_SERVICES_STAGING_B64 }}
+        run: |
+          if [ -z "$B64" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Android app not gated::GOOGLE_SERVICES_STAGING_B64 is not set, so :android:app was NOT compiled or tested. See .github/workflows/android-v2-gate.yml."
+          else
+            mkdir -p android/app/src/staging
+            echo "$B64" | base64 -d > android/app/src/staging/google-services.json
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Android app compiles
+        if: steps.gservices.outputs.present == 'true'
+        run: ./gradlew :android:app:compileStagingDebugKotlin --no-daemon
+
+      - name: Android app unit tests
+        if: steps.gservices.outputs.present == 'true'
+        run: ./gradlew :android:app:testStagingDebugUnitTest --no-daemon
+
+      - name: Publish test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            core/build/reports/tests/
+            composeApp/build/reports/tests/
+            android/app/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  ios-contract:
+    name: iOS contract (commonMain still links)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    # `:core` and `:composeApp` commonMain are shared with a build shipping to
+    # TestFlight. A green Xcode build proves nothing on its own — Xcode will
+    # happily link a STALE framework — so the assemble is the check that the
+    # Kotlin actually still produces a framework.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: touch local.properties
+      - name: Assemble the iOS XCFramework
+        run: ./gradlew :composeApp:assembleComposeAppDebugXCFramework --no-daemon

@@ -48,6 +48,24 @@ kotlin {
             }
         }
 
+        // JVM-side tests for the Android target. This exists for ONE thing that
+        // cannot be tested anywhere else: the SQLDelight migration.
+        //
+        // `commonTest` cannot do it — there is no driver in common code — and an
+        // instrumented test would need a device on every run. The JDBC driver
+        // gives a real SQLite file (or an in-memory one) inside an ordinary JVM
+        // unit test, which is enough to build a database at the OLD schema,
+        // migrate it, and assert what survived. That is the only way to see the
+        // failure that matters here: `Schema.create` runs solely on an empty
+        // database, so a missing migration is invisible on every development
+        // device and shows up first on the phones that have had the app longest.
+        val androidUnitTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation("app.cash.sqldelight:sqlite-driver:2.0.2")
+            }
+        }
+
         val androidMain by getting {
             dependencies {
                 implementation("io.ktor:ktor-client-android:3.0.0-rc-1")
