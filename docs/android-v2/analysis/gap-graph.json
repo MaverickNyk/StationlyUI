@@ -1,0 +1,1104 @@
+{
+  "$schema": "https://stationly.local/android-v2-gap-graph/v1",
+  "generated": "2026-09-05",
+  "branch": "dev_android_bring_to_v2",
+  "base": {
+    "branch": "ios-parity",
+    "commit": "b7b7a1c"
+  },
+  "prose": "docs/android-v2/analysis/GAP_ANALYSIS.md",
+  "ledger": "docs/android-v2/BOARD.md",
+  "legend": {
+    "layers": {
+      "L0": "backend contract (REST + Firestore + FCM)",
+      "L1": ":core commonMain",
+      "L2": ":core androidMain / iosMain",
+      "L3": ":composeApp commonMain",
+      "L4": ":composeApp androidMain / iosMain",
+      "L5": ":android:app / iosApp host"
+    },
+    "status": {
+      "SHARED": "built at L0/L1/L3; works on Android as soon as something calls it",
+      "STUB": "an actual exists so the target compiles, but it does nothing",
+      "ABSENT": "no Android implementation of any kind",
+      "DIVERGENT": "Android has an older implementation that contradicts the v2 model",
+      "PLATFORM": "Android can do this differently, or better, than iOS"
+    },
+    "edges": {
+      "depends_on": "source cannot be done until target is",
+      "blocks": "source prevents target from shipping",
+      "realised_by": "capability is delivered by this story",
+      "threatens": "risk endangers this capability or contract",
+      "replaces": "v2 artifact supersedes a v1 artifact"
+    }
+  },
+  "measurements": [
+    {
+      "id": "M1",
+      "claim": "ios-parity is a strict superset of master",
+      "command": "git rev-list --count ios-parity..master",
+      "result": "0",
+      "date": "2026-09-05"
+    },
+    {
+      "id": "M2",
+      "claim": "the shipped Android app compiles on ios-parity",
+      "command": "./gradlew :android:app:compileStagingDebugKotlin",
+      "result": "BUILD SUCCESSFUL",
+      "date": "2026-09-05"
+    },
+    {
+      "id": "M3",
+      "claim": "the entire iOS v2 UI compiles for the Android target",
+      "command": "./gradlew :composeApp:compileDebugKotlinAndroid",
+      "result": "BUILD SUCCESSFUL (warnings only)",
+      "date": "2026-09-05"
+    },
+    {
+      "id": "M4",
+      "claim": "shared + composeApp unit tests are green at the branch point",
+      "command": "./gradlew :core:testDebugUnitTest :composeApp:testDebugUnitTest",
+      "result": "BUILD SUCCESSFUL",
+      "date": "2026-09-05"
+    },
+    {
+      "id": "M5",
+      "claim": "the v1 to v2 schema delta is 21 items, not the 7 the .sq banner lists",
+      "command": "column extraction over `git show master:...StationlyDatabase.sq` vs HEAD",
+      "result": "21",
+      "date": "2026-09-05"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "D1",
+      "text": "Branch from ios-parity, not master",
+      "date": "2026-09-05",
+      "consequence": "no cherry-picking; falsifies the no-migrations premise in StationlyDatabase.sq"
+    },
+    {
+      "id": "D2",
+      "text": ":android:app adopts the :composeApp shared UI",
+      "date": "2026-09-05",
+      "consequence": "~20 native screens deleted; accepts navigation/lifecycle 2.9.0-beta01 in production"
+    },
+    {
+      "id": "D3",
+      "text": "Widget stays RemoteViews; per-instance config added",
+      "date": "2026-09-05",
+      "consequence": "Glance is post-launch work"
+    },
+    {
+      "id": "D4",
+      "text": "Support surfaces built, gated OFF for the v2 launch",
+      "date": "2026-09-05",
+      "consequence": "Play policy resolved off the critical path"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "cap.multiline",
+      "kind": "capability",
+      "layer": "L1/L3",
+      "status": "SHARED",
+      "title": "Multiple lines per station",
+      "evidence": "core/.../model/user/Board.kt"
+    },
+    {
+      "id": "cap.multidirection",
+      "kind": "capability",
+      "layer": "L1",
+      "status": "SHARED",
+      "title": "Multiple directions per line",
+      "evidence": "direction is in the PredictionEntity + SyncStatusEntity primary keys"
+    },
+    {
+      "id": "cap.multistation",
+      "kind": "capability",
+      "layer": "L1/L3",
+      "status": "SHARED",
+      "title": "Multiple stations (boards)",
+      "evidence": "users/{uid}.boards"
+    },
+    {
+      "id": "cap.bushub",
+      "kind": "capability",
+      "layer": "L1",
+      "status": "SHARED",
+      "title": "Bus hub grouping by parentStationId",
+      "evidence": "board id is the hub; naptan sits on the selection"
+    },
+    {
+      "id": "cap.filters",
+      "kind": "capability",
+      "layer": "L1/L3",
+      "status": "SHARED",
+      "title": "Route / destination / via filters",
+      "evidence": "BoardFilterResolver, matchesFilter precomputed at ingest"
+    },
+    {
+      "id": "cap.branchfilter",
+      "kind": "capability",
+      "layer": "L1/L3",
+      "status": "SHARED",
+      "title": "Branch filtering on rejoining lines",
+      "evidence": "RouteGraph.kt, RouteGraphPicker.kt"
+    },
+    {
+      "id": "cap.stationsettings",
+      "kind": "capability",
+      "layer": "L3",
+      "status": "SHARED",
+      "title": "Station settings screen",
+      "evidence": "StationSettingsScreen.kt"
+    },
+    {
+      "id": "cap.homesettings",
+      "kind": "capability",
+      "layer": "L3",
+      "status": "SHARED",
+      "title": "Home settings screen",
+      "evidence": "HomeSettingsScreen.kt, HomeLayout.kt"
+    },
+    {
+      "id": "stub.location",
+      "kind": "stub",
+      "layer": "L4",
+      "status": "STUB",
+      "title": "PlatformLocationProvider",
+      "file": "composeApp/src/androidMain/.../PlatformLocationProvider.kt",
+      "lines": 9,
+      "breaks": "nearby-station search returns nothing"
+    },
+    {
+      "id": "stub.deviceidentity",
+      "kind": "stub",
+      "layer": "L4",
+      "status": "STUB",
+      "title": "DeviceIdentity",
+      "file": "composeApp/src/androidMain/.../platform/DeviceIdentity.kt",
+      "lines": 22,
+      "breaks": "fresh UUID per process; device sessions and the subscription registry"
+    },
+    {
+      "id": "stub.dream",
+      "kind": "stub",
+      "layer": "L4",
+      "status": "STUB",
+      "title": "DreamPlatform (4 members)",
+      "file": "composeApp/src/androidMain/.../platform/DreamPlatform.android.kt",
+      "lines": 22,
+      "breaks": "in-memory prefs, no keep-awake, no weather"
+    },
+    {
+      "id": "stub.homepromo",
+      "kind": "stub",
+      "layer": "L4",
+      "status": "STUB",
+      "title": "HomePromoPlatform (3 members)",
+      "file": "composeApp/src/androidMain/.../platform/HomePromoPlatform.android.kt",
+      "lines": 13,
+      "breaks": "reports AUTHORIZED unconditionally; POST_NOTIFICATIONS never prompts"
+    },
+    {
+      "id": "stub.connectivity",
+      "kind": "stub",
+      "layer": "L4",
+      "status": "STUB",
+      "title": "AndroidConnectivityMonitor",
+      "file": "composeApp/src/androidMain/.../platform/AndroidConnectivityMonitor.kt",
+      "lines": 6,
+      "breaks": "flowOf(true); the offline banner can never appear"
+    },
+    {
+      "id": "stub.haptics",
+      "kind": "stub",
+      "layer": "L4",
+      "status": "STUB",
+      "title": "AndroidHapticFeedback",
+      "file": "composeApp/src/androidMain/.../platform/AndroidHapticFeedback.kt",
+      "lines": 5,
+      "breaks": "no haptics"
+    },
+    {
+      "id": "stub.modeicons",
+      "kind": "stub",
+      "layer": "L4",
+      "status": "STUB",
+      "title": "ModeIconStore",
+      "file": "composeApp/src/androidMain/.../platform/ModeIconStore.kt",
+      "lines": 14,
+      "breaks": "roundels fall back to the drawn shape"
+    },
+    {
+      "id": "stub.sduiassets",
+      "kind": "stub",
+      "layer": "L4",
+      "status": "STUB",
+      "title": "SduiAssetCache",
+      "file": "composeApp/src/androidMain/.../ui/sdui/SduiAssetCache.android.kt",
+      "lines": 20,
+      "breaks": "widget-guide media degrades to posters (a designed fallback)"
+    },
+    {
+      "id": "stub.supportcheckout",
+      "kind": "stub",
+      "layer": "L4",
+      "status": "STUB",
+      "title": "SupportCheckout",
+      "file": "composeApp/src/androidMain/.../ui/support/SupportCheckout.android.kt",
+      "lines": 25,
+      "breaks": "nothing \u2014 intentional under D4"
+    },
+    {
+      "id": "partial.auth",
+      "kind": "stub",
+      "layer": "L4",
+      "status": "STUB",
+      "title": "signInWithGoogleInteractive",
+      "file": "composeApp/src/androidMain/.../AndroidPlatformAuthProvider.kt",
+      "lines": 104,
+      "breaks": "the shared LoginScreen's sign-in path returns a failure"
+    },
+    {
+      "id": "host.activity",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "ABSENT",
+      "title": "An Activity hosting App()",
+      "evidence": "iOS's host is 20 lines: MainViewController.kt"
+    },
+    {
+      "id": "host.dependency",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "ABSENT",
+      "title": ":android:app depends on :composeApp",
+      "evidence": "today it depends only on :core"
+    },
+    {
+      "id": "host.nav",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "DIVERGENT",
+      "title": "Navigation",
+      "evidence": "MainActivity.kt 443L, AndroidX NavHost, 9 destinations"
+    },
+    {
+      "id": "host.deeplinks",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "DIVERGENT",
+      "title": "Deep links",
+      "evidence": "manifest hardcodes scheme=stationly; staging needs its own"
+    },
+    {
+      "id": "host.theme",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "DIVERGENT",
+      "title": "Theme / splash / edge-to-edge",
+      "evidence": "v1 Theme.Stationly.Splash vs composeApp StationlyThemeHost"
+    },
+    {
+      "id": "host.fonts",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "DIVERGENT",
+      "title": "Typography",
+      "evidence": "downloadable Google Fonts vs compose.components.resources"
+    },
+    {
+      "id": "host.v1ui",
+      "kind": "artifact",
+      "layer": "L5",
+      "status": "DIVERGENT",
+      "title": "v1 native screens",
+      "evidence": "com.stationly.mobile.ui.{summary,selection,profile,login}"
+    },
+    {
+      "id": "data.fcm",
+      "kind": "capability",
+      "layer": "L2/L5",
+      "status": "PLATFORM",
+      "title": "FCM push delivery of departures",
+      "evidence": "LiveStream.android.kt is 12 lines of deliberate no-ops"
+    },
+    {
+      "id": "data.fcmservice",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "DIVERGENT",
+      "title": "FcmMessagingService at v2",
+      "evidence": "400+ lines on single-selection assumptions"
+    },
+    {
+      "id": "data.topics",
+      "kind": "capability",
+      "layer": "L1",
+      "status": "SHARED",
+      "title": "Topic lifecycle",
+      "evidence": "StationLifecycleUseCase emits Station_{naptan} + LineStatus_{mode}_{line}"
+    },
+    {
+      "id": "data.syncboards",
+      "kind": "capability",
+      "layer": "L0",
+      "status": "SHARED",
+      "title": "/user/sync/boards",
+      "evidence": "route exists alongside /user/sync/stations"
+    },
+    {
+      "id": "data.sessions",
+      "kind": "capability",
+      "layer": "L0/L2",
+      "status": "SHARED",
+      "title": "Device registration + stateRev",
+      "evidence": "/device/register, /user/state/rev"
+    },
+    {
+      "id": "data.activity",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "ABSENT",
+      "title": "Activity trail uploader",
+      "evidence": "iOS drives it from ActivityUploadScheduler.swift"
+    },
+    {
+      "id": "data.budget",
+      "kind": "capability",
+      "layer": "L2",
+      "status": "PLATFORM",
+      "title": "No widget refresh budget",
+      "evidence": "RefreshBudgetStore.android.kt returns null on purpose \u2014 correct, leave it"
+    },
+    {
+      "id": "widget.render",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "SHARED",
+      "title": "Dot-matrix rendering",
+      "evidence": "widget_departure_board.xml + a 758L provider"
+    },
+    {
+      "id": "widget.perid",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "ABSENT",
+      "title": "One widget per station",
+      "evidence": "v1 has a single logical widget"
+    },
+    {
+      "id": "widget.config",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "ABSENT",
+      "title": "Configuration Activity",
+      "evidence": "standard placement-time flow"
+    },
+    {
+      "id": "widget.inapp",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "PLATFORM",
+      "title": "In-app widget manager",
+      "evidence": "AppWidgetManager.getAppWidgetIds(); iOS cannot read its own widget config"
+    },
+    {
+      "id": "widget.placement",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "ABSENT",
+      "title": "Board.widget placement probe",
+      "evidence": "@Transient, device-local, re-derived on foreground"
+    },
+    {
+      "id": "widget.guide",
+      "kind": "capability",
+      "layer": "L3",
+      "status": "SHARED",
+      "title": "Widget guide screen",
+      "evidence": "WidgetGuideScreen.kt + /sdui/app/widget-guide"
+    },
+    {
+      "id": "dream.ui",
+      "kind": "capability",
+      "layer": "L3",
+      "status": "SHARED",
+      "title": "Dream UI",
+      "evidence": "11 files under composeApp/.../ui/dream"
+    },
+    {
+      "id": "dream.service",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "DIVERGENT",
+      "title": "StationlyDreamService",
+      "evidence": "works; must host the shared DreamHost"
+    },
+    {
+      "id": "rel.gate",
+      "kind": "capability",
+      "layer": "L1",
+      "status": "SHARED",
+      "title": "Release gate",
+      "evidence": "ReleasePolicy carries android: PlatformRelease"
+    },
+    {
+      "id": "rel.update",
+      "kind": "capability",
+      "layer": "L5",
+      "status": "PLATFORM",
+      "title": "In-app updates",
+      "evidence": "iOS links out to the App Store; Android has Play In-App Updates"
+    },
+    {
+      "id": "rel.sdui",
+      "kind": "capability",
+      "layer": "L3",
+      "status": "SHARED",
+      "title": "SDUI renderer",
+      "evidence": "v1 has a thinner SduiComponentRenderer, deleted by D2"
+    },
+    {
+      "id": "rel.quota",
+      "kind": "capability",
+      "layer": "L1",
+      "status": "SHARED",
+      "title": "Board quotas",
+      "evidence": "BoardQuota.kt, StationLimitSheet.kt"
+    },
+    {
+      "id": "rel.support",
+      "kind": "capability",
+      "layer": "L3",
+      "status": "ABSENT",
+      "title": "Support surfaces",
+      "evidence": "gated off by D4; backend dormant on feat/support-contributions"
+    },
+    {
+      "id": "c1",
+      "kind": "contract",
+      "title": "v1 Android contract",
+      "detail": "a live versionCode 2 phone keeps working and is not corrupted by a v2 device on the same account"
+    },
+    {
+      "id": "c2",
+      "kind": "contract",
+      "title": "iOS contract",
+      "detail": ":core and :composeApp commonMain are shared with a build shipping to TestFlight now"
+    },
+    {
+      "id": "c3",
+      "kind": "contract",
+      "title": "schema contract",
+      "detail": "an existing stationly.db must migrate; Schema.create only ever runs on an empty database"
+    },
+    {
+      "id": "r1",
+      "kind": "risk",
+      "severity": "critical",
+      "title": "Upgrade-in-place crashes on the old database",
+      "note": "invisible on dev devices; two primary keys changed so ALTER cannot do it"
+    },
+    {
+      "id": "r2",
+      "kind": "risk",
+      "severity": "critical",
+      "title": "A v1 device wipes a v2 device's boards",
+      "note": "PROVEN \u2014 syncStations is a full replace; already fixed once in SelectionViewModel"
+    },
+    {
+      "id": "r3",
+      "kind": "risk",
+      "severity": "high",
+      "title": "The UI swap regresses v1 behaviour",
+      "note": "the entire UI layer changes at once on a live app"
+    },
+    {
+      "id": "r4",
+      "kind": "risk",
+      "severity": "high",
+      "title": "A commonMain edit breaks iOS mid-TestFlight",
+      "note": "shared source, two release trains"
+    },
+    {
+      "id": "r5",
+      "kind": "risk",
+      "severity": "medium",
+      "title": "Beta nav/lifecycle artifacts in production",
+      "note": "2.9.0-beta01; v1 already shipped a blank-screen bug from a nav/Compose mismatch"
+    },
+    {
+      "id": "r6",
+      "kind": "risk",
+      "severity": "medium",
+      "title": "FCM topic churn on upgrade day",
+      "note": "every device re-subscribes its whole set at once"
+    },
+    {
+      "id": "r7",
+      "kind": "risk",
+      "severity": "medium",
+      "title": "Play policy rejection on the money surface",
+      "note": "retired for v2 by D4"
+    },
+    {
+      "id": "r8",
+      "kind": "risk",
+      "severity": "medium",
+      "title": "R8 strips something the new graph needs",
+      "note": "minify + shrinkResources on, reflection-heavy libraries"
+    },
+    {
+      "id": "r9",
+      "kind": "risk",
+      "severity": "low",
+      "title": "Two font pipelines in one app",
+      "note": "downloadable Google Fonts and compose resources"
+    },
+    {
+      "id": "r10",
+      "kind": "risk",
+      "severity": "high",
+      "title": "Auto Backup restores a v1 database into a fresh v2 install",
+      "note": "backup_rules.xml includes domain=database; reaches devices that never had v1"
+    },
+    {
+      "id": "AV2-1.1",
+      "kind": "story",
+      "title": "the gate, in CI",
+      "epic": "EPIC-01"
+    },
+    {
+      "id": "AV2-1.2",
+      "kind": "story",
+      "title": "lock the v1 contract",
+      "epic": "EPIC-01"
+    },
+    {
+      "id": "AV2-1.3",
+      "kind": "story",
+      "title": "capture v1's golden outputs",
+      "epic": "EPIC-01"
+    },
+    {
+      "id": "AV2-2.1",
+      "kind": "story",
+      "title": "reinstate migrations",
+      "epic": "EPIC-02"
+    },
+    {
+      "id": "AV2-2.2",
+      "kind": "story",
+      "title": "prove the migration",
+      "epic": "EPIC-02"
+    },
+    {
+      "id": "AV2-2.3",
+      "kind": "story",
+      "title": "close the drift permanently",
+      "epic": "EPIC-02"
+    },
+    {
+      "id": "AV2-3.1",
+      "kind": "story",
+      "title": "host the shared UI",
+      "epic": "EPIC-03"
+    },
+    {
+      "id": "AV2-3.2",
+      "kind": "story",
+      "title": "real actuals, batch A",
+      "epic": "EPIC-03"
+    },
+    {
+      "id": "AV2-3.3",
+      "kind": "story",
+      "title": "real actuals, batch B",
+      "epic": "EPIC-03"
+    },
+    {
+      "id": "AV2-3.4",
+      "kind": "story",
+      "title": "auth and deep links",
+      "epic": "EPIC-03"
+    },
+    {
+      "id": "AV2-3.5",
+      "kind": "story",
+      "title": "the cutover",
+      "epic": "EPIC-03"
+    },
+    {
+      "id": "AV2-4.1",
+      "kind": "story",
+      "title": "FCM at v2",
+      "epic": "EPIC-04"
+    },
+    {
+      "id": "AV2-4.2",
+      "kind": "story",
+      "title": "topic lifecycle",
+      "epic": "EPIC-04"
+    },
+    {
+      "id": "AV2-4.3",
+      "kind": "story",
+      "title": "cloud state",
+      "epic": "EPIC-04"
+    },
+    {
+      "id": "AV2-4.4",
+      "kind": "story",
+      "title": "sessions and activity",
+      "epic": "EPIC-04"
+    },
+    {
+      "id": "AV2-5.1",
+      "kind": "story",
+      "title": "per-instance binding",
+      "epic": "EPIC-05"
+    },
+    {
+      "id": "AV2-5.2",
+      "kind": "story",
+      "title": "the in-app widget manager",
+      "epic": "EPIC-05"
+    },
+    {
+      "id": "AV2-5.3",
+      "kind": "story",
+      "title": "updates and placement",
+      "epic": "EPIC-05"
+    },
+    {
+      "id": "AV2-5.4",
+      "kind": "story",
+      "title": "the widget guide",
+      "epic": "EPIC-05"
+    },
+    {
+      "id": "AV2-6.1",
+      "kind": "story",
+      "title": "real dream actuals",
+      "epic": "EPIC-06"
+    },
+    {
+      "id": "AV2-6.2",
+      "kind": "story",
+      "title": "host the shared dream",
+      "epic": "EPIC-06"
+    },
+    {
+      "id": "AV2-7.1",
+      "kind": "story",
+      "title": "the update gate",
+      "epic": "EPIC-07"
+    },
+    {
+      "id": "AV2-7.2",
+      "kind": "story",
+      "title": "config and quotas",
+      "epic": "EPIC-07"
+    },
+    {
+      "id": "AV2-7.3",
+      "kind": "story",
+      "title": "support, built and off",
+      "epic": "EPIC-07"
+    },
+    {
+      "id": "AV2-8.1",
+      "kind": "story",
+      "title": "release build integrity",
+      "epic": "EPIC-08"
+    },
+    {
+      "id": "AV2-8.2",
+      "kind": "story",
+      "title": "upgrade verification on real devices",
+      "epic": "EPIC-08"
+    },
+    {
+      "id": "AV2-8.3",
+      "kind": "story",
+      "title": "ship",
+      "epic": "EPIC-08"
+    }
+  ],
+  "edges": [
+    {
+      "from": "AV2-1.2",
+      "to": "c1",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-2.1",
+      "to": "c3",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-2.2",
+      "to": "c3",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-2.3",
+      "to": "c3",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-3.1",
+      "to": "host.activity",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-3.1",
+      "to": "host.dependency",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-3.2",
+      "to": "stub.connectivity",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-3.2",
+      "to": "stub.haptics",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-3.2",
+      "to": "stub.modeicons",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-3.2",
+      "to": "stub.deviceidentity",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-3.3",
+      "to": "stub.homepromo",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-3.3",
+      "to": "stub.location",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-3.3",
+      "to": "stub.sduiassets",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-3.4",
+      "to": "partial.auth",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-3.4",
+      "to": "host.deeplinks",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-3.5",
+      "to": "host.v1ui",
+      "kind": "replaces"
+    },
+    {
+      "from": "AV2-3.5",
+      "to": "host.nav",
+      "kind": "replaces"
+    },
+    {
+      "from": "AV2-3.5",
+      "to": "host.theme",
+      "kind": "replaces"
+    },
+    {
+      "from": "AV2-3.5",
+      "to": "host.fonts",
+      "kind": "replaces"
+    },
+    {
+      "from": "AV2-4.1",
+      "to": "data.fcmservice",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-4.2",
+      "to": "data.topics",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-4.3",
+      "to": "data.syncboards",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-4.4",
+      "to": "data.sessions",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-4.4",
+      "to": "data.activity",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-5.1",
+      "to": "widget.perid",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-5.1",
+      "to": "widget.config",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-5.2",
+      "to": "widget.inapp",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-5.3",
+      "to": "widget.placement",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-5.4",
+      "to": "widget.guide",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-6.1",
+      "to": "stub.dream",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-6.2",
+      "to": "dream.service",
+      "kind": "replaces"
+    },
+    {
+      "from": "AV2-7.1",
+      "to": "rel.update",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-7.2",
+      "to": "rel.quota",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-7.3",
+      "to": "rel.support",
+      "kind": "realised_by"
+    },
+    {
+      "from": "AV2-1.2",
+      "to": "AV2-1.1",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-1.3",
+      "to": "AV2-1.1",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-2.1",
+      "to": "AV2-1.1",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-2.2",
+      "to": "AV2-2.1",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-2.3",
+      "to": "AV2-2.2",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-3.1",
+      "to": "AV2-2.2",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-3.2",
+      "to": "AV2-3.1",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-3.3",
+      "to": "AV2-3.2",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-3.4",
+      "to": "AV2-3.2",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-3.5",
+      "to": "AV2-3.3",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-3.5",
+      "to": "AV2-3.4",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-3.5",
+      "to": "AV2-1.3",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-4.1",
+      "to": "AV2-3.5",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-4.2",
+      "to": "AV2-4.1",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-4.3",
+      "to": "AV2-4.2",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-4.4",
+      "to": "AV2-4.3",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-5.1",
+      "to": "AV2-4.3",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-5.2",
+      "to": "AV2-5.1",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-5.3",
+      "to": "AV2-5.1",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-5.4",
+      "to": "AV2-5.1",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-5.4",
+      "to": "AV2-3.3",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-6.1",
+      "to": "AV2-3.2",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-6.2",
+      "to": "AV2-6.1",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-7.1",
+      "to": "AV2-3.5",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-7.2",
+      "to": "AV2-3.5",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-7.3",
+      "to": "AV2-3.5",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-8.2",
+      "to": "AV2-2.2",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-8.2",
+      "to": "AV2-8.1",
+      "kind": "depends_on"
+    },
+    {
+      "from": "AV2-8.3",
+      "to": "AV2-8.2",
+      "kind": "depends_on"
+    },
+    {
+      "from": "r1",
+      "to": "c3",
+      "kind": "threatens"
+    },
+    {
+      "from": "r10",
+      "to": "c3",
+      "kind": "threatens"
+    },
+    {
+      "from": "r2",
+      "to": "c1",
+      "kind": "threatens"
+    },
+    {
+      "from": "r3",
+      "to": "c1",
+      "kind": "threatens"
+    },
+    {
+      "from": "r4",
+      "to": "c2",
+      "kind": "threatens"
+    },
+    {
+      "from": "r5",
+      "to": "host.nav",
+      "kind": "threatens"
+    },
+    {
+      "from": "r6",
+      "to": "data.topics",
+      "kind": "threatens"
+    },
+    {
+      "from": "r8",
+      "to": "AV2-8.1",
+      "kind": "threatens"
+    },
+    {
+      "from": "r9",
+      "to": "host.fonts",
+      "kind": "threatens"
+    },
+    {
+      "from": "r1",
+      "to": "AV2-8.3",
+      "kind": "blocks"
+    },
+    {
+      "from": "r2",
+      "to": "AV2-8.3",
+      "kind": "blocks"
+    }
+  ],
+  "backlog": "docs/android-v2/BACKLOG.md",
+  "epics": "docs/android-v2/epics/"
+}
