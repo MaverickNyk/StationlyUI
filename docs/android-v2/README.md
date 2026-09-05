@@ -77,10 +77,16 @@ One command. Run at the start and the end of every session.
 
 ```bash
 ./gradlew :core:testDebugUnitTest \
+          :core:verifyCommonMainStationlyDatabaseMigration \
           :composeApp:testDebugUnitTest \
           :android:app:compileStagingDebugKotlin \
           :composeApp:compileDebugKotlinAndroid
 ```
+
+The migration verification is named explicitly because SQLDelight does **not**
+wire it into `check`. It compares a database built by applying the migrations
+against one built by `Schema.create`, and it is the only thing that catches the
+`.sq` and the `.sqm` drifting apart.
 
 Whenever `commonMain` changed, also:
 

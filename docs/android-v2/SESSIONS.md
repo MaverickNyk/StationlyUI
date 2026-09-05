@@ -18,6 +18,62 @@ Template:
 
 ---
 
+## S006 — 2026-09-05 — AV2-2.3 "Close the drift permanently" · **EPIC-02 complete**
+**Outcome:** DONE
+**Gate:** GREEN, and it has a new task in it
+**Commits:** see branch head
+
+**Did:** Enabled `verifyMigrations`. The build now fails if the `.sq` and the
+`.sqm` disagree.
+
+**Learned — the old comment was right about the blocker and wrong about the
+fix being hard.** `verifyMigrations.set(true)` does fail with *"Verifying a
+migration requires a database file to be present… use the generate schema Gradle
+task"*, and that task genuinely **is not registered** by SQLDelight 2.0.2 in this
+configuration — `:core:tasks --all` lists only the two `verify…` tasks. That dead
+end is what got the earlier attempt reverted.
+
+The way through is realising the baseline does not need generating. It is the
+schema as the **last released Android build** created it — a fact about a shipped
+APK, not about anything in this tree. So it is built by hand from the same
+fixture AV2-2.2 checked in, which means the two cannot disagree. Two shell lines,
+recorded in `core/build.gradle.kts`.
+
+**Proven to bite:** a column added to the `.sq` alone now fails the build and
+names the column.
+
+**⚠️ Trap for whoever writes `2.sqm`: do NOT touch `1.db`.** It is the start of
+the chain, not a snapshot of the present. Regenerating it from the current schema
+makes the check vacuous — it would compare the schema against itself and pass
+forever. That warning is in the build file too.
+
+**The task is not wired into `check`**, so it is named explicitly in the gate and
+in CI.
+
+**And it caught something immediately.** Switching it on broke interface
+generation with `1.sqm: (149, 13): Duplicate index name prediction_lookup`. The
+migration drops and rebuilds `PredictionEntity` and then recreates its index with
+`direction` added; SQLite drops an index with its table, so this was
+*functionally* fine — it ran under `sqlite3` and `MigrationTest` passed — but
+SQLDelight's analyzer does not model the cascade. An explicit
+`DROP INDEX IF EXISTS` before the `DROP TABLE` fixes it and reads better.
+
+Three checks had already called that file correct. The flag found something on
+its first run.
+
+**Next agent needs to know:** sprint 1 is done. EPIC-01 and EPIC-02 are both
+complete: the gate exists and runs in CI, v1's behaviour is recorded, and a real
+v1 database migrates without loss on both schema shapes.
+
+**AV2-3.1 is next and it is the first story that changes the shipped app.** It
+adds the `:composeApp` dependency and a second Activity, staging-only, with v1's
+`MainActivity` still the launcher. Do not make it the launcher — that is AV2-3.5,
+after the actuals are real. And carry over the `launchMode="singleTask"` plus
+`onNewIntent` reasoning; the manifest comment explains what breaks without it,
+and it shipped as a blank screen once already.
+
+---
+
 ## S005 — 2026-09-05 — AV2-2.2 "Prove the migration"
 **Outcome:** DONE
 **Gate:** GREEN — `:core` 403 tests (9 new). No `commonMain` change, so no

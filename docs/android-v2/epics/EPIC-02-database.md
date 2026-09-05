@@ -153,7 +153,7 @@ schema, where the flag tests the build, and the two fail at different times.
 
 ---
 
-## AV2-2.3 — Close the drift permanently · `M` · Backlog
+## AV2-2.3 — Close the drift permanently · `M` · **Done** (S006)
 
 **Depends on:** AV2-2.2 **Files:** `core/build.gradle.kts`, `core/.../sqldelight/databases/`
 
@@ -166,17 +166,71 @@ is a recorded schema baseline. Start from that note — it was written by someon
 who already tried and reverted.
 
 ### Tasks
-- [ ] **a.** Generate and check in the schema baseline under `sqldelight/databases/`.
-- [ ] **b.** Enable `verifyMigrations`.
-- [ ] **c.** Prove it: add a column to the `.sq` only, confirm the build fails,
+- [x] **a.** Generate and check in the schema baseline under `sqldelight/databases/`.
+- [x] **b.** Enable `verifyMigrations`.
+- [x] **c.** Prove it: add a column to the `.sq` only, confirm the build fails,
       revert.
-- [ ] **d.** Update the comment in `core/build.gradle.kts` to describe what is now
+- [x] **d.** Update the comment in `core/build.gradle.kts` to describe what is now
       true rather than what was.
 
 ### Acceptance criteria
-- [ ] `:core:build` fails when `.sq` and `.sqm` disagree.
-- [ ] The AV2-2.2 equivalence test still passes and is kept — it tests the schema,
+- [x] `:core:build` fails when `.sq` and `.sqm` disagree.
+- [x] The AV2-2.2 equivalence test still passes and is kept — it tests the schema,
       where this tests the build.
 
-### Handoff notes
-_(none yet)_
+### Handoff notes — S006, 2026-09-05
+
+**Done, and it worked where the earlier attempt did not.** The blocker the old
+comment described is real and reproduces exactly: `verifyMigrations.set(true)`
+fails with *"Verifying a migration requires a database file to be present… use
+the generate schema Gradle task"*, and that task **is not registered** by
+SQLDelight 2.0.2 here — `:core:tasks --all` lists only the two `verify…` tasks.
+
+The way through is that the baseline does not need generating. It is the schema
+as the **last released Android build** created it — a fact about a shipped APK,
+not about anything in this tree — so it is built by hand from the same fixture
+AV2-2.2 checked in, which means the two can never disagree:
+
+```
+sqlite3 core/src/commonMain/sqldelight/databases/1.db < docs/android-v2/fixtures/v1/schema-v1.sql
+sqlite3 core/src/commonMain/sqldelight/databases/1.db "PRAGMA user_version = 1;"
+```
+
+**Proven to bite.** Adding a column to the `.sq` alone now fails the build with
+the column named:
+
+```
+Error migrating from 1.db, fresh database looks different from migration database:
+  /tables[UserSelectionEntity]/columns[UserSelectionEntity.driftColumn] - ADDED
+```
+
+**⚠️ For whoever adds `2.sqm`: do NOT touch `1.db`.** It is the starting point of
+the chain, not a snapshot of the present. Regenerating it from the current schema
+makes the check vacuous — it would compare the schema against itself and pass
+forever.
+
+**The task is not wired into `check`**, so it is named explicitly in the gate
+(README) and in CI.
+
+**It caught something the moment it was switched on.** With `verifyMigrations`
+enabled, interface generation began failing:
+
+```
+1.sqm: (149, 13): Duplicate index name prediction_lookup
+```
+
+`1.sqm` drops and rebuilds `PredictionEntity`, then recreates the index with
+`direction` added. SQLite drops an index along with its table, so the migration
+was **functionally correct** — it ran fine under `sqlite3` and `MigrationTest`
+passed — but SQLDelight's analyzer does not model that cascade. Fixed with an
+explicit `DROP INDEX IF EXISTS prediction_lookup;` before the `DROP TABLE`,
+which reads better anyway: the index is being redefined, and saying so beats
+relying on a cascade. Re-verified end to end afterwards, on a real v1 database.
+
+That is the flag paying for itself on day one, on a file that three separate
+checks had already called correct.
+
+### EPIC-02 complete
+Migrations exist, are proven against a real v1 database on both shapes, and can
+no longer drift from the schema without the build saying so. **EPIC-03 is
+unblocked** — the shared UI can now be hosted on a database that upgrades.
