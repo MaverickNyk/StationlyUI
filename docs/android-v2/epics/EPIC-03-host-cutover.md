@@ -152,7 +152,7 @@ navigates. Then open **Stationly Staging** and confirm the v1 app still works.
 
 ---
 
-## AV2-3.2 — Real actuals, batch A · `L` · Backlog
+## AV2-3.2 — Real actuals, batch A · `L` · Review (S008)
 
 **Depends on:** AV2-3.1 **Reads:** [`GAP_ANALYSIS.md`](../analysis/GAP_ANALYSIS.md) §3.2
 **Files:** `composeApp/src/androidMain/kotlin/com/stationly/app/platform/`
@@ -167,9 +167,13 @@ Four stubs, each currently a placeholder that compiles and does nothing.
 | `DeviceIdentity` | a fresh UUID **per process** | delegate to the existing persistent `DeviceIdProvider` |
 
 ### Tasks
-- [ ] **a.** Add an application-context holder to `composeApp/androidMain`. All
-      four need a `Context` and there is nowhere to get one today.
-- [ ] **b.–e.** The four actuals above.
+- [x] **a.** `AndroidAppContext` in `composeApp/androidMain`. It does not hold a
+      context — it *sources* one, from `Platform.appContext`, which the host
+      already sets in `Application.onCreate`. It does hold the current Activity,
+      weakly, because a `Context` alone is not enough for haptics (and AV2-3.3
+      and AV2-3.4 both need one too).
+- [x] **b.–e.** All four. Each writes to the shipped app's storage rather than
+      beside it — see the handoff.
 
 ### Why `DeviceIdentity` is the one that matters
 A per-process id means device sessions, the subscription registry and
@@ -179,12 +183,83 @@ session survived a reinstall while the device id did not, leaving ghost sessions
 that logout could never release.
 
 ### Acceptance criteria
-- [ ] The offline banner appears when the device goes offline. It cannot today.
-- [ ] `DeviceIdentity.deviceId()` is stable across process death.
-- [ ] `GAP_ANALYSIS.md` §3.2 updated: four rows leave the stub table.
+- [ ] The offline banner appears when the device goes offline. **Needs
+      hardware**, same device check AV2-3.1 is waiting on. The flow is real:
+      `registerDefaultNetworkCallback`, an emission before registration so a
+      device that is simply online is not left silent, and `distinctUntilChanged`
+      over a callback that fires on signal strength and metering too.
+- [ ] `DeviceIdentity.deviceId()` is stable across process death. **Needs
+      hardware** to observe, but the mechanism it depends on is checked here:
+      `V1V2StorageContractTest` asserts it reads the same preferences file and
+      key the shipped app already writes, and the write is `commit()` rather
+      than `apply()`.
+- [x] `GAP_ANALYSIS.md` §3.2 updated: four rows leave the stub table.
 
 ### Handoff notes
-_(none yet)_
+
+**S008 · 2026-09-05 · Review.** Four stubs became real. The thing worth carrying
+forward is not any of the four implementations — it is what they all had to do.
+
+**Every one of them writes into the shipped app's storage, not beside it.**
+`:composeApp` cannot import `:android:app`; the dependency runs the other way.
+So "delegate to the existing `DeviceIdProvider` / `ModeIconCache`" cannot mean
+calling them. It means agreeing on a file name:
+
+| | v1 writes | the shared UI now reads and writes |
+|---|---|---|
+| device id | `SharedPreferences("StationlyDevice")` → `device_id` | the same file, the same key |
+| mode icons | `filesDir/mode_icons/<safeName>.png` | the same directory, the same sanitisation |
+| tints | `mode_icons/tints.json` | still written, though nothing shared reads it |
+
+Get any of those wrong and nothing errors. A changed prefs file issues every v1
+user a **new device id**, and the backend releases a station's subscription only
+when the last device signs out — so the old session becomes a ghost that logout
+can never clear. iOS spent two days there. A changed icon directory is quieter
+still: the shared UI re-downloads everything into a second set of files and the
+**home-screen widget keeps rendering from the first**, untinted.
+
+`V1V2StorageContractTest` (in `:android:app`, the only module that can see both,
+and only on staging) reads those constants off both classes by reflection and
+compares them, then calls `ModeIconCache.safeName` against
+`modeIconFileName` over the real mode names. It is the only thing standing
+between those two implementations and silent divergence. AV2-3.5 deletes the v1
+halves and this test with them.
+
+**`tints.json` is written by a store whose interface has no notion of tints.**
+Deliberate. v1's widget reads it. Do not "tidy" it out before AV2-3.5.
+
+**Haptics go through a View, not `Vibrator`.** Two consequences that are the
+whole reason: `View.performHapticFeedback` respects the user's system
+touch-feedback setting, and it needs no `VIBRATE` permission — so adopting the
+shared UI does not add a permission to a live app. The cost is needing an
+Activity, which is why `AndroidAppContext` tracks one. `CONFIRM`/`REJECT` are
+API 30, so 26–29 falls back to `VIRTUAL_KEY`/`LONG_PRESS` — different from each
+other, which is the point, and tested.
+
+**Scope note — two files outside the story's list.**
+1. `core/src/androidMain/.../Platform.kt`: `appContext` went from `private
+   lateinit` to `lateinit … private set`. One line. The alternative was a second
+   context holder in `composeApp/androidMain` with its own initialisation order
+   to forget, in an app that already has exactly one place for this — every
+   other Android platform service is built from that same field. Android-only
+   file, so iOS is untouched.
+2. `composeApp/build.gradle.kts` + a new `composeApp/src/androidMain/AndroidManifest.xml`:
+   an `androidUnitTest` source set (for the pure decisions), and the two
+   permissions the Android actuals need. `:android:app` already declares both,
+   so the manifest merges to nothing today — which is the point, the library
+   should not rely on that coincidence holding.
+
+**Finding — two connectivity implementations now exist and they must be edited
+together.** `android/`'s `NetworkState` is a process-wide `StateFlow` read by the
+widget's RemoteViews builder; the new `getConnectivityFlow()` is a per-collector
+`callbackFlow` because that is the shape the `expect` asks for. Both make the
+same judgement call — `NET_CAPABILITY_INTERNET`, not `VALIDATED`, so a captive
+portal counts as online — and the comment in each says so. AV2-3.5 deletes one.
+
+**For the reviewer, on device:** toggle airplane mode with a board open and watch
+for the offline banner. Then check the device id survived the upgrade — a v1
+install that opens the shared UI must keep the same entry in the account's device
+list, not gain a second one.
 
 ---
 

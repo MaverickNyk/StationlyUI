@@ -143,14 +143,19 @@ Measured by reading every file in `composeApp/src/androidMain`. Sizes are lines.
 | File | Members | Status | What breaks until it is real |
 |---|---|---|---|
 | `PlatformLocationProvider.kt` (9L) | `platformLocationProvider()` | `STUB` | Nearby-station search returns nothing. |
-| `platform/DeviceIdentity.kt` (22L) | `deviceId()`, `deviceInfo()` | `STUB` | A fresh UUID per process. Device sessions, the subscription registry and logout-releases-subscriptions all break. The shipped app already has a persistent `DeviceIdProvider` to delegate to. See [`ios-device-id-ghost-sessions`]. |
+| `platform/DeviceIdentity.kt` | `deviceId()`, `deviceInfo()` | `SHARED` | AV2-3.2. Reads and writes `SharedPreferences("StationlyDevice")` → `device_id`, the **same file and key** `DeviceIdProvider` already uses, so a v1 user keeps their identity. `commit()`, not `apply()`. Guarded by `V1V2StorageContractTest`. |
 | `platform/DreamPlatform.android.kt` (22L) | `DreamPrefsBackend`, `KeepScreenAwake`, `fetchMetNoForecast`, `lastKnownLatLon` | `STUB` | In-memory prefs, no keep-awake, no weather. The shipped app has all four in `com.stationly.mobile.dream`. |
 | `platform/HomePromoPlatform.android.kt` (13L) | `notificationAuthState`, `requestNotificationAuthorization`, `openAppNotificationSettings` | `STUB` | Reports `AUTHORIZED` unconditionally, so the notifications promo never shows and the POST_NOTIFICATIONS prompt never fires. |
-| `platform/AndroidConnectivityMonitor.kt` (6L) | `getConnectivityFlow()` | `STUB` | `flowOf(true)`. The offline banner can never appear. |
-| `platform/AndroidHapticFeedback.kt` (5L) | `performHaptic()` | `STUB` | No haptics anywhere. |
-| `platform/ModeIconStore.kt` (14L) | `sync`, `hasIcon`, `cachedIconBitmap` | `STUB` | Mode roundels fall back to the drawn shape. `ModeIconCache` exists in the shipped app. |
+| `platform/AndroidConnectivityMonitor.kt` | `getConnectivityFlow()` | `SHARED` | AV2-3.2. A real `registerDefaultNetworkCallback` flow. Emits before registering (a callback only speaks on change) and `distinctUntilChanged` (it fires for signal strength and metering too). **Second implementation:** `android/`'s `NetworkState` — same `NET_CAPABILITY_INTERNET`-not-`VALIDATED` call, different shape, edit together until AV2-3.5. |
+| `platform/AndroidHapticFeedback.kt` | `performHaptic()` | `SHARED` | AV2-3.2. `View.performHapticFeedback` off the tracked Activity's decor view — **not** `Vibrator`: the view route respects the user's touch-feedback setting and needs no `VIBRATE` permission, so adopting the shared UI adds no permission to a live app. `CONFIRM`/`REJECT` are API 30; 26–29 falls back to two still-distinct effects. |
+| `platform/ModeIconStore.kt` | `sync`, `hasIcon`, `cachedIconBitmap` | `SHARED` | AV2-3.2. Writes `filesDir/mode_icons/` with the **same layout and filename sanitisation** as `ModeIconCache`, so one cache serves both — including the widget, which renders from it. Still writes `tints.json` though nothing shared reads tints: v1's widget does. Guarded by `V1V2StorageContractTest`. |
 | `ui/sdui/SduiAssetCache.android.kt` (20L) | `localPath`, `cachedPath` | `STUB` | Widget-guide media degrades to poster stills (a designed fallback, so this is the least urgent). |
 | `ui/support/SupportCheckout.android.kt` (25L) | `openCheckout`, `dismissCheckout` | `STUB` | Intentional under D4. Leave stubbed for v2. |
+
+`AndroidAppContext.kt` (AV2-3.2) is where the Android actuals get a `Context`
+— sourced from `Platform.appContext`, not held a second time — and the currently
+resumed Activity, held weakly. AV2-3.3 (POST_NOTIFICATIONS) and AV2-3.4
+(interactive Google sign-in) both need that Activity too.
 
 Already real and ship-ready: `ComposeResourcesCheck.kt` (`true`, correct),
 `ui/common/PlatformWebView.android.kt` (112L, a real WebView),
