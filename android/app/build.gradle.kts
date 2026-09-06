@@ -12,6 +12,26 @@ val localProperties = Properties().apply {
     if (f.exists()) load(f.inputStream())
 }
 
+/**
+ * The custom URL scheme this build answers to, declared ONCE per flavour and
+ * spent in two places that must never disagree:
+ *
+ *  - `${deepLinkScheme}` in the manifest, which decides what Android is willing
+ *    to deliver to us;
+ *  - `BuildConfig.DEEP_LINK_SCHEME`, which decides what we do with it once it
+ *    arrives (`parseDeepLink`, and the links we build ourselves for FCM).
+ *
+ * Two literals is how iOS lost two days: the app registered
+ * `stationly-staging://` and then compared the incoming URL against a hardcoded
+ * `"stationly"`. Every staging link was silently dropped — nothing errored, taps
+ * simply did nothing. Setting both from one argument makes that mismatch
+ * unspellable rather than merely discouraged.
+ */
+fun com.android.build.api.dsl.ApplicationProductFlavor.deepLinkScheme(scheme: String) {
+    manifestPlaceholders["deepLinkScheme"] = scheme
+    buildConfigField("String", "DEEP_LINK_SCHEME", "\"$scheme\"")
+}
+
 android {
     namespace = "com.stationly.mobile"
     compileSdk = 35
@@ -55,6 +75,7 @@ android {
             dimension = "environment"
             signingConfig = signingConfigs.getByName("prod")
             buildConfigField("String", "STATIONLY_API_KEY", "\"${localProperties.getProperty("prod.STATIONLY_API_KEY") ?: ""}\"")
+            deepLinkScheme("stationly")
         }
         create("staging") {
             dimension = "environment"
@@ -66,6 +87,7 @@ android {
             // does not have.
             resValue("string", "v2_launcher_label", "Stationly v2")
             buildConfigField("String", "STATIONLY_API_KEY", "\"${localProperties.getProperty("staging.STATIONLY_API_KEY") ?: ""}\"")
+            deepLinkScheme("stationly-staging")
         }
     }
 

@@ -12,6 +12,7 @@ import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.util.StationlyFormatters
+import com.stationly.mobile.BuildConfig
 import com.stationly.mobile.widget.DepartureWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -309,7 +310,13 @@ class FcmMessagingService : FirebaseMessagingService() {
             priority         = if (isGood) "default" else "high",
             color            = color,
             style            = "bigText",
-            deepLink         = "stationly://home?station=$deepLinkStationId",
+            // The scheme is the build's, not a literal: staging registers
+            // `stationly-staging://` and MainActivity accepts only that, so a
+            // hardcoded `stationly` here would build a notification whose tap
+            // opens the app and then focuses nothing. (The PendingIntent names
+            // MainActivity explicitly, so the tap still lands — it is the
+            // routing that would go quiet, which is the harder kind to notice.)
+            deepLink         = "${BuildConfig.DEEP_LINK_SCHEME}://home?station=$deepLinkStationId",
             groupKey         = "stationly_line_status",
             // Stable id per-line — so a Piccadilly status flapping
             // updates the existing chip instead of stacking new ones.

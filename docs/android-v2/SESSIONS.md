@@ -18,6 +18,80 @@ Template:
 
 ---
 
+## S009 — 2026-09-06 — AV2-3.4 "Auth and deep links" · **first session with a device**
+
+**Took over** a claim S009 had written into the board and never acted on — no
+commits, only the claim row. Gate GREEN on arrival.
+
+**Built.** Google sign-in from the shared `LoginScreen` (it returned a canned
+failure before, so sign-in from the shared UI was impossible), Apple left
+correctly unavailable, and the deep-link scheme made per-flavour: `stationly` on
+prod, `stationly-staging` on staging.
+
+**A device was attached mid-session**, which changed the shape of the work. It
+closed out the on-device criteria AV2-3.1 and AV2-3.2 had been sitting in Review
+for since S007, and it found things no test would have.
+
+**Learned — four things, in order of how much they cost to find:**
+
+1. **Changing the manifest alone would have shipped the iOS bug, not fixed it.**
+   `MainActivity.handleDeepLink` compared `uri.scheme == "stationly"` at four
+   call sites. Flip only the manifest and a staging build starts *receiving*
+   `stationly-staging://` links and silently drops every one — arriving,
+   matching no branch, doing nothing. The scheme is now declared once per
+   flavour and spent twice, on the manifest placeholder and
+   `BuildConfig.DEEP_LINK_SCHEME`, from a single argument. `handleDeepLink` runs
+   on `core`'s `parseDeepLink`, which is what AV2-1.3 extracted it for.
+
+2. **Backing out of a slow sign-in crashed the app, and the crash was disguised
+   as a blink.** Press back while "Signing you in…" is up: the Activity is
+   destroyed → the NavController's `ViewModelStore` is cleared → `viewModelScope`
+   is cancelled → and cancelling *drains* the dispatcher queue, running the rest
+   of an already-successful sign-in synchronously inside Activity destruction.
+   No suspension points are left after the last `await`, so cancellation is
+   never observed and the navigation callback fires into a dead NavHost.
+   `IllegalStateException: State must be at least 'CREATED'`. The app then
+   relaunched **already signed in**, because Firebase had persisted the
+   credential — so it looks like a flicker, not a crash. Fixed with one guard
+   (`navigateIfLive`) over all nine navigation callbacks in `LoginViewModel`.
+   The only `commonMain` change this session, and provably inert on iOS.
+
+3. **v2 writes user state that crashes v1 on launch.** Once an account has been
+   used in the shared UI, the v1 icon dies before drawing:
+   `Key "940GZZLUKSX_piccadilly" was already used`. v1 keys its list by
+   station+line; the v2 board model keeps one selection **per direction**, so
+   King's Cross with Piccadilly east- and westbound is two rows with one key.
+   Not a prod risk — no shipped build has both UIs, and AV2-3.5 deletes v1's —
+   but it is a trap set for **AV2-8.2**, which will hit it the moment it signs
+   one account into both. Recorded under AV2-3.1.
+
+4. **The offline "banner" does not exist, and should not.**
+   `computeBoardFallbackState` returns early on `hasPredictions` *before* testing
+   `isOnline`, so airplane mode over a live board shows nothing and the board
+   keeps ticking on cached data. That is the right behaviour; the acceptance
+   criterion was written against a component that was never there. The real
+   offline surface is the cold-start "Can't reach servers", and it appeared —
+   the device arrived with WiFi enabled but joined to nothing, which tested it
+   by accident before anything else could.
+
+**Also settled by hardware, cheaply:** the Google chooser names *"Stationly
+Staging"* and mints a token against the staging Firebase project, so the
+per-flavour `default_web_client_id` wiring is right; `dumpsys package` lists
+`stationly-staging` on all four filters and no `stationly` anywhere;
+`am start -d "stationly://home"` answers *"unable to resolve Intent"*; the device
+id held one value across a crash, several force-stops, an update install and a
+sign-out; and sign-out empties `com.google.android.gms.signin.xml`, so the
+chooser genuinely reappears for the next user of a shared phone.
+
+**Next agent needs to know:** AV2-3.3 is the last story before the cutover.
+Two things are deliberately left for AV2-3.5, not forgotten: the
+"Continue with Apple" button the shared landing screen still renders on Android,
+and the four deep-link filters, which stay on `MainActivity` until there is one
+door left to move them to. And read Q6 before planning any side-by-side install
+test — the two flavours share an `applicationId` and cannot coexist.
+
+---
+
 ## S008 — 2026-09-05 — AV2-3.2 "Real actuals, batch A"
 **Outcome:** PARTIAL → Review (two acceptance criteria need hardware)
 **Gate:** GREEN both ends

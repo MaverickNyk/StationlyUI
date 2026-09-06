@@ -32,6 +32,13 @@
              guarantees one instance in one task; every launch is funnelled through
              onNewIntent (already implemented) so the nav state is never duplicated
              or lost. -->
+        <!-- The four `stationly://` intent-filters below carry
+             `${deepLinkScheme}`, not a literal. Prod resolves it to
+             `stationly`; staging to `stationly-staging`, so the two builds
+             cannot answer for each other's links. The same value reaches the
+             code as `BuildConfig.DEEP_LINK_SCHEME` — see `deepLinkScheme()` in
+             build.gradle.kts, and `handleDeepLink` below, which must agree with
+             this filter or the link arrives and is silently dropped. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -46,25 +53,25 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="stationly" android:host="auth" />
+                <data android:scheme="${deepLinkScheme}" android:host="auth" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="stationly" android:host="reset" />
+                <data android:scheme="${deepLinkScheme}" android:host="reset" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="stationly" android:host="home" />
+                <data android:scheme="${deepLinkScheme}" android:host="home" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="stationly" android:host="verified" />
+                <data android:scheme="${deepLinkScheme}" android:host="verified" />
             </intent-filter>
         </activity>
 
