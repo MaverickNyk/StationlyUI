@@ -161,11 +161,16 @@ Already real and ship-ready: `ComposeResourcesCheck.kt` (`true`, correct),
 `ui/common/PlatformWebView.android.kt` (112L, a real WebView),
 `ui/sdui/SduiSmartImage.android.kt` (Coil `AsyncImage`).
 
-Real but **incomplete**: `AndroidPlatformAuthProvider.kt` (104L) —
-`signInWithGoogleInteractive()` returns a failure carrying the string
-*"Use the Google Sign-In button to continue."*, which is v1's flow talking. The
-shared `LoginScreen` calls the interactive path. `signInWithAppleInteractive()`
-correctly stays unavailable on Android.
+`AndroidPlatformAuthProvider.kt` — **complete since AV2-3.4.**
+`signInWithGoogleInteractive()` runs the real chooser (legacy `GoogleSignIn`, the
+same client and web client id v1 uses, launched through the Activity's
+`ActivityResultRegistry` because the caller is a suspend function and not a
+composable) and hands the ID token to the existing Firebase exchange. Sign-out
+now also signs the Google client out, as v1 does, or the next
+"Continue with Google" silently reuses the cached account.
+`signInWithAppleInteractive()` correctly stays unavailable on Android — but note
+the shared landing screen still *renders* an Apple button there; hiding it is a
+`commonMain` change, left to AV2-3.5.
 
 ### 3.3 The app host — `:android:app`
 
@@ -174,10 +179,10 @@ correctly stays unavailable on Android.
 | Hosting `App(authProvider, startLoggedIn, deepLinkOobCode)` | `SHARED` on staging | AV2-3.1. `V2MainActivity` (`android/app/src/staging/`) is the Android half of that signature. Staging only, a second launcher; `MainActivity` is still the shipped app. |
 | `:android:app` → `:composeApp` dependency | `SHARED` on staging | AV2-3.1, via `"stagingImplementation"`. **Not `implementation`:** it moves Compose 1.7.0 → 1.8.0 and material3 1.3.0 → 1.3.2 for whatever flavour it is on, and `navigation-compose:2.8.0` is pinned to Compose 1.7. AV2-3.5 promotes it alongside deleting the v1 nav stack. Side effect to know: **v1's screens on a staging build now run on Compose 1.8.0.** |
 | Navigation | `DIVERGENT` | `MainActivity.kt` (443L) owns an AndroidX `NavHost` with 9 destinations. `AppNavigation.kt` in `:composeApp` replaces it. The `singleTask` + `onNewIntent` reasoning in the manifest comment is load-bearing — carried over to `V2MainActivity` in AV2-3.1, which additionally takes its own `taskAffinity` so the two doors cannot clear each other's back stacks. **Open:** shared `AppNavigation` derives `startDestination` from a plain `val`, so a restore after process death can root a saved back stack on the wrong destination — v1's shipped blank screen. AV2-3.1 saved `startLoggedIn` host-side; the `isEmailProvider()`/`isEmailVerified()` branch is still recomputed. Needs `rememberSaveable` in `commonMain` — AV2-3.5. |
-| Deep links | `DIVERGENT` | Manifest hardcodes `scheme="stationly"` for `auth`/`reset`/`home`/`verified`. iOS learned the hard way that the scheme must be per-environment. See [`ios-deeplink-scheme-per-env`]. Staging needs `stationly-staging` via a flavor manifest. |
+| Deep links | `SHARED` | **AV2-3.4.** The scheme is per-flavour — `stationly` on prod, `stationly-staging` on staging — declared once by `deepLinkScheme(...)` in `build.gradle.kts`, which sets both the manifest's `${deepLinkScheme}` placeholder **and** `BuildConfig.DEEP_LINK_SCHEME`. That pairing is the point: what the app registers and what it accepts cannot disagree, which is the failure iOS shipped (see [`ios-deeplink-scheme-per-env`]). `MainActivity.handleDeepLink` now runs on `core`'s `parseDeepLink`; `FcmMessagingService` builds its `://home?station=` link from the same constant. The four filters deliberately stay on `MainActivity` until AV2-3.5 — two activities advertising one scheme means a disambiguation dialog on every tap. |
 | Splash, edge-to-edge, staging banner, theme | `DIVERGENT` | v1 has `Theme.Stationly.Splash`, `enableEdgeToEdge()`, `StagingBanner.kt`. `:composeApp` has its own `StationlyThemeHost`. Reconcile, do not run both. |
 | Typography | `DIVERGENT` | v1 uses downloadable Google Fonts (`ui-text-google-fonts`, Inter Tight, `font_certs.xml`); `:composeApp` uses `compose.components.resources`. Two font pipelines in one app is a bug waiting to happen. |
-| Interactive Google Sign-In | `ABSENT` | See §3.2. `play-services-auth` is already a dependency of both modules. |
+| Interactive Google Sign-In | `SHARED` | **AV2-3.4**, verified on a Pixel 7 Pro. See §3.2. The host passes `R.string.default_web_client_id` in rather than `:composeApp` looking it up by name — a name-only reference becomes an unused resource once AV2-3.5 deletes `FirebaseAuthManager`, and `shrinkResources` would strip it, breaking release builds only. |
 | `Platform.initialize` before first composition | `SHARED` | `StationlyApplication.onCreate` already does it. Keep it. Guarded by `V2HostManifestTest`: a staging `<application android:name>` would silently replace the class and is now a test failure. |
 
 ### 3.4 The data plane — where Android is *stronger* than iOS

@@ -17,9 +17,11 @@ import com.stationly.core.repository.UserSyncRepository
 import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class LoginViewModel(
@@ -266,16 +268,16 @@ class LoginViewModel(
                                     .onFailure { runCatching { authProvider.sendEmailVerification() } }
                             }
                             _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                            onNeedsEmailVerification()
+                            navigateIfLive(onNeedsEmailVerification)
                             return@fold
                         }
                         if (syncUserAndSetupData(provider = "email")) {
                             _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                            onSuccess()
+                            navigateIfLive(onSuccess)
                         }
                     } else {
                         _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                        onSuccess()
+                        navigateIfLive(onSuccess)
                     }
                 },
                 onFailure = { e ->
@@ -295,7 +297,7 @@ class LoginViewModel(
                 onSuccess = {
                     if (syncUserAndSetupData(provider = "google")) {
                         _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                        onSuccess()
+                        navigateIfLive(onSuccess)
                     }
                 },
                 onFailure = { e ->
@@ -315,7 +317,7 @@ class LoginViewModel(
                 onSuccess = {
                     if (syncUserAndSetupData(provider = "google")) {
                         _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                        onSuccess()
+                        navigateIfLive(onSuccess)
                     }
                 },
                 onFailure = { e ->
@@ -335,7 +337,7 @@ class LoginViewModel(
                 onSuccess = {
                     if (syncUserAndSetupData(provider = "apple")) {
                         _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                        onSuccess()
+                        navigateIfLive(onSuccess)
                     }
                 },
                 onFailure = { e ->
@@ -532,7 +534,7 @@ class LoginViewModel(
                         isAuthenticating = false, passwordResetConfirmed = true,
                         resetOobCode = null, inputs = emptyMap()
                     )
-                    onSuccess()
+                    navigateIfLive(onSuccess)
                 },
                 onFailure = { e ->
                     val msg = when {
@@ -561,6 +563,37 @@ class LoginViewModel(
      * true, while "Something went wrong" tells a user nothing they had not
      * already worked out.
      */
+    /**
+     * Run a navigation callback, unless this coroutine has already been
+     * cancelled — which on Android means the screen it would navigate is gone.
+     *
+     * ## The crash this exists to stop
+     * Observed on a Pixel 7 Pro, 2026-09-06, backing out of the shared login
+     * screen while "Signing you in…" was up. Interactive Google sign-in leaves
+     * the app for the account chooser and can take several seconds; press back
+     * in that window and the host Activity is destroyed, which clears the
+     * NavController's `ViewModelStore`, which cancels `viewModelScope`. The
+     * sign-in itself had already succeeded, so its final resumption was sitting
+     * on the dispatcher queue — and cancelling drains that queue, running the
+     * rest of this coroutine synchronously *inside* Activity destruction.
+     * Cancellation is only observed at suspension points, and there are none
+     * left after the last `await`, so the callback fired into a dead NavHost:
+     *
+     *     java.lang.IllegalStateException: State must be at least 'CREATED' to
+     *     be moved to 'DESTROYED' … destination=Destination route=summary
+     *         at NavController.navigate(NavController.android.kt:1003)
+     *         at LoginViewModel${'$'}onGoogleSignInInteractive${'$'}1.invokeSuspend
+     *
+     * The app died and relaunched already signed in, which is a good disguise
+     * for a crash on the primary sign-in path.
+     *
+     * iOS is unaffected either way: nothing there destroys the view model
+     * mid-flow, so `isActive` is true and this is the call it always was.
+     */
+    private fun CoroutineScope.navigateIfLive(go: () -> Unit) {
+        if (isActive) go()
+    }
+
     private fun friendlyAuthError(raw: String): String = when {
         raw.containsAny("wrong-password", "invalid-credential", "INVALID_LOGIN_CREDENTIALS") ->
             strings.wrongPassword
@@ -596,7 +629,7 @@ class LoginViewModel(
             if (authProvider.isEmailVerified()) {
                 if (syncUserAndSetupData(provider = "email")) {
                     _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                    onAuthSuccess()
+                    navigateIfLive(onAuthSuccess)
                 }
             } else {
                 _uiState.value = _uiState.value.copy(
@@ -618,7 +651,7 @@ class LoginViewModel(
             if (authProvider.isEmailVerified()) {
                 if (syncUserAndSetupData(provider = "email")) {
                     _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                    onAuthSuccess()
+                    navigateIfLive(onAuthSuccess)
                 }
             }
         }

@@ -9,26 +9,29 @@
 ```
 SPRINT:            2 — host cutover  (sprint 1 complete: EPIC-01 + EPIC-02)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S008 (2026-09-05) — AV2-3.2 real actuals, batch A
+LAST SESSION:      S009 (2026-09-06) — AV2-3.4 auth and deep links · FIRST SESSION
+                   WITH A DEVICE (Pixel 7 Pro), which also closed the on-device
+                   criteria AV2-3.1 and AV2-3.2 were held in Review for
 GATE:              GREEN
                    :core:testDebugUnitTest                  PASS  (403 tests)
                    :core:verify…DatabaseMigration           PASS  (catches .sq/.sqm drift)
-                   :composeApp:testDebugUnitTest            PASS  (52 tests, +7 androidUnitTest)
-                   :android:app:testStagingDebugUnitTest    PASS  (12 tests, +3 storage contract)
-                   :android:app:compileStagingDebugKotlin   PASS
+                   :composeApp:testDebugUnitTest            PASS  (52 tests)
+                   :android:app:testStagingDebugUnitTest    PASS  (17 tests, +5 deep-link scheme)
+                   :android:app:compileStaging/ProdDebugKotlin  PASS
                    :composeApp:compileDebugKotlinAndroid    PASS
-                   :android:app:assembleStaging/ProdDebug   PASS  (S007; prod APK carries
-                                                            0 shared-UI classes, staging 326)
-                   :composeApp:assembleComposeAppDebugXCFramework  n/a (commonMain untouched
-                                                            by S007 and S008)
+                   :composeApp:assembleComposeAppDebugXCFramework  PASS  (commonMain
+                                                            CHANGED this session — see S009)
 WORKING TREE:      clean
 BLOCKED ON OWNER:  Q3 blocks EPIC-06 · Q4 keeps :android:app out of CI
                    Q5 iOS testers need telling before this reaches TestFlight
-                   AV2-3.1 + AV2-3.2 in Review: both need the SAME on-device
-                   pass (no Android device has been attached) — see the epic
-NEXT UP:           AV2-3.3 and AV2-3.4 are both Ready and INDEPENDENT of each
-                   other. 3.4 is the one a tester notices: sign-in from the
-                   shared LoginScreen does not work at all today.
+                   Q6 (NEW) both flavours share one applicationId, so they
+                   cannot be installed side by side — AV2-3.4 criterion 3 is
+                   unreachable, not merely unverified
+                   AV2-3.1 in Review with ONE half failing, and not its fault:
+                   v2-written state crashes v1's summary on launch. Read the
+                   finding in the epic before signing anything off.
+NEXT UP:           AV2-3.3 is the only Ready story and the last one before the
+                   cutover. AV2-3.5 unblocks once it lands.
 ```
 
 ---
@@ -65,7 +68,6 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 | Story | Epic | Title | Size |
 |---|---|---|---|
 | AV2-3.3 | 03 | Real actuals, batch B | M |
-| AV2-3.4 | 03 | Auth and deep links | M |
 
 ### 🅘 In Progress — WIP limit 2
 
@@ -77,8 +79,9 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Session | What to look at |
 |---|---|---|
-| AV2-3.2 | S008 | Same device pass as AV2-3.1, two extra checks. Toggle airplane mode with a board open → the offline banner should appear and clear. And confirm a v1 install opening the shared UI keeps **one** entry in the account's device list, not two — a second entry means the device id was reissued, which is the failure this story exists to prevent. |
-| AV2-3.1 | S007 | Install a staging debug build. There are now **two** launcher icons. Open **Stationly v2** → the shared UI should reach login or summary and navigate. Then open **Stationly Staging** → v1 must still work (it now runs on Compose 1.8; see the handoff). Prod is untouched and proven so at the dependency graph and the merged manifest. |
+| AV2-3.4 | S009 | All three tasks done and the first two criteria **verified on hardware**: Google sign-in completes from the shared landing screen, and `stationly://` no longer resolves on a staging build while `stationly-staging://` does. Criterion 3 is unreachable (Q6). Two things to read rather than re-test: the **crash** found by backing out of a slow sign-in (fixed, in `commonMain` — one guard, nine call sites), and the still-visible **"Continue with Apple"** button on Android, deliberately left for AV2-3.5. |
+| AV2-3.2 | S008 · device pass S009 | Both criteria now **verified on a Pixel 7 Pro** and the epic updated. One correction worth reading: there is no offline *banner* over a live board and there should not be — `computeBoardFallbackState` short-circuits on `hasPredictions`, so a board with cached departures keeps ticking. The offline surface is the cold-start "Can't reach servers", and it appeared. Device id held one value across a crash, force-stops, an update install and a sign-out. |
+| AV2-3.1 | S007 · device pass S009 | **Half passes, half fails, and the failure is not this story's.** Two launcher icons; **Stationly v2** opens the shared UI, signs in and navigates. **Stationly Staging** (v1) now *crashes on launch* on any account that has opened v2 — duplicate LazyColumn key, because the v2 board model keeps one selection per direction and v1's keys by station+line. Read that finding before signing off; it is a trap set for AV2-8.2. Prod remains untouched and proven so at the dependency graph and the merged manifest. |
 
 ### 🅧 Blocked
 
@@ -110,6 +113,7 @@ Do not block on these unless a story names one as a dependency. Log and continue
 | Q5 | **iOS TestFlight testers must delete and reinstall once** when the schema-version bump ships. Their databases are stamped version 1 but already hold the v2 schema, so `1.sqm` refuses to run on them (safely — see MIGRATION.md §1.4b). Standing iOS policy already says wipe-on-schema-change and boards restore from the cloud, but these are live testers. Tell them, or hold the bump until the next TestFlight build? | S004 | iOS TestFlight | OPEN |
 | Q4 | Add `GOOGLE_SERVICES_STAGING_B64` as a repo secret so CI can compile and test `:android:app`? The file is gitignored, so CI skips those steps today and says so with a warning annotation. | S001 | `:android:app` coverage in CI | OPEN |
 | Q3 | Does Daydream survive into v2? It is deprecated on newer Android, v1 ships it, and users may rely on it. Two sessions ride on the answer. | S000 | **EPIC-06 entirely** | OPEN |
+| Q6 | Should staging get its own `applicationId` (e.g. `com.stationly.mobile.staging`)? Today both flavours are `com.stationly.mobile`, so staging and prod **cannot be installed side by side** — which is why AV2-3.4's third criterion is unreachable rather than unverified. Not a build-file change: the google-services plugin fails unless that exact package is registered as an Android app in the staging Firebase project, and Google sign-in additionally needs the (package, SHA-1) pair registered there. Owner-side console work. iOS already did this split (`com.stationly.mobile.staging`). | S009 | AV2-3.4 criterion 3 · AV2-8.2 side-by-side testing | OPEN |
 
 ---
 
@@ -139,7 +143,7 @@ the users, 03 is the foundation 04 builds on.
 |---|---|---|---|---|
 | 01 Safety net | 3 | **3** ✅ | 9 | **9** |
 | 02 Database | 3 | **3** ✅ | 11 | **11** |
-| 03 Host cutover | 5 | 0 (2 in review) | 21 | 0 |
+| 03 Host cutover | 5 | 0 (3 in review) | 21 | 0 |
 | 04 Data plane | 4 | 0 | 18 | 0 |
 | 05 Widget | 4 | 0 | 16 | 0 |
 | 06 Dream | 2 | 0 | 6 | 0 |

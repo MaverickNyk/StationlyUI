@@ -14,12 +14,14 @@ import javax.xml.parsers.DocumentBuilderFactory
  * everything that keeps it safe is an attribute in a manifest rather than a
  * line of Kotlin. Nothing else in the build would notice these going wrong:
  * moving the activity into `src/main` still compiles, dropping `singleTask`
- * still compiles, and adding a `stationly://` filter still compiles. Each one
- * changes what the shipped app does.
+ * still compiles, adding a `stationly://` filter still compiles, and writing a
+ * scheme out as a literal still compiles. Each one changes what the shipped app
+ * does.
  *
  * So this test reads the manifests as files. It is not testing Android; it is
- * testing four decisions that AV2-3.1 took and that AV2-3.5 is allowed to undo
- * — deliberately, by editing this test — but that nothing else should.
+ * testing the manifest decisions AV2-3.1 and AV2-3.4 took, which AV2-3.5 is
+ * allowed to undo — deliberately, by editing this test — but that nothing else
+ * should.
  */
 class V2HostManifestTest {
 
@@ -43,17 +45,35 @@ class V2HostManifestTest {
         val v1 = mainManifest.activity(".MainActivity")
         assertTrue("v1 must stay a launcher until AV2-3.5", v1.isLauncher())
         assertEquals(
-            "AV2-3.4 moves these; until then every stationly:// link lands on v1.",
+            "AV2-3.4 made the scheme per-flavour but deliberately left the four " +
+                "filters here; AV2-3.5 moves them, when there is one door left.",
             listOf("auth", "reset", "home", "verified"),
             v1.deepLinkHosts(),
         )
     }
 
     @Test
+    fun `no manifest pins one environment's scheme`() {
+        // `${deepLinkScheme}` resolves to `stationly` for prod and
+        // `stationly-staging` for staging, from a single argument in
+        // build.gradle.kts that also sets BuildConfig.DEEP_LINK_SCHEME. A
+        // literal here would register one environment's scheme in both builds —
+        // and installing either would then answer for the other's links.
+        // `DeepLinkSchemeTest` holds the code half of the same contract.
+        listOf(mainManifest, stagingManifest).forEach { m ->
+            assertEquals(
+                emptyList<String>(),
+                m.deepLinkSchemes().filterNot { it == "\${deepLinkScheme}" },
+            )
+        }
+    }
+
+    @Test
     fun `the v2 host advertises no deep link scheme`() {
-        // Two activities advertising `stationly://` would put a disambiguation
+        // Two activities advertising one scheme would put a disambiguation
         // dialog in front of the user on every link tap, on a build that exists
-        // to be tested by hand.
+        // to be tested by hand. So the second door is reached with `am start -n`
+        // instead — see V2MainActivity.
         assertEquals(emptyList<String>(), stagingManifest.activity(".v2.V2MainActivity").deepLinkHosts())
     }
 
@@ -128,9 +148,13 @@ class V2HostManifestTest {
     }
 
     /** The `android:host` of every `<data>` element under this activity, in order. */
-    private fun Element.deepLinkHosts(): List<String> =
+    private fun Element.deepLinkHosts(): List<String> = dataElements().mapNotNull { it.getAttr("host") }
+
+    /** The `android:scheme` of every `<data>` element anywhere in this manifest. */
+    private fun Element.deepLinkSchemes(): List<String> = dataElements().mapNotNull { it.getAttr("scheme") }
+
+    private fun Element.dataElements(): List<Element> =
         intentFilters().flatMap { it.getElementsByTagName("data").asList() }
-            .mapNotNull { it.getAttr("host") }
 
     private fun NodeList.asList(): List<Element> =
         (0 until length).mapNotNull { item(it) as? Element }

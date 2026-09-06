@@ -19,6 +19,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.stationly.core.model.deeplink.DeepLinkRoute
+import com.stationly.core.model.deeplink.parseDeepLink
 import com.stationly.mobile.ui.common.StagingBanner
 import com.stationly.mobile.ui.common.rememberFirebaseAuthState
 import com.stationly.mobile.ui.selection.SelectionScreen
@@ -79,19 +81,37 @@ class MainActivity : ComponentActivity() {
         com.stationly.mobile.service.UserSyncCoordinator.reconcile(this)
     }
 
+    /**
+     * Route an inbound link, against the scheme THIS build answers to.
+     *
+     * The routing itself moved to `core` as [parseDeepLink]; this is the four
+     * lines that turn a route into Compose state. Two reasons it is not a
+     * `when` over `uri.scheme` any more:
+     *
+     * 1. **The scheme is per-flavour now.** Prod answers `stationly://`,
+     *    staging `stationly-staging://`. The literal that used to be here,
+     *    repeated four times, would have matched neither on staging: the link
+     *    would arrive (the manifest filter uses the same placeholder) and be
+     *    dropped here, silently. That is not a hypothetical — it is exactly the
+     *    bug iOS shipped, and it cost two days because nothing errors and taps
+     *    simply do nothing. `BuildConfig.DEEP_LINK_SCHEME` and the manifest's
+     *    `${deepLinkScheme}` are set from one argument in build.gradle.kts, so
+     *    what we register and what we accept cannot disagree.
+     * 2. There are two hosts during the cutover and three implementations
+     *    across platforms. One table, in `core`, tested against the recorded v1
+     *    behaviour in `docs/android-v2/fixtures/v1/deeplinks.json`.
+     */
     private fun handleDeepLink(intent: Intent?) {
         val uri = intent?.data ?: return
-        when {
-            uri.scheme == "stationly" && uri.host == "auth"  -> passwordResetComplete.value = true
-            uri.scheme == "stationly" && uri.host == "home"  -> { /* just opens the app — no-op */ }
-            uri.scheme == "stationly" && uri.host == "verified" -> {
-                val code = uri.getQueryParameter("oobCode")
-                if (!code.isNullOrBlank()) pendingVerifyOobCode.value = code
-            }
-            uri.scheme == "stationly" && uri.host == "reset" -> {
-                val code = uri.getQueryParameter("oobCode")
-                if (!code.isNullOrBlank()) pendingResetOobCode.value = code
-            }
+        when (val route = parseDeepLink(uri.toString(), BuildConfig.DEEP_LINK_SCHEME)) {
+            is DeepLinkRoute.PasswordResetComplete -> passwordResetComplete.value = true
+            is DeepLinkRoute.Home                  -> { /* just opens the app — no-op */ }
+            is DeepLinkRoute.VerifyEmail           -> pendingVerifyOobCode.value = route.oobCode
+            is DeepLinkRoute.ResetPassword         -> pendingResetOobCode.value = route.oobCode
+            // Includes a known host arriving WITHOUT its code: v1 checked
+            // isNullOrBlank and did nothing rather than opening a reset screen
+            // that cannot complete. `parseDeepLink` keeps that.
+            is DeepLinkRoute.Unhandled             -> Unit
         }
     }
 }

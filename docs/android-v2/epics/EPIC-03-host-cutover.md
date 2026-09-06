@@ -44,10 +44,11 @@ implementations of the same thing.
 - `rememberSaveable` versus `remember` for nav state, for the same reason.
 
 ### Acceptance criteria
-- [ ] A staging build opens the shared UI and can navigate. **Needs hardware.**
-      `assembleStagingDebug` links and packages, but no device was attached this
-      session. This is the one thing S007 could not check, and it is why the
-      story is in Review rather than Done.
+- [x] A staging build opens the shared UI and can navigate. **Verified on a
+      Pixel 7 Pro, S009 (2026-09-06)** — the hardware S007 could not get. Two
+      launcher icons; **Stationly v2** opens the shared landing, signs in, and
+      navigates login → summary → home settings → profile → back. Screenshots in
+      the S009 session note.
 - [x] A prod build is byte-for-byte unaffected in behaviour. Proven three ways,
       the last of which is the one that settles it — in the **packaged APK**:
 
@@ -150,6 +151,44 @@ adb shell am start -n com.stationly.mobile/.v2.V2MainActivity \
 icon (there are now two), and check it reaches the login or summary screen and
 navigates. Then open **Stationly Staging** and confirm the v1 app still works.
 
+**S009 · 2026-09-06 · both halves run on hardware. The first passes. The second
+does not, and it is not the host's fault** — see the finding.
+
+### Finding — v2 writes user state that crashes v1 on launch
+
+Once an account has been used in the v2 UI, opening the **Stationly Staging**
+(v1) icon dies before it draws:
+
+```
+java.lang.IllegalArgumentException: Key "940GZZLUKSX_piccadilly" was already
+used. If you are using LazyColumn/Row please make sure you provide a unique key
+for each item.
+    at SummaryScreen.kt:229
+```
+
+`SummaryScreen.kt:229` is `items(currentSelections, key = { "${it.station}_${it.line}" })`.
+v1's model assumes one selection per (station, line). **The v2 board model does
+not** — it keeps one selection per direction, so King's Cross St. Pancras with
+Piccadilly westbound *and* eastbound is two rows with one key. The v2 summary
+renders both happily, side by side (Platform 6 → Cockfosters, Platform 5 →
+Heathrow); v1 throws on the duplicate.
+
+Not caused by AV2-3.4: it reproduces on a plain `am start -n …/.MainActivity`
+with no deep link, and nothing in this story touches selections.
+
+**What it does and does not threaten.** It is not a prod risk today — prod ships
+one UI, and AV2-3.5 deletes v1's summary in the same change that promotes the
+shared one, so no shipped build ever has both. It *is*:
+- a blocker for this story's second reviewer instruction, which cannot pass on
+  any account that has opened v2;
+- a live trap for AV2-8.2 (upgrade verification on hardware), which will hit it
+  the moment it signs one account into both;
+- a reason to be careful about ever shipping the two doors together.
+
+**Not yet established:** whether a v1 install restoring this account *from the
+cloud* crashes the same way, or only one whose local DB was written by v2. The
+cloud path is the one that matters for AV2-8.2. Test it there.
+
 ---
 
 ## AV2-3.2 — Real actuals, batch A · `L` · Review (S008)
@@ -183,16 +222,29 @@ session survived a reinstall while the device id did not, leaving ghost sessions
 that logout could never release.
 
 ### Acceptance criteria
-- [ ] The offline banner appears when the device goes offline. **Needs
-      hardware**, same device check AV2-3.1 is waiting on. The flow is real:
-      `registerDefaultNetworkCallback`, an emission before registration so a
-      device that is simply online is not left silent, and `distinctUntilChanged`
-      over a callback that fires on signal strength and metering too.
-- [ ] `DeviceIdentity.deviceId()` is stable across process death. **Needs
-      hardware** to observe, but the mechanism it depends on is checked here:
-      `V1V2StorageContractTest` asserts it reads the same preferences file and
-      key the shipped app already writes, and the write is `commit()` rather
-      than `apply()`.
+- [x] The offline banner appears when the device goes offline. **Verified on a
+      Pixel 7 Pro, S009 (2026-09-06)**, with one correction to the wording — see
+      below. The flow is real: `registerDefaultNetworkCallback`, an emission
+      before registration so a device that is simply online is not left silent,
+      and `distinctUntilChanged` over a callback that fires on signal strength
+      and metering too.
+
+      **There is no banner over a live board, by design.** Launching with no
+      network gives the full-screen "Can't reach servers"; that is the offline
+      surface and it appeared correctly, driven by real connectivity (the device
+      arrived with WiFi enabled but joined to nothing). Toggling airplane mode
+      with a board already open shows **nothing**, and that is right:
+      `computeBoardFallbackState` returns `null` on `hasPredictions` *before* it
+      tests `isOnline`, so a board with cached departures keeps rendering and
+      ticking rather than being covered by a warning. `OFFLINE` is a board
+      fallback, not a banner. Reword the criterion rather than "fixing" this.
+- [x] `DeviceIdentity.deviceId()` is stable across process death. **Verified on
+      a Pixel 7 Pro, S009.** `shared_prefs/StationlyDevice.xml` held
+      `e46dce7d-e669-4864-8eef-34aebc58795d` unchanged across a crash, several
+      `am force-stop`s, an update install, and a full sign-out — read back with
+      `run-as`. The mechanism is also checked statically by
+      `V1V2StorageContractTest`: same preferences file, same key the shipped app
+      writes, and `commit()` rather than `apply()`.
 - [x] `GAP_ANALYSIS.md` §3.2 updated: four rows leave the stub table.
 
 ### Handoff notes
@@ -288,17 +340,17 @@ _(none yet)_
 
 ---
 
-## AV2-3.4 — Auth and deep links · `M` · Backlog
+## AV2-3.4 — Auth and deep links · `M` · Review (S009)
 
 **Depends on:** AV2-3.2 **Files:** `AndroidPlatformAuthProvider.kt`, `AndroidManifest.xml`, flavour manifests
 
 ### Tasks
-- [ ] **a.** Implement `signInWithGoogleInteractive()`. It currently returns a
+- [x] **a.** Implement `signInWithGoogleInteractive()`. It currently returns a
       failure carrying the string *"Use the Google Sign-In button to continue."* —
       v1's flow talking about a button the shared `LoginScreen` does not have.
       `play-services-auth` is already a dependency of both modules.
-- [ ] **b.** Leave `signInWithAppleInteractive()` unavailable. Correct on Android.
-- [ ] **c.** Per-flavour deep-link scheme: `stationly` for prod,
+- [x] **b.** Leave `signInWithAppleInteractive()` unavailable. Correct on Android.
+- [x] **c.** Per-flavour deep-link scheme: `stationly` for prod,
       `stationly-staging` for staging. The manifest hardcodes `stationly` on all
       four hosts (`auth`, `reset`, `home`, `verified`).
 
@@ -307,13 +359,146 @@ iOS shipped this exact bug: a hardcoded `"stationly"` in `onOpenURL` silently
 dropped **every** staging widget tap. Nothing errored; taps just did nothing.
 
 ### Acceptance criteria
-- [ ] Sign-in completes from the shared `LoginScreen`.
-- [ ] A `stationly-staging://` link opens the staging app, and a `stationly://`
-      link does not.
+- [x] Sign-in completes from the shared `LoginScreen`. **Verified on a Pixel 7
+      Pro** — chooser ("to continue to Stationly Staging") → account → summary
+      with live boards restored from the account.
+- [x] A `stationly-staging://` link opens the staging app, and a `stationly://`
+      link does not. **Verified on device**, both directions:
+      `am start -d "stationly://home"` → *"unable to resolve Intent"*;
+      `stationly-staging://home` → starts. `dumpsys package` lists
+      `stationly-staging` against all four filters and no `stationly` at all.
 - [ ] With both flavours installed, neither steals the other's links.
+      **Cannot be tested and does not currently apply** — both flavours share
+      `applicationId "com.stationly.mobile"`, so they cannot coexist on one
+      device. See the finding below; this is now Q6 for the owner.
 
 ### Handoff notes
-_(none yet)_
+
+**S009 · 2026-09-06 · Review.** Sign-in from the shared UI works, and the two
+environments can no longer answer for each other's links. Verified on hardware —
+a Pixel 7 Pro was attached for this session, which also closed out the device
+checks AV2-3.1 and AV2-3.2 had been waiting on.
+
+**One scheme literal per flavour, and it feeds both halves.** The bug this story
+exists to prevent needs *two* places to disagree: what the manifest registers,
+and what the code accepts. So `deepLinkScheme("stationly-staging")` in
+`build.gradle.kts` sets `manifestPlaceholders["deepLinkScheme"]` **and**
+`BuildConfig.DEEP_LINK_SCHEME` from one argument. Writing them separately is now
+the only way to get it wrong, and `DeepLinkSchemeTest` fails if you do.
+
+**Changing the manifest alone would have SHIPPED the iOS bug, not fixed it.**
+`MainActivity.handleDeepLink` compared `uri.scheme == "stationly"` at four call
+sites. Flip only the manifest and a staging build starts *receiving*
+`stationly-staging://reset?oobCode=…` and then silently drops every one of them
+— arriving, matching no branch, doing nothing. So `handleDeepLink` was rewritten
+onto `core`'s `parseDeepLink(url, BuildConfig.DEEP_LINK_SCHEME)`, which is what
+that function was extracted for in AV2-1.3. Same for the one link the app
+*builds*: `FcmMessagingService` hardcoded `"stationly://home?station=…"`.
+
+**The v2 door still advertises no scheme.** AV2-3.1's staging manifest comment
+said AV2-3.4 would move the filters onto `V2MainActivity`; it should not, and
+does not. Two activities advertising one scheme puts a disambiguation dialog in
+front of the user on every tap. `MainActivity` stays the deep-link owner until
+AV2-3.5 deletes it, and the v2 host is driven with `am start -n` (component
+named, so no filter has to match). Verified end to end anyway:
+
+```
+adb shell am start -n com.stationly.mobile/.v2.V2MainActivity \
+    -a android.intent.action.VIEW -d "stationly-staging://reset?oobCode=AV2TESTCODE"
+```
+lands on the shared "Set new password" screen with the code carried through.
+
+**Why the web client id is a constructor parameter.** `default_web_client_id` is
+generated into `:android:app` by the google-services plugin, per flavour;
+`:composeApp` cannot see that `R`. The obvious workaround —
+`resources.getIdentifier("default_web_client_id", …)` — is a trap that only
+springs later: the release build runs `shrinkResources`, and once AV2-3.5 deletes
+`FirebaseAuthManager` (today the only `R.string.default_web_client_id` reference)
+a string reached solely by name becomes an unused resource and is stripped.
+Google sign-in would then work in every debug build and fail only in release.
+Passing it in is a compile error instead.
+
+**The legacy `GoogleSignIn` API, not Credential Manager.** v1 signs in with
+exactly this client against exactly this web client id and the two must coexist
+until AV2-3.5. Same library means a tester comparing the two doors is comparing
+the doors. Migrating is worth its own story, once there is one login screen left.
+
+**Sign-out now signs the Google client out too.** v1 did
+(`FirebaseAuthManager.signOut`); the shared provider only called
+`auth.signOut()`. Without it the client keeps the last account cached and the
+next "Continue with Google" re-signs the *same* account with no chooser — "sign
+out, sign in as someone else" fails on a shared phone in a way that looks like
+the sign-out did not work. Confirmed on device:
+`shared_prefs/com.google.android.gms.signin.xml` goes to `<map />` on sign-out,
+and the chooser reappears on the next attempt.
+
+**Cancellation surfaces a message, unlike v1.** v1 swallowed status 12501 and
+left the screen silent. The shared `LoginViewModel` has no "failed, but say
+nothing" channel — every failure becomes `uiState.error` — and adding one means
+changing `commonMain`, which is iOS's shipped code. So Android now matches what
+iOS already does with an abandoned Apple sheet: "Sign-in was cancelled."
+
+### Scope note — three files outside the story's list, and why each had to be
+
+1. `MainActivity.kt` and `FcmMessagingService.kt`: see above. Without them task
+   (c) is not a fix, it is the iOS bug ported to Android.
+2. `LoginViewModel.kt` (`commonMain`, shared with iOS) — a **crash** found on
+   device. Detailed below, because it is the finding of this session.
+
+### Finding — backing out of a slow sign-in crashed the app
+
+Reproduced on a Pixel 7 Pro. Tap "Continue with Google", pick the account, then
+press back while "Signing you in…" is up (the backend restore takes several
+seconds):
+
+```
+java.lang.IllegalStateException: State must be at least 'CREATED' to be moved to
+'DESTROYED' … destination=Destination route=summary
+    at androidx.navigation.NavController.navigate(NavController.android.kt:1003)
+    at AppNavigationKt.AppNavigation$…$lambda$26(AppNavigation.kt:151)
+    at LoginViewModel$onGoogleSignInInteractive$1.invokeSuspend(LoginViewModel.kt:318)
+```
+
+The mechanism, because it is not obvious and it will recur:
+
+- Back destroys the host Activity, which clears the NavController's
+  `ViewModelStore`, which cancels `viewModelScope`.
+- The sign-in had **already succeeded**; its final resumption was sitting on the
+  dispatcher queue. Cancelling *drains* that queue, so the rest of the coroutine
+  ran synchronously **inside Activity destruction**.
+- Kotlin only observes cancellation at suspension points, and there are none
+  left after the last `await` — so the navigation callback fired into a dead
+  NavHost.
+
+The disguise is what makes it dangerous: the app died and relaunched **already
+signed in**, because Firebase had persisted the credential. It reads as a blink.
+
+Fixed with `navigateIfLive` — one private helper in `LoginViewModel`, applied to
+all nine navigation callbacks in that file, that skips the callback when the
+coroutine has been cancelled. iOS is unaffected in either direction: nothing
+there destroys the view model mid-flow, so `isActive` is true and it is the call
+it always was. Verified by re-running the exact sequence on device: no
+`FATAL EXCEPTION`, process alive, sign-in still completed.
+
+### Finding — the shared landing screen shows "Continue with Apple" on Android
+
+`LandingContent` renders `AppleButton` unconditionally, above the Google button.
+On Android its only outcome is "Sign in with Apple is not available on Android."
+Hiding it is a `commonMain` edit to a screen iOS ships, so it is **not** done
+here. AV2-3.5 owns the shared login surface; this should go with it. The failure
+message is at least written for a user rather than a developer.
+
+### Finding — the two flavours cannot be installed side by side
+
+Acceptance criterion 3 assumed they could. They share
+`applicationId "com.stationly.mobile"`; only `versionNameSuffix` differs.
+Giving staging an `applicationIdSuffix` is not a build-file change — the
+google-services plugin fails unless that exact package is registered as an
+Android app in the staging Firebase project, and Google sign-in additionally
+needs the (package, SHA-1) pair registered. That is owner-side console work.
+Raised as **Q6**. Until then the criterion is not merely unverified, it is not
+reachable — and the per-flavour scheme is still the right change, because the
+schemes must not collide the day the ids diverge.
 
 ---
 
