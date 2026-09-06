@@ -12,9 +12,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.stationly.app.platform.openSystemScreensaverSettings
 import com.stationly.app.ui.dream.DreamHost
 import com.stationly.app.ui.dream.DreamSettingsScreen
 import com.stationly.app.ui.summary.BoardFocus
@@ -32,13 +34,42 @@ import com.stationly.app.ui.summary.SummaryScreen
 fun AppNavigation(
     authProvider: PlatformAuthProvider,
     startLoggedIn: Boolean = false,
-    deepLinkOobCode: String? = null
+    deepLinkOobCode: String? = null,
+    /**
+     * Bumped by the host each time it has applied an email-verification code
+     * from a deep link, so the verify screen re-runs the check it already does
+     * on resume. Zero means "nothing applied" — see [emailVerifiedSignal] on
+     * the verify route below for why this is a counter and not a boolean.
+     */
+    emailVerifiedSignal: Int = 0,
+    /** A `…://auth` link landed: the user finished a password reset in email. */
+    showPasswordResetSuccess: Boolean = false,
+    onPasswordResetBannerShown: () -> Unit = {},
 ) {
     val navController = rememberNavController()
-    val startDestination = when {
-        !startLoggedIn -> "auth/login"
-        authProvider.isEmailProvider() && !authProvider.isEmailVerified() -> "auth/verify-email"
-        else -> "summary"
+
+    /**
+     * SAVED, not recomputed — and the saving has to be here rather than in the
+     * host, because two of the three branches ask the auth provider.
+     *
+     * A NavHost can only restore a saved back stack onto the same start
+     * destination it was built with. Recomputing after process death asks
+     * Firebase questions it may not have rehydrated: it answers "not verified",
+     * the start destination flips to `auth/verify-email`, and a stack rooted at
+     * `summary` has nowhere to land — a blank screen. Android shipped exactly
+     * that in v1 and fixed it with `rememberSaveable` around the same decision;
+     * the host's `startLoggedIn` covered the first branch only, and AV2-3.1
+     * logged the other two as still open. This closes them, for both platforms.
+     *
+     * Saving the STRING rather than the inputs is deliberate: it is the value
+     * the NavHost must see again, and re-deriving it is the bug.
+     */
+    val startDestination = rememberSaveable {
+        when {
+            !startLoggedIn -> "auth/login"
+            authProvider.isEmailProvider() && !authProvider.isEmailVerified() -> "auth/verify-email"
+            else -> "summary"
+        }
     }
 
     // Deep link: code passed directly from Swift on cold start
@@ -147,6 +178,8 @@ fun AppNavigation(
             LoginScreen(
                 screenType = "login",
                 authProvider = authProvider,
+                showPasswordResetSuccess = showPasswordResetSuccess,
+                onPasswordResetBannerShown = onPasswordResetBannerShown,
                 onNavigateToSummary = {
                     navController.navigate("summary") {
                         popUpTo("auth/login") { inclusive = true }
@@ -214,6 +247,11 @@ fun AppNavigation(
         composable("auth/verify-email") {
             com.stationly.app.ui.login.VerifyEmailScreen(
                 authProvider = authProvider,
+                // A COUNTER, not a boolean: the host can apply a second code
+                // (the user taps an older link, or the first one expired) and a
+                // boolean that is already true would not change, so the screen
+                // would never re-check. Zero is the resting value.
+                recheckSignal = emailVerifiedSignal.takeIf { it > 0 },
                 onVerified = {
                     navController.navigate("summary") {
                         popUpTo(0) { inclusive = true }
@@ -246,7 +284,13 @@ fun AppNavigation(
         composable("home/settings") {
             HomeSettingsScreen(
                 onBack = { navController.popBackStack() },
-                onOpenScreensaver = { navController.navigate("dream/settings") },
+                // Android's screensaver is a Daydream, bound by the OS and
+                // configured in system settings; the in-app screen would take
+                // the user's choices and drop them (EPIC-06). iOS has no system
+                // screensaver, answers false, and reaches the screen below.
+                onOpenScreensaver = {
+                    if (!openSystemScreensaverSettings()) navController.navigate("dream/settings")
+                },
                 onOpenWidgetGuide = { navController.navigate("widget-guide") },
                 // Pushed ON TOP of home settings rather than replacing it: the
                 // station list is where the user was, and back should return

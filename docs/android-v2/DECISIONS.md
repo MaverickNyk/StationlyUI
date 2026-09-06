@@ -96,3 +96,44 @@ put on a launch's critical path.
 **Open.** Q1 — Play Billing, or a charity/non-profit exemption for external
 checkout. Resolved separately, after launch. The surface ships off either way, so
 the answer does not gate v2.
+
+
+---
+
+## D5 — The host keeps the v1 class name; the shared UI moves into it
+**2026-09-06 · S011 (AV2-3.5)**
+
+At the cutover, `com.stationly.mobile.MainActivity` was rewritten to host
+`App()` rather than being deleted in favour of promoting `.v2.V2MainActivity`.
+
+**Why.** Home-screen pins and launcher shortcuts reference the *component name*,
+not the package. Promoting the v2 name and deleting the v1 one greys out the
+icon of every existing user who pinned Stationly to their home screen — with no
+error, no log line, and no recourse but re-adding it. The alternative was an
+`<activity-alias>`, which works and is one more indirection to explain forever.
+
+**Rules out.** Renaming or repackaging the launcher Activity, ever, while
+`versionCode 2` installs exist in the wild. `HostManifestTest` asserts the name.
+
+---
+
+## D6 — Apple sign-in is a platform capability, asked of the provider
+**2026-09-06 · S011 (AV2-3.5)**
+
+`PlatformAuthProvider.supportsAppleSignIn` is abstract, with no default, and the
+landing screen asks it before rendering the button.
+
+**Why.** The shared landing screen offered "Continue with Apple" on Android for
+as long as Android has run the shared UI, and the only outcome was an apology.
+It is a property of the platform's auth stack, not of the build, not of a
+compile-time `expect`/`actual`, and not of a config key — the provider is
+already the seam where "what can this platform's auth actually do" is answered.
+
+**No default, deliberately.** `= false` would let a third platform inherit "no
+Apple" silently, which is the same class of mistake in the other direction. A
+new platform has to answer.
+
+**Rules out.** Gating this on `BuildConfig`, on SDUI config, or on an
+`expect val`. Also rules out deleting `signInWithAppleInteractive` from the
+Android provider: a future screen that forgets to ask should find a failure
+carrying a sentence a user can read, not a `TODO()`.

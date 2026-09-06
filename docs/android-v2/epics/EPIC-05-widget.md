@@ -16,6 +16,15 @@ easier to honour, not optional.
 **Exit.** Two widgets on one home screen show two different stations, and the
 user can rebind either one without touching the home screen.
 
+**You also own a piece of v1 that AV2-3.5 could not delete.**
+`util/HomeConfigStore` and `util/ModeIconCache` survived the cutover for one
+reason each: `DepartureWidgetProvider` reads them. Everything else in
+`com.stationly.mobile.ui` that is still there is the Daydream's (EPIC-06). The
+shared UI has its own equivalents — `HomeConfigCache`, `ModeIconStore` — and
+`V1V2StorageContractTest` is the only thing holding the two mode-icon caches to
+the same directory and the same filename sanitisation. Retire the v1 halves in
+this epic, or say in the handoff why the widget still needs them.
+
 ---
 
 ## AV2-5.1 — Per-instance widget binding · `L` · Backlog

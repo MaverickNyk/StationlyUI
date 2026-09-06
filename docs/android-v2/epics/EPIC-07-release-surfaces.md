@@ -16,8 +16,25 @@ the money surface exists behind a flag nobody has turned on.
 `ReleasePolicy` already carries an `android: PlatformRelease` alongside `ios`, so
 the backend side is done. Only the client wiring is missing.
 
+> ### ⚠️ Read before planning: the gate is ALREADY LIVE on Android
+> AV2-3.5 made `App()` the whole Android app, and `App()` calls
+> `UpdateSurfaces()` at the root, unconditionally, above every screen. So task
+> (a) is not "wire it" — it is wired, it is reading whatever
+> `/release-policy` serves, and **it can already block the app**.
+>
+> That moves one sub-task to the front. `UpdateBlockedScreen` is opaque,
+> consumes every gesture, and offers exactly one action. If the backend's
+> `android` block carries an `itms-apps://` deep link — or an
+> `apps.apple.com` web URL — then that one action opens nothing on Android and
+> the user has no way past the screen at all. `rememberStoreOpener` falls back
+> from the deep link to the web URL only when the first *throws*; a handler
+> that returns having opened nothing is indistinguishable from success, and
+> the KDoc says so. Check what the backend actually serves for
+> `android.storeUrl` / `android.storeUrlWeb` before anything else here.
+
 ### Tasks
-- [ ] **a.** Wire `ReleaseGate` and `UpdateSurfaces` on Android.
+- [ ] **a.** ~~Wire~~ **Verify** `ReleaseGate` and `UpdateSurfaces` on Android —
+      the cutover wired them. Start with the store links above.
 - [ ] **b.** **Play In-App Updates** for the soft path — a flexible update the
       user can take without leaving the app. iOS links out to the App Store
       because it has no other option; Android does, and copying the link-out for
@@ -32,6 +49,8 @@ this ships, and it is the only lever that ends the `stations` dual-write.
 
 ### Acceptance criteria
 - [ ] A build below the floor is blocked and offers the update.
+- [ ] The update button on the blocking screen opens the **Play Store**, on a
+      device with Play and on one without.
 - [ ] A soft update completes without leaving the app.
 
 ### Handoff notes

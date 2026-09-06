@@ -230,18 +230,32 @@ private fun AppleButton(label: String, onClick: () -> Unit) {
  * SECONDARY to Apple. On dark themes, Google's dark-brand button (dark surface +
  * white text + colour "G") so it recedes below the white Apple primary; on light
  * themes the standard white button. The colour "G" is brand-fixed either way.
+ *
+ * [primary] promotes it to the primary treatment — taller, bold, lifted — for
+ * the platforms where there is no Apple button above it to recede below. On
+ * Android that is every launch: hiding Apple without this left a landing screen
+ * whose only sign-in action was styled to look like the lesser of two, so the
+ * eye landed on "other ways to sign in" instead. Geometry only; the container,
+ * text and "G" keep Google's brand colours in both states, which is what their
+ * guidelines actually constrain.
  */
 @Composable
-private fun GoogleButton(label: String, onClick: () -> Unit) {
+private fun GoogleButton(label: String, onClick: () -> Unit, primary: Boolean = false) {
     val isDark = isDarkTheme()
     SocialSignInButton(
         label = label,
         container = if (isDark) Color(0xFF1C1C1E) else Color.White,
         content = if (isDark) Color.White else Color(0xFF1F1F1F),
         onClick = onClick,
+        height = if (primary) 56.dp else 54.dp,
+        elevation = if (primary) 3.dp else 0.dp,
         border = androidx.compose.foundation.BorderStroke(
-            1.dp, if (isDark) Color.White.copy(0.14f) else Color(0xFF747775).copy(0.22f),
+            1.dp,
+            if (isDark) Color.White.copy(if (primary) 0.24f else 0.14f)
+            else Color(0xFF747775).copy(if (primary) 0.34f else 0.22f),
         ),
+        labelWeight = if (primary) FontWeight.Bold else FontWeight.SemiBold,
+        labelSize = if (primary) 16.sp else 15.sp,
     ) { _ ->
         androidx.compose.foundation.Image(imageVector = GoogleGLogo, contentDescription = null, modifier = Modifier.size(18.dp))
     }
@@ -518,7 +532,9 @@ private fun SduiFormContent(
         if (showPasswordResetSuccess) PasswordResetSuccessBanner(onPasswordResetBannerDismissed)
 
         if (googleBtn != null) {
-            GoogleButton(googleBtn.label) { onGoogle() }
+            // Named, not trailing: `primary` is the last parameter now, and a
+            // trailing lambda would bind to it.
+            GoogleButton(googleBtn.label, onClick = { onGoogle() })
             if (inputFields.isNotEmpty()) OrRow()
         }
 
@@ -714,7 +730,13 @@ private fun FormScreenContent(
 
 // ── Landing ────────────────────────────────────────────────────────────────────
 @Composable
-private fun LandingContent(onAppleClick: () -> Unit, onGoogleClick: () -> Unit, onEmailClick: () -> Unit, onRegisterClick: () -> Unit) {
+private fun LandingContent(
+    showApple: Boolean,
+    onAppleClick: () -> Unit,
+    onGoogleClick: () -> Unit,
+    onEmailClick: () -> Unit,
+    onRegisterClick: () -> Unit,
+) {
     var showMoreOptions by remember { mutableStateOf(false) }
     val chevronRotation by animateFloatAsState(if (showMoreOptions) 180f else 0f, label = "chevron")
 
@@ -735,9 +757,18 @@ private fun LandingContent(onAppleClick: () -> Unit, onGoogleClick: () -> Unit, 
         Spacer(Modifier.weight(0.55f))
         // Primary: Sign in with Apple (iOS-native first), then Google. Email +
         // "create account" stay tucked behind the "other ways" expander.
-        AppleButton("Continue with Apple", onAppleClick)
-        Spacer(Modifier.height(12.dp))
-        GoogleButton("Continue with Google", onGoogleClick)
+        //
+        // [showApple] is the platform's own answer (PlatformAuthProvider.
+        // supportsAppleSignIn), not a build flag: Apple's flow exists only on
+        // Apple platforms, so Android offered a button whose only outcome was
+        // "Sign in with Apple is not available on Android." Where it is absent,
+        // Google inherits the primary treatment rather than the screen being
+        // left with no primary action at all.
+        if (showApple) {
+            AppleButton("Continue with Apple", onAppleClick)
+            Spacer(Modifier.height(12.dp))
+        }
+        GoogleButton("Continue with Google", onGoogleClick, primary = !showApple)
         Spacer(Modifier.height(12.dp))
 
         OtherWaysToggle(expanded = showMoreOptions, chevronRotation = chevronRotation, onClick = { showMoreOptions = !showMoreOptions })
@@ -1023,15 +1054,19 @@ fun LoginScreen(
                         )
                     } else {
                         LandingContent(
+                            showApple = authProvider.supportsAppleSignIn,
                             onAppleClick = ::launchApple,
                             onGoogleClick = ::launchGoogle,
                             onEmailClick = {
                                 // A failed Apple/Google landing attempt leaves
                                 // uiState.error set; without clearing it here
-                                // the stale banner ("Sign in with Apple isn't
-                                // available...") rode along into the email
+                                // the stale banner rode along into the email
                                 // form and rendered before the user typed
-                                // anything.
+                                // anything. (The example that found this was
+                                // Android's "Sign in with Apple isn't
+                                // available" — a button that is no longer
+                                // shown there. A cancelled Google chooser
+                                // reproduces it on both platforms.)
                                 if (uiState.error != null) viewModel.clearError()
                                 showEmailForm = true
                             },

@@ -136,3 +136,12 @@ replace nine stub `actual`s with real ones, rebuild the widget for per-instance
 configuration, and write the database migration the `.sq` file already says
 Android owes. The risk is not in building the features. It is that the features
 arrive all at once on a live app whose database has never been migrated.
+
+**As of AV2-3.5 (S011) the first three of those are done.** `MainActivity` is
+`setContent { App(...) }`, `:composeApp` is a plain `implementation`, the nine
+placeholders are real, and v1's UI is deleted. What is left of
+`com.stationly.mobile` is the widget, the Daydream, the FCM/auth services, and
+the theme + util those three still import — so if you are looking for "the
+Android app's screens", they are in `composeApp/src/commonMain` and they are the
+same files iOS runs. The unmigrated-database risk is unchanged and still the
+one that reaches users who have had the app longest.

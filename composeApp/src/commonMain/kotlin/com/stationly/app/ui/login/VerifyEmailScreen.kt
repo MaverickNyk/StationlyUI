@@ -69,6 +69,20 @@ fun VerifyEmailScreen(
     authProvider: PlatformAuthProvider,
     onVerified: () -> Unit,
     onUseDifferentEmail: () -> Unit,
+    /**
+     * A new value here means "the account may have just become verified by
+     * something outside this screen — look again".
+     *
+     * Android's `…://verified?oobCode=…` link is applied by the HOST, using the
+     * Firebase SDK it already holds, because applying an action code is a
+     * platform call and iOS reaches Firebase through a Swift bridge instead.
+     * That leaves the host with an answer and no way to say so: the apply
+     * finishes while the Activity is already resumed, so the ON_RESUME poll
+     * below has been and gone. This is that missing edge.
+     *
+     * Null on iOS, where nothing applies codes behind the screen's back.
+     */
+    recheckSignal: Any? = null,
     viewModel: LoginViewModel = viewModel { LoginViewModel(authProvider) }
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -108,6 +122,13 @@ fun VerifyEmailScreen(
         if (elapsedSec in 0..cooldownSec) {
             resendCooldown = cooldownSec - elapsedSec
         }
+    }
+
+    // The host applied a verification code from a deep link. Same check the
+    // resume poll runs — it syncs, then navigates — so a link tapped while the
+    // app is already open lands on the summary rather than on this screen.
+    LaunchedEffect(recheckSignal) {
+        if (recheckSignal != null) viewModel.silentlyCheckEmailVerified(onVerified)
     }
 
     // Auto-detect verification when the user returns to the app from their email.

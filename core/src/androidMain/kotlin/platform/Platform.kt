@@ -112,7 +112,7 @@ class AndroidStorageManager(
 ) : StorageManager {
     
     private val prefs: SharedPreferences by lazy {
-        context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     }
     
     private val json = Json { ignoreUnknownKeys = true }
@@ -164,7 +164,7 @@ class AndroidStorageManager(
      * The direct mirror of iOS keeping these in the App Group suite.
      */
     private val durablePrefs by lazy {
-        context.getSharedPreferences("stationly_durable_prefs", android.content.Context.MODE_PRIVATE)
+        context.getSharedPreferences(DURABLE_PREFS, android.content.Context.MODE_PRIVATE)
     }
 
     override suspend fun saveDurable(key: String, value: String) {
@@ -175,6 +175,23 @@ class AndroidStorageManager(
 
     override suspend fun removeDurable(key: String) {
         durablePrefs.edit().remove(key).apply()
+    }
+
+    /**
+     * The two file names, named rather than spelled out at each use.
+     *
+     * They were four inline literals until AV2-3.5, which is fine right up
+     * until something OUTSIDE this class has to agree with one of them. Two
+     * things now do: the app's own `AppSettings` (`:android:app`), which reads
+     * the theme the shared UI writes, and `V1ThemeCarryOverTest`, which is the
+     * only thing that would notice either name drifting.
+     *
+     * `PREFS` in particular is the file the v1 Android app has been writing
+     * since launch. Renaming it does not migrate anything; it abandons it.
+     */
+    internal companion object {
+        const val PREFS = "StationlyPrefs"
+        const val DURABLE_PREFS = "stationly_durable_prefs"
     }
 }
 

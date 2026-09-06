@@ -41,3 +41,32 @@ expect suspend fun fetchMetNoForecast(lat: Double, lon: Double, userAgent: Strin
  * `CLLocationManager.location` is exactly that cached value on iOS.
  */
 expect fun lastKnownLatLon(): Pair<Double, Double>?
+
+/**
+ * Open the platform's OWN screensaver configuration, or return `false` when
+ * this platform configures the screensaver inside the app.
+ *
+ * ## Why this exists
+ * The shared home settings offer a "Screensaver" row, and until AV2-3.5 that
+ * was an iOS-only question: iOS has no system screensaver, so the row opens
+ * [DreamSettingsScreen][com.stationly.app.ui.dream.DreamSettingsScreen] and the
+ * app owns the whole feature.
+ *
+ * Android does not work that way, and the cutover made it matter. Android's
+ * screensaver is a **Daydream**, bound by the OS and configured in Settings →
+ * Display → Screen saver. `android/`'s `StationlyDreamService` is the real one,
+ * with real persistence in `StationlyDreamPrefs`, real keep-awake, and real
+ * weather. `composeApp`'s Android `actual`s for all of that are placeholders
+ * (EPIC-06, gated on Q3) — written when this target was a build-verification
+ * surface rather than the shipped app.
+ *
+ * So on Android the in-app screen would have taken the user's settings, put
+ * them in a map that dies with the process, and changed nothing about the
+ * screensaver they actually have. v1's home screen sent them to
+ * `ACTION_DREAM_SETTINGS` instead, which is the affordance that works, and this
+ * keeps that.
+ *
+ * Returns a Boolean rather than being a capability flag on its own so there is
+ * one call site and no way to check the flag and then forget to act on it.
+ */
+expect fun openSystemScreensaverSettings(): Boolean

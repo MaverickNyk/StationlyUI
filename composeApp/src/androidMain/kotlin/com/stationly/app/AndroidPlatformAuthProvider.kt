@@ -163,15 +163,25 @@ class AndroidPlatformAuthProvider(
     }
 
     /**
-     * Unavailable, and correct: Sign in with Apple needs an Apple-issued
-     * `ASAuthorization` flow that exists only on Apple platforms.
+     * No, and the landing screen no longer offers it.
      *
-     * **The landing screen still shows the button.** `LandingContent` in the
-     * shared `LoginScreen` renders "Continue with Apple" unconditionally, so on
-     * Android it is a button whose only outcome is this message. Hiding it is a
-     * `commonMain` edit to a screen iOS ships, which is outside this story —
-     * see the AV2-3.4 handoff note. Until then the message is written to be
-     * read by a user, not by a developer.
+     * Sign in with Apple needs an Apple-issued `ASAuthorization` flow that
+     * exists only on Apple platforms — there is no Android implementation to
+     * write, so this is a permanent answer rather than a stub.
+     *
+     * Until AV2-3.5 the shared `LandingContent` rendered "Continue with Apple"
+     * unconditionally, so Android showed a button whose only outcome was the
+     * apology below. It now asks this first.
+     */
+    override val supportsAppleSignIn: Boolean = false
+
+    /**
+     * Unreachable from the landing screen, and kept anyway.
+     *
+     * [supportsAppleSignIn] is what hides the button, and it is one boolean in
+     * one composable — a future screen that forgets to ask would otherwise get
+     * a `TODO()` or a silent no-op. A failure carrying a sentence a user can
+     * read is the safe thing to find at the bottom of that path.
      */
     override suspend fun signInWithAppleInteractive(): Result<String> =
         Result.failure(Exception("Sign in with Apple is not available on Android."))
@@ -252,6 +262,42 @@ class AndroidPlatformAuthProvider(
     override suspend fun reloadUser(): Result<Unit> = try {
         val user = auth.currentUser ?: throw IllegalStateException("Not signed in.")
         user.reload().await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /**
+     * Apply an `oobCode` from a `…://verified` deep link, then make the local
+     * user agree with the server about it.
+     *
+     * ## Why this is not on [PlatformAuthProvider]
+     * Only Android registers that link. iOS's verification mail opens Firebase's
+     * hosted page in Safari and the app finds out by polling on resume, so there
+     * is no iOS half to write — and widening the shared interface for one
+     * platform's link would mean a new Swift bridge command that nothing calls.
+     * The host holds this provider already, so an Android-only method on the
+     * Android class is the whole of the plumbing.
+     *
+     * ## The token refresh is not optional
+     * `applyActionCode` changes the account on Firebase's side; the cached user
+     * and the cached ID token both still say unverified. `reload()` fixes the
+     * first. `getIdToken(true)` fixes the second, and it is the one that matters
+     * to the backend: the next sync carries the claim, which is what releases
+     * the welcome email. v1 did both, in `LoginViewModel.applyVerificationCode`.
+     *
+     * A null user is not a failure. The app can be killed between signing up and
+     * tapping the link, in which case the apply still succeeded — the account is
+     * verified — and there is simply no session here to refresh. Reporting that
+     * as an error would put "this link is no longer valid" in front of someone
+     * whose link worked.
+     */
+    suspend fun applyEmailVerificationCode(oobCode: String): Result<Unit> = try {
+        auth.applyActionCode(oobCode).await()
+        auth.currentUser?.let { user ->
+            user.reload().await()
+            user.getIdToken(true).await()
+        }
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)

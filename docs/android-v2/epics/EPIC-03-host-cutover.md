@@ -613,6 +613,10 @@ Hiding it is a `commonMain` edit to a screen iOS ships, so it is **not** done
 here. AV2-3.5 owns the shared login surface; this should go with it. The failure
 message is at least written for a user rather than a developer.
 
+**CLOSED by AV2-3.5 (S011)** — `PlatformAuthProvider.supportsAppleSignIn`. The
+half this finding did not see is written up there: hiding Apple left the screen
+with no primary action, because Google's button is styled to recede below it.
+
 ### Finding — the two flavours cannot be installed side by side
 
 Acceptance criterion 3 assumed they could. They share
@@ -627,31 +631,282 @@ schemes must not collide the day the ids diverge.
 
 ---
 
-## AV2-3.5 — The cutover · `L` · Backlog
+## AV2-3.5 — The cutover · `L` · Review (S011)
 
 **Depends on:** AV2-3.3, AV2-3.4, AV2-1.3 **Reads:** [`GAP_ANALYSIS.md`](../analysis/GAP_ANALYSIS.md) §3.3
 
 The irreversible one. The v1 golden fixtures from AV2-1.3 must exist first.
 
 ### Tasks
-- [ ] **a.** The v2 Activity becomes the launcher.
-- [ ] **b.** Delete `com.stationly.mobile.ui.{summary,selection,profile,login}`,
+- [x] **a.** The v2 Activity becomes the launcher.
+- [x] **b.** Delete `com.stationly.mobile.ui.{summary,selection,profile,login}`,
       `SduiComponentRenderer`, `HomeConfigStore`, and the v1 `ui/theme` package.
-- [ ] **c.** **One font pipeline.** v1 uses downloadable Google Fonts
+      *(Two of the six could not go — see "what survived", below. Both are held
+      by the Daydream and the widget, neither of which this story owns.)*
+- [x] **c.** **One font pipeline.** v1 uses downloadable Google Fonts
       (`ui-text-google-fonts`, Inter Tight, `font_certs.xml`); `:composeApp` uses
       `compose.components.resources`. Two in one app is a bug waiting to happen —
       pick one and delete the other, do not leave both wired.
-- [ ] **d.** Reconcile splash (`Theme.Stationly.Splash`), `enableEdgeToEdge()`
+- [x] **d.** Reconcile splash (`Theme.Stationly.Splash`), `enableEdgeToEdge()`
       and the staging banner against `:composeApp`'s `StationlyThemeHost`. One
       implementation each.
-- [ ] **e.** Carry over the theme choice from v1's `ThemeRepository` to
-      `UserSettings` as a one-shot translation on first v2 launch.
+- [x] **e.** Carry over the theme choice from v1's `ThemeRepository` to
+      `UserSettings` as a one-shot translation on first v2 launch. *(No
+      translation was written and none should be — the carry-over already works,
+      for a reason worth reading. See the finding.)*
 
 ### Acceptance criteria
-- [ ] The AV2-1.3 fixtures still assert what they should, or their change is
+- [x] The AV2-1.3 fixtures still assert what they should, or their change is
       justified in the commit message.
-- [ ] No `com.stationly.mobile.ui` package remains except what the host needs.
-- [ ] A user upgrading keeps their theme.
+- [x] No `com.stationly.mobile.ui` package remains except what the host needs.
+- [ ] A user upgrading keeps their theme. *(Held by
+      `V1ThemeCarryOverTest`; not yet exercised on a phone that has actually
+      been upgraded — see "for the reviewer".)*
 
-### Handoff notes
-_(none yet)_
+### What the app is now
+
+`MainActivity` is `setContent { App(...) }` and there is no other screen. The
+class **name** is the v1 one on purpose: home-screen pins and launcher shortcuts
+reference the component (`com.stationly.mobile/.MainActivity`), not the package,
+so promoting `.v2.V2MainActivity` and deleting this name would have greyed out
+the icon of every v1 user who had pinned one. Moving the host INTO the old name
+costs nothing and needs no `<activity-alias>`. `src/staging/` is gone entirely —
+one door, one manifest.
+
+Deleted: `ui/{login,profile,selection,summary}`, `SduiComponentRenderer`, and
+the `ui/common` leaves only those screens used (`AuthState`, `UrlOpener`,
+`LoadingOverlay`, `ServiceUnavailableScreen`, `WebViewScreen`,
+`NotificationPermissionEffect`, `ThemeToggleButton`), plus `util/SduiCache` and
+`ui/theme/Type.kt`. Roughly 8,000 lines.
+
+**What survived under `com.stationly.mobile.ui`, and why.** Task (b) was written
+before anyone traced the Daydream's imports:
+
+| Kept | Held by | Retires with |
+|---|---|---|
+| `ui/theme/` (minus `Type.kt`) | `dream/DreamHost`, `DreamSettingsActivity`, `DreamSummary` | EPIC-06 (**Q3**) |
+| `ui/util/` | `dream/DreamBoard`, `StationlyApplication` | EPIC-06 |
+| `util/HomeConfigStore` | `widget/DepartureWidgetProvider`, `dream/` | EPIC-05, EPIC-06 |
+| `ui/common/StagingBanner` | the host — `BuildConfig.FLAVOR` is this module's fact | never |
+
+Deleting those now would mean porting the Daydream onto the shared palette in
+the same change that swaps the whole UI, for a feature whose survival is **Q3**.
+The one thing that did move is the TfL line palette: it was twenty lines at the
+top of v1's 2,000-line `Board.kt`, so it now lives in `ui/theme/LineColors.kt`
+and the entire board went. `:composeApp` carries its own copy; if the two ever
+disagree the shared one is right.
+
+**Two font pipelines became one.** `ui-text-google-fonts` and `font_certs.xml`
+are gone with v1's `Type.kt`; the shared UI's bundled Inter Tight is the only
+one left. The downloadable pipeline had a failure mode the bundled one does not
+— no GMS, no network or a blocked provider silently degrades the wordmark to the
+system face — and it cost ~250KB of TTF to close.
+
+**`navigation-compose` went too, and that is the point.** The `:composeApp`
+dependency was `stagingImplementation` because promoting it moves AndroidX
+Compose 1.7.0 → 1.8.0 under a `navigation-compose:2.8.0` pinned to 1.7, and that
+pairing exists because it already shipped a blank screen once. v1's NavHost was
+that library's only user. Deleting the NavHost and the library together removes
+the second half of the pairing rather than betting on it.
+
+### Findings
+
+#### The landing screen showed "Continue with Apple" on Android
+
+Carried over from AV2-3.4, which correctly refused to fix it in `commonMain`.
+`LandingContent` rendered `AppleButton` unconditionally, above Google, so on
+Android the *primary* action on the sign-in screen was a button whose only
+outcome was "Sign in with Apple is not available on Android."
+
+Worth being precise about where it came from: **v1's Android landing screen had
+no Apple button at all** — `LandingContent(onGoogleClick, onEmailClick,
+onRegisterClick)`, three parameters. The button arrived on Android with the
+shared UI at AV2-3.1, five days ago. It is not a long-standing wart; it is
+something the port brought with it, which is the category of thing to look for
+again on every screen the shared UI now owns.
+
+Fixed by asking the platform rather than the build:
+`PlatformAuthProvider.supportsAppleSignIn`, abstract and not defaulted — a
+default would let a third platform inherit "no Apple" silently, which is the
+same mistake facing the other way. iOS answers `true`, Android `false`.
+
+The second half is the part that is easy to miss. Hiding Apple left the screen
+with **no primary action at all**: `GoogleButton` is deliberately styled to
+recede below the white Apple primary (dark surface, 54dp, semibold, no lift), so
+Android's only sign-in button read as the lesser of two and the eye landed on
+"other ways to sign in". `GoogleButton` now takes `primary` and inherits the
+primary geometry where there is no Apple button above it. Geometry only —
+container, text and the colour "G" keep Google's brand colours in both states,
+which is what their guidelines actually constrain.
+
+#### The theme carries over already, and a migration would be the wrong fix
+
+Task (e) says to write a one-shot translation from v1's store to the shared one.
+Do not. The shared reader is:
+
+```kotlin
+Platform.storageManager.loadDurable("app_theme") ?: loadString("app_theme")
+```
+
+and on Android `loadString` reads `StationlyPrefs` — exactly the file and
+exactly the key v1's `AppSettings` wrote to, with the same three `storedAs`
+strings. The fallback was added for an *iOS* reason (a value written before the
+setting became durable), and it happens to be the whole of Android's upgrade
+path. A translation on top of it would be a second mechanism doing the same job,
+with its own first-launch ordering to get wrong.
+
+What the story's task description got wrong is smaller and worth recording: the
+theme choice was never in `ThemeRepository`. That object holds the SDUI colour
+*token* cache. The choice was in `AppSettings`, in the same file as the enum.
+
+**The bug this did surface** is the other direction. The shared UI writes the
+theme to `stationly_durable_prefs`; v1's `AppSettings` read `StationlyPrefs`
+only. Every screen that read it is deleted — except the **Daydream**, which is
+still on v1's Compose tree. So flipping the theme in the app would have left the
+screensaver rendering whatever the user last chose in v1: silent, and on a
+surface nobody opens deliberately. v1's reader now uses the same durable-first
+precedence as the shared one, and has no setter at all, because two writers is
+how the two files start disagreeing. `V1ThemeCarryOverTest` holds both halves.
+
+#### The remaining two `startDestination` branches are closed
+
+AV2-3.1 fixed the logged-in/logged-out flip in the host and logged that
+`AppNavigation`'s other two branches (`isEmailProvider()`, `isEmailVerified()`)
+were still recomputed on every restore — a user whose verification state
+resolves late lands a `summary`-rooted back stack on an `auth/verify-email`
+root, which is a blank screen. `startDestination` is now `rememberSaveable`, in
+`commonMain`, for both platforms. The host keeps saving `startLoggedIn` because
+it still has to give the same answer twice.
+
+#### Two links would have been silently dropped
+
+v1's `MainActivity` owned four intent-filters and the shared `App` handled one
+of them (`…://reset`). Deleting v1 without moving the other three would have
+left `…://verified` and `…://auth` registered in the manifest, delivered by
+Android, and dropped in code — the exact failure mode that cost iOS two days,
+where nothing errors and the tap simply does nothing.
+
+- `…://auth` (a completed password reset) is now a `showPasswordResetSuccess`
+  flag through `App` → `AppNavigation` → the login screen, which already had
+  the banner and the dismiss callback and was simply never passed them. Note
+  for whoever tests it: the banner renders on the **email form**, not on the
+  landing screen — that is v1's behaviour too, checked against the deleted
+  file, not a half-wiring.
+- `…://verified` needs the `oobCode` **applied**, and that is a Firebase call.
+  iOS reaches Firebase through a Swift bridge and does not register this link at
+  all, so widening `PlatformAuthProvider` for it would mean a bridge command
+  nothing calls. `AndroidPlatformAuthProvider.applyEmailVerificationCode` is an
+  Android-only method on the Android class; the host calls it and bumps a
+  counter that the shared verify screen watches, re-running the check it already
+  runs on resume. A counter and not a flag: a user who taps an expired link,
+  gets a new mail and taps again would otherwise set an already-true boolean.
+  The apply is not awaited before `setContent` — blocking the launcher on
+  Firebase is worse than any screen this can show — so a cold start composes at
+  `auth/verify-email`, which is true at that instant, and the signal moves it on.
+
+A failed apply deliberately shows nothing: the user lands on the verify screen,
+which explains the situation and carries "Resend email". v1 raised its own error
+banner from the view model; the host has no channel into the shared screen's
+state and widening one for this would be a poor trade.
+
+#### Two v1 behaviours are gone, and belong to EPIC-04
+
+Both were `MainActivity`'s, so both went with it. Neither is recoverable in this
+story, and neither should be recovered by the host:
+
+1. **`UserSyncCoordinator.reconcile(this)` in `onResume`** — the foreground
+   fallback for a missed `user_sync` FCM push. It is now called from nowhere.
+   Note *why* this is coherent rather than merely deferred: FCM does not reach
+   the v2 board model either (**AV2-4.1**, still in Backlog), so today the
+   fallback would be a fallback for nothing. AV2-4.1 and AV2-4.3 restore both
+   halves together.
+2. **The account-removed notice on Android.** The shared UI has the whole
+   receiving end — `UserStateSync.ACCOUNT_REMOVED_FLAG`, read by
+   `LoginViewModel`, rendered by `LoginScreen` — but the only writer is
+   `iosMain`'s `UserSyncBridge`. Android's writer was v1's `UserSyncCoordinator`,
+   into storage only v1's deleted `AppNavigation` read. So a user whose account
+   is deleted from another device is returned to login with no explanation.
+   **AV2-4.4.**
+
+Not a finding, a deliberate difference: the shared UI does *not* evict local
+data reactively when Firebase reports no user, and v1 did. That is iOS's
+decision from `4d10a18` ("a 401 that no longer ends a session") and it stands.
+
+#### The cutover exposed a screensaver screen that could not work
+
+Found while reviewing what else the shared UI now shows Android users, not by a
+task. Home settings → **Screensaver** opened `DreamSettingsScreen`, and
+`composeApp`'s Android `actual`s for the dream are placeholders: `DreamPrefsBackend`
+is a map that dies with the process, `KeepScreenAwake` is a no-op,
+`fetchMetNoForecast` returns null. Their own file header said why — "the
+composeApp android target is a build-verification surface only" — which was true
+until this story made it the shipped app.
+
+So an Android user would have configured a screensaver, had every choice
+silently discarded, and still had the real Daydream sitting unchanged in
+Settings → Display. Two configuration surfaces for one feature, one of which
+does nothing.
+
+v1 had the right answer already: its home screen carried a "Set as Screensaver"
+promo that fired `ACTION_DREAM_SETTINGS`. That is now
+`openSystemScreensaverSettings()` — one `expect fun` returning whether the
+platform handled it, `true` on Android and `false` on iOS, which has no system
+screensaver and reaches the in-app screen exactly as before. A Boolean return
+rather than a capability flag so there is one call site and no way to read the
+flag and forget to act on it.
+
+Neither shared dream route is reachable on Android now, which is also the right
+outcome for the in-app dream itself: without `KeepScreenAwake` it would have let
+the screen time out while pretending to be a screensaver. **EPIC-06** flips this
+by making the four `actual`s real — or Q3 answers "no" and the whole thing goes.
+
+#### One thing the cutover switched ON without meaning to
+
+`App()` calls `UpdateSurfaces()` at its root, so making `App()` the Android app
+made the **update gate live on Android** — reading `/release-policy`, and able
+to raise a blocking screen that consumes every gesture and offers one action.
+If the backend's `android` block carries iOS's store URLs, that action opens
+nothing and there is no way past the screen. Written up as a warning at the top
+of **AV2-7.1**, which had been planned as "wire it up" and is now "verify what
+is already running".
+
+### Handoff notes — S011, 2026-09-06
+
+**Gate GREEN**, including the XCFramework (`commonMain` changed: `App`,
+`AppNavigation`, `LoginScreen`, `VerifyEmailScreen`, `PlatformAuthProvider`).
+`:android:app` tests 18 → 23. Every `commonMain` addition is a parameter with a
+default that means "nothing happened", which is what iOS passes by not passing
+it, so iOS's call sites are untouched.
+
+**The AV2-3.1 v1-crash finding is now moot, and that matters for AV2-8.2.**
+v2-written state (one selection per direction) crashed v1's summary on its
+duplicate LazyColumn key. There is no v1 summary. But AV2-8.2's *upgrade*
+verification runs a real v1 build first, so read that finding before signing off
+— the open question it left ("does a v1 install restoring this account **from
+the cloud** crash the same way?") is still open, and is now only answerable by
+installing `versionCode 2` from Play.
+
+**For the reviewer — what actually needs a phone.** Nothing here has run on
+hardware yet; this session is a compile-and-test pass over an irreversible
+change. In order of what would hurt most:
+
+1. **Upgrade in place.** Install a v1 build (`versionCode 2`), set the theme to
+   Light, add a station, pin the launcher icon to the home screen. Then install
+   this build over it. The pinned icon must still work, the theme must still be
+   Light, and the station must still be there. That is acceptance criteria 3 and
+   the component-name finding, in one pass.
+2. **The sign-in screen has one primary button and it says Google.** No Apple
+   button anywhere.
+3. **All four deep links**, via `adb shell am start -a android.intent.action.VIEW
+   -d "stationly-staging://home"` and the same for `…://auth`,
+   `…://reset?oobCode=…`, `…://verified?oobCode=…`. The last two need real codes
+   from an email. `…://auth` should show the password-reset banner on the login
+   screen; `…://verified` should move a signed-in unverified user to the summary.
+4. **The screensaver still matches the app's theme.** Flip the theme in the app,
+   then Settings → Display → Screensaver → Stationly. This is the one the tests
+   cover only by constant, and the one nobody would report.
+
+**Q6 is still open and now costs more.** Both flavours are still
+`com.stationly.mobile`, so a staging build and a prod build cannot be installed
+side by side — which means (1) above has to be done twice, or with one flavour,
+and AV2-8.2 inherits the same constraint.

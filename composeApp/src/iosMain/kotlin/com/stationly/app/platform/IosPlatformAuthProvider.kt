@@ -70,6 +70,14 @@ class IosPlatformAuthProvider : PlatformAuthProvider {
     override suspend fun signInWithAppleInteractive(): Result<String> =
         issueCommand("appleSignInInteractive", timeoutMillis = 180_000L)
 
+    /**
+     * Yes, and it has been live since 2026-07-25 — the `applesignin`
+     * entitlement landed with the Stationly Limited team. The landing screen
+     * asks before it offers the button; Android answers `false`, where the flow
+     * does not exist.
+     */
+    override val supportsAppleSignIn: Boolean = true
+
     override suspend fun confirmPasswordReset(oobCode: String, newPassword: String): Result<Unit> =
         issueCommand("resetConfirm|$oobCode|$newPassword").map { }
 

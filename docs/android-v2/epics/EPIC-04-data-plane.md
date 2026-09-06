@@ -38,9 +38,21 @@ KDoc names this service as its caller.
       boards, on several lines, in several directions, with different filters.
 - [ ] **e.** `matchesFilter` precomputed at ingest — once per push rather than on
       every recomposition and every one-second countdown tick.
+- [ ] **f.** **Restore the foreground reconcile that AV2-3.5 deleted.** v1's
+      `MainActivity.onResume` called `UserSyncCoordinator.reconcile(this)` — the
+      fallback for a device that was offline when a `user_sync` push went out.
+      The host that replaced it does not, and `reconcile` is now called from
+      nowhere. Coherent rather than merely deferred, because the push it backs
+      up does not reach the v2 board model either until this story lands: fix
+      both halves together, or the fallback is a fallback for nothing. Put it in
+      the shared UI's resume hook (`SummaryScreen`'s `ON_RESUME` observer, which
+      already exists and already reloads from SQLite) rather than back in the
+      Activity — iOS needs the same thing and the host is not the place for it.
 
 ### Acceptance criteria
 - [ ] The characterization table still passes, or each change is justified.
+- [ ] A device that was offline for a `user_sync` push catches up when the app
+      is next brought to the foreground.
 - [ ] A push to a station a user tracks twice (two directions) updates both, and
       neither clears the other.
 - [ ] A filtered board admits only matching rows, and an empty filter result
@@ -130,9 +142,20 @@ _(none yet)_
       worth having most are the ones around an auth change, and a queue emptied
       by the event it is recording can never report it. `clearAllData` names its
       tables explicitly; keep it that way.
+- [ ] **e.** **Write `ACCOUNT_REMOVED_FLAG` from Android.** The shared UI has the
+      entire receiving end already — `UserStateSync.ACCOUNT_REMOVED_FLAG`, read
+      by `LoginViewModel`, rendered by `LoginScreen` — and the only writer is
+      `iosMain`'s `UserSyncBridge`. Android's writer was v1's
+      `UserSyncCoordinator`, into storage that only v1's deleted `AppNavigation`
+      read, so AV2-3.5 left Android silently without it. Today a user whose
+      account is deleted from another device is returned to the login screen
+      with no explanation at all. The flag is durable and common; this is a
+      writer, not a feature.
 
 ### Acceptance criteria
 - [ ] An Android device appears in the device list.
+- [ ] Deleting the account from another device returns this one to login **with
+      the account-removed notice**, not silently.
 - [ ] Logging out releases its subscriptions — no ghost sessions.
 - [ ] The activity queue survives a logout and uploads under the next uid.
 

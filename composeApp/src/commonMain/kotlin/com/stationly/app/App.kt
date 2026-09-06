@@ -55,7 +55,19 @@ private fun isWebUrl(url: String): Boolean =
 fun App(
     authProvider: PlatformAuthProvider,
     startLoggedIn: Boolean = false,
-    deepLinkOobCode: String? = null
+    deepLinkOobCode: String? = null,
+    /**
+     * The host has applied an email-verification code this many times.
+     *
+     * Android registers four deep links and iOS one, so the two hosts hand
+     * different amounts of work to the same `App`. Both extra parameters below
+     * default to the value that means "nothing happened", which is what iOS
+     * passes by not passing them at all.
+     */
+    emailVerifiedSignal: Int = 0,
+    /** A `…://auth` link landed: a password reset completed in the browser. */
+    showPasswordResetSuccess: Boolean = false,
+    onPasswordResetBannerShown: () -> Unit = {},
 ) {
     val uriHandler = LocalUriHandler.current
 
@@ -182,9 +194,12 @@ fun App(
         ) {
             Box(Modifier.fillMaxSize()) {
                 AppNavigation(
-                    authProvider    = authProvider,
-                    startLoggedIn   = startLoggedIn,
-                    deepLinkOobCode = deepLinkOobCode
+                    authProvider               = authProvider,
+                    startLoggedIn              = startLoggedIn,
+                    deepLinkOobCode            = deepLinkOobCode,
+                    emailVerifiedSignal        = emailVerifiedSignal,
+                    showPasswordResetSuccess   = showPasswordResetSuccess,
+                    onPasswordResetBannerShown = onPasswordResetBannerShown,
                 )
                 LoadingOverlay(visible = busyLabel != null, label = busyLabel)
 
