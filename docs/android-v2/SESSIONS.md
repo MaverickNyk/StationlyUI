@@ -18,6 +18,74 @@ Template:
 
 ---
 
+## S010 — 2026-09-06 — AV2-3.3 "Real actuals, batch B" · **EPIC-03 code-complete bar the cutover**
+
+**Built.** The last three placeholder `actual`s became real: POST_NOTIFICATIONS
+(state, request, and a settings deep link), fused-location nearby search, and an
+on-disk SDUI asset cache. Both behavioural criteria verified on the Pixel 7 Pro.
+
+**Learned — one finding that outweighs the story:**
+
+**`AndroidAppContext` had been silently disarming the notification prompt since
+AV2-3.2.** It registered its Activity-lifecycle callbacks lazily, on first
+access, and its own KDoc justified that: "everything reading this is a response
+to a user touching the screen, which cannot happen before then."
+
+The shared UI already broke that assumption. `NotificationPermissionEffect`
+reads the current Activity from a `LaunchedEffect` on the summary screen's first
+composition — no touch — and composition runs **after** `onActivityResumed`. The
+tracker therefore registered too late to hear the only resume that had happened,
+reported no Activity, and the request returned false without launching anything.
+
+On a fresh install the prompt never appeared. It did not appear on the next
+screen either, or the next launch — nothing fires `onActivityResumed` again
+until the user happens to background the app and come back. Nothing threw and
+nothing logged, because "no Activity" is a legitimate answer meaning "cannot
+ask". The bug was visible only as **an absence**, on one of the two prompts
+Android gives you a single chance at.
+
+Found by running the acceptance criterion on hardware rather than reasoning
+about it. It would not have failed any test, on any CI, ever.
+
+Fixed with `StationlyActivityTracker`, a content provider in `:composeApp`'s own
+manifest — instantiated after `Application.onCreate` and before the first
+Activity, which is the only hook a library gets there without adding an
+obligation to the twenty-line host contract. Staging-only, confirmed in the
+merged manifests. It also un-breaks haptics, and every future `actual` that
+needs an Activity.
+
+**Three smaller things worth carrying:**
+
+1. **The notification "we asked" flag is v1's flag** — `StationlyPrefs` /
+   `post_notifications_asked` / `post_notifications_granted`. Third instance of
+   the AV2-3.2 storage contract, and the quietest failure yet: a different file
+   makes every already-decided user read as `NOT_DETERMINED`, the effect asks
+   again, and Android returns the standing answer with no UI at all. A user who
+   had *denied* would also lose the banner explaining why no alerts arrive.
+   Now pinned by `V1V2StorageContractTest`.
+
+2. **v1's location request is wrong in two ways, and both are fixed.** It asks
+   for `ACCESS_FINE_LOCATION` alone — the shape Android documents against on
+   API 31+ — and checks for FINE alone, so a user who grants **Approximate** has
+   location and v1 refuses to use it. Both permissions are now requested
+   together (which is what puts Precise/Approximate in the dialog) and either
+   grant is accepted. Verified by granting Approximate on purpose and watching
+   the nearby list populate with FINE denied.
+
+3. **The permission request had to move from the UI into the provider.** v1
+   launched it from `SelectionScreen`; the shared one is `commonMain` and cannot
+   hold an Android launcher. iOS's provider already asks from inside
+   `getCurrentLocation`, so the shared contract assumed this all along.
+
+**Next agent needs to know:** AV2-3.5, the cutover, is unblocked and is the
+irreversible one. Read it together with the AV2-3.1 finding — v1's summary
+crashes on any account that has opened v2, and 3.5 is what deletes that summary.
+Two things were deliberately deferred *to* 3.5 and are easy to forget: the
+"Continue with Apple" button the shared landing still renders on Android, and
+the four deep-link filters still sitting on `MainActivity`.
+
+---
+
 ## S009 — 2026-09-06 — AV2-3.4 "Auth and deep links" · **first session with a device**
 
 **Took over** a claim S009 had written into the board and never acted on — no

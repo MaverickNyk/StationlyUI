@@ -2,10 +2,7 @@ package com.stationly.app
 
 import android.app.Activity
 import android.content.Context
-import android.content.Intent
 import androidx.activity.ComponentActivity
-import androidx.activity.result.ActivityResult
-import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
@@ -15,21 +12,17 @@ import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
-import com.stationly.app.platform.AndroidAppContext
+import com.stationly.app.platform.awaitActivityResult
+import com.stationly.app.platform.currentActivity
 import com.stationly.app.ui.login.PlatformAuthProvider
-import java.util.concurrent.atomic.AtomicInteger
-import kotlin.coroutines.resume
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.withContext
 
 /**
  * Android's half of the shared UI's auth contract.
  *
  * @param context the host Activity where there is one. Interactive Google
  *   sign-in launches an Activity for a result, so a `Context` alone will not
- *   do; [AndroidAppContext] is the fallback for any other construction site.
+ *   do; [currentActivity] is the fallback for any other construction site.
  * @param googleWebClientId the OAuth **web** client id, `R.string.default_web_client_id`.
  *
  * ## Why the web client id is passed in rather than read here
@@ -139,9 +132,11 @@ class AndroidPlatformAuthProvider(
             ?: return Result.failure(IllegalStateException(NO_ACTIVITY))
 
         val result = try {
-            withContext(Dispatchers.Main.immediate) {
-                awaitActivityResult(activity, googleClient().signInIntent)
-            }
+            awaitActivityResult(
+                activity,
+                ActivityResultContracts.StartActivityForResult(),
+                googleClient().signInIntent,
+            )
         } catch (e: Exception) {
             return Result.failure(e)
         }
@@ -212,50 +207,7 @@ class AndroidPlatformAuthProvider(
      * with when the host passed itself, otherwise whatever is on screen.
      */
     private fun hostActivity(): ComponentActivity? =
-        context as? ComponentActivity ?: AndroidAppContext.activity as? ComponentActivity
-
-    /**
-     * `startActivityForResult`, awaited.
-     *
-     * Registers against the Activity's [androidx.activity.result.ActivityResultRegistry]
-     * directly rather than through `rememberLauncherForActivityResult`, because
-     * the caller is a suspend function in shared code and not a composable. The
-     * three-argument `register` (no `LifecycleOwner`) is the overload that
-     * permits this; it registers immediately and hands back the unregistering
-     * to us, which the `finally` does on every path including cancellation.
-     *
-     * A unique key per launch, because a key still registered from a previous
-     * launch would collide.
-     *
-     * **Process death during the chooser loses the result.** The registry keeps
-     * a pending result for a key nobody has re-registered, and nothing here
-     * re-registers it — the coroutine that was awaiting it died with the
-     * process. The user taps the button again. Surviving that would mean
-     * hoisting the flow out of the auth provider and into saved Activity state,
-     * which is a larger change than the failure justifies: the window is the
-     * seconds the chooser is on screen, and the recovery is one tap.
-     */
-    private suspend fun awaitActivityResult(
-        activity: ComponentActivity,
-        intent: Intent,
-    ): ActivityResult {
-        val key = "stationly:google-sign-in:${launchCount.incrementAndGet()}"
-        var launcher: ActivityResultLauncher<Intent>? = null
-        try {
-            return suspendCancellableCoroutine { continuation ->
-                val registered = activity.activityResultRegistry.register(
-                    key,
-                    ActivityResultContracts.StartActivityForResult(),
-                ) { result ->
-                    if (continuation.isActive) continuation.resume(result)
-                }
-                launcher = registered
-                registered.launch(intent)
-            }
-        } finally {
-            launcher?.unregister()
-        }
-    }
+        context as? ComponentActivity ?: currentActivity()
 
     /**
      * Google's status codes, in the words the user gets.
@@ -280,9 +232,6 @@ class AndroidPlatformAuthProvider(
         const val CANCELLED = "Sign-in was cancelled."
         const val NO_ACTIVITY =
             "Google sign-in needs an Activity to launch from, and none is on screen."
-
-        /** Distinct registry keys across concurrent or repeated launches. */
-        val launchCount = AtomicInteger()
     }
 
     override fun consumePendingResetCode(): String? = null

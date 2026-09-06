@@ -14,8 +14,30 @@
     <!-- ModeIconStore downloads roundels; SduiSmartImage loads remote images. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- POST_NOTIFICATIONS: the runtime grant the shared
+         NotificationPermissionEffect asks for. API 33+; harmless below. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- AndroidLocationProvider: nearby-station search. BOTH, because they are
+         requested together — asking for FINE alone on API 31+ is the shape that
+         leaves the system dialog without its Approximate option, and COARSE
+         alone is enough to place a station list. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
     <!-- No VIBRATE. Haptics go through View.performHapticFeedback, which needs
          no permission and respects the user's touch-feedback setting. See
          AndroidHapticFeedback.kt. -->
+
+    <application>
+        <!-- Registers the Activity tracker before the first Activity exists.
+             The authority carries ${applicationId} so it stays unique if the
+             flavours ever get their own package names (BOARD.md Q6) — two apps
+             declaring one authority is an install failure, not a warning. -->
+        <provider
+            android:name="com.stationly.app.platform.StationlyActivityTracker"
+            android:authorities="${applicationId}.composeapp.activity-tracker"
+            android:exported="false" />
+    </application>
 
 </manifest>

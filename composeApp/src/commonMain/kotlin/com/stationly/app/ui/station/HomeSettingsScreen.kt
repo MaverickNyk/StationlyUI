@@ -267,7 +267,11 @@ fun HomeSettingsScreen(
                 SettingsActionRow(
                     icon = Icons.Rounded.Notifications,
                     title = "Notifications",
-                    subtitle = "Open iOS notification settings",
+                    // Not "iOS notification settings", which is what this said
+                    // while the shared UI only ran on iOS — it is now on screen
+                    // in the Android app too. Both platforms open the OS's own
+                    // settings, so the copy names neither.
+                    subtitle = "Open notification settings",
                     onClick = { openAppNotificationSettings() },
                 )
             }

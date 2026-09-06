@@ -211,6 +211,13 @@ Four stubs, each currently a placeholder that compiles and does nothing.
       already sets in `Application.onCreate`. It does hold the current Activity,
       weakly, because a `Context` alone is not enough for haptics (and AV2-3.3
       and AV2-3.4 both need one too).
+
+      ⚠️ **AV2-3.3 corrected this.** The Activity tracking registered lazily, on
+      first access, and that was too late to hear the first `onActivityResumed`
+      — so `activity` was null for anything reading it before the user
+      backgrounded the app once. It silently disarmed the POST_NOTIFICATIONS
+      prompt and would have skipped haptics too. Now started eagerly by
+      `StationlyActivityTracker`; see the AV2-3.3 finding.
 - [x] **b.–e.** All four. Each writes to the shipped app's storage rather than
       beside it — see the handoff.
 
@@ -315,7 +322,7 @@ list, not gain a second one.
 
 ---
 
-## AV2-3.3 — Real actuals, batch B · `M` · Backlog
+## AV2-3.3 — Real actuals, batch B · `M` · Review (S010)
 
 **Depends on:** AV2-3.2 **Files:** as above, plus `ui/sdui/`
 
@@ -326,17 +333,135 @@ list, not gain a second one.
 | `SduiAssetCache` | returns null | a real on-disk cache |
 
 ### Tasks
-- [ ] **a.–c.** The three actuals above.
-- [ ] **d.** Confirm the notification-permission flow matches v1's
+- [x] **a.–c.** The three actuals above.
+- [x] **d.** Confirm the notification-permission flow matches v1's
       `NotificationPermissionEffect` behaviour, which users already have.
 
 ### Acceptance criteria
-- [ ] The POST_NOTIFICATIONS prompt actually fires on a fresh install. It cannot today.
-- [ ] Nearby-station search returns stations. It cannot today.
-- [ ] Only `SupportCheckout` remains stubbed, by D4.
+- [x] The POST_NOTIFICATIONS prompt actually fires on a fresh install.
+      **Verified on a Pixel 7 Pro** after `pm clear`: sign in, and the dialog
+      appears on the summary screen unaided. Granting writes
+      `post_notifications_asked` / `post_notifications_granted` into
+      `StationlyPrefs` — v1's file, v1's keys.
+- [x] Nearby-station search returns stations. **Verified on the same device**,
+      and deliberately on **Approximate** location, which v1 refuses (below).
+      The distances read ~885 mi because the phone is not in London; the list is
+      correctly ordered from where it actually is.
+- [~] Only `SupportCheckout` remains stubbed, by D4. **Not literally true, and
+      the criterion was incomplete.** `SupportCheckout` is stubbed by D4 — and
+      so are the four `DreamPlatform.android` actuals (`DreamPrefsBackend`,
+      `KeepScreenAwake`, `fetchMetNoForecast`, `lastKnownLatLon`), which are
+      **AV2-6.1's** scope and blocked on **Q3**. Nothing else in
+      `composeApp/androidMain` is a placeholder any more. Read the criterion as
+      "only SupportCheckout (D4) and the dream actuals (Q3)".
 
 ### Handoff notes
-_(none yet)_
+
+**S010 · 2026-09-06 · Review.** The last three stubs are real, and the story
+turned up a defect in AV2-3.2's plumbing that had been silently disarming the
+one permission prompt Android only offers once.
+
+**The notification flag is v1's flag.** `StationlyPrefs` /
+`post_notifications_asked` / `post_notifications_granted` — the same file and
+keys `NotificationPermissionEffect` already writes. This is the AV2-3.2 storage
+contract again, and the failure mode is the quietest one yet: pick a different
+file and every user who has already answered reads back as `NOT_DETERMINED`,
+the shared effect calls `requestNotificationAuthorization()`, and Android —
+which never re-shows a dialog it has already shown — returns the standing answer
+with **no UI at all**. Nothing appears, nothing logs. A user who had *denied*
+would also stop seeing the banner explaining why no alerts arrive, because their
+state would read as undecided rather than denied. `V1V2StorageContractTest` now
+compares all three names across the two implementations.
+
+**Android needs that flag and iOS does not,** which is the whole reason
+`NotificationAuthState` has three values: `checkSelfPermission` returns granted
+or not-granted and cannot tell "denied" from "never asked", while iOS reports
+`notDetermined` natively.
+
+**Location asks for both permissions, and accepts either.** v1 requests
+`ACCESS_FINE_LOCATION` alone and checks for it alone. Two consequences, both
+fixed here: on API 31+ the single-permission request is the shape Android
+documents *against*, and a user who grants **Approximate** has FINE denied and
+COARSE granted — so v1 sees no permission and silently returns nothing. This
+requests both together (which is what puts the Precise/Approximate choice in the
+dialog) and treats either grant as usable, because a few hundred metres does not
+change which stations are nearby. Verified by granting Approximate on purpose:
+`ACCESS_FINE_LOCATION: granted=false`, `ACCESS_COARSE_LOCATION: granted=true`,
+and the nearby list still populated.
+
+**The permission request moved from the UI into the provider.** v1 launched it
+from `SelectionScreen`; the shared `SelectionScreen` is `commonMain` and cannot
+hold an Android launcher, and `LocationProvider` is a bare
+`getCurrentLocation()` with nowhere to say "ask first". So the provider asks —
+which is what `IosLocationProvider` already does with
+`requestWhenInUseAuthorization`, so the shared contract assumed it all along.
+The only visible change is *when*: `SelectionViewModel` pre-warms from `init`,
+so the prompt lands as the selection flow opens rather than one step later at
+the station picker. A `Mutex` serialises it, because that pre-warm and the
+user's own "nearby stations" tap otherwise race into two system dialogs.
+
+**`SduiAssetCache` is real but has no Android caller yet.** The widget guide is
+iOS-first by `docs/SDUI.md` §1, so AV2-5.4 will be its first use. Downloads to
+`cacheDir/sdui-assets` (re-downloadable content belongs in a directory the OS
+may reclaim), keyed `<name>-<version>.<ext>` so a version check is one
+`exists()`, reaping older versions *before* the new one lands, and writing to a
+`.part` file it renames — a download killed halfway must not leave a truncated
+file that `exists()` serves forever. The naming and versioning rules are pure
+and unit-tested (`SduiAssetNamingTest`), including that a server-chosen URL
+cannot produce a path that climbs out of the cache directory.
+
+### The finding — a defect in AV2-3.2 that made this story fail silently
+
+`AndroidAppContext.activity` registered its lifecycle callbacks **on first
+access**, reasoning in its own KDoc that "everything reading this is a response
+to a user touching the screen, which cannot happen before then".
+
+That is false, and the shared UI already violated it. `NotificationPermissionEffect`
+reads it from a `LaunchedEffect` during the summary screen's first composition —
+no touch — and composition runs **after** `onActivityResumed`. So the tracker
+registered too late to hear the only resume that had happened, reported no
+Activity, and `requestNotificationAuthorization()` returned false without ever
+launching. On a fresh install the prompt simply never appeared, and did not
+appear on any later visit either: nothing calls `onActivityResumed` again until
+the user happens to background the app and come back.
+
+Nothing threw and nothing logged, because "no Activity" is a legitimate answer
+meaning "cannot ask". It was only visible as *an absence*, on the one prompt
+Android gives you a single chance at.
+
+Fixed with `StationlyActivityTracker`, a content provider in `:composeApp`'s own
+manifest. Android instantiates providers after `Application.onCreate` and before
+the first Activity, which is the only hook a library has there without adding an
+obligation to the twenty-line host contract — an obligation whose omission would
+fail exactly this silently. Same mechanism `androidx.startup` and Firebase use,
+without the dependency. The lazy path is kept as a fallback.
+
+It merges into staging only, because `:composeApp` is a staging-only dependency:
+confirmed in the merged manifests, one `activity-tracker` entry on staging and
+zero on prod.
+
+**This bug also affected haptics** (AV2-3.2) and would have affected any future
+`actual` that needs an Activity. Interactive Google sign-in (AV2-3.4) escaped it
+only because `V2MainActivity` passes itself to `AndroidPlatformAuthProvider`,
+bypassing the tracker entirely.
+
+### Scope note — four files outside the story's list
+
+1. `composeApp/build.gradle.kts` + `composeApp/src/androidMain/AndroidManifest.xml`:
+   `play-services-location` (the story said it was already a dependency — it is
+   `:android:app`'s, and the dependency runs app → library, so `:composeApp`
+   needs its own edge), the three new permissions, and the provider entry.
+2. `platform/AndroidAppContext.kt` and the new `StationlyActivityTracker.kt`:
+   the finding above.
+3. `AndroidPlatformAuthProvider.kt`: its private `awaitActivityResult` became the
+   shared `platform/ActivityResults.kt`, generic over the contract, because the
+   notification and location prompts need the identical plumbing. Behaviour
+   unchanged; AV2-3.4's device checks still pass.
+4. `ui/station/HomeSettingsScreen.kt` (`commonMain`): the Notifications row read
+   *"Open **iOS** notification settings"* — written when the shared UI only ran
+   on iOS, and now on screen in the Android app. Now names neither platform.
+   Other iOS-specific copy remains in `WidgetGuideDefaults.kt`; that is the
+   widget guide, iOS-only by `docs/SDUI.md` §1, and belongs to **AV2-5.4**.
 
 ---
 

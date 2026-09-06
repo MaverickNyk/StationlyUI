@@ -1,6 +1,7 @@
 package com.stationly.mobile.v2
 
 import com.stationly.app.platform.DeviceIdentity
+import com.stationly.app.platform.NotificationPermissionStore
 import com.stationly.app.platform.ModeIconStore
 import com.stationly.app.platform.modeIconFileName
 import com.stationly.mobile.service.DeviceIdProvider
@@ -30,8 +31,15 @@ import org.junit.Test
  *   caches quietly stop finding each other's PNGs. The shared UI re-downloads
  *   everything into a second set of files; the home-screen widget carries on
  *   reading the first and renders untinted fallbacks.
+ * - Change where the notification "we asked" flag lives and every user who has
+ *   already answered reads back as NOT_DETERMINED. The shared effect then calls
+ *   `requestNotificationAuthorization()`, and Android — which never re-shows a
+ *   dialog it has already shown — returns the standing answer with no UI at
+ *   all. Nothing appears; nothing is logged. Meanwhile a user who had DENIED
+ *   stops seeing the banner explaining why no alerts arrive, because their
+ *   state now reads as undecided.
  *
- * Neither shows up as an error, on either side. Both show up here.
+ * None of these shows up as an error, on either side. All of them show up here.
  *
  * AV2-3.5 deletes the v1 halves, and with them this test.
  */
@@ -94,6 +102,36 @@ class V1V2StorageContractTest {
                 modeIconFileName(mode),
             )
         }
+    }
+
+    @Test
+    fun `both sides remember the notification prompt in the same place`() {
+        // v1 keeps these as private top-level consts, so the owner is the file
+        // facade class rather than a type this module can name in source.
+        val v1 = Class.forName("com.stationly.mobile.ui.common.NotificationPermissionEffectKt")
+        val v2 = NotificationPermissionStore::class.java
+
+        assertEquals(
+            "the preferences file for the notification flag drifted",
+            constant(v1, "PREFS"),
+            constant(v2, "PREFS"),
+        )
+        assertEquals(
+            "the \"we asked\" key drifted — every decided user reads as NOT_DETERMINED",
+            constant(v1, "KEY_ASKED"),
+            constant(v2, "KEY_ASKED"),
+        )
+        assertEquals(
+            "the \"last granted\" key drifted",
+            constant(v1, "KEY_LAST_GRANTED"),
+            constant(v2, "KEY_LAST_GRANTED"),
+        )
+        // Spelled out too, so changing BOTH sides at once — which keeps them
+        // agreeing with each other while abandoning every flag already on disk
+        // — still fails.
+        assertEquals("StationlyPrefs", constant(v2, "PREFS"))
+        assertEquals("post_notifications_asked", constant(v2, "KEY_ASKED"))
+        assertEquals("post_notifications_granted", constant(v2, "KEY_LAST_GRANTED"))
     }
 
     /**
