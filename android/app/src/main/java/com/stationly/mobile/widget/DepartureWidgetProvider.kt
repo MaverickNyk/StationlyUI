@@ -113,17 +113,15 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         )
                         selections.forEach { selection ->
                             repo.fetchInitialData(selection)
-                            // Same fan-out the FCM service and home pull-to-
-                            // refresh use — pings the home VM and the dream
-                            // so they re-read SQL, then redraws the widget.
-                            // Without this, tapping the widget's refresh
-                            // button would update only the widget; an open
-                            // app or active dream would stay on stale data
-                            // until the next FCM landed.
-                            com.stationly.mobile.util.FreshDataNotifier.notify(
+                            // Same fan-out the FCM service uses — tells the
+                            // app's board and the dream to re-read SQL, then
+                            // redraws the widget. Without this, tapping the
+                            // widget's refresh button would update only the
+                            // widget; an open app or active dream would stay
+                            // on stale data until the next FCM landed.
+                            com.stationly.mobile.util.FreshDataNotifier.notifyPredictions(
                                 context,
                                 stationId = selection.station,
-                                lineId = selection.line,
                             )
                         }
                     } else {

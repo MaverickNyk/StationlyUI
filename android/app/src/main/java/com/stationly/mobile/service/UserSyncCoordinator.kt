@@ -12,7 +12,6 @@ import com.stationly.core.service.TflApiServiceFactory
 import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.mobile.util.FreshDataNotifier
-import com.stationly.mobile.widget.DepartureWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -41,12 +40,13 @@ import kotlinx.coroutines.tasks.await
  */
 object UserSyncCoordinator {
 
-    private const val STORAGE_PREFS = "StationlyPrefs"
-    // Deliberately a SEPARATE prefs file: FirebaseAuthManager.logout()
-    // clears all of "StationlyPrefs", which would erase a notice flag
-    // stored there before the login screen could read it.
-    private const val FLAGS_PREFS = "StationlySyncFlags"
-    private const val FLAG_ACCOUNT_REMOVED = "pending_account_removed"
+    // `StationlySyncFlags` / `pending_account_removed` used to live here: a
+    // separate prefs file, because `FirebaseAuthManager.logout()` clears all of
+    // `StationlyPrefs` and would have erased the notice before the login screen
+    // could read it. The shared UI solves the same problem the same way, one
+    // layer up — `UserStateSync.ACCOUNT_REMOVED_FLAG` in DURABLE storage — and
+    // its login screen is the only login screen now. Two files for one flag is
+    // how the two stop agreeing, so this one is gone. See [forceLogout].
 
     // Foreground reconcile is only a FALLBACK for a missed `user_sync` push, so
     // it's deliberately infrequent: each run costs one Firestore read of the
@@ -128,13 +128,14 @@ object UserSyncCoordinator {
                     // Surface a display-name change made on another device.
                     try { FirebaseAuth.getInstance().currentUser?.reload()?.await() } catch (_: Exception) {}
 
-                    // Nudge the home board to re-read selections from SQL
-                    // (SummaryViewModel listens for the "selections" key), then
-                    // redraw the widget + dream.
-                    context.getSharedPreferences(STORAGE_PREFS, Context.MODE_PRIVATE)
-                        .edit().putString("selections", now.toString()).apply()
+                    // A reconcile can rewrite the whole board list, so the scope
+                    // is genuinely All — every collector reloads everything.
+                    // (The `SharedPreferences.putString("selections", …)` ping
+                    // that used to precede this was read by v1's SummaryViewModel
+                    // and by nothing since AV2-3.5; the explicit
+                    // `updateWidgetFromStorage` that followed it is inside
+                    // notifyAll.)
                     FreshDataNotifier.notifyAll(context)
-                    DepartureWidgetProvider.updateFromStorage(context)
 
                     Log.d("UserSync", "Reconcile complete: ${profile.stations.size} station(s)")
                 } catch (e: com.stationly.core.service.UserNotFoundException) {
@@ -151,15 +152,33 @@ object UserSyncCoordinator {
     }
 
     /**
-     * Account was deleted elsewhere — wipe and bounce to login. Sets a
-     * one-shot flag (in a prefs file that survives the logout wipe) so the
-     * login screen can show a brief "account removed" notice.
+     * Account was deleted elsewhere — wipe and bounce to login, and leave behind
+     * the one-shot notice that explains it.
+     *
+     * ## The flag has to be one the LOGIN SCREEN reads
+     * This used to write `pending_account_removed` into a private prefs file and
+     * v1's `MainActivity` read it back and raised a Toast. AV2-3.5 deleted that
+     * Activity, so from the cutover until now Android signed the user out and
+     * dropped them on the login screen **with no explanation at all** — the most
+     * alarming thing an app can do silently.
+     *
+     * The shared login screen has carried the receiving end the whole time
+     * (`LoginViewModel` reads `UserStateSync.ACCOUNT_REMOVED_FLAG` from durable
+     * storage and renders `strings.accountRemoved`); the only writer was iOS's
+     * `UserSyncBridge`. This is Android's writer.
+     *
+     * Durable rather than ordinary storage for the same reason the old private
+     * file existed: the teardown below wipes the app's own defaults, so a flag
+     * written to those would be erased by the very sequence it exists to
+     * outlive. `stationly_durable_prefs` is a different file and survives.
      */
     private fun forceLogout(context: Context) {
         scope.launch {
             try {
-                context.getSharedPreferences(FLAGS_PREFS, Context.MODE_PRIVATE)
-                    .edit().putBoolean(FLAG_ACCOUNT_REMOVED, true).apply()
+                Platform.storageManager.saveDurable(
+                    com.stationly.app.sync.UserStateSync.ACCOUNT_REMOVED_FLAG,
+                    "1",
+                )
                 // Full local teardown + Firebase sign-out. MainActivity's
                 // auth-state observer evicts to the login screen the moment
                 // currentUser becomes null.
@@ -171,13 +190,10 @@ object UserSyncCoordinator {
         }
     }
 
-    /** Read-and-clear the "account removed" notice flag (called from MainActivity). */
-    fun consumeAccountRemovedFlag(context: Context): Boolean {
-        val prefs = context.getSharedPreferences(FLAGS_PREFS, Context.MODE_PRIVATE)
-        val flag = prefs.getBoolean(FLAG_ACCOUNT_REMOVED, false)
-        if (flag) prefs.edit().putBoolean(FLAG_ACCOUNT_REMOVED, false).apply()
-        return flag
-    }
+    // `consumeAccountRemovedFlag` lived here and was called by v1's
+    // MainActivity. The shared `LoginViewModel` consumes the flag itself now,
+    // read-once-and-clear, on the screen the user is actually looking at when
+    // it matters — see [forceLogout].
 
     private fun buildLifecycle(): StationLifecycleUseCase {
         val apiService = TflApiServiceFactory.create()

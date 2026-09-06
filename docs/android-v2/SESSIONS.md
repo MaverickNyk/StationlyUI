@@ -18,6 +18,78 @@ Template:
 
 ---
 
+## S012 — 2026-09-06 — AV2-4.1 "FCM at v2" · **the board was not listening**
+
+**Built.** Three scoped fan-out entry points instead of one, the foreground
+reconcile restored, Android's writer for the account-removed notice, a read-side
+dedupe for duplicate boards, and 15 tests. `commonMain` untouched.
+
+**Learned — a story's task list can be a description of a problem that has
+already been solved.** Tasks (c), (d) and (e) asked for direction scoping,
+per-board fan-out and a `matchesFilter` precompute in `FcmMessagingService`.
+All three were already in `SyncPredictionsUseCase`, which both platforms call:
+the shared use case absorbed them on `ios-parity` before this branch existed.
+Writing them again would have produced a second implementation of three things
+that were already right. Characterizing first is what showed that — the tests
+went green against untouched code, which is the answer, not a disappointment.
+
+**Learned — the bug was where the cutover had removed a reader, not where the
+story pointed.** The fan-out told the app a board had changed by writing a
+SharedPreferences key that v1's `SummaryViewModel` watched. AV2-3.5 deleted that
+view model. The write kept happening to a key with no listener, and the shared
+view model that replaced it collects a different signal that nothing on Android
+emitted. So an FCM push wrote fresh departures and the visible board sat still
+until its own 30-second poll. Nothing errored. It looks exactly like a slow
+network, which is why it survived a cutover and three device passes.
+
+The general shape, and it is the second time this week: **deleting a consumer
+does not delete its producer, and a producer with no consumer is silent.**
+AV2-3.5 hit the same thing with intent-filters. Grep for the deleted class's
+name is not enough — grep for what wrote TO it.
+
+**Learned — put a log line at the point of silence.** The fix would have been
+one function change; the durable part is `D/FreshData: fresh data → Station(…)`.
+The failure mode here was not a wrong value, it was no evidence at all.
+
+**Three defects, and the device found the one the tests could not.**
+1. The push→board gap above. Fixed, verified from real pushes.
+2. Android signed people out with no explanation when their account was deleted
+   elsewhere — v1's Toast went with v1's Activity, and the shared login screen
+   had been carrying the receiving end unused the whole time. Fixed; this was
+   AV2-4.4's task (e), closed early because it was three lines in a file I was
+   already in and leaving it meant leaving a silent sign-out shipped.
+3. **A screenshot showed the same departure rendered twice.** Three
+   `UserSelectionEntity` rows for one board; the schema has an AUTOINCREMENT
+   primary key and no uniqueness constraint at all. Deduped on read. They came
+   back after a restore with the identical 2-with-hub-plus-1-blank shape, which
+   points at the cloud `stations` array rather than a local double-insert —
+   AV2-4.3's to chase.
+
+**Learned — screenshot the thing.** Defect 3 was invisible in the logs and in
+every test; it took one `adb exec-out screencap`. The log then confirmed the
+cost: one push, three identical sync-and-persist passes.
+
+**Next agent needs to know:**
+
+1. **Q7 is a live correctness bug on both platforms and I did not fix it.** The
+   prediction table's primary key includes the FORMATTED eta string, so two
+   trains 40 seconds apart collapse into one and the rider is shown one train
+   where two are coming. `SyncPredictionsUseCase` dedupes on `targetEpochMs`
+   specifically to prevent this and the schema undoes it underneath. The fix is
+   a migration, which this story does not own and which lands on Q5. There is a
+   test asserting the WRONG behaviour on purpose — flip it, do not delete it.
+2. **Task (b) is deliberately open.** Routing Android through
+   `ProcessPredictionsUseCase` is right and would regress the widget today: the
+   shared path refreshes the primary selection only, Android redraws every
+   instance. Do it after AV2-5.1, which is the story that makes per-instance
+   refresh a thing the shared path can express.
+3. **AV2-4.2 has a head start.** The device is subscribed to two `Station_*`
+   topics for boards it no longer has. `run-as com.stationly.mobile cat
+   shared_prefs/StationlyPrefs.xml`, grep `Station_`, compare with the selection
+   table.
+
+---
+
 ## S011 — 2026-09-06 — AV2-3.5 "The cutover" · **the shared UI IS the Android app**
 
 **Built.** `MainActivity` is `setContent { App(...) }`. `src/staging/` is gone,

@@ -149,13 +149,12 @@ class FcmMessagingService : FirebaseMessagingService() {
                     if (extractedPredictions.isNotEmpty()) {
                         Platform.sqlStorage.savePredictions(selection.station, selection.line, selection.direction, extractedPredictions)
                     }
-                    // Single fan-out (SharedPrefs ping + dream broadcast +
-                    // widget redraw). See FreshDataNotifier.
+                    // Single fan-out: the app's board, the dream, the widget.
+                    // See FreshDataNotifier.
                     launch(Dispatchers.Main) {
-                        com.stationly.mobile.util.FreshDataNotifier.notify(
+                        com.stationly.mobile.util.FreshDataNotifier.notifyPredictions(
                             this@FcmMessagingService,
                             stationId = selection.station,
-                            lineId = selection.line,
                         )
                     }
                 }
@@ -179,10 +178,6 @@ class FcmMessagingService : FirebaseMessagingService() {
 
                 Platform.sqlStorage.saveLineStatus(status)
 
-                // Ping SharedPreferences to trigger UI updates
-                val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-                prefs.edit().putString("line_status_data", System.currentTimeMillis().toString()).apply()
-
                 // Walk active selections — for the ones subscribed to this
                 // line, refresh widget AND (if the transition is
                 // significant) post a status-change notification. We post
@@ -195,13 +190,14 @@ class FcmMessagingService : FirebaseMessagingService() {
                 }
                 if (subscribedToThisLine.isEmpty()) return@launch
 
-                subscribedToThisLine.forEach { selection ->
-                    com.stationly.mobile.util.FreshDataNotifier.notify(
-                        this@FcmMessagingService,
-                        stationId = selection.station,
-                        lineId = selection.line,
-                    )
-                }
+                // ONCE, not once per subscribed board. The event names the
+                // LINE, and every collector already knows which of its boards
+                // ride it — the old per-selection loop sent N identical pings
+                // and made each of them reload.
+                com.stationly.mobile.util.FreshDataNotifier.notifyLineStatus(
+                    this@FcmMessagingService,
+                    lineId = status.id,
+                )
 
                 // Build + dispatch one notification IF this is a
                 // significant transition (good service ⇄ disruption, or
@@ -358,17 +354,14 @@ class FcmMessagingService : FirebaseMessagingService() {
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
                         syncPredictionsUseCase.execute(payload, selection)
-                        // Single fan-out point: SharedPrefs ping (home VM
-                        // listener fires → re-reads SQL), dream broadcast,
-                        // widget redraw. Same helper is called from the
-                        // home pull-to-refresh and the widget refresh button
-                        // — guarantees identical surface coverage regardless
+                        // Single fan-out point: the app's open board, the
+                        // dream, the widget. Same helper the widget refresh
+                        // button calls — identical surface coverage regardless
                         // of which trigger originated the fetch.
                         launch(Dispatchers.Main) {
-                            com.stationly.mobile.util.FreshDataNotifier.notify(
+                            com.stationly.mobile.util.FreshDataNotifier.notifyPredictions(
                                 this@FcmMessagingService,
                                 stationId = selection.station,
-                                lineId = selection.line,
                             )
                         }
                     } catch (e: Exception) {
