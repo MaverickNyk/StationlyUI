@@ -12,6 +12,26 @@
 **Exit.** `StationlyDreamService` hosts `DreamHost`; the v1 `dream` package is
 deleted.
 
+**The Daydream is now the reason v1 code is still in the app.** AV2-3.5 deleted
+every v1 screen, and stopped at what `dream/` imports:
+
+| Still there | What the dream uses it for |
+|---|---|
+| `ui/theme/` (Theme, AppTheme, ThemeTokens, ThemeRepository, Color) | `DreamSettingsActivity` wraps itself in `StationlyThemeHost`; `DreamHost` resolves light/dark |
+| `ui/theme/LineColors.kt` | line dots and pills — **moved here by AV2-3.5** from the top of v1's deleted `Board.kt`, and duplicated in `:composeApp` on purpose |
+| `ui/util/` (NetworkState, PredictionTicker, StationStripFitter, BoardFallbackState, ScrollWrap) | `DreamBoard` |
+| `util/HomeConfigStore` | shared with the widget (EPIC-05) |
+
+So this epic's real exit is wider than it reads: deleting `dream/` is what
+finally empties `com.stationly.mobile.ui`. If **Q3** comes back "no", deleting
+the Daydream does the same job and is the cheaper answer.
+
+One thing to preserve either way: v1's `AppSettings` reads the theme
+**durable-first** so the screensaver shows the same theme as the app, which the
+shared UI writes to `stationly_durable_prefs`. It has no setter, deliberately.
+`V1ThemeCarryOverTest` fails if that precedence is dropped, and nothing else
+would — a screensaver rendering last month's theme is not a thing users report.
+
 ---
 
 ## AV2-6.1 — Real dream actuals · `M` · Backlog (blocked on Q3)
@@ -20,6 +40,14 @@ deleted.
 
 All four members are placeholders, and all four have working implementations
 **one package away** in `com.stationly.mobile.dream`.
+
+**They are now placeholders inside the shipped app**, not inside a
+build-verification target — AV2-3.5 changed what that module is. Nothing reaches
+them today only because `openSystemScreensaverSettings()` returns `true` on
+Android and sends the user to Settings → Display → Screen saver instead, which
+is what v1's home-screen promo did. Making these four real is what lets that
+`actual` return `false` and hands the feature back to the app; until then, do
+not route anything else at `dream/settings` on Android.
 
 | Member | Today | Source of the real one |
 |---|---|---|

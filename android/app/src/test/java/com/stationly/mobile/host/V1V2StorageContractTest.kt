@@ -1,4 +1,4 @@
-package com.stationly.mobile.v2
+package com.stationly.mobile.host
 
 import com.stationly.app.platform.DeviceIdentity
 import com.stationly.app.platform.NotificationPermissionStore
@@ -10,14 +10,26 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * v1 and v2 share storage, and nothing but this test says so.
+ * The shared UI reaches the shipped app's data by writing to the same *file
+ * names*, and nothing but this test says so.
  *
  * `:composeApp` cannot import `:android:app` — the dependency runs the other
- * way — so the shared UI's `actual`s reach the shipped app's data by writing to
- * the same *file names*, not by calling the same code. Two implementations, one
- * directory, agreeing by convention. This is the only module that can see both,
- * and it can only see both on the staging flavour, which is where the shared UI
- * lives.
+ * way — so the two sides agree by convention rather than by calling the same
+ * code. Two implementations, one directory. This is the only module that can
+ * see both.
+ *
+ * ## What the cutover changed here
+ * AV2-3.5 deleted v1's UI, so the *notification* half of this test went with
+ * it: `NotificationPermissionEffect` was a composable on v1's summary screen and
+ * has no successor to compare against. Its spelled-out assertions stay, and they
+ * are the half that mattered — the flag on disk was written by v1 installs that
+ * are still out there, so `NotificationPermissionStore` has to keep reading the
+ * name v1 used whether or not v1's code still exists to be compared with.
+ *
+ * The other two halves are NOT historical. `DeviceIdProvider` and
+ * `ModeIconCache` survived the cutover because the FCM registrar and the
+ * home-screen widget still use them, so both are live contracts between two
+ * live implementations until EPIC-04 and EPIC-05 retire them.
  *
  * The failures this catches are all silent:
  *
@@ -40,8 +52,6 @@ import org.junit.Test
  *   state now reads as undecided.
  *
  * None of these shows up as an error, on either side. All of them show up here.
- *
- * AV2-3.5 deletes the v1 halves, and with them this test.
  */
 class V1V2StorageContractTest {
 
@@ -105,37 +115,30 @@ class V1V2StorageContractTest {
     }
 
     @Test
-    fun `both sides remember the notification prompt in the same place`() {
-        // v1 keeps these as private top-level consts, so the owner is the file
-        // facade class rather than a type this module can name in source.
-        val v1 = Class.forName("com.stationly.mobile.ui.common.NotificationPermissionEffectKt")
-        val v2 = NotificationPermissionStore::class.java
-
-        assertEquals(
-            "the preferences file for the notification flag drifted",
-            constant(v1, "PREFS"),
-            constant(v2, "PREFS"),
-        )
-        assertEquals(
-            "the \"we asked\" key drifted — every decided user reads as NOT_DETERMINED",
-            constant(v1, "KEY_ASKED"),
-            constant(v2, "KEY_ASKED"),
-        )
-        assertEquals(
-            "the \"last granted\" key drifted",
-            constant(v1, "KEY_LAST_GRANTED"),
-            constant(v2, "KEY_LAST_GRANTED"),
-        )
-        // Spelled out too, so changing BOTH sides at once — which keeps them
-        // agreeing with each other while abandoning every flag already on disk
-        // — still fails.
-        assertEquals("StationlyPrefs", constant(v2, "PREFS"))
-        assertEquals("post_notifications_asked", constant(v2, "KEY_ASKED"))
-        assertEquals("post_notifications_granted", constant(v2, "KEY_LAST_GRANTED"))
+    fun `the notification prompt is remembered where v1 left it`() {
+        // v1's half of this comparison — `NotificationPermissionEffectKt`'s
+        // private consts — died with v1's summary screen at AV2-3.5. What did
+        // NOT die is the data: every install that has already answered the
+        // POST_NOTIFICATIONS prompt has these keys on disk under these names.
+        //
+        // Change them and every decided user reads back as NOT_DETERMINED. The
+        // shared effect then calls `requestNotificationAuthorization()`, and
+        // Android — which never re-shows a dialog it has already shown —
+        // returns the standing answer with no UI at all. Nothing appears;
+        // nothing is logged. Meanwhile a user who had DENIED stops seeing the
+        // banner explaining why no alerts arrive, because their state now reads
+        // as undecided.
+        //
+        // So this is now a one-sided assertion against recorded history, which
+        // is the correct shape once one of the two implementations is gone.
+        val store = NotificationPermissionStore::class.java
+        assertEquals("StationlyPrefs", constant(store, "PREFS"))
+        assertEquals("post_notifications_asked", constant(store, "KEY_ASKED"))
+        assertEquals("post_notifications_granted", constant(store, "KEY_LAST_GRANTED"))
     }
 
     /**
-     * A `private const val` on a Kotlin object, read back off the class.
+     * A `const val` on a Kotlin object, read back off the class.
      *
      * Reflection rather than parsing the source: it survives reformatting and a
      * rewrite, and it fails loudly if the field is renamed — which is itself the

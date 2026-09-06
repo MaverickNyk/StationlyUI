@@ -8,10 +8,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 
 /**
@@ -19,7 +16,7 @@ import androidx.compose.ui.platform.LocalContext
  *
  * Architecture (see [ThemeTokens] docstring for full detail):
  *
- *   [StationlyThemeHost]      ← MainActivity wraps everything in this
+ *   [StationlyThemeHost]      ← DreamSettingsActivity wraps everything in this
  *        │
  *        ├─ reads AppTheme preference (Light / Dark / System)
  *        ├─ reads cached SduiThemeTokens from SharedPrefs
@@ -71,9 +68,15 @@ fun StationlyTheme(
 }
 
 /**
- * Top-level theme host for [com.stationly.mobile.MainActivity]. Composes:
- *   - The persisted [AppTheme] preference (state held here so the in-app
- *     toggle button can flip it without restart).
+ * Theme host for the surfaces still on v1's Compose tree. Since AV2-3.5 that
+ * is `DreamSettingsActivity` and nothing else — the app itself is
+ * `:composeApp`'s `StationlyThemeHost`, which is a different function in a
+ * different module with the same name and the same job.
+ *
+ * Composes:
+ *   - The persisted [AppTheme] preference, read once. It is READ-only here now:
+ *     the picker is in the shared UI, and `AppSettings` explains why there must
+ *     not be a second writer.
  *   - The SharedPrefs cache of SDUI theme overrides (read synchronously
  *     on first composition — cheap, ~1 KB JSON).
  *   - A background-coroutine network refresh (fire-and-forget per launch).
@@ -81,7 +84,7 @@ fun StationlyTheme(
 @Composable
 fun StationlyThemeHost(content: @Composable () -> Unit) {
     val context = LocalContext.current
-    var theme by remember { mutableStateOf(AppSettings.getTheme(context)) }
+    val theme = remember { AppSettings.getTheme(context) }
 
     // Read SDUI overrides once per composition. The merge happens below
     // against the active dark/light defaults so flipping the theme picker
@@ -102,14 +105,7 @@ fun StationlyThemeHost(content: @Composable () -> Unit) {
     val activeOverrides = if (darkTheme) overrides.dark else overrides.light
     val mergedTokens = base.merge(activeOverrides, overrides.constants)
 
-    val themeState = AppThemeState(
-        theme    = theme,
-        onChange = { new ->
-            AppSettings.setTheme(context, new)
-            theme = new
-        },
-    )
-    CompositionLocalProvider(LocalAppTheme provides themeState) {
+    CompositionLocalProvider(LocalAppTheme provides AppThemeState(theme)) {
         StationlyTheme(theme = theme, tokens = mergedTokens, content = content)
     }
 }

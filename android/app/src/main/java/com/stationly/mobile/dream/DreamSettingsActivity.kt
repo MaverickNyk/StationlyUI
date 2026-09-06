@@ -227,7 +227,7 @@ private fun DreamSettingsScreen(onBack: () -> Unit) {
                                     title = sel.stationName,
                                     subtitle = "${sel.line.replaceFirstChar { it.uppercase() }} · " +
                                         sel.direction.replaceFirstChar { it.uppercase() },
-                                    lineColor = com.stationly.mobile.ui.summary.components.lineColorForTheme(
+                                    lineColor = com.stationly.mobile.ui.theme.lineColorForTheme(
                                         sel.line,
                                         MaterialTheme.colorScheme.background.luminance() < 0.5f,
                                     ).let { c -> if (c == com.stationly.mobile.ui.theme.TflAmber) accent else c },

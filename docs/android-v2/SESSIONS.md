@@ -18,6 +18,89 @@ Template:
 
 ---
 
+## S011 — 2026-09-06 — AV2-3.5 "The cutover" · **the shared UI IS the Android app**
+
+**Built.** `MainActivity` is `setContent { App(...) }`. `src/staging/` is gone,
+`:composeApp` is `implementation`, and roughly 8,000 lines of v1 UI are deleted
+along with `navigation-compose` and the downloadable-fonts pipeline. The class
+kept the v1 NAME on purpose — home-screen pins reference the component, not the
+package — so no `<activity-alias>` was needed. Tests 18 → 23.
+
+**Started from a user report, not the board.** "Why do I see a Sign in with
+Apple option in Android — catch mistakes like that, that's basic." It was a
+known finding, correctly deferred by AV2-3.4 because hiding the button meant
+editing a `commonMain` screen iOS ships, and AV2-3.5 owns that screen. Fixed
+with `PlatformAuthProvider.supportsAppleSignIn`, abstract rather than defaulted.
+
+**Learned — the fix for a wrong button is rarely just removing it.** Hiding
+Apple left the landing screen with **no primary action at all**. `GoogleButton`
+is deliberately styled to recede *below* the white Apple primary — dark surface,
+54dp, semibold, no lift — so with Apple gone, Android's only sign-in button read
+as the lesser of two and the eye went to "other ways to sign in" instead. A
+button that is wrong to show is usually load-bearing for the one beside it.
+
+**Learned — a migration task can be satisfied by a fallback written for another
+platform.** Task (e) asked for a one-shot theme translation on first v2 launch.
+None was written and none should be: the shared reader is `loadDurable(key) ?:
+loadString(key)`, and on Android `loadString` reads `StationlyPrefs` — exactly
+the file and key v1 wrote to, with the same three `storedAs` strings. That
+fallback exists for an *iOS* reason and happens to be the whole of Android's
+upgrade path. The story's task text also misnamed the source: the choice was
+never in `ThemeRepository` (that is the SDUI colour-token cache), it was in
+`AppSettings`.
+
+The real theme bug was the other direction and nobody had asked about it: the
+shared UI writes to `stationly_durable_prefs`, v1's reader read `StationlyPrefs`
+only, and the **Daydream** is the one v1 surface still standing. Flipping the
+theme in the app would have left the screensaver on last month's. v1's reader is
+now durable-first with no setter at all.
+
+**Learned — the cutover's real risk was not what it deleted, it was what it
+started SHOWING.** Two things came from asking "what does the shared UI now put
+in front of an Android user that nobody checked?", and neither was on the task
+list:
+
+- Home settings → **Screensaver** opened the shared dream settings screen, whose
+  Android `actual`s are placeholders — a map that dies with the process, a
+  no-op keep-awake. The user would configure a screensaver, have every choice
+  discarded, and still have the real Daydream unchanged in system Settings.
+  Their own file header said "the composeApp android target is a
+  build-verification surface only", which stopped being true the moment this
+  story landed. Android now goes to `ACTION_DREAM_SETTINGS`, as v1's promo did.
+- `App()` calls `UpdateSurfaces()` at its root, so the **update gate is live on
+  Android** as of this commit — including a blocking screen that consumes every
+  gesture and offers one button. If the backend's `android` block carries iOS's
+  store URLs, that button opens nothing and there is no way past. Written up at
+  the top of AV2-7.1, which was planned as "wire it up".
+
+A placeholder is only safe while nothing reaches it. Changing what a module
+*is* changes what reaches it, and the compiler has nothing to say about that.
+
+**Learned — deleting a host deletes its intent-filters' meaning, not the
+filters.** v1's `MainActivity` owned four; the shared `App` handled one. The
+other three would have stayed registered in the manifest, been delivered by
+Android, and dropped in code — nothing errors, the tap does nothing. That is the
+iOS bug this project keeps citing, and the cutover was one commit away from
+re-committing it on Android.
+
+**Next agent needs to know:**
+
+1. **Nothing in EPIC-03 has run on a phone since the cutover.** Five stories sit
+   in Review on a compile-and-test pass over an irreversible change. The check
+   that cannot be deferred is the upgrade in place: v1 build → set theme, add a
+   station, pin the icon → install this build over it. Everything else can be
+   re-derived from the code; that cannot.
+2. **AV2-4.1 inherits two deleted behaviours**, written into EPIC-04 as tasks
+   rather than left in a findings section: the foreground `reconcile` fallback
+   (4.1 (f)) and the Android writer for `ACCOUNT_REMOVED_FLAG` (4.4 (e)). The
+   first is coherent to defer — the push it backs up does not reach the v2 board
+   model either — and the second is not: today an account deleted from another
+   device returns this one to login with no explanation at all.
+3. **Q3 got more expensive.** The Daydream is now the only reason any v1 code is
+   left in the app. Answering it "no" empties `com.stationly.mobile.ui` for free.
+
+---
+
 ## S010 — 2026-09-06 — AV2-3.3 "Real actuals, batch B" · **EPIC-03 code-complete bar the cutover**
 
 **Built.** The last three placeholder `actual`s became real: POST_NOTIFICATIONS

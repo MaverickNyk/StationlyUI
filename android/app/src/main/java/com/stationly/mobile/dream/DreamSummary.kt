@@ -31,7 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.UserSelection
-import com.stationly.mobile.ui.summary.components.TFL_LINE_COLORS
+import com.stationly.mobile.ui.theme.TFL_LINE_COLORS
 import com.stationly.mobile.ui.theme.TflAmber
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -377,7 +377,7 @@ internal fun EmptyStatePanel() {
 @Composable
 internal fun lineColorOf(line: String?): Color {
     val isDark = LocalDreamColors.current === DarkDreamColors
-    return com.stationly.mobile.ui.summary.components.lineColorForTheme(line, isDark)
+    return com.stationly.mobile.ui.theme.lineColorForTheme(line, isDark)
 }
 
 private fun prettyLineName(line: String): String =

@@ -81,11 +81,9 @@ android {
             dimension = "environment"
             versionNameSuffix = "-staging"
             resValue("string", "app_name", "Stationly Staging")
-            // The second launcher icon, for the v2 host in src/staging. Named
-            // here rather than in a staging res/ folder so both flavour labels
-            // sit together, and so prod never generates a string for a door it
-            // does not have.
-            resValue("string", "v2_launcher_label", "Stationly v2")
+            // `v2_launcher_label` lived here until AV2-3.5. It named the SECOND
+            // launcher icon while the shared UI was a staging-only door beside
+            // the shipped app. There is one door now, and it is `app_name`.
             buildConfigField("String", "STATIONLY_API_KEY", "\"${localProperties.getProperty("staging.STATIONLY_API_KEY") ?: ""}\"")
             deepLinkScheme("stationly-staging")
         }
@@ -138,37 +136,33 @@ dependencies {
     implementation(project(":core"))
 
     // The shared Compose Multiplatform UI — the same 101 files iOS runs on.
-    // See docs/android-v2/DECISIONS.md D2 for why the Android app adopts this
-    // rather than re-implementing the v2 screens against its own Compose tree.
+    // Since AV2-3.5 it is not "the shared UI" as distinct from the app's: it IS
+    // the app. `MainActivity` is `setContent { App(...) }` and there is no other
+    // screen. See docs/android-v2/DECISIONS.md D2.
     //
-    // ⚠️ STAGING ONLY, deliberately, and it must stay that way until AV2-3.5.
-    //
-    // `:composeApp` builds against Compose Multiplatform 1.8.0, and putting it
-    // on the classpath drags every AndroidX Compose artifact up with it:
+    // This was `stagingImplementation` until the cutover, and the reason it was
+    // scoped is worth keeping written down. `:composeApp` builds against Compose
+    // Multiplatform 1.8.0 and drags every AndroidX Compose artifact up with it:
     //
     //     androidx.compose.runtime     1.7.0 -> 1.8.0
     //     androidx.compose.foundation  1.7.0 -> 1.8.0
     //     androidx.compose.material3   1.3.0 -> 1.3.2
     //
-    // which silently overrides the compose-bom pin below. That is not a
-    // theoretical problem here: the navigation comment further down records a
-    // SHIPPED blank-screen bug caused by navigation-compose being misaligned
-    // with the Compose it ran against, and `navigation-compose:2.8.0` is pinned
-    // to Compose **1.7**. Letting the shared UI in through `implementation`
-    // would move the live app's Compose runtime out from under a version pairing
-    // that exists because it already went wrong once.
+    // overriding the compose-bom pin below. The hazard was never the bump on its
+    // own: it was `navigation-compose:2.8.0`, which is pinned to Compose **1.7**
+    // and which v1's NavHost depended on. That pairing exists because it already
+    // went wrong once — a shipped blank screen, recorded in the navigation
+    // comment this replaced.
     //
-    // Scoping it to the staging flavour keeps the prod build bit-for-bit on the
-    // dependency graph it shipped with, while the shared UI is exercised on
-    // staging. AV2-3.5 promotes this to `implementation` — and does it in the
-    // same change that DELETES the v1 navigation stack, at which point the
-    // pairing this protects no longer exists and the Compose/navigation versions
-    // can be moved together, deliberately.
-    // Kotlin DSL generates type-safe accessors only for the configurations that
-    // exist when the script is compiled, and flavour configurations are created
-    // BY this script — so `stagingImplementation(...)` does not resolve. The
-    // string invoke addresses the same configuration by name.
-    "stagingImplementation"(project(":composeApp"))
+    // v1's NavHost is deleted and `navigation-compose` with it, so the pairing
+    // has no second half left to break. The only NavHost in the app is the
+    // shared one, which brings its own navigation at its own aligned version.
+    // The bom below is now a FLOOR for the app module's remaining Compose (the
+    // Daydream), not a ceiling on the shared UI's.
+    //
+    // Staging has been running exactly this resolution since AV2-3.1, on
+    // hardware, through three device passes.
+    implementation(project(":composeApp"))
 
     // AndroidX Core
     implementation("androidx.core:core-ktx:1.12.0")
@@ -188,20 +182,27 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
-    // Downloadable Google Fonts — used for the Stationly brand wordmark
-    // (Inter Tight). Fetched via Google Play Services Fonts provider so
-    // we don't ship a TTF and fonts can be added/swapped without an
-    // APK update. See ui/theme/Type.kt for the FontFamily declaration.
-    implementation("androidx.compose.ui:ui-text-google-fonts")
+    // ONE font pipeline, and this is not it (AV2-3.5 task (c)).
+    //
+    // v1 loaded Inter Tight through the Google Play Services Fonts provider
+    // (`ui-text-google-fonts` + `res/values/font_certs.xml`), and `:composeApp`
+    // bundles the same six static weights as compose-resources. Two font
+    // pipelines in one app is two places for the brand face to come out wrong,
+    // and the downloadable one has a failure mode the bundled one does not: no
+    // GMS, no network, or a blocked provider silently degrades the wordmark to
+    // the system face. Both users of the provider — v1's `Type.kt` and its
+    // `font_certs.xml` — are deleted, so the dependency goes with them.
+    //
+    // The cost is ~250KB of TTF in the APK. That is the price of the app and
+    // the widget agreeing about what Stationly looks like offline.
 
-    // Navigation — must match Compose 1.7 (compose-bom 2024.09.00). nav 2.7.x
-    // targets Compose 1.6 and its screen transitions break on 1.7's AnimatedContent
-    // rewrite: fast navigate+pop (e.g. open/close Profile repeatedly) leaves the
-    // fade transition stuck mid-flight, so destinations overlap (ghosted Profile
-    // behind Summary) and eventually nothing draws → blank screen. 2.8.x is the
-    // Compose-1.7-aligned line and fixes this; it also brings lifecycle 2.8.x in
-    // transitively, so the viewmodel-compose pin below is lifted to match.
-    implementation("androidx.navigation:navigation-compose:2.8.0")
+    // Navigation — `androidx.navigation:navigation-compose` was here until
+    // AV2-3.5 and is deliberately NOT replaced. v1's NavHost was its only user;
+    // the shared UI brings its own navigation, aligned to its own Compose.
+    // Adding a second navigation library back would recreate the exact version
+    // pairing whose breakage shipped a blank screen — see the `:composeApp`
+    // comment above.
+
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
 
     // Splash Screen

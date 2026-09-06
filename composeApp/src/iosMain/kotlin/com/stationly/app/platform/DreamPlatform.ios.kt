@@ -95,3 +95,9 @@ actual fun lastKnownLatLon(): Pair<Double, Double>? {
     val loc = CLLocationManager().location ?: return null
     return loc.coordinate.useContents { latitude to longitude }
 }
+
+/**
+ * No. iOS has no system screensaver, so the app owns the whole feature and the
+ * home-settings row opens `DreamSettingsScreen` exactly as it always has.
+ */
+actual fun openSystemScreensaverSettings(): Boolean = false
