@@ -24,8 +24,27 @@ uploading because R8 strips unused code aggressively. This programme changes the
 dependency graph substantially — a whole Compose Multiplatform UI, JetBrains
 navigation and lifecycle, Coil 3, kotlinx-serialization across new types.
 
+> ### Partial result, S014 (2026-09-06) — R8 COMPILES after the cutover
+> `:android:app:assembleStagingRelease` **succeeds**: R8 full mode plus
+> `shrinkResources`, against the post-cutover dependency graph (`:composeApp` as
+> `implementation`, `navigation-compose` and `ui-text-google-fonts` gone). That
+> is the first time the minified build has been exercised since AV2-3.5, and it
+> retires the largest unknown here — that the whole Compose Multiplatform UI
+> would not survive shrinking at all. **10m 31s, 6.98 MB unsigned APK** (task
+> (e)'s baseline; the pre-cutover number was never recorded, so this is the
+> first datum rather than a delta).
+>
+> The only R8 output is the familiar `An error occurred when parsing kotlin
+> metadata` version-skew warning, repeated eleven times. Pre-existing and benign.
+>
+> **This does NOT close task (b), which is the one that matters.** A release
+> build that compiles is not a release build that runs: serialization and
+> reflection failures under R8 surface as runtime crashes on screens nobody
+> opened. Nothing has been installed or walked. Keep the story open.
+
 ### Tasks
-- [ ] **a.** Build a release AAB and install it. Not a debug build.
+- [x] **a.** ~~Build~~ a release APK. *(Built, not yet installed — see above.
+      Still to do: the AAB, and installing it.)*
 - [ ] **b.** Walk every screen. Serialization and reflection failures under R8
       surface as runtime crashes on screens nobody opened during testing.
 - [ ] **c.** Add keep rules for anything the new graph needs. Existing rules
