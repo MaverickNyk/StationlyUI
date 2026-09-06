@@ -41,16 +41,25 @@ internal object AndroidAppContext {
     /**
      * The Activity currently resumed, or null.
      *
-     * ## Why lazy registration is enough
-     * Registering on first access means the tracker starts during the first
-     * composition — inside `Activity.onCreate`, before `onActivityResumed` has
-     * fired — so for a few milliseconds there is a resumed Activity that this
-     * object does not know about. That window closes as soon as `onCreate`
-     * returns, and everything reading this is a response to a user touching the
-     * screen, which cannot happen before then. The alternative is a
-     * `ContentProvider` or an `androidx.startup` `Initializer` purely to be
-     * eager, which is a manifest entry and a dependency for a race with nobody
-     * in it.
+     * ## Lazy registration was NOT enough, and the window was not milliseconds
+     * This used to register the tracker on first access, reasoning that anything
+     * reading it was a response to a touch and so could not run before
+     * `onCreate` returned. That was wrong, and AV2-3.3 caught it on a Pixel 7
+     * Pro: the shared `NotificationPermissionEffect` reads this from a
+     * `LaunchedEffect` on the summary screen's first composition — no touch
+     * involved — and composition runs **after** `onActivityResumed`. So the
+     * tracker registered too late to hear the only resume that had happened,
+     * and `activity` stayed null.
+     *
+     * Null is not an error to any caller here; each one treats it as "cannot
+     * ask". So the POST_NOTIFICATIONS prompt simply never appeared on a fresh
+     * install, silently, and stayed missing until the user happened to
+     * background the app and come back — the next real `onActivityResumed`.
+     * That is a permission prompt you only get one chance at.
+     *
+     * Hence [StationlyActivityTracker], a content provider that registers
+     * before any Activity exists. The lazy path below is kept as a fallback for
+     * a host that somehow starts without it.
      */
     val activity: Activity?
         get() {
@@ -58,11 +67,26 @@ internal object AndroidAppContext {
             return activityRef?.get()
         }
 
+    /**
+     * Begin tracking. Idempotent, and safe to call before [Platform] is
+     * initialised because the caller supplies the [Application].
+     */
+    @Synchronized
+    internal fun startTracking(app: Application) {
+        if (tracking) return
+        tracking = true
+        register(app)
+    }
+
     @Synchronized
     private fun ensureTracking() {
         if (tracking) return
-        val app = context.applicationContext as? Application ?: return
+        val app = runCatching { context.applicationContext as? Application }.getOrNull() ?: return
         tracking = true
+        register(app)
+    }
+
+    private fun register(app: Application) {
         app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
                 activityRef = WeakReference(activity)

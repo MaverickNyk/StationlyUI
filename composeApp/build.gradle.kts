@@ -63,6 +63,10 @@ kotlin {
                 implementation("androidx.activity:activity-compose:1.8.1")
                 implementation("com.google.firebase:firebase-auth-ktx:22.1.1")
                 implementation("com.google.android.gms:play-services-auth:20.7.0")
+                // Nearby-station search. `:android:app` already ships this (at
+                // 21.0.1); :composeApp needs its own edge because the dependency
+                // runs app → library, so the app's classpath is not this one's.
+                implementation("com.google.android.gms:play-services-location:21.0.1")
                 implementation("io.coil-kt.coil3:coil-network-okhttp:3.0.4")
             }
         }

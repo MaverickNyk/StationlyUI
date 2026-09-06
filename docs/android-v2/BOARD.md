@@ -9,14 +9,13 @@
 ```
 SPRINT:            2 — host cutover  (sprint 1 complete: EPIC-01 + EPIC-02)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S009 (2026-09-06) — AV2-3.4 auth and deep links · FIRST SESSION
-                   WITH A DEVICE (Pixel 7 Pro), which also closed the on-device
-                   criteria AV2-3.1 and AV2-3.2 were held in Review for
+LAST SESSION:      S010 (2026-09-06) — AV2-3.3 real actuals, batch B.
+                   EPIC-03 is now code-complete except the cutover itself
 GATE:              GREEN
                    :core:testDebugUnitTest                  PASS  (403 tests)
                    :core:verify…DatabaseMigration           PASS  (catches .sq/.sqm drift)
-                   :composeApp:testDebugUnitTest            PASS  (52 tests)
-                   :android:app:testStagingDebugUnitTest    PASS  (17 tests, +5 deep-link scheme)
+                   :composeApp:testDebugUnitTest            PASS  (58 tests, +6 asset naming)
+                   :android:app:testStagingDebugUnitTest    PASS  (18 tests, +1 notif contract)
                    :android:app:compileStaging/ProdDebugKotlin  PASS
                    :composeApp:compileDebugKotlinAndroid    PASS
                    :composeApp:assembleComposeAppDebugXCFramework  PASS  (commonMain
@@ -30,8 +29,9 @@ BLOCKED ON OWNER:  Q3 blocks EPIC-06 · Q4 keeps :android:app out of CI
                    AV2-3.1 in Review with ONE half failing, and not its fault:
                    v2-written state crashes v1's summary on launch. Read the
                    finding in the epic before signing anything off.
-NEXT UP:           AV2-3.3 is the only Ready story and the last one before the
-                   cutover. AV2-3.5 unblocks once it lands.
+NEXT UP:           AV2-3.5 — THE CUTOVER — is now unblocked (3.3, 3.4 and 1.3
+                   all done). It is the irreversible one: read its story and the
+                   AV2-3.1 v1-crash finding together before starting.
 ```
 
 ---
@@ -45,7 +45,6 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Epic | Title | Waiting on |
 |---|---|---|---|
-| AV2-3.5 | 03 | The cutover | AV2-3.3, AV2-3.4, AV2-1.3 |
 | AV2-4.1 | 04 | FCM at v2 | AV2-3.5 |
 | AV2-4.2 | 04 | Topic lifecycle | AV2-4.1 |
 | AV2-4.3 | 04 | Cloud state dual-write | AV2-4.2 |
@@ -67,7 +66,7 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Epic | Title | Size |
 |---|---|---|---|
-| AV2-3.3 | 03 | Real actuals, batch B | M |
+| AV2-3.5 | 03 | The cutover | L |
 
 ### 🅘 In Progress — WIP limit 2
 
@@ -79,6 +78,7 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Session | What to look at |
 |---|---|---|
+| AV2-3.3 | S010 | Three stubs became real, both behavioural criteria **verified on the Pixel**: the POST_NOTIFICATIONS prompt fires on a fresh install, and nearby-station search returns stations on *Approximate* location, which v1 refuses. The thing to read is the finding: `AndroidAppContext` tracked the Activity lazily and so never saw the first resume, which silently disarmed that prompt entirely — one of the two prompts Android gives you a single chance at. Fixed with a content provider, staging-only. |
 | AV2-3.4 | S009 | All three tasks done and the first two criteria **verified on hardware**: Google sign-in completes from the shared landing screen, and `stationly://` no longer resolves on a staging build while `stationly-staging://` does. Criterion 3 is unreachable (Q6). Two things to read rather than re-test: the **crash** found by backing out of a slow sign-in (fixed, in `commonMain` — one guard, nine call sites), and the still-visible **"Continue with Apple"** button on Android, deliberately left for AV2-3.5. |
 | AV2-3.2 | S008 · device pass S009 | Both criteria now **verified on a Pixel 7 Pro** and the epic updated. One correction worth reading: there is no offline *banner* over a live board and there should not be — `computeBoardFallbackState` short-circuits on `hasPredictions`, so a board with cached departures keeps ticking. The offline surface is the cold-start "Can't reach servers", and it appeared. Device id held one value across a crash, force-stops, an update install and a sign-out. |
 | AV2-3.1 | S007 · device pass S009 | **Half passes, half fails, and the failure is not this story's.** Two launcher icons; **Stationly v2** opens the shared UI, signs in and navigates. **Stationly Staging** (v1) now *crashes on launch* on any account that has opened v2 — duplicate LazyColumn key, because the v2 board model keeps one selection per direction and v1's keys by station+line. Read that finding before signing off; it is a trap set for AV2-8.2. Prod remains untouched and proven so at the dependency graph and the merged manifest. |
@@ -143,7 +143,7 @@ the users, 03 is the foundation 04 builds on.
 |---|---|---|---|---|
 | 01 Safety net | 3 | **3** ✅ | 9 | **9** |
 | 02 Database | 3 | **3** ✅ | 11 | **11** |
-| 03 Host cutover | 5 | 0 (3 in review) | 21 | 0 |
+| 03 Host cutover | 5 | 0 (4 in review) | 21 | 0 |
 | 04 Data plane | 4 | 0 | 18 | 0 |
 | 05 Widget | 4 | 0 | 16 | 0 |
 | 06 Dream | 2 | 0 | 6 | 0 |
