@@ -42,6 +42,43 @@ class SqlStorage(private val database: StationlyDatabase) {
         )
     }
 
+    /**
+     * Every board this device tracks, in the user's own order, with duplicates
+     * collapsed.
+     *
+     * ## Why a dedupe is needed at all
+     * `UserSelectionEntity`'s primary key is an AUTOINCREMENT `id`, so
+     * `insertSelection` APPENDS — there is no uniqueness constraint on
+     * (station, line, direction), and nothing in the schema stops the same board
+     * being written twice. Observed on a Pixel 7 Pro on 2026-09-06: three rows
+     * for Hackney Wick / Mildmay / inbound, two carrying `parentStationId` and
+     * one blank.
+     *
+     * It is not cosmetic. The home screen groups CARDS by hub, so the duplicates
+     * collapse into one card — and then the hero strip inside it renders one
+     * entry per selection, so the user sees the same departure twice, side by
+     * side, saying the same thing. Every FCM push also runs the whole
+     * sync-and-persist path once per duplicate, writing identical rows over each
+     * other.
+     *
+     * ## Why here and not a UNIQUE index
+     * A constraint is the right long-term answer and it is a schema change, so
+     * it needs a migration in a `.sq` shared with a build going to TestFlight.
+     * This is the read-side repair that costs nothing and helps every user who
+     * already has duplicates on disk — including from the AV2-3.1 era, when a v1
+     * door and a v2 door both wrote this table. Raised as a finding on AV2-4.1.
+     *
+     * ## The two rules, and why each one
+     * - **Position comes from the FIRST occurrence.** `selectAllSelections`
+     *   orders by `id` and its own comment explains that the order is
+     *   load-bearing: three surfaces read "your first station" off it. Collapsing
+     *   a duplicate must not move anything.
+     * - **The kept ROW is the richest one.** A blank `parentStationId` means
+     *   "same as station", which was true before hubs existed and is wrong for a
+     *   bus stop: without it, one stop's poles render as several identically
+     *   named cards. Where a duplicate group has both shapes, keeping whichever
+     *   was inserted first would be a coin toss on exactly that bug.
+     */
     fun getAllSelections(): List<UserSelection> {
         return queries.selectAllSelections().executeAsList().map {
             UserSelection(
@@ -64,8 +101,34 @@ class SqlStorage(private val database: StationlyDatabase) {
                 directionTowards = it.directionTowards,
                 routeResolvedAt = it.routeResolvedAt,
             )
-        }
+        }.dedupeBoards()
     }
+
+    /**
+     * Collapse rows that name the same board. See [getAllSelections] for why
+     * this is needed and why the two rules are what they are.
+     */
+    private fun List<UserSelection>.dedupeBoards(): List<UserSelection> {
+        // Cheap exit for the overwhelmingly common case: nothing duplicated.
+        val keys = map { boardKey(it) }
+        if (keys.size == keys.toSet().size) return this
+
+        val best = LinkedHashMap<String, UserSelection>(size)
+        forEach { candidate ->
+            val key = boardKey(candidate)
+            val held = best[key]
+            // `put` on an existing key keeps the ORIGINAL insertion position in
+            // a LinkedHashMap, which is exactly what is wanted: the group sits
+            // where its first row sat, whichever row wins on content.
+            if (held == null || (held.parentStationId.isBlank() && candidate.parentStationId.isNotBlank())) {
+                best[key] = candidate
+            }
+        }
+        return best.values.toList()
+    }
+
+    private fun boardKey(s: UserSelection): String =
+        "${s.station.lowercase()}|${s.line.lowercase()}|${s.direction.lowercase()}"
 
     /**
      * Store a list of strings in one TEXT column, losslessly.

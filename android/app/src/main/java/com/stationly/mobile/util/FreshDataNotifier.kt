@@ -2,82 +2,113 @@ package com.stationly.mobile.util
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
+import com.stationly.core.util.FreshData
 import com.stationly.mobile.dream.StationlyDreamService
 import com.stationly.mobile.widget.DepartureWidgetProvider
+import com.stationly.core.util.FreshDataNotifier as SharedNotifier
 
 /**
  * Single fan-out point for "fresh prediction data is in SQL now".
  *
  * Any code path that writes a new prediction payload to SQL (FCM push,
- * pull-to-refresh on home, refresh button on widget) should call
- * [notify] afterwards. This guarantees every surface picks up the
- * change with identical semantics — the chronometer resets, rows
- * re-derive, the colour goes back to amber — regardless of which
- * trigger caused the fetch.
+ * pull-to-refresh on home, refresh button on widget) calls one of the three
+ * entry points below afterwards. This guarantees every surface picks up the
+ * change with identical semantics — the chronometer resets, rows re-derive, the
+ * colour goes back to amber — regardless of which trigger caused the fetch.
  *
- * What it does:
- *   1. **SharedPreferences ping**  → [SummaryViewModel] listens for
- *      `predictions_<station>_<line>` key changes and re-reads SQL.
- *      Drives the home Board's prediction list + chronometer anchor.
- *   2. **`ACTION_DREAM_REFRESH` broadcast**  → [DreamHost] bumps its
- *      `refreshTick` `StateFlow`, which fires the `LaunchedEffect`
- *      that re-loads the snapshot from SQL. Drives the cluster +
- *      fullscreen dreams.
- *   3. **Widget redraw**  → [DepartureWidgetProvider.updateFromStorage]
- *      reads SQL and pushes a fresh RemoteViews to every widget
- *      instance.
+ * The three surfaces:
  *
- * Without this helper each call site had to remember to do these three
- * things by hand, and (per the audit) only the FCM handler did all
- * three — pull-to-refresh skipped the dream, widget refresh skipped
- * BOTH home and dream. This file is the single answer for "where does
- * fresh data get fanned out?"
+ *   1. **The app**, via the shared [SharedNotifier] flow, which
+ *      `SummaryViewModel` collects. It reloads only the boards the event names.
+ *   2. **The screensaver**, via the `ACTION_DREAM_REFRESH` broadcast → `DreamHost`
+ *      bumps its `refreshTick` `StateFlow` and re-reads the snapshot from SQL.
+ *   3. **The home-screen widget**, via `DepartureWidgetProvider.updateFromStorage`.
+ *
+ * ## What AV2-4.1 changed here, and why it was invisible
+ * Surface 1 used to be a **SharedPreferences ping**: this wrote a timestamp
+ * under `predictions_<station>_<line>` and v1's `SummaryViewModel` held an
+ * `OnSharedPreferenceChangeListener` keyed to it. AV2-3.5 deleted that view
+ * model along with the rest of v1's UI, and nothing in the app has registered a
+ * preference listener since. The write kept happening, to a key with no reader.
+ *
+ * Meanwhile the shared `SummaryViewModel` — which IS the app's home screen now —
+ * collects `com.stationly.core.util.FreshDataNotifier.events`, and nothing on
+ * Android emitted to it. So **an FCM push wrote fresh departures to SQLite and
+ * the open board did not move**: it caught up on its own 30-second poll, or when
+ * the user backgrounded and returned. No error, no log line, and it looks
+ * exactly like a slow network. iOS was unaffected throughout, because iOS
+ * reaches the same SQLite through `ProcessPredictionsUseCase`, which emits.
+ *
+ * That is why the entry points are named per scope now instead of one `notify`.
+ * The shared flow carries WHAT changed, and a station push and a line-status
+ * push are different answers; collapsing them into one call would have meant
+ * emitting [FreshData.All] for everything and reloading every board on the phone
+ * on every push, which is the cost the shared notifier was made precise to
+ * avoid.
+ *
+ * ## Ordering
+ * The shared emit goes FIRST in each function. The other two surfaces reach into
+ * Android — a broadcast and an AppWidgetManager call — and the one the user is
+ * looking at should not queue behind them.
  */
 object FreshDataNotifier {
 
     /**
-     * Notify every surface that fresh data has landed for the given
-     * `stationId` + `lineId`. Safe to call from any thread — the inner
-     * operations are themselves thread-safe (SharedPreferences edit,
-     * sendBroadcast, RemoteViews push).
+     * New departures for one stop are in SQL.
      *
-     * `stationId` + `lineId` identify which board's data changed; only
-     * boards whose SharedPrefs key matches will trigger a re-read on
-     * the home side. The dream broadcast and widget redraw are
-     * board-agnostic — they re-read whatever is in SQL.
+     * `stationId` is [com.stationly.core.model.UserSelection.station] — the
+     * naptan the departures were FETCHED from, which on a bus stop is the pole
+     * and not the hub. That is the id the shared collector matches boards by, so
+     * passing the hub here would silently reload nothing.
      */
-    fun notify(context: Context, stationId: String, lineId: String) {
-        pingHome(context, stationId, lineId)
+    fun notifyPredictions(context: Context, stationId: String) {
+        announce(FreshData.Station(stationId))
         broadcastDream(context)
         redrawWidget(context)
     }
 
     /**
-     * Variant for callers that just persisted a payload not tied to a
-     * single (stationId, lineId) — e.g. line-status updates that
-     * affect multiple boards, or background syncs that don't carry a
-     * station context. Fires the dream broadcast and widget redraw
-     * but skips the SharedPrefs ping (which is keyed to a specific
-     * board).
+     * A new status for one line is in SQL.
+     *
+     * Called ONCE per push rather than once per subscribed board: the event
+     * names the line, and the collector already knows which of its boards ride
+     * it. The old per-selection loop sent N identical pings.
      */
-    fun notifyAll(context: Context) {
+    fun notifyLineStatus(context: Context, lineId: String) {
+        announce(FreshData.Line(lineId))
         broadcastDream(context)
         redrawWidget(context)
     }
 
-    private fun pingHome(context: Context, stationId: String, lineId: String) {
-        // The home `SummaryViewModel.prefsListener` is keyed by the
-        // string "predictions_<station>_<line>". Writing a fresh
-        // timestamp under that key triggers the listener, which calls
-        // `loadPredictions(selection)` → re-reads SQL → updates the
-        // prediction list + the chronometer anchor.
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString(
-                "predictions_${stationId}_${lineId}",
-                System.currentTimeMillis().toString(),
-            )
-            .apply()
+    /**
+     * Something changed and the caller cannot name the scope — a cross-device
+     * reconcile that may have rewritten the whole board list, for instance.
+     *
+     * Honest rather than lazy: [FreshData.All] makes every collector reload
+     * everything, which is always CORRECT and merely expensive. A caller that
+     * CAN name its scope must use one of the two above.
+     */
+    fun notifyAll(context: Context) {
+        announce(FreshData.All)
+        broadcastDream(context)
+        redrawWidget(context)
+    }
+
+    /**
+     * Emit, and say so.
+     *
+     * The log line is not debug scaffolding left behind — it is the fix for the
+     * half of this bug that made it survive a cutover and three device passes.
+     * A fan-out that writes to a key nobody reads produces no error, no warning
+     * and no trace, and the symptom (a board that updates a bit late) is
+     * indistinguishable from a slow network. One line at the only place that
+     * knows a push reached the app is the difference between "the board feels
+     * sluggish" and a searchable answer.
+     */
+    private fun announce(what: FreshData) {
+        Log.d(TAG, "fresh data → $what")
+        SharedNotifier.notifyFreshData(what)
     }
 
     private fun broadcastDream(context: Context) {
@@ -94,4 +125,6 @@ object FreshDataNotifier {
         // render" entry point — same path the watchdog and FCM use.
         DepartureWidgetProvider.updateFromStorage(context)
     }
+
+    private const val TAG = "FreshData"
 }

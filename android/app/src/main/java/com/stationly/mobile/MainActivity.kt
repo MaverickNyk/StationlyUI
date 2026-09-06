@@ -19,6 +19,7 @@ import com.stationly.app.AndroidPlatformAuthProvider
 import com.stationly.app.App
 import com.stationly.core.model.deeplink.DeepLinkRoute
 import com.stationly.core.model.deeplink.parseDeepLink
+import com.stationly.mobile.service.UserSyncCoordinator
 import com.stationly.mobile.ui.common.StagingBanner
 import kotlinx.coroutines.launch
 
@@ -135,6 +136,36 @@ class MainActivity : ComponentActivity() {
                 StagingBanner(Modifier.align(Alignment.BottomCenter))
             }
         }
+    }
+
+    /**
+     * The foreground fallback for a `user_sync` push this device missed.
+     *
+     * ## Why this is on the Activity and not in the shared resume hook
+     * AV2-4.1 asked for it in `SummaryScreen`'s `ON_RESUME` observer, where iOS
+     * would get it too. It cannot go there yet: `UserSyncCoordinator` lives in
+     * `:android:app` and `:composeApp` cannot import it — the dependency runs
+     * the other way. The alternatives were a second reconcile implementation in
+     * `composeApp/androidMain`, which is the divergence this codebase keeps
+     * paying for, or lifting the coordinator up a module, which is AV2-4.3's
+     * job and is where it is going anyway. So this is v1's arrangement,
+     * restored exactly, until the coordinator moves.
+     *
+     * `MainActivity.onResume` is also the more faithful trigger: it fires on app
+     * foreground, where the screen's observer fires on every screen resume too.
+     * The coordinator debounces at 15 minutes either way, and a push-triggered
+     * reconcile passes `force = true` and bypasses it.
+     *
+     * ## Why it was gone, and why that was survivable
+     * AV2-3.5 deleted v1's `MainActivity`, and this call with it, leaving
+     * `reconcile` with no caller at all. Nothing broke visibly, because the push
+     * it backs up did not reach the v2 board model either — a fallback for
+     * nothing. AV2-4.1 fixes both halves in one change, which is the only order
+     * in which either is testable.
+     */
+    override fun onResume() {
+        super.onResume()
+        UserSyncCoordinator.reconcile(this)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
