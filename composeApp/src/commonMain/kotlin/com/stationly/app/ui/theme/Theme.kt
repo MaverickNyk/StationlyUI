@@ -18,6 +18,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
+import com.stationly.app.platform.ApplySystemBarAppearance
 import com.stationly.core.model.sdui.SduiThemeTokens
 import kotlinx.coroutines.launch
 
@@ -113,6 +114,13 @@ fun StationlyThemeHost(content: @Composable () -> Unit) {
             theme = new
         },
     )
+    // The system bars belong to the APP's theme, not the phone's. A user running
+    // their phone dark with Stationly on Light was getting white status-bar
+    // icons on a cream canvas — see ApplySystemBarAppearance. Called here
+    // because this is where AppTheme.SYSTEM has just become a boolean, and it
+    // recomposes when the user flips the toggle.
+    ApplySystemBarAppearance(darkTheme)
+
     CompositionLocalProvider(LocalAppTheme provides themeState) {
         StationlyTheme(theme = theme, tokens = mergedTokens, content = content)
     }

@@ -34,7 +34,12 @@ sealed interface FreshData {
      * CORRECT — just expensive. Any new emitter that cannot name its scope
      * should use this rather than guess at one.
      */
-    object All : FreshData
+    object All : FreshData {
+        // Without this it logs as `FreshData$All@4da5542`, which defeats the
+        // point of a diagnostic line — the two data-class variants print their
+        // ids, and the one that means "reload everything" printed a hash.
+        override fun toString(): String = "All"
+    }
 }
 
 /**
