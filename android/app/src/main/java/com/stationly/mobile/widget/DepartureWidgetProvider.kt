@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.SystemClock
 import android.widget.RemoteViews
 import com.stationly.core.model.PredictionDisplay
+import com.stationly.core.model.UserSelection
 import com.stationly.core.util.StationlyFormatters
 import com.stationly.mobile.R
 import com.stationly.mobile.util.HomeConfigStore
@@ -48,6 +49,16 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         }
     }
     
+    /**
+     * The user dragged these widgets off the home screen. Forget what they were
+     * for, or the store accumulates dead ids forever and the in-app manager
+     * (AV2-5.2) lists widgets that are not on any home screen.
+     */
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        super.onDeleted(context, appWidgetIds)
+        WidgetBindingStore.unbind(context, appWidgetIds)
+    }
+
     override fun onDisabled(context: Context) {
         super.onDisabled(context)
         // Last widget removed from the home screen — drop the watchdog
@@ -255,34 +266,104 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             for (id in ids) appWidgetManager.partiallyUpdateAppWidget(id, views)
         }
 
+        /**
+         * Redraw every placed widget, each from the station it is bound to.
+         *
+         * ## What this used to do, and why it had to change
+         * It read `selections.first()` and pushed the SAME board to every widget
+         * id. Two widgets meant two copies of one station — the multi-station
+         * story did not exist, and a widget could not be wrong because it was
+         * never right about anything in particular.
+         *
+         * Android does not need a widget stack for this, and there is no point
+         * looking for one: the home screen is a free grid and has always
+         * supported many instances of one provider, each with its own
+         * `appWidgetId`. Two stations is two widgets. See [WidgetBindingStore]
+         * for the map from id to station and for what Android can do here that
+         * iOS cannot.
+         *
+         * One `getAllSelections()` for the whole pass rather than one per
+         * widget: it is a SQL read and the answer cannot change between two
+         * renders in the same loop.
+         */
         fun updateFromStorage(context: Context) {
-            android.util.Log.d("Widget", "Force updating from storage...")
+            val appWidgetManager = AppWidgetManager.getInstance(context)
+            val appWidgetIds = appWidgetManager.getAppWidgetIds(
+                android.content.ComponentName(context, DepartureWidgetProvider::class.java)
+            )
+            if (appWidgetIds.isEmpty()) return
+
+            // Backstop for bindings whose `onDeleted` never arrived — a
+            // launcher replaced, a restore, a broadcast dropped while the app
+            // was force-stopped. See WidgetBindingStore.prune.
+            WidgetBindingStore.prune(context)
+
             val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
-            if (selections.isEmpty()) {
-                android.util.Log.w("Widget", "No selections found in storage")
-                val appWidgetManager = AppWidgetManager.getInstance(context)
-                val appWidgetIds = appWidgetManager.getAppWidgetIds(
-                    android.content.ComponentName(context, DepartureWidgetProvider::class.java)
+            for (id in appWidgetIds) {
+                renderWidget(context, appWidgetManager, id, selections)
+            }
+        }
+
+        /**
+         * Redraw exactly ONE widget.
+         *
+         * For the in-app manager: rebinding widget A must not repaint widget B,
+         * which is on screen showing a station that did not change. The full
+         * `updateFromStorage` sweep is right after a data change (every board
+         * may have moved) and wrong after a binding change (one did).
+         */
+        fun updateOne(context: Context, appWidgetId: Int) {
+            renderWidget(
+                context,
+                AppWidgetManager.getInstance(context),
+                appWidgetId,
+                com.stationly.core.platform.Platform.sqlStorage.getAllSelections(),
+            )
+        }
+
+        /**
+         * Draw ONE widget, for the station it is bound to and no other.
+         *
+         * An unbound widget, or one whose station is no longer among the user's
+         * boards, renders the honest empty state and offers the configuration
+         * screen. It does **not** fall back to the first station: showing
+         * somebody a train that is not theirs, at a stop they are not standing
+         * at, with nothing on screen to say so, is the worst thing a departure
+         * board can do. That rule is why the binding exists at all.
+         */
+        private fun renderWidget(
+            context: Context,
+            appWidgetManager: AppWidgetManager,
+            appWidgetId: Int,
+            selections: List<UserSelection>,
+        ) {
+            val boundTo = WidgetBindingStore.boundStation(context, appWidgetId)
+            // The board's selections, in the user's own order. A hub can hold
+            // several (lines, directions); the widget renders the first, which
+            // is the depth v1 had. Rendering a whole multi-line hub in
+            // RemoteViews is a rendering change, not a binding one — AV2-5.3.
+            val selection = selections.firstOrNull { it.groupingId == boundTo }
+
+            if (selection == null) {
+                updateAppWidget(
+                    context, appWidgetManager, appWidgetId,
+                    isBound = false,
+                    hasAnyBoard = selections.isNotEmpty(),
                 )
-                for (id in appWidgetIds) {
-                    updateAppWidget(context, appWidgetManager, id) 
-                }
                 return
             }
-            
-            val selection = selections.first()
-            android.util.Log.d("Widget", "Updating for station: ${selection.stationName}")
+
             val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-            
+
             var lineStatusSeverity: String? = null
             var lineStatusReason: String? = null
-            
-            val cachedStatus = com.stationly.core.platform.Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
+            val cachedStatus = com.stationly.core.platform.Platform.sqlStorage
+                .getLineStatus(selection.mode, selection.line)
             if (cachedStatus != null) {
                 lineStatusSeverity = cachedStatus.statusSeverityDescription
                 lineStatusReason = cachedStatus.reason
             }
-            
+
             // Re-derive each row's `eta` from its absolute `targetEpochMs`
             // against the current wall clock AND drop rows whose train
             // has already departed (more than 60s past target). Single
@@ -306,7 +387,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             val lastUpdatedMs = com.stationly.core.platform.Platform.sqlStorage
                 .getLastUpdatedTimestamp(selection.station, selection.line, selection.direction)
                 ?: System.currentTimeMillis()
-            
+
             var sduiPayload: com.stationly.core.model.sdui.SduiWidgetPayload? = null
             val sduiJson = prefs.getString("sdui_layout_${selection.station}", null)
             if (sduiJson != null) {
@@ -317,31 +398,35 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     android.util.Log.w("Widget", "Failed to parse SDUI layout for ${selection.station}", e)
                 }
             }
-            
-            if (sduiPayload != null && predictions.isNotEmpty()) {
-                 sduiPayload = com.stationly.core.util.GlobalBoardProcessor.bindSduiTemplate(
-                     sduiPayload,
-                     predictions,
-                     lineStatusSeverity,
-                     lineStatusReason
-                 )
-            }
-            
-            val hasLoadedData = predictions.isNotEmpty()
 
-            updateWidgetContent(
-                context,
-                selection.stationName,
-                selection.line.replaceFirstChar { it.uppercase() },
-                predictions,
-                lineStatusSeverity,
-                lineStatusReason,
-                sduiPayload,
-                hasLoadedData,
-                lastUpdatedMs,
+            if (sduiPayload != null && predictions.isNotEmpty()) {
+                sduiPayload = com.stationly.core.util.GlobalBoardProcessor.bindSduiTemplate(
+                    sduiPayload,
+                    predictions,
+                    lineStatusSeverity,
+                    lineStatusReason
+                )
+            }
+
+            updateAppWidget(
+                context = context,
+                appWidgetManager = appWidgetManager,
+                appWidgetId = appWidgetId,
+                stationName = selection.stationName,
+                lineName = selection.line.replaceFirstChar { it.uppercase() },
+                predictions = predictions,
+                lineStatusSeverity = lineStatusSeverity,
+                lineStatusReason = lineStatusReason,
+                sduiPayload = sduiPayload,
+                hasLoadedData = predictions.isNotEmpty(),
+                lastUpdatedMs = lastUpdatedMs,
+                isBound = true,
+                hasAnyBoard = true,
+                mode = selection.mode,
+                boundSelection = selection,
             )
         }
-        
+
         /**
          * Update a single widget instance
          * This mirrors the MindTheTimeAndroid implementation exactly
@@ -365,20 +450,36 @@ class DepartureWidgetProvider : AppWidgetProvider() {
              * widget was redrawn long after the last FCM landed.
              */
             lastUpdatedMs: Long = System.currentTimeMillis(),
+            /**
+             * Whether THIS widget is pointed at a station the user still has.
+             * False renders the "which station?" state and points the tap at
+             * the configuration screen. See [WidgetBindingStore].
+             */
+            isBound: Boolean = false,
+            /** Whether the ACCOUNT has any boards — a different question, and a
+             *  different empty state ("pick a station" vs "which station?"). */
+            hasAnyBoard: Boolean = false,
+            /** The bound board's mode, for the platform-header line prefix and
+             *  the mode roundel. Passed in rather than guessed from the first
+             *  selection, which is how a widget used to wear another station's
+             *  roundel. */
+            mode: String? = null,
+            /** The bound board, for the one query that needs its full identity. */
+            boundSelection: UserSelection? = null,
         ) {
-            android.util.Log.d("Widget", "Updating widget $appWidgetId for $stationName with ${predictions.size} departures")
-            
-            val views = RemoteViews(context.packageName, R.layout.widget_departure_board)
-            val allSelections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
-            val hasSelection = allSelections.isNotEmpty()
+            android.util.Log.d(
+                "Widget",
+                "Updating widget $appWidgetId for $stationName with ${predictions.size} departures" +
+                    if (!isBound) " (UNBOUND)" else "",
+            )
 
-            // Resolve the active selection's mode so we can prefix the
-            // first platform-header row with the line context the home
-            // line-pill provides. (Widget only shows one line at a time.)
-            val resolvedMode = allSelections
-                .firstOrNull { it.line.equals(lineName, ignoreCase = true) }
-                ?.mode
-                ?: allSelections.firstOrNull()?.mode
+            val views = RemoteViews(context.packageName, R.layout.widget_departure_board)
+            // `hasSelection` asks whether the ACCOUNT has boards; `isBound` asks
+            // whether THIS widget has one. Both were previously derived from a
+            // single `getAllSelections().isNotEmpty()` inside this function —
+            // one SQL read per widget per redraw, answering neither question.
+            val hasSelection = hasAnyBoard
+            val resolvedMode = mode
             val sduiStrings = HomeConfigStore.read(context)
             val linePrefix = StationlyFormatters.formatLinePrefix(resolvedMode, lineName, sduiStrings)
 
@@ -489,19 +590,48 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 }
             }
             
-            // Set up click intent to open app — match launcher semantics so the
-            // Splash Screen API shows the icon (widget-triggered launches without
-            // ACTION_MAIN/CATEGORY_LAUNCHER only show the splash background).
-            val intent = Intent(context, com.stationly.mobile.MainActivity::class.java).apply {
+            // Where a tap goes, and the two taps mean different things.
+            //
+            // The GEAR is this widget's settings, always — the screen that asks
+            // which station it is for. Straight there rather than into the app's
+            // own settings, because the user tapped the gear ON a particular
+            // widget and that is the widget they mean. (The same screen lists
+            // every placed widget when it is opened from inside the app, so
+            // "change a different one" is one tap further, not unreachable.)
+            // The request code is the widget id so two widgets do not share one
+            // PendingIntent and configure each other.
+            val configureIntent = android.app.PendingIntent.getActivity(
+                context,
+                appWidgetId,
+                WidgetConfigureActivity.reconfigureIntent(context, appWidgetId),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+            )
+            views.setOnClickPendingIntent(R.id.btn_settings, configureIntent)
+
+            // The BOARD opens the app, with launcher semantics so the Splash
+            // Screen API shows the icon (a widget-triggered launch without
+            // ACTION_MAIN/CATEGORY_LAUNCHER shows only the splash background).
+            //
+            // Except when the widget is unbound, where there is no board to have
+            // tapped: the empty state says "tap to choose", so the tap has to
+            // land somewhere that can choose. Sending it to the home screen
+            // would be an instruction the app cannot carry out.
+            val openApp = Intent(context, com.stationly.mobile.MainActivity::class.java).apply {
                 action = Intent.ACTION_MAIN
                 addCategory(Intent.CATEGORY_LAUNCHER)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
-            val pendingIntent = android.app.PendingIntent.getActivity(
-                context, 0, intent,
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            views.setOnClickPendingIntent(
+                R.id.departure_board,
+                if (isBound) {
+                    android.app.PendingIntent.getActivity(
+                        context, 0, openApp,
+                        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+                    )
+                } else {
+                    configureIntent
+                },
             )
-            views.setOnClickPendingIntent(R.id.btn_settings, pendingIntent)
 
             // Set up manual refresh intent
             val refreshIntent = Intent(context, DepartureWidgetProvider::class.java).apply {
@@ -591,10 +721,16 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 views.setViewVisibility(R.id.waiting_container, android.view.View.GONE)
 
                 val isLoggedIn = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser != null
-                val hasEverUpdated = if (hasSelection) {
-                    val sel = com.stationly.core.platform.Platform.sqlStorage.getAllSelections().first()
-                    com.stationly.core.platform.Platform.sqlStorage.hasPredictionsInDatabase(sel.station, sel.line, sel.direction)
-                } else false
+                // THIS widget's board, not the account's first one. The old
+                // form asked whether the primary station had ever loaded and
+                // used the answer to describe a different station's widget.
+                val hasEverUpdated: Boolean = if (boundSelection != null) {
+                    com.stationly.core.platform.Platform.sqlStorage.hasPredictionsInDatabase(
+                        boundSelection.station, boundSelection.line, boundSelection.direction,
+                    )
+                } else {
+                    false
+                }
                 
                 val legacyRows = com.stationly.core.util.GlobalBoardProcessor.prepareLegacyRows(
                     predictions,
@@ -604,7 +740,8 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     hasEverUpdated,
                     lineStatusSeverity,
                     lineStatusReason,
-                    java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                    java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY),
+                    isBound,
                 )
 
                 legacyRows.forEach { row ->
@@ -706,38 +843,13 @@ class DepartureWidgetProvider : AppWidgetProvider() {
          * Update widget content with predictions
          * This is called from the FCM service or WorkManager
          */
-        fun updateWidgetContent(
-            context: Context,
-            stationName: String,
-            lineName: String,
-            predictions: List<PredictionDisplay>,
-            lineStatusSeverity: String? = null,
-            lineStatusReason: String? = null,
-            sduiPayload: com.stationly.core.model.sdui.SduiWidgetPayload? = null,
-            hasLoadedData: Boolean = true,
-            lastUpdatedMs: Long = System.currentTimeMillis(),
-        ) {
-            val appWidgetManager = AppWidgetManager.getInstance(context)
-            val appWidgetIds = appWidgetManager.getAppWidgetIds(
-                android.content.ComponentName(context, DepartureWidgetProvider::class.java)
-            )
-
-            for (appWidgetId in appWidgetIds) {
-                updateAppWidget(
-                    context,
-                    appWidgetManager,
-                    appWidgetId,
-                    stationName,
-                    lineName,
-                    predictions,
-                    lineStatusSeverity,
-                    lineStatusReason,
-                    sduiPayload,
-                    hasLoadedData,
-                    lastUpdatedMs,
-                )
-            }
-        }
+        // `updateWidgetContent` was here. It took one board and pushed it to
+        // EVERY placed widget id — which is what "one logical widget over the
+        // primary selection" meant in practice, and exactly what per-instance
+        // binding replaces. Its loop is now `updateFromStorage`, which resolves
+        // each id's own station before drawing it. Deleted rather than left
+        // unused: a helper that fans one station out to every widget is a
+        // loaded gun in a file whose one rule is never to show the wrong stop.
 
         private fun applyRowsToWidget(views: RemoteViews, rowViews: List<RemoteViews>) {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {

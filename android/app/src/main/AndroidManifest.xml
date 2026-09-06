@@ -137,6 +137,30 @@
                 android:resource="@xml/departure_widget_info" />
         </receiver>
 
+        <!-- Which station a given widget is for.
+             Named by `android:configure` in departure_widget_info.xml, so the
+             launcher starts it when the widget is dropped and does not create
+             the widget at all unless it returns RESULT_OK. That is Android's
+             answer to iOS's widget stack: not one frame the user swipes, but
+             many instances of one provider, each told which station it is.
+
+             exported="true" is required and is not a hole: the launcher is a
+             different process and has to be able to start it. It carries no
+             intent-filter, so nothing can reach it by action — only by
+             component, with an appWidgetId the system issued.
+
+             excludeFromRecents + taskAffinity="": it is a sheet the launcher
+             put up, not a place in the app. Without them, backing out of it
+             lands in Stationly's own task, and the widget the user was placing
+             is behind them. -->
+        <activity
+            android:name=".widget.WidgetConfigureActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:label="@string/widget_name"
+            android:theme="@style/Theme.Stationly" />
+
         <!-- WorkManager for background updates -->
         <provider
             android:name="androidx.startup.InitializationProvider"

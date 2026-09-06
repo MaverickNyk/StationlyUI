@@ -45,6 +45,8 @@ fun AppNavigation(
     /** A `…://auth` link landed: the user finished a password reset in email. */
     showPasswordResetSuccess: Boolean = false,
     onPasswordResetBannerShown: () -> Unit = {},
+    /** Android's widget manager. Null on iOS — see [HomeSettingsScreen]. */
+    onManageWidgets: (() -> Unit)? = null,
 ) {
     val navController = rememberNavController()
 

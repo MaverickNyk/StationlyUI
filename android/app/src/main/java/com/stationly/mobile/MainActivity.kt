@@ -21,6 +21,7 @@ import com.stationly.core.model.deeplink.DeepLinkRoute
 import com.stationly.core.model.deeplink.parseDeepLink
 import com.stationly.mobile.service.UserSyncCoordinator
 import com.stationly.mobile.ui.common.StagingBanner
+import com.stationly.mobile.widget.WidgetConfigureActivity
 import kotlinx.coroutines.launch
 
 /**
@@ -129,6 +130,18 @@ class MainActivity : ComponentActivity() {
                     emailVerifiedSignal        = emailVerifiedSignal,
                     showPasswordResetSuccess   = passwordResetComplete,
                     onPasswordResetBannerShown = { passwordResetComplete = false },
+                    // Home settings → "Widget stations". No `appWidgetId`, so
+                    // the screen opens in manager mode: every placed widget and
+                    // the station it shows. Null on iOS, where an app cannot
+                    // read a widget's configuration at all — the row is hidden
+                    // rather than shown and broken.
+                    onManageWidgets = {
+                        // `this@MainActivity`: inside `setContent` the receiver
+                        // is the composable scope, not the Activity.
+                        startActivity(
+                            Intent(this@MainActivity, WidgetConfigureActivity::class.java),
+                        )
+                    },
                 )
                 // Outside `App` because it is the one thing on screen the shared
                 // UI cannot know: `BuildConfig.FLAVOR` belongs to this module.

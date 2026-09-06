@@ -82,6 +82,19 @@ fun HomeSettingsScreen(
     onBack: () -> Unit,
     onOpenScreensaver: () -> Unit,
     onOpenWidgetGuide: () -> Unit,
+    /**
+     * Open the platform's widget manager — the screen that lists every widget
+     * on the home screen and lets each one be pointed at a station.
+     *
+     * **Null on iOS, and that is not a gap.** An iOS app can never read a
+     * widget's AppIntent configuration (`getCurrentConfigurations` returns `[]`
+     * inside a timeline), so there is no list to show and no binding to write;
+     * changing an iOS widget's station is long-press-and-edit, on the home
+     * screen. Android has `AppWidgetManager.getAppWidgetIds()` and owns its own
+     * binding store, so it can do both. The row is hidden rather than disabled
+     * where the platform cannot answer.
+     */
+    onManageWidgets: (() -> Unit)? = null,
     /** Straight through to that station's own settings — see [StationOrderCard]. */
     onOpenStationSettings: (stationId: String, mode: String, stationName: String) -> Unit = { _, _, _ -> },
 ) {
@@ -263,6 +276,15 @@ fun HomeSettingsScreen(
                     subtitle = "Boards on your Home Screen",
                     onClick = onOpenWidgetGuide,
                 )
+                if (onManageWidgets != null) {
+                    SettingsDivider()
+                    SettingsActionRow(
+                        icon = Icons.Rounded.GridView,
+                        title = "Widget stations",
+                        subtitle = "Choose what each widget shows",
+                        onClick = onManageWidgets,
+                    )
+                }
                 SettingsDivider()
                 SettingsActionRow(
                     icon = Icons.Rounded.Notifications,

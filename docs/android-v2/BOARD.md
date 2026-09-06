@@ -7,37 +7,36 @@
 ## Live state
 
 ```
-SPRINT:            3 — data plane  (sprint 2 complete: EPIC-03)
+SPRINT:            4 — widget  (sprints 1-2 complete; sprint 3 in progress)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S012 (2026-09-06) — AV2-4.1. FCM pushes reach the shared
-                   board again; three defects found, two fixed, one needs Q7.
+LAST SESSION:      S013 (2026-09-06) — AV2-5.1 + AV2-5.2. Each widget shows its
+                   own station, and every widget can be reassigned from the app
+                   or from the widget itself.
 GATE:              GREEN
-                   :core:testDebugUnitTest                  PASS  (418 tests, +15)
+                   :core:testDebugUnitTest                  PASS  (418 tests)
                    :core:verify…DatabaseMigration           PASS
                    :composeApp:testDebugUnitTest            PASS  (58 tests)
-                   :android:app:testStagingDebugUnitTest    PASS  (26 tests, +3)
+                   :android:app:testStagingDebugUnitTest    PASS  (30 tests, +4)
                    :android:app:compileStaging/ProdDebugKotlin  PASS
                    :composeApp:compileDebugKotlinAndroid    PASS
-                   XCFramework                              NOT RUN — commonMain
-                                                            unchanged this session
+                   :composeApp:assembleComposeAppDebugXCFramework  PASS
+                                                            (commonMain CHANGED —
+                                                            all additive, defaults
+                                                            preserve iOS exactly)
 WORKING TREE:      clean
-DEVICE:            Pixel 7 Pro, staging debug. One launcher icon, no crash, real
-                   pushes fan out to the board, foreground reconcile runs, and
-                   the duplicate hero departure is gone. EPIC-03's own device
-                   pass is still outstanding — see below.
-BLOCKED ON OWNER:  Q7 (NEW) the prediction primary key collapses two real trains
-                   into one. Fix is a schema change + migration; cheap and
-                   low-risk, but it lands on Q5's pending bump.
-                   Q3 blocks EPIC-06 and is the last thing holding v1 code.
-                   Q4 keeps :android:app out of CI. Q5 iOS testers. Q6 one
-                   applicationId, so no side-by-side install.
-                   EPIC-03 HAS NOT HAD ITS UPGRADE-IN-PLACE PASS. Five stories
-                   sit in Review on it; the check is in AV2-3.5 §"for the
-                   reviewer" and it is the one this branch cannot recover from
-                   getting wrong.
-NEXT UP:           AV2-4.2 — topic lifecycle. It has a head start: the device is
-                   demonstrably subscribed to two Station_* topics for boards it
-                   no longer has, and AV2-4.1's findings say how to reproduce it.
+DEVICE:            Pixel 7 Pro. The config Activity launches and lays out (no
+                   exception), but the widget flow COULD NOT be verified: adb
+                   cannot drag a widget onto a home screen, and the phone locked
+                   itself mid-session. The four-minute manual script is in
+                   AV2-5.1's handoff and it is the next thing to do.
+BLOCKED ON OWNER:  Q7 the prediction primary key collapses two real trains.
+                   Q3 blocks EPIC-06 and holds the last v1 code.
+                   Q4 CI. Q5 iOS testers. Q6 one applicationId.
+                   EPIC-03 STILL HAS NOT HAD ITS UPGRADE-IN-PLACE PASS.
+NEXT UP:           AV2-4.2 (topic lifecycle) or AV2-5.3 (targeted redraw). 5.3 is
+                   the smaller one and the widget work just made it easy: a push
+                   for station A still redraws every widget, and the binding
+                   store now says which ones actually care.
 ```
 
 
@@ -55,9 +54,6 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 |---|---|---|---|
 | AV2-4.3 | 04 | Cloud state dual-write | AV2-4.2 |
 | AV2-4.4 | 04 | Sessions and activity | AV2-4.3 |
-| AV2-5.1 | 05 | Per-instance widget binding | AV2-4.3 |
-| AV2-5.2 | 05 | In-app widget manager | AV2-5.1 |
-| AV2-5.3 | 05 | Widget updates and placement | AV2-5.1 |
 | AV2-5.4 | 05 | Widget guide | AV2-5.1, AV2-3.3 |
 | AV2-6.1 | 06 | Real dream actuals | AV2-3.2, **Q3** |
 | AV2-6.2 | 06 | Host the shared dream | AV2-6.1 |
@@ -84,6 +80,7 @@ duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 | Story | Session | What to look at |
 |---|---|---|
+| AV2-5.1 + AV2-5.2 | S013 | **"Widget stacking is not an option on Android — what can be done?"** Nothing needs inventing: Android's home screen has always allowed many instances of one provider, each with its own `appWidgetId`. Two stations is two widgets. What was missing was a binding — `updateFromStorage` pushed `selections.first()` to every widget id, so a widget could not show the wrong station only because it never showed a particular one. Each now resolves its own. Read the epic header for the full design answer and the three things Android can do here that iOS cannot, and AV2-5.1's finding that its AV2-4.3 dependency did not hold. Then run the four-minute device script in AV2-5.1's handoff — **none of this has been driven by a human yet**, because adb cannot place a widget. |
 | AV2-4.1 | S012 | **The story's premise was stale and the real bug was somewhere else.** Direction scoping, per-board fan-out and the `matchesFilter` precompute were all already done in `SyncPredictionsUseCase`; they got pinned, not written. What was actually broken: since AV2-3.5, an FCM push wrote fresh departures to SQLite and **the open board did not move** — the fan-out was pinging a SharedPreferences key whose only listener was v1's deleted view model, and nothing emitted to the shared flow the new home screen collects. Fixed, logged, and verified from real pushes on the Pixel. Two more found on the way: Android was signing people out with no explanation (the receiving end already existed — closes AV2-4.4 (e) early), and the home screen was rendering the same departure twice off duplicate rows. One defect is left deliberately unfixed and is now **Q7**. |
 | AV2-3.5 | S011 | **The irreversible one, and nothing has been run on a phone.** The shared UI is now the Android app: one launcher, one manifest, ~8,000 lines of v1 deleted, `navigation-compose` and the downloadable-fonts pipeline gone with it. Four things to read rather than re-derive: the **Apple button** is finally hidden on Android — and hiding it left the screen with no primary action, which is the half AV2-3.4 did not see; the **theme carry-over needed no migration** and the real bug was the screensaver reading a different file from the app; **two deep links** would have been registered and silently dropped; and **two v1 behaviours are gone** and are now written into EPIC-04 as tasks. Then two things nobody asked for and both worth knowing: the shared **Screensaver** row opened a settings screen whose Android actuals discard everything written to them (now routed to system settings, as v1 did), and the **update gate is live on Android** as of this commit — read the warning at the top of AV2-7.1 before anyone changes a release policy. Then do the upgrade-in-place pass in §"for the reviewer" — it is the only check this branch cannot recover from getting wrong. |
 | AV2-3.3 | S010 | Three stubs became real, both behavioural criteria **verified on the Pixel**: the POST_NOTIFICATIONS prompt fires on a fresh install, and nearby-station search returns stations on *Approximate* location, which v1 refuses. The thing to read is the finding: `AndroidAppContext` tracked the Activity lazily and so never saw the first resume, which silently disarmed that prompt entirely — one of the two prompts Android gives you a single chance at. Fixed with a content provider, staging-only. |
@@ -154,7 +151,7 @@ the users, 03 is the foundation 04 builds on.
 | 02 Database | 3 | **3** ✅ | 11 | **11** |
 | 03 Host cutover | 5 | 0 (5 in review) | 21 | 0 |
 | 04 Data plane | 4 | 0 (1 in review) | 18 | 0 |
-| 05 Widget | 4 | 0 | 16 | 0 |
+| 05 Widget | 4 | 0 (2 in review) | 16 | 0 |
 | 06 Dream | 2 | 0 | 6 | 0 |
 | 07 Release surfaces | 3 | 0 | 10 | 0 |
 | 08 Rollout | 3 | 0 | 11 | 0 |
