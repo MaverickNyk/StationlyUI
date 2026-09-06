@@ -18,6 +18,70 @@ Template:
 
 ---
 
+## S013 — 2026-09-06 — AV2-5.1 + AV2-5.2 "the widget knows which station it is"
+
+**Built.** `WidgetBindingStore` (`appWidgetId` → `groupingId`), a configuration
+Activity with two modes, per-instance rendering, and a "Widget stations" row in
+the app's home settings. Deleted `updateWidgetContent`.
+
+**The owner's question was the design.** *"Multiple widgets of different stations
+— widget stacking is not an option on Android, so what can be done?"* The answer
+is that nothing needs inventing and stacking was never the shape. Stacking is
+iOS's answer to WidgetKit's placement model; Android's home screen is a free grid
+and has allowed many instances of one provider since widgets existed, each with
+its own `appWidgetId`. **Two stations is two widgets.** What was missing was a
+way to tell each instance which station it is for, which is `android:configure`.
+
+**Learned — a thing can be un-wrong without ever being right.**
+`updateFromStorage` read `selections.first()` and pushed that board to every
+widget id. It was impossible for a widget to show the wrong station, because no
+widget was ever showing a particular one. That reads as "working" for as long as
+the user has one station, which is how it survived to here. The bug was not in
+the rendering; it was that there was nothing to render *from*.
+
+**Learned — deleting the helper is part of the fix.** `updateWidgetContent` took
+one board and fanned it out to every id. Left unused it would have been a
+correctly-named, obviously-useful function that does exactly the forbidden thing,
+sitting in a file whose one rule is never to show the wrong stop. Two smaller
+versions of the same shape fell out of the same change: the mode roundel and the
+"has this ever loaded" check were both reading the account's FIRST selection to
+describe whatever widget was being drawn.
+
+**A second owner instruction, mid-session:** *"there should be a widget settings
+in the app that can also be opened from the widget, and then every widget can be
+assigned a station."* Both halves built, and the second changed a decision — the
+gear on a widget used to open the app's home screen and now opens that widget's
+own picker. You tapped the gear ON a widget; that is the widget you meant.
+
+**Learned — the dependency graph is not evidence.** The board had AV2-5.1 waiting
+on AV2-4.3 (cloud state dual-write). It does not: the binding is device-local
+prefs, and both halves of it already existed on Android. The dependency looks
+inherited from AV2-5.3's placement probe, which is itself `@Transient` and never
+synced. Worth checking a dependency before spending a sprint respecting it.
+
+**Next agent needs to know:**
+
+1. **Nothing here has been driven by a human, and it cannot be from adb.** There
+   is no shell command that drags a widget onto a home screen. The Activity
+   launches and lays out (confirmed by `dumpsys`, no exception) and that is all
+   that can be claimed. The four-minute script is in AV2-5.1's handoff; do it
+   before anything else in this epic.
+2. **AV2-5.3 got easy.** A push for station A still redraws every widget. The
+   binding store now says which ones care, so the targeted redraw is a filter on
+   a list that already exists.
+3. **`requestPinAppWidget` is designed and not built.** "Add to Home Screen" on a
+   station's own settings, placing a widget already bound to it. It is the piece
+   that makes the whole feature discoverable — today the user has to know the
+   widget gallery exists. Guard on `isRequestPinAppWidgetSupported()`.
+4. **Owner direction on `boards`** (also this session): Android moves to the
+   backend's `boards` array now that iOS has developed it. That is AV2-4.3 task
+   (b), already the plan, now confirmed and prioritised — and AV2-4.1's duplicate
+   rows point at the `stations` array as their source, so this removes a cause
+   rather than a symptom. The widget binding is unaffected: a board's id is the
+   same StopArea naptan a `groupingId` already is.
+
+---
+
 ## S012 — 2026-09-06 — AV2-4.1 "FCM at v2" · **the board was not listening**
 
 **Built.** Three scoped fan-out entry points instead of one, the foreground

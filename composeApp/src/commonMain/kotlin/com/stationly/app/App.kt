@@ -68,6 +68,14 @@ fun App(
     /** A `…://auth` link landed: a password reset completed in the browser. */
     showPasswordResetSuccess: Boolean = false,
     onPasswordResetBannerShown: () -> Unit = {},
+    /**
+     * Open the platform's widget manager, or null where the platform has none.
+     *
+     * Android can list its placed widgets and rewrite their bindings; iOS
+     * cannot read a widget's configuration at all. The row is hidden rather
+     * than shown-and-broken — see [com.stationly.app.ui.station.HomeSettingsScreen].
+     */
+    onManageWidgets: (() -> Unit)? = null,
 ) {
     val uriHandler = LocalUriHandler.current
 
@@ -200,6 +208,7 @@ fun App(
                     emailVerifiedSignal        = emailVerifiedSignal,
                     showPasswordResetSuccess   = showPasswordResetSuccess,
                     onPasswordResetBannerShown = onPasswordResetBannerShown,
+                    onManageWidgets            = onManageWidgets,
                 )
                 LoadingOverlay(visible = busyLabel != null, label = busyLabel)
 

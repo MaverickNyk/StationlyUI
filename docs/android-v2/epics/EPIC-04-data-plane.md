@@ -280,11 +280,38 @@ subscription counts, so a one-element post deletes every other board on the
 account. This already happened — it is why `SelectionViewModel` on this branch
 reads the full list out of SQLite before posting.
 
+> ### Owner direction, 2026-09-06 (S013)
+> **"Align with the backend — we would be using the `boards` array now, after
+> iOS has developed it."** Task (b) below was already the plan; this confirms it
+> and settles the order: `boards` is authoritative on Android too, and
+> `stations` becomes the dual-write for the transition window, not the source of
+> truth.
+>
+> **AV2-4.1 found the evidence for why this matters, and it is stronger than the
+> plan assumed.** The Pixel's home screen was rendering the same departure twice
+> off three `UserSelectionEntity` rows for one board — and they came BACK after a
+> restore, with the identical two-with-hub-plus-one-blank shape. A restore is
+> `profile.stations.toUserSelections()` written verbatim, so three rows on the
+> device means three entries in the cloud **`stations`** array, one of them
+> written by something that dropped the hub. Moving Android to `boards` removes
+> the source rather than the symptom. The read-side dedupe shipped in AV2-4.1 is
+> the repair for devices that already have them; it is not the fix.
+>
+> Note what does NOT change: the two lists stay two lists on the wire, and the
+> subscription registry keeps reading their UNION. "Adopt `boards`" is about
+> which one Android believes, not about collapsing them.
+
 ### Tasks
 - [ ] **a.** **Verify on the backend** that `syncStations` does not touch
       `boards` and `syncBoards` does not touch `stations`. The whole plan rests
       on it and it has not been read. If it is false, stop and re-plan.
-- [ ] **b.** Adopt `/user/sync/boards` as the authoritative write.
+      **Also check whether the account's `stations` array carries duplicates
+      today** — AV2-4.1's evidence says at least one does, and if the backend is
+      appending rather than replacing, that is a server-side bug this story
+      inherits rather than fixes.
+- [ ] **b.** Adopt `/user/sync/boards` as the authoritative write. `reconcileBoards`
+      already exists in `UserSyncRepository` and is the path iOS uses; Android's
+      `UserSyncCoordinator.reconcile` still calls the `stations` variant.
 - [ ] **c.** **Dual-write** the same list flattened to `SubscribedStation` via
       `/user/sync/stations`, for the transition window. `Board.toSelections()`
       already produces exactly that shape (AV2-1.2 proves the fold is total).

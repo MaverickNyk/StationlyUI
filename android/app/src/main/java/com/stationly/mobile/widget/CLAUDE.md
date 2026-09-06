@@ -3,28 +3,48 @@
 The Stationly home-screen widget renders the same dot-matrix departure
 board the in-app summary screen and the dream/screensaver show.
 Everything in this package backs **a single AppWidgetProvider**:
-`DepartureWidgetProvider`. There's no Compose here — the widget is
-classic RemoteViews + `R.layout.widget_departure_board`.
+`DepartureWidgetProvider`. The board itself is classic RemoteViews +
+`R.layout.widget_departure_board` — no Compose. The configuration
+screen is Compose, because it is an ordinary Activity.
+
+**Since AV2-5.1 (2026-09-06) each placed widget shows its own station.**
+Before that, `updateFromStorage` read `selections.first()` and pushed
+that board to every `appWidgetId`, so two widgets meant two copies of
+one station. Android needs no widget stack for this: the home screen
+has always allowed many instances of one provider, each with its own
+id. What was missing was a per-instance binding, which is
+`WidgetBindingStore`.
 
 ## File layout
 
 ```
 widget/
-├── DepartureWidgetProvider.kt   The whole widget. Lifecycle hooks,
-│                                broadcast actions, RemoteViews builder,
+├── DepartureWidgetProvider.kt   The board. Lifecycle hooks, broadcast
+│                                actions, RemoteViews builder,
 │                                AlarmManager watchdog + colour-fade
 │                                alarms.
+├── WidgetBindingStore.kt        appWidgetId → groupingId, in
+│                                `widget_prefs`. The whole of "which
+│                                station is this widget for".
+├── WidgetConfigureActivity.kt   Compose. Two modes: PICKER (an
+│                                appWidgetId — which station?) and
+│                                MANAGER (no id — which widget?).
 └── CLAUDE.md                    This file.
 ```
 
 External entry points:
 - `AndroidManifest.xml` registers `DepartureWidgetProvider` with the
-  standard widget actions + our custom `ACTION_*` broadcasts.
-- `service/FcmMessagingService` calls `updateWidgetContent(...)` after
-  every FCM payload is persisted to SQL.
+  standard widget actions + our custom `ACTION_*` broadcasts, and
+  `WidgetConfigureActivity` as the `android:configure` target named by
+  `res/xml/departure_widget_info.xml`.
+- `util/FreshDataNotifier` calls `updateFromStorage(...)` after every
+  path that writes predictions to SQL — FCM, the widget's own refresh
+  button, a cross-device reconcile.
 - `core/.../platform/AndroidWidgetManager` sends `ACTION_UPDATE_WIDGET`
   broadcasts from the in-app code path so the widget refreshes when
   the user changes their selection or fetches via REST.
+- `MainActivity` starts `WidgetConfigureActivity` with **no** id, from
+  the shared Home settings → "Widget stations" row.
 
 ## How the data flows
 
@@ -33,8 +53,15 @@ External entry points:
      persists predictions to SQL with **8 rows per platform** (see
      `GlobalBoardProcessor.processPredictions` and the
      `perPlatformCap` parameter)
-   - Then calls `DepartureWidgetProvider.updateWidgetContent(...)` to
-     immediately push the new rows to every widget instance
+   - Then calls `FreshDataNotifier.notifyPredictions(...)`, whose
+     widget leg is `DepartureWidgetProvider.updateFromStorage(context)`
+   - `updateFromStorage` loops the placed ids and renders **each one
+     from its own binding**. (It used to call `updateWidgetContent`,
+     which took one board and fanned it out to every id. That function
+     is deleted — a helper that shows one station on every widget is a
+     loaded gun in a file whose one rule is never to show the wrong
+     stop. Today a push for station A still redraws a widget bound to
+     station B, from B's own rows; targeting the redraw is AV2-5.3.)
 2. **Watchdog fires** (`ACTION_ETA_TICK`) → `updateFromStorage(context)`
    - Reads predictions back from SQL
    - Re-derives each row's `eta` from `targetEpochMs + now` via the
@@ -122,11 +149,28 @@ colour feedback is approximate anyway.
 ## Architectural invariants (do not break)
 
 **1. Every render path lands in `updateAppWidget`.**
-FCM → `updateWidgetContent` → `updateAppWidget`. Watchdog →
-`updateFromStorage` → `updateAppWidget`. Manual refresh →
-`updateFromStorage` → `updateAppWidget`. The watchdog scheduling
-sits at the END of `updateAppWidget` so every path re-arms it.
-Don't bypass `updateAppWidget` or you'll leak alarms.
+FCM, watchdog and manual refresh all go
+`updateFromStorage` → `renderWidget` (per id) → `updateAppWidget`.
+The watchdog scheduling sits at the END of `updateAppWidget` so every
+path re-arms it. Don't bypass `updateAppWidget` or you'll leak alarms.
+
+**1b. Never substitute another station's board.**
+`renderWidget` resolves this id's binding against the live selections.
+No binding, or a binding whose station is no longer one of the user's
+boards, renders the honest empty state (`isBound = false`) and points
+the tap at the picker. It does **not** fall back to the first station.
+Showing somebody a train that is not theirs, at a stop they are not
+standing at, with nothing on screen to say so, is the worst thing a
+departure board can do — and it is what this package used to do by
+construction.
+
+**1c. `updateAppWidget` is told what it is drawing; it does not look.**
+`isBound`, `hasAnyBoard`, `mode` and `boundSelection` are parameters,
+and `isBound`/`hasAnyBoard` default to FALSE. It used to run its own
+`getAllSelections()` — one SQL read per widget per redraw — and derive
+the mode roundel and the "has this ever loaded" check from the
+account's FIRST selection, which is how a widget could wear another
+station's icon.
 
 **2. The renderer re-derives `eta` from `targetEpochMs`, never blits
 the SQL string.**
@@ -195,8 +239,19 @@ helpers, or document why this surface needs to diverge.
 - **`updateAppWidget` rebuilds the view tree.** Every call applies a
   fresh RemoteViews actions list; the previous state is gone except
   for view IDs. Don't expect tags or animations to persist.
-- **Multiple widgets on one home screen.** `updateWidgetContent`
-  iterates all `appWidgetIds`. Don't assume there's only one.
+- **Multiple widgets on one home screen, each with its own station.**
+  `updateFromStorage` iterates all `appWidgetIds` and resolves each
+  one's binding separately. Never assume there is only one, and never
+  assume two of them show the same thing.
+- **`RESULT_CANCELED` first in the config Activity.** Set before
+  anything else, so backing out — or the process dying mid-screen —
+  leaves the launcher believing the placement failed and removing the
+  widget. `RESULT_OK` is the only thing that commits it.
+- **`onDeleted` is not guaranteed.** It is the normal path for a
+  removed widget and it can be missed (launcher replaced or its data
+  cleared, restore from backup, broadcast dropped while force-stopped).
+  `WidgetBindingStore.prune()` runs on every `updateFromStorage` and
+  agrees the store with `getAppWidgetIds()`, which is the authority.
 - **The `SDUI` payload path.** If the user's station has a stored
   SDUI template (`sdui_layout_<stationId>` SharedPref), we bind it
   with the ticked predictions and render through that path instead

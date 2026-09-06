@@ -117,14 +117,29 @@ object GlobalBoardProcessor {
         hasEverUpdated: Boolean = false,
         lineStatusSeverity: String? = null,
         lineStatusReason: String? = null,
-        currentHour: Int = -1
+        currentHour: Int = -1,
+        /**
+         * Whether THIS widget is pointed at a station.
+         *
+         * Distinct from [hasSelection], which asks whether the account has any
+         * boards at all, and the two need different words. "Pick a station,
+         * we'll do the rest" is right for a new user and wrong for someone with
+         * four boards who just dropped a fifth widget on the home screen — they
+         * have picked their stations; this widget has not been told which one.
+         *
+         * Defaults to true so every existing caller keeps its behaviour
+         * exactly. Android reaches it from the per-instance binding
+         * (`WidgetBindingStore`); iOS has the same state when a configured
+         * station has since been deleted.
+         */
+        isBound: Boolean = true,
     ): List<LegacyRow> {
         val rows = mutableListOf<LegacyRow>()
 
         if (predictions.isEmpty()) {
             buildPlaceholderRows(
                 lineName, hasSelection, isLoggedIn, hasEverUpdated,
-                lineStatusSeverity, lineStatusReason, currentHour
+                lineStatusSeverity, lineStatusReason, currentHour, isBound
             ).forEach { rows.add(it) }
             return rows
         }
@@ -161,7 +176,8 @@ object GlobalBoardProcessor {
         hasEverUpdated: Boolean,
         lineStatusSeverity: String?,
         lineStatusReason: String?,
-        currentHour: Int
+        currentHour: Int,
+        isBound: Boolean = true,
     ): List<LegacyRow> {
         val line = lineName.trim()
         val isNightRoute = line.matches(Regex("(?i)^N\\d+$"))
@@ -183,6 +199,16 @@ object GlobalBoardProcessor {
                 "Pick a station, we'll do the rest",
                 "Tube · Bus · DLR · Overground",
                 "Tap to set up your board →"
+            )
+            // The user HAS boards; this widget has not been told which one.
+            // Deliberately ahead of every service-state message below: there is
+            // no line to report on until a station is chosen, and guessing one
+            // is the thing a departure board must never do.
+            !isBound -> listOf(
+                "📍 Which station?",
+                "This widget isn't set up yet",
+                "Your boards are ready to pick from",
+                "Tap to choose →"
             )
             isNightRoute && currentHour != -1 && isDay -> listOf(
                 "🌙 Night owls only",
