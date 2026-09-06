@@ -270,21 +270,27 @@ fun HomeSettingsScreen(
                 // promo was removed on 2026-08-23 for asking without being
                 // asked; the guide is the same subject reached the other way
                 // round. See `WidgetGuideScreen`.
+                // ONE widget row, and where it goes depends on what the
+                // platform can do about widgets.
+                //
+                // It was briefly two — "Widgets" (a guide) and "Widget
+                // stations" (the manager) — and that was worse than either
+                // alone. Somebody looking for widget settings taps the row
+                // called "Widgets", gets a page explaining what a widget is,
+                // and concludes the app has no widget settings. Reported by
+                // the owner within a day of it shipping.
+                //
+                // Android goes to the manager: it lists the placed widgets,
+                // adds one, and explains how if the launcher will not. iOS
+                // cannot list or place anything, so its row keeps the guide,
+                // which is genuinely all iOS has to offer here.
                 SettingsActionRow(
                     icon = Icons.Rounded.GridView,
                     title = "Widgets",
-                    subtitle = "Boards on your Home Screen",
-                    onClick = onOpenWidgetGuide,
+                    subtitle = if (onManageWidgets != null) "Choose what each widget shows"
+                    else "Boards on your Home Screen",
+                    onClick = onManageWidgets ?: onOpenWidgetGuide,
                 )
-                if (onManageWidgets != null) {
-                    SettingsDivider()
-                    SettingsActionRow(
-                        icon = Icons.Rounded.GridView,
-                        title = "Widget stations",
-                        subtitle = "Choose what each widget shows",
-                        onClick = onManageWidgets,
-                    )
-                }
                 SettingsDivider()
                 SettingsActionRow(
                     icon = Icons.Rounded.Notifications,

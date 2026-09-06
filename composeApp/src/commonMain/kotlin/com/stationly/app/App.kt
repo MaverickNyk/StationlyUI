@@ -76,6 +76,11 @@ fun App(
      * than shown-and-broken — see [com.stationly.app.ui.station.HomeSettingsScreen].
      */
     onManageWidgets: (() -> Unit)? = null,
+    /**
+     * Put a widget for one station on the home screen. Null on iOS, which
+     * cannot place widgets from inside the app at all.
+     */
+    onAddWidgetForStation: ((String) -> Unit)? = null,
 ) {
     val uriHandler = LocalUriHandler.current
 
@@ -209,6 +214,7 @@ fun App(
                     showPasswordResetSuccess   = showPasswordResetSuccess,
                     onPasswordResetBannerShown = onPasswordResetBannerShown,
                     onManageWidgets            = onManageWidgets,
+                    onAddWidgetForStation      = onAddWidgetForStation,
                 )
                 LoadingOverlay(visible = busyLabel != null, label = busyLabel)
 

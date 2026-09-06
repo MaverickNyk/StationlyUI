@@ -27,6 +27,66 @@ this epic, or say in the handoff why the widget still needs them.
 
 ---
 
+## The Android flow (owner-directed, S015)
+
+**"I don't see the widget settings yet — design a good dedicated flow, it's very
+different from iPhone."** The settings existed; they were unfindable, and that
+was a design fault worth writing down rather than a bug worth quietly fixing.
+
+**What went wrong.** AV2-5.2 added a "Widget stations" row NEXT TO the existing
+"Widgets" row, both in Home settings → More. A user looking for widget settings
+taps the row called **Widgets**, gets a page explaining what a widget is, and
+concludes the app has no widget settings. Two rows for one subject is worse than
+either alone, and the more obvious one led to the less useful place.
+
+**The flow now, built around where the want actually forms.**
+
+```
+  Station settings --"Add to Home Screen"--+   requestPinAppWidget:
+                                           |   the launcher confirms, and the
+                                           +-> widget arrives already showing
+  Settings > Widgets --"Add a widget"------+   that station. No picker at all.
+
+  Settings > Widgets --> the list of placed widgets --> change any one
+
+  The widget's own gear -----------------------------> change THAT one
+
+  Widget gallery drag -------------------------------> "Which station?"
+```
+
+The first row is the point, and it is the one iOS cannot have. The moment
+somebody wants a widget is while they are looking at a station — so the action
+lives there, and `requestPinAppWidget` means the app can act on it immediately.
+Most people should never see a station picker.
+
+The gallery drag still works, because it is how Android users expect to add
+widgets. It is simply no longer the only door.
+
+**One destination, not two.** Settings → **Widgets** now goes to the manager on
+Android and to the guide on iOS — one row, and it leads to whatever that
+platform can actually do. The manager's empty state carries the how-to that the
+guide would have given.
+
+**How the station survives the pin.** `requestPinAppWidget` never tells the
+caller the new `appWidgetId`, and the success callback does not carry it either.
+So `WidgetPinner` leaves the chosen station in `widget_prefs` and the
+configuration Activity — which the launcher runs after pinning, because we
+declare `android:configure` and deliberately do NOT declare
+`configuration_optional` — claims it, binds, and closes without asking. The claim
+is read-once and **expires after two minutes**: a stale one would bind the next
+gallery-dropped widget to an hour-old choice, which is the silent wrong answer
+this package exists to prevent. If it lapses, the widget simply asks. Asking is
+always safe.
+
+**Where it degrades, it says so.** A launcher that refuses pin requests
+(`isRequestPinAppWidgetSupported == false`) hides the "Add to Home Screen" row
+and the "Add a widget" button, and the manager prints the long-press
+instructions instead. An action that cannot happen is not a feature switched
+off; it is a feature that is absent, and a button that silently fails teaches
+the user the app is broken.
+
+---
+
 ## The shape of the answer — why Android needs no widget stack
 
 **Raised by the owner: "multiple widgets of different stations — widget stacking
@@ -252,19 +312,28 @@ one. An iOS app can never read a widget's AppIntent configuration
 to show and no binding to write. A greyed-out row would be advertising something
 that is not coming.
 
-### Handoff notes — S013, 2026-09-06
+### Handoff notes — S013, then reworked in S015
 
-Still to build here, and both were designed but not written:
+**S013** built the manager as a second settings row. That was the mistake the
+owner reported the next day — see "The Android flow" at the top of this epic.
 
-1. **`requestPinAppWidget`** — "Add to Home Screen" on a station's own settings,
-   which places a widget already bound to it. It is the piece that makes the
-   whole feature discoverable: today a user has to know the widget gallery
-   exists. Guard on `isRequestPinAppWidgetSupported()` and hide the button where
-   the launcher says no. Design note in this epic's header.
+**S015** built `requestPinAppWidget` (item 1 below, now done), collapsed the two
+settings rows into one, and added the station-level "Add to Home Screen" that
+makes the whole feature discoverable.
+
+Still open:
+
+1. ~~`requestPinAppWidget`~~ **DONE (S015)** — `WidgetPinner`, reached from
+   Station settings → "Add to Home Screen" and from the manager's "Add a
+   widget".
 2. **A "Manage all widgets" affordance inside the picker**, so a user who
    arrived from one widget's gear can reach the others without going into the
-   app. One row at the bottom of the picker that clears the target back to
-   `INVALID_APPWIDGET_ID`.
+   app. One row at the bottom of the picker that switches the mode back to
+   Manager — the state is already there, it needs a control.
+3. **AV2-5.4's guide has nowhere to be reached from on Android.** The single
+   "Widgets" row now goes to the manager, so when the guide is wired it needs a
+   row inside the manager rather than a second row in settings. Do not put it
+   back in Home settings; that is the arrangement that caused this.
 
 ---
 
