@@ -133,6 +133,31 @@ class WidgetConfigurationContractTest {
         assertTrue(unbound != newUser)
     }
 
+    @Test
+    fun `the pin flow cannot bind a widget to a stale choice`() {
+        // WidgetPinner leaves the chosen station in prefs for the configuration
+        // Activity to claim, because `requestPinAppWidget` never tells anyone
+        // the new widget's id. That value has to expire: a stale one would bind
+        // the NEXT widget dragged out of the gallery to a station picked an hour
+        // ago — a silent wrong answer, which is the single outcome this whole
+        // package exists to prevent.
+        val ttl = constant(WidgetPinner::class.java, "PENDING_TTL_MS")
+        assertTrue(
+            "the pending-pin TTL must be short enough that it cannot outlive the " +
+                "launcher's confirm dialog by much; it was $ttl ms",
+            ttl in 30_000L..5 * 60_000L,
+        )
+    }
+
+    @Test
+    fun `the binding store and the pin flow share one prefs file`() {
+        // The pending station rides in the same file as the bindings. If they
+        // drift apart, `claimPending` reads an empty value forever and every
+        // pinned widget silently falls back to asking — which looks like the
+        // pin flow "not working" rather than like a bug.
+        assertEquals("widget_prefs", WidgetBindingStore.PREFS)
+    }
+
     // ── plumbing ─────────────────────────────────────────────────────────────
 
     private val ANDROID_NS = "http://schemas.android.com/apk/res/android"
@@ -151,6 +176,10 @@ class WidgetConfigurationContractTest {
 
     private fun Element.attr(name: String): String? =
         getAttributeNS(ANDROID_NS, name).takeIf { getAttributeNodeNS(ANDROID_NS, name) != null }
+
+    /** A private const read back off the class, as the storage contract tests do. */
+    private fun constant(owner: Class<*>, name: String): Long =
+        owner.getDeclaredField(name).apply { isAccessible = true }.getLong(null)
 
     private fun Element.activities(): List<Element> {
         val nodes = getElementsByTagName("activity")

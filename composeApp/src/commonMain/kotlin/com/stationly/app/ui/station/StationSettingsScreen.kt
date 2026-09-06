@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -133,6 +134,24 @@ fun StationSettingsScreen(
      * making them find it again — the filter lives two taps inside that line.
      */
     onEditLines: (String?) -> Unit,
+    /**
+     * Put a widget for THIS station on the home screen, or null where the
+     * platform cannot.
+     *
+     * **The Android front door, and iOS has no equivalent.** The moment somebody
+     * wants a widget is while they are looking at a station — right here — and
+     * Android's `requestPinAppWidget` lets the app act on it: the launcher shows
+     * a confirm dialog and the widget arrives already showing this station. An
+     * iOS app cannot place a widget at all, so its users must go to the home
+     * screen and find Stationly in the widget gallery; a row promising otherwise
+     * would be a row that lies.
+     *
+     * Null on iOS, and also on an Android launcher that refuses pin requests —
+     * the host asks before passing one. Hidden rather than disabled: an action
+     * that cannot happen is not a feature that is switched off, it is a feature
+     * that is absent.
+     */
+    onAddWidget: (() -> Unit)? = null,
     viewModel: StationSettingsViewModel = viewModel(key = "station-settings-$stationId") {
         StationSettingsViewModel(stationId)
     },
@@ -456,6 +475,24 @@ fun StationSettingsScreen(
                     subtitle = "Add a line, change a direction, or set a filter",
                     onClick = { onEditLines(null) },
                 )
+            }
+
+            // ── Home screen ──
+            //
+            // Here, on the station, rather than in a widget settings screen the
+            // user would have to know to go looking for. This is the moment the
+            // want exists.
+            if (onAddWidget != null) {
+                Spacer(Modifier.height(28.dp))
+                SettingsSectionLabel("Home screen")
+                SettingsCard {
+                    SettingsActionRow(
+                        icon = Icons.Rounded.GridView,
+                        title = "Add to Home Screen",
+                        subtitle = "A widget showing this station's live departures",
+                        onClick = onAddWidget,
+                    )
+                }
             }
 
             Spacer(Modifier.height(28.dp))

@@ -22,6 +22,7 @@ import com.stationly.core.model.deeplink.parseDeepLink
 import com.stationly.mobile.service.UserSyncCoordinator
 import com.stationly.mobile.ui.common.StagingBanner
 import com.stationly.mobile.widget.WidgetConfigureActivity
+import com.stationly.mobile.widget.WidgetPinner
 import kotlinx.coroutines.launch
 
 /**
@@ -138,9 +139,19 @@ class MainActivity : ComponentActivity() {
                     onManageWidgets = {
                         // `this@MainActivity`: inside `setContent` the receiver
                         // is the composable scope, not the Activity.
-                        startActivity(
-                            Intent(this@MainActivity, WidgetConfigureActivity::class.java),
-                        )
+                        startActivity(WidgetConfigureActivity.managerIntent(this@MainActivity))
+                    },
+                    // The Android front door: ask the LAUNCHER to place a widget
+                    // already bound to this station, so the user confirms one
+                    // dialog instead of hunting through the widget gallery and
+                    // then answering a picker. Null where the launcher refuses
+                    // pin requests, which hides the row rather than showing one
+                    // that does nothing — `canPin` is read at composition, not
+                    // cached, because a launcher can be swapped.
+                    onAddWidgetForStation = if (WidgetPinner.canPin(this@MainActivity)) {
+                        { groupingId -> WidgetPinner.pin(this@MainActivity, groupingId) }
+                    } else {
+                        null
                     },
                 )
                 // Outside `App` because it is the one thing on screen the shared

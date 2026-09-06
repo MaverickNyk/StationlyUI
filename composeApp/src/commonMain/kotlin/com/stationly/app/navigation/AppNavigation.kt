@@ -47,6 +47,12 @@ fun AppNavigation(
     onPasswordResetBannerShown: () -> Unit = {},
     /** Android's widget manager. Null on iOS — see [HomeSettingsScreen]. */
     onManageWidgets: (() -> Unit)? = null,
+    /**
+     * Put a widget for one station on the home screen, by grouping id. Null on
+     * iOS, which cannot place widgets — see
+     * [com.stationly.app.ui.station.StationSettingsScreen].
+     */
+    onAddWidgetForStation: ((String) -> Unit)? = null,
 ) {
     val navController = rememberNavController()
 
@@ -322,6 +328,9 @@ fun AppNavigation(
                     stationId = stationId,
                     stationName = stationName,
                     mode = mode,
+                    // Bound to THIS station: the row is on its screen, so the
+                    // station never has to be chosen again.
+                    onAddWidget = onAddWidgetForStation?.let { add -> { add(stationId) } },
                     // ── Come back to the station you were editing ──
                     //
                     // Not "come back to the home screen". A user on page C of a
