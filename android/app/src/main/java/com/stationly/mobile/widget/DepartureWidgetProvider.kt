@@ -305,6 +305,50 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         }
 
         /**
+         * Redraw only the widgets showing the station this push was about.
+         *
+         * ## Why not just redraw everything
+         * A `Station_{naptan}` push arrives every ~30 seconds per tracked stop.
+         * The old behaviour drew every placed widget on every one of them, so a
+         * phone with four widgets did four full RemoteViews rebuilds — SQL read,
+         * tick, platform grouping, row inflation — to change one of them. The
+         * other three were re-rendered with the bytes they already had.
+         *
+         * ## The naptan is not the binding, and this is where that bites
+         * The push names the naptan departures were FETCHED from
+         * ([UserSelection.station]); a binding holds the HUB the user picked
+         * ([UserSelection.groupingId]). On tube they coincide. On bus they do
+         * not — every pole has its own naptan, so Smithwood Close resolves route
+         * 39 inbound to 490008805N and outbound to 490012211N while the widget
+         * is bound to the stop. Matching the push's id against bindings directly
+         * would silently never update a single bus widget.
+         *
+         * So the push's naptan is resolved through the selections to the hubs it
+         * feeds, and the widgets bound to those hubs are the ones drawn.
+         */
+        fun updateForStation(context: Context, pushedStationId: String) {
+            val appWidgetManager = AppWidgetManager.getInstance(context)
+            val appWidgetIds = appWidgetManager.getAppWidgetIds(
+                android.content.ComponentName(context, DepartureWidgetProvider::class.java)
+            )
+            if (appWidgetIds.isEmpty()) return
+
+            val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
+            val affectedHubs = selections
+                .filter { it.station.equals(pushedStationId, ignoreCase = true) }
+                .map { it.groupingId }
+                .toSet()
+            if (affectedHubs.isEmpty()) return
+
+            for (id in appWidgetIds) {
+                val bound = WidgetBindingStore.boundStation(context, id) ?: continue
+                if (bound in affectedHubs) {
+                    renderWidget(context, appWidgetManager, id, selections)
+                }
+            }
+        }
+
+        /**
          * Redraw exactly ONE widget.
          *
          * For the in-app manager: rebinding widget A must not repaint widget B,
