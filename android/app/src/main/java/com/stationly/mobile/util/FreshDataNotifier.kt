@@ -65,7 +65,12 @@ object FreshDataNotifier {
     fun notifyPredictions(context: Context, stationId: String) {
         announce(FreshData.Station(stationId))
         broadcastDream(context)
-        redrawWidget(context)
+        // Only the widgets showing this stop. A `Station_{naptan}` push lands
+        // every ~30s per tracked station, and redrawing all of them meant a
+        // phone with four widgets doing four full RemoteViews rebuilds to
+        // change one. See DepartureWidgetProvider.updateForStation, which also
+        // explains why the push's naptan is not the widget's binding.
+        DepartureWidgetProvider.updateForStation(context, stationId)
     }
 
     /**
