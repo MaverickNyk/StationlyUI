@@ -3,41 +3,46 @@
 // Applied to the `Debug Production` and `Release Production` configurations.
 //
 // ══════════════════════════════════════════════════════════════════════════
-//  ⚠️  PLACEHOLDER FILE — production is NOT yet buildable end to end.
+//  REAL as of 2026-09-09. Production is buildable end to end.
 // ══════════════════════════════════════════════════════════════════════════
 //
-// Three values below are placeholders awaiting owner-side console work (see
-// docs/IOS_ENV_SPLIT_AND_TESTFLIGHT.md §6). Everything else is real.
+// Every value below is live. The three placeholders this file shipped with
+// (Firebase plist, reversed client id, API key) were filled in when the
+// `stationly-prod` iOS app was registered for `com.stationly.mobile`.
 //
-// What was wrong before this file existed: `Debug/Release Production` set
-// STATIONLY_ENVIRONMENT=production — pointing the app at api.stationly.co.uk —
-// while there was only ONE GoogleService-Info.plist in the repo, belonging to
-// the *staging* Firebase project `mindthetimefcm`. A production build would
-// therefore have minted a staging uid and handed a staging ID token to the
-// production backend. It was never caught because no production build has ever
-// been run. The placeholders below make that failure LOUD (the app refuses to
-// configure Firebase and logs why) instead of silent.
+// What the placeholders were guarding against, kept because the trap is still
+// real for anyone adding a THIRD environment: before this file existed,
+// `Debug/Release Production` set STATIONLY_ENVIRONMENT=production — pointing
+// the app at api.stationly.co.uk — while the repo held one
+// GoogleService-Info.plist, belonging to the *staging* project
+// `mindthetimefcm`. A production build would have minted a staging uid and
+// handed a staging ID token to the production backend. The placeholders made
+// that failure loud (the app refused to configure Firebase and logged why)
+// rather than silent.
 //
-// ── To finish production, in order ──
-//  1. Firebase console → project `stationly-prod` → add an iOS app with bundle
-//     id `com.stationly.mobile`. Enable the Google and Apple sign-in providers
-//     under Authentication → Sign-in method. Upload the APNs `.p8` auth key
-//     for team 7T7D5LLYSL under Cloud Messaging.
-//  2. Download its GoogleService-Info.plist and commit it over
-//     `iosApp/Config/GoogleService-Info-Production.plist` (which is currently a
-//     stub with no GOOGLE_APP_ID).
-//  3. Copy REVERSED_CLIENT_ID out of that plist into
-//     GOOGLE_REVERSED_CLIENT_ID below.
-//  4. Put the production backend API key into the git-ignored
-//     iosApp/Config/Secrets.xcconfig (see Secrets.example.xcconfig).
-//  5. Apple Developer → register App ID `com.stationly.mobile` with the App
-//     Groups, Push Notifications and Sign in with Apple capabilities, and
-//     create the App Group `group.com.stationly.shared`.
+// ── Owner-side console work, all done ──
+//  1. ✅ Firebase `stationly-prod`: iOS app registered for `com.stationly.mobile`
+//     (GOOGLE_APP_ID 1:528964831464:ios:16bb4b24694cb06e1de15d), Google and
+//     Apple sign-in providers enabled, APNs `.p8` for team 7T7D5LLYSL uploaded.
+//  2. ✅ Its GoogleService-Info.plist committed over the stub at
+//     `iosApp/Config/GoogleService-Info-Production.plist`.
+//  3. ✅ REVERSED_CLIENT_ID copied from that plist into
+//     GOOGLE_REVERSED_CLIENT_ID below. The two must stay equal, and NOTHING
+//     checks that they are — the ios-testflight.sh preflight asserts the
+//     bundle id, environment, App Group and Firebase project, but not this.
+//  4. ✅ Production backend API key in the git-ignored
+//     iosApp/Config/Secrets.xcconfig (template: Secrets.example.xcconfig).
+//     Same key as Android's `prod.STATIONLY_API_KEY`.
+//  5. ✅ Apple Developer: App ID `com.stationly.mobile` registered with App
+//     Groups, Push and Sign in with Apple; App Group
+//     `group.com.stationly.shared` created. Done 2026-08-15 by automatic
+//     signing, verified by decoding the minted profiles.
 //
-// Until step 2 lands, a production build still COMPILES and RUNS — it just has
-// no Firebase, so sign-in is unavailable. That is intentional: a production
-// build that half-works against staging credentials is far more dangerous than
-// one that plainly cannot sign in.
+// The Apple sign-in provider takes NO Services ID, team id, key id or private
+// key in the Firebase console. Those four drive the OAuth web redirect flow
+// used by web and Android; iOS signs in natively through
+// ASAuthorizationAppleIDProvider and hands Firebase the credential directly
+// (AuthBridge.signInWithApple), so Firebase never reads them.
 
 #include "Base.xcconfig"
 
@@ -63,20 +68,23 @@ STATIONLY_URL_SCHEME = stationly
 
 STATIONLY_APPICON_NAME = AppIcon
 
-// ⚠️ PLACEHOLDER — the file this names is a stub with no GOOGLE_APP_ID, which
-// `AppDelegate.configureFirebaseIfAvailable()` detects and refuses. Replace
-// per step 2 above.
+// The real `stationly-prod` configuration, copied into the app bundle as
+// `GoogleService-Info.plist` by the pre-build script. Carries a GOOGLE_APP_ID,
+// which is exactly what `AppDelegate.configureFirebaseIfAvailable()` tests for
+// before calling `FirebaseApp.configure()`.
 STATIONLY_FIREBASE_PLIST = GoogleService-Info-Production
 
-// ⚠️ PLACEHOLDER — must be the REVERSED_CLIENT_ID from the production plist.
-// Left as an obviously-fake value rather than copying staging's: a staging
-// scheme in a production build would silently route the Google sign-in
-// redirect to a client that does not belong to this Firebase project.
-GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.PRODUCTION-CLIENT-ID-NOT-YET-CONFIGURED
+// The Google Sign-In redirect scheme, verbatim from
+// GoogleService-Info-Production.plist. Firebase mints the OAuth client per
+// REGISTERED APP, not per project, so this moves whenever that plist is
+// replaced and the two must be swapped together. A wrong value fails silently
+// and confusingly: the browser sheet opens, the user authenticates, and
+// nothing happens on return.
+GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.528964831464-kmotqq9duc4bpmio4ffm0bk303udctpq
 
-// ⚠️ PLACEHOLDER until Secrets.xcconfig exists. That file (git-ignored,
-// `#include?`d by Base.xcconfig) defines STATIONLY_API_KEY_PRODUCTION; the
-// `:default=` fallback below applies only when it is absent, so a fresh clone
-// still builds. Requests then carry a bogus key and are rejected by the
-// backend — the correct outcome for a build holding no production credential.
+// From the git-ignored Secrets.xcconfig (`#include?`d by Base.xcconfig), which
+// defines STATIONLY_API_KEY_PRODUCTION. The `:default=` fallback applies only
+// when that file is absent, so a fresh clone still builds staging; its
+// requests then carry a bogus key and are rejected by the backend, which is
+// the correct outcome for a build holding no production credential.
 STATIONLY_API_KEY = $(STATIONLY_API_KEY_PRODUCTION:default=PRODUCTION-API-KEY-NOT-CONFIGURED)

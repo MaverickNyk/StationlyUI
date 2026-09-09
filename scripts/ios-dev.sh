@@ -61,8 +61,14 @@ fi
 case "$ENVIRONMENT" in
     staging)    SCHEME="iosApp Staging";    CONFIG="Debug Staging" ;;
     production) SCHEME="iosApp Production"; CONFIG="Debug Production"
-        echo "⚠️  Production has PLACEHOLDER Firebase credentials — the app will run but cannot sign in."
-        echo "   See docs/IOS_ENV_SPLIT_AND_TESTFLIGHT.md §6." ;;
+        # Real since 2026-09-09: the stationly-prod iOS app is registered, its
+        # GoogleService-Info is committed, and Secrets.xcconfig holds the
+        # production API key. This build talks to api.stationly.co.uk with a
+        # production uid. Note APS_ENVIRONMENT tracks the BUILD TYPE, so this
+        # debug build registers with the APNs SANDBOX gateway — pushes sent by
+        # the production backend (production gateway) will not arrive. Use a
+        # Release Production build to exercise push.
+        echo "⚠️  PRODUCTION build: real users, real data, api.stationly.co.uk." ;;
     *) echo "unknown environment: $ENVIRONMENT (want staging|production)" >&2; exit 2 ;;
 esac
 
