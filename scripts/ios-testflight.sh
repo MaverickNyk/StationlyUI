@@ -79,14 +79,19 @@ case "$ENVIRONMENT" in
     staging)
         SCHEME="iosApp Staging"; CONFIG="Release Staging" ;;
     production)
-        # Refused rather than warned. An uploaded production build would carry
-        # placeholder Firebase credentials and could not sign in — and a broken
-        # build sitting in TestFlight is far more expensive to walk back than
-        # one that was never made.
-        echo "error: production is not ready to ship." >&2
-        echo "  Its Firebase config is a placeholder, so the uploaded build could not sign in." >&2
-        echo "  Complete docs/IOS_ENV_SPLIT_AND_TESTFLIGHT.md §6 steps 1-2, then remove this guard." >&2
-        exit 1 ;;
+        # The guard that stood here refused production outright, because
+        # GoogleService-Info-Production.plist was a stub with no GOOGLE_APP_ID
+        # and an uploaded build could not have signed in. That stopped being
+        # true on 2026-09-09 (76309b2): `stationly-prod` has an iOS app
+        # registered for com.stationly.mobile and the real plist is committed.
+        #
+        # What replaced it is step 3, which reads the ARCHIVE and asserts its
+        # Firebase project, its Firebase bundle id and its Google redirect
+        # scheme against the committed config for this environment, plus step
+        # 4a on the exported .ipa. A blanket refusal cannot tell a fixed
+        # environment from a broken one; it goes stale silently and is then
+        # deleted wholesale, taking no knowledge with it.
+        SCHEME="iosApp Production"; CONFIG="Release Production" ;;
     *) echo "unknown environment: $ENVIRONMENT" >&2; exit 2 ;;
 esac
 
@@ -261,6 +266,27 @@ EXPECTED_PLIST="$ROOT/iosApp/Config/$(xcfg STATIONLY_FIREBASE_PLIST "$ROOT/iosAp
     "Sign in with Apple validates the identity token's audience against the bundle" \
     "ids registered in the Firebase project, so sign-in would fail for every tester."
 
+# The Google redirect scheme is a FOURTH value that has to move with the plist,
+# and it is the only one that lives outside it: project.yml expands
+# $(GOOGLE_REVERSED_CLIENT_ID) from the xcconfig into CFBundleURLTypes, while
+# REVERSED_CLIENT_ID sits in the plist. Firebase mints the OAuth client per
+# REGISTERED APP rather than per project, so replacing the plist moves this too
+# — and until now nothing compared them. The header of Production.xcconfig said
+# as much and asked for this check.
+#
+# A mismatch fails in the most confusing way available: the browser sheet opens,
+# the user authenticates, control returns to the app, and nothing happens.
+ARCHIVE_GOOGLE_SCHEME="$(plist 'CFBundleURLTypes:0:CFBundleURLSchemes:0' "$APP_PLIST")"
+EXPECTED_GOOGLE_SCHEME="$(plist REVERSED_CLIENT_ID "$EXPECTED_PLIST")"
+[[ -n "$EXPECTED_GOOGLE_SCHEME" ]] || fail \
+    "$(basename "$EXPECTED_PLIST") has no REVERSED_CLIENT_ID — Google sign-in cannot work."
+[[ "$ARCHIVE_GOOGLE_SCHEME" == "$EXPECTED_GOOGLE_SCHEME" ]] || fail \
+    "archive Google redirect scheme is '$ARCHIVE_GOOGLE_SCHEME'," \
+    "but $(basename "$EXPECTED_PLIST") declares '$EXPECTED_GOOGLE_SCHEME'." \
+    "GOOGLE_REVERSED_CLIENT_ID in Config/$ENV_CAP.xcconfig is out of sync with that plist." \
+    "They are minted together per registered app and must be replaced together."
+echo "  google-scheme=matches $(basename "$EXPECTED_PLIST")"
+
 # ── 3c. Is the Kotlin in here the RELEASE build? ──
 #
 # The comment above this block used to claim this check existed. It did not —
@@ -335,6 +361,58 @@ xcodebuild -exportArchive -archivePath "$ARCHIVE" \
 IPA="$(find "$EXPORT_DIR" -maxdepth 1 -name '*.ipa' | head -1)"
 [[ -n "$IPA" ]] || { echo "error: export produced no .ipa in $EXPORT_DIR" >&2; exit 1; }
 echo "✓ .ipa at $IPA"
+
+# ── 4a. Is the SIGNED .ipa a distribution build aimed at the right APNs? ──
+#
+# This lives here and NOT in step 3 because the archive legitimately fails it.
+# Automatic signing archives with whatever profile is already on the machine —
+# an iOS Team Provisioning Profile — so every .xcarchive here carries
+# aps-environment=development and get-task-allow=true, whatever APS_ENVIRONMENT
+# said. Export is what re-signs with the Apple Distribution identity and the
+# App Store profile. Asserting on the archive would fail on every correct
+# build; the exported .ipa is the artefact that actually ships.
+#
+# aps-environment decides which APNs gateway will accept this build's device
+# tokens, and the two are not interchangeable. A `development` value means
+# sandbox tokens: the backend registers the device, api.push.apple.com rejects
+# every send, and nothing in the app reports it. get-task-allow=true means a
+# debuggable binary, which ASC rejects at upload — better to know before the
+# 20-minute round trip.
+IPA_TMP="$(mktemp -d)"
+trap 'rm -rf "$IPA_TMP"' EXIT
+unzip -q "$IPA" -d "$IPA_TMP"
+IPA_APP="$(find "$IPA_TMP/Payload" -maxdepth 1 -name '*.app' | head -1)"
+[[ -n "$IPA_APP" ]] || fail "exported .ipa has no .app in Payload/ — the export is malformed."
+ipa_ent() { codesign -d --entitlements :- "$IPA_APP" 2>/dev/null \
+    | plutil -extract "$1" raw -o - - 2>/dev/null; }
+IPA_APS="$(ipa_ent aps-environment)"
+IPA_GTA="$(ipa_ent get-task-allow)"
+# Captured first, then matched — NOT `codesign … | grep -m1`. Under this
+# script's `set -euo pipefail`, grep -m1 closes the pipe on the first match,
+# codesign dies of SIGPIPE, pipefail promotes 141 to the pipeline's status and
+# set -e kills the run. It presents as the script vanishing without a word
+# right after the .ipa line. awk is used rather than `head -1` for the same
+# reason: it consumes all of its input instead of exiting early.
+_CS_INFO="$(codesign -dvvv "$IPA_APP" 2>&1 || true)"
+IPA_SIGNER="$(printf '%s\n' "$_CS_INFO" | awk '/^Authority=/ && !seen { sub(/^Authority=/, ""); print; seen = 1 }')"
+
+[[ "$IPA_APS" == "production" ]] || fail \
+    "exported .ipa has aps-environment='${IPA_APS:-<absent>}', expected 'production'." \
+    "Its device tokens would be SANDBOX tokens, which api.push.apple.com rejects." \
+    "Every push would fail silently: the device registers, nothing ever arrives." \
+    "Signed by: ${IPA_SIGNER:-<unknown>}"
+[[ "$IPA_GTA" != "true" ]] || fail \
+    "exported .ipa has get-task-allow=true — it is a debuggable build." \
+    "App Store Connect rejects these at upload. Export did not re-sign for" \
+    "distribution; check that exportOptions-$ENV_CAP.plist still says" \
+    "method=app-store-connect and signingStyle=automatic."
+case "$IPA_SIGNER" in
+    "Apple Distribution"*) ;;
+    *) fail "exported .ipa is signed by '${IPA_SIGNER:-<unknown>}', not an Apple Distribution identity." \
+            "Only a distribution-signed build can be uploaded." ;;
+esac
+echo "  ipa: aps-environment=production  get-task-allow=${IPA_GTA:-absent}"
+echo "  ipa: signed by $IPA_SIGNER"
 
 if [[ $DRY_RUN -eq 1 ]]; then
     echo "▸ Dry run — stopping here, NOTHING uploaded."
