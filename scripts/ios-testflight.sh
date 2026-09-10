@@ -387,7 +387,14 @@ ipa_ent() { codesign -d --entitlements :- "$IPA_APP" 2>/dev/null \
     | plutil -extract "$1" raw -o - - 2>/dev/null; }
 IPA_APS="$(ipa_ent aps-environment)"
 IPA_GTA="$(ipa_ent get-task-allow)"
-IPA_SIGNER="$(codesign -dvvv "$IPA_APP" 2>&1 | grep -m1 '^Authority=' | sed 's/^Authority=//')"
+# Captured first, then matched — NOT `codesign … | grep -m1`. Under this
+# script's `set -euo pipefail`, grep -m1 closes the pipe on the first match,
+# codesign dies of SIGPIPE, pipefail promotes 141 to the pipeline's status and
+# set -e kills the run. It presents as the script vanishing without a word
+# right after the .ipa line. awk is used rather than `head -1` for the same
+# reason: it consumes all of its input instead of exiting early.
+_CS_INFO="$(codesign -dvvv "$IPA_APP" 2>&1 || true)"
+IPA_SIGNER="$(printf '%s\n' "$_CS_INFO" | awk '/^Authority=/ && !seen { sub(/^Authority=/, ""); print; seen = 1 }')"
 
 [[ "$IPA_APS" == "production" ]] || fail \
     "exported .ipa has aps-environment='${IPA_APS:-<absent>}', expected 'production'." \
