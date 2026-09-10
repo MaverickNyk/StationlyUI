@@ -3,7 +3,6 @@ package com.stationly.app.ui.selection
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -30,6 +29,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -45,6 +46,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -52,43 +54,47 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CallMade
-import androidx.compose.material.icons.filled.CallReceived
 import androidx.compose.material.icons.filled.East
-import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.North
 import androidx.compose.material.icons.filled.South
 import androidx.compose.material.icons.filled.West
 import androidx.compose.material.icons.rounded.ArrowBackIosNew
+import androidx.compose.material.icons.rounded.ArrowRightAlt
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Clear
-import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.Loop
+import androidx.compose.material.icons.rounded.NearMe
+import androidx.compose.material.icons.rounded.Place
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.RocketLaunch
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material.icons.rounded.Train
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.Button
+import com.stationly.core.config.BoardPolicyStore
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -98,6 +104,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -112,75 +124,185 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.stationly.app.ui.common.ServiceUnavailableScreen
+import com.stationly.app.ui.common.StationlySpinner
+import com.stationly.app.ui.summary.components.LineLimitSheet
+import com.stationly.app.ui.summary.components.StationLimitSheet
+import com.stationly.app.ui.summary.components.lineColorForTheme
+import com.stationly.app.ui.theme.isDarkTheme
+import com.stationly.core.model.FilterMode
 import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.model.sdui.SduiAppScreen
 import com.stationly.core.model.sdui.SduiDropdownOption
 import kotlinx.coroutines.delay
 
-// ── Palette ───────────────────────────────────────────────────────────────────
-private val Amber    = Color(0xFFFFB81C)
-private val Surface0 = Color(0xFF0A0A0A)
-private val Surface1 = Color(0xFF141414)
-private val Surface2 = Color(0xFF1C1C1C)
-private val White90  = Color.White.copy(alpha = 0.90f)
-private val White55  = Color.White.copy(alpha = 0.55f)
-private val White25  = Color.White.copy(alpha = 0.25f)
-private val White08  = Color.White.copy(alpha = 0.08f)
+/* ═══════════════════════════════════════════════════════════════
+   Palette — theme-aware (names preserved so call sites stay unchanged).
+   Each reads from MaterialTheme.colorScheme so the screen flips with the
+   app theme. The dot-matrix board keeps its own locked dark signage palette.
+   ═══════════════════════════════════════════════════════════════ */
+private val Amber    @Composable get() = MaterialTheme.colorScheme.primary
+private val Surface0 @Composable get() = MaterialTheme.colorScheme.background
+private val Surface1 @Composable get() = MaterialTheme.colorScheme.surface
+private val Surface2 @Composable get() = MaterialTheme.colorScheme.surfaceVariant
+private val White90  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.90f)
+private val White55  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
+private val White25  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.25f)
+private val White08  @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f)
 
-// ── SDUI helpers ──────────────────────────────────────────────────────────────
-private fun SduiAppScreen.sdText(id: String): String? =
+/* ═══════════════════════════════════════════════════════════════
+   SDUI helpers
+   ═══════════════════════════════════════════════════════════════ */
+/**
+ * Resolve a server-driven string by component id, interpolating any
+ * `{mode}` / `{station}` / `{line}` (etc.) placeholders the backend embedded
+ * with the live selection. The server can ship "{Mode} stops near you" or
+ * "Lines from {station}" and the client fills in the runtime values. Empty
+ * substitutions collapse cleanly so a missing var never leaves a dangling
+ * token. Returns null when the key isn't in the layout, so call sites fall
+ * back to the local default string.
+ */
+private fun SduiAppScreen.sdText(id: String, vars: Map<String, String?> = emptyMap()): String? =
     components.filterIsInstance<SduiAppComponent.Text>().find { it.id == id }?.text
+        ?.let { interpolate(it, vars) }
 
-// ── Step helpers ──────────────────────────────────────────────────────────────
-private fun computeStep(s: Map<String, String>): Int = when {
-    "direction" in s -> 3
-    "line"      in s -> 2
-    "station"   in s -> 1
-    else             -> 0
+private fun interpolate(template: String, vars: Map<String, String?>): String {
+    if (!template.contains('{')) return template
+    var out = template
+    vars.forEach { (k, v) -> out = out.replace("{$k}", v ?: "") }
+    return out.replace(Regex("\\s{2,}"), " ").trim()
+}
+
+/* ───────────────────────────────────────────────────────────────
+   Context-aware vocabulary. The copy on each step references the choice
+   made on the previous step (mode → station → line), so the flow reads like
+   a sentence: "Bus stops near you" → "Routes from Trafalgar Square" →
+   "Buses from Trafalgar Square". A bus rides on "stops"/"routes"/"Buses";
+   rail modes on "stations"/"lines"/"Trains". Backend can still override any
+   of these via the screen_* SDUI keys.
+   ─────────────────────────────────────────────────────────────── */
+internal fun stopNounSingular(modeId: String?): String =
+    if (modeId == "bus" || modeId == "tram") "stop" else "station"
+internal fun lineNounSingular(modeId: String?): String =
+    if (modeId == "bus") "route" else "line"
+internal fun lineNounPluralCap(modeId: String?): String =
+    if (modeId == "bus") "Routes" else "Lines"
+internal fun vehicleNounPlural(modeId: String?): String = when (modeId) {
+    "bus"       -> "Buses"
+    "tram"      -> "Trams"
+    "river-bus" -> "Boats"
+    else        -> "Trains"
+}
+
+/** Compact destination summary for a junction headline, e.g.
+ *  ["Wimbledon","Richmond","Ealing Broadway","Kensington (Olympia)"] →
+ *  "Wimbledon, Richmond & 2 more". */
+private fun summariseDestinations(labels: List<String>): String = when (labels.size) {
+    0 -> ""
+    1 -> labels[0]
+    2 -> "${labels[0]} & ${labels[1]}"
+    3 -> "${labels[0]}, ${labels[1]} & ${labels[2]}"
+    else -> "${labels[0]}, ${labels[1]} & ${labels.size - 2} more"
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Step helpers  (unified flow: Mode → Station → Line → Direction)
+   ═══════════════════════════════════════════════════════════════ */
+/**
+ * Progress dots. Line and direction are no longer keys in the flat selection
+ * map — they live in the multi-line picks — so the last two steps are derived
+ * from those instead: any line checked reaches step 2, and every checked line
+ * having a direction completes step 3.
+ */
+private fun computeStep(s: Map<String, String>, picks: Map<String, Set<String>>): Int = when {
+    picks.isNotEmpty() && picks.values.all { it.isNotEmpty() } -> 3
+    picks.isNotEmpty()                                        -> 2
+    "station" in s                                            -> 1
+    else                                                      -> 0
 }
 
 private fun screenIdx(s: Map<String, String>): Int = when {
     "mode"    !in s -> 0
     "station" !in s -> 1
-    else            -> 2
+    else            -> 2  // merged line + direction screen
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Root
+   ═══════════════════════════════════════════════════════════════ */
 @Composable
 fun SelectionScreen(
     onNavigateToSummary: () -> Unit,
     onNavigateBack: () -> Unit = onNavigateToSummary,
     onRequestLocationPermission: () -> Unit = {},
+    /**
+     * Station to open the flow ON, as (grouping id, mode, name) — the home
+     * screen's "Edit station". Null starts the flow at the mode step as usual.
+     */
+    editStation: Triple<String, String, String>? = null,
+    /** A line to open expanded — see [SelectionViewModel.openForStation]. */
+    focusLine: String? = null,
     viewModel: SelectionViewModel = viewModel { SelectionViewModel() }
 ) {
+    // Keyed on the station so re-entering for a DIFFERENT one re-runs, and
+    // recomposition alone never does — replaying it would fight the user by
+    // dragging them back to the line step every time they pressed back.
+    LaunchedEffect(editStation, focusLine) {
+        editStation?.let { (id, mode, name) ->
+            viewModel.openForStation(mode, id, name, focusLine)
+        }
+    }
+
     val st by viewModel.uiState.collectAsStateWithLifecycle()
     val selMap by viewModel.selections.collectAsStateWithLifecycle()
     val dropdownData by viewModel.dropdownData.collectAsStateWithLifecycle()
     val modes by viewModel.modes.collectAsStateWithLifecycle()
     val recentStations by viewModel.recentStations.collectAsStateWithLifecycle()
+    val linePicks by viewModel.linePicks.collectAsStateWithLifecycle()
+    val existingPicks by viewModel.existingPicks.collectAsStateWithLifecycle()
+    val directionsByLine by viewModel.directionsByLine.collectAsStateWithLifecycle()
+    val loadingDirections by viewModel.loadingDirections.collectAsStateWithLifecycle()
+    val failedDirections by viewModel.failedDirections.collectAsStateWithLifecycle()
+    val selectionComplete by viewModel.isSelectionComplete.collectAsStateWithLifecycle()
+    val boardFilters by viewModel.boardFilters.collectAsStateWithLifecycle()
+    val expandedLine by viewModel.expandedLine.collectAsStateWithLifecycle()
 
-    val primary by remember(st.layout) {
-        derivedStateOf {
-            st.layout?.theme?.primaryColor?.let {
-                parseColorSafe(it) ?: Amber
-            } ?: Amber
-        }
+    // (line, direction) whose filter sheet is open; null = closed.
+    var filterTarget by remember {
+        mutableStateOf<Pair<SduiDropdownOption, SduiDropdownOption>?>(null)
     }
+
+    // App-wide themed primary — flips automatically with light/dark mode and
+    // any SDUI ThemeTokens override. Previously this screen parsed
+    // `st.layout?.theme?.primaryColor`, which hardcoded a bright TfL-amber that
+    // wrecked light-mode contrast (chips, CTA, border all #FFB81C regardless).
+    val primary = MaterialTheme.colorScheme.primary
 
     LaunchedEffect(st.showSuccessDialog) {
-        if (st.showSuccessDialog) {
-            onNavigateToSummary()
-            viewModel.dismissSuccessDialog()
+        if (st.showSuccessDialog) { onNavigateToSummary(); viewModel.dismissSuccessDialog() }
+    }
+
+    // The CTA now waits on the multi-line picks rather than on flat map keys:
+    // every checked line must have a direction before the board can be built.
+    val done by remember(selMap, selectionComplete) {
+        derivedStateOf { "mode" in selMap && "station" in selMap && selectionComplete }
+    }
+
+    val step = computeStep(selMap, linePicks)
+    val idx  = screenIdx(selMap)
+    val mode = modes.find { it.id == selMap["mode"] }
+    // The chosen station's display name, carried forward into the line /
+    // direction copy ("Lines from {station}"). Kept in dropdownData even after
+    // selection, so this resolves on the later steps too.
+    val stationName = remember(dropdownData, selMap) {
+        selMap["station"]?.let { id ->
+            dropdownData["station"]?.find { it.id == id }?.label
         }
     }
 
-    val done by remember(selMap) {
-        derivedStateOf { listOf("mode", "station", "line", "direction").all { it in selMap } }
-    }
-
-    val step = computeStep(selMap)
-    val idx  = screenIdx(selMap)
-    val mode = modes.find { it.id == selMap["mode"] }
-
+    // When station screen is shown, auto-load nearby stations (if not already
+    // loaded). On iOS there is no Activity permission launcher — we hand off to
+    // the host via onRequestLocationPermission and let the VM resolve location.
     LaunchedEffect(idx) {
         if (idx == 1 && !st.isLocating && dropdownData["station"].isNullOrEmpty() && !st.isGpsUnavailable) {
             if (st.userLat != null && st.userLon != null) {
@@ -192,6 +314,7 @@ fun SelectionScreen(
         }
     }
 
+    // If location resolved after the station screen was already shown, re-trigger
     LaunchedEffect(st.userLat, st.userLon) {
         if (idx == 1 && !st.isLocating && dropdownData["station"].isNullOrEmpty()
             && !st.isGpsUnavailable && st.userLat != null && st.userLon != null) {
@@ -200,16 +323,27 @@ fun SelectionScreen(
     }
 
     Box(
-        Modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Surface0, Color.Black)))
+        Modifier.fillMaxSize()
+            // Subtle theme-aware fade: surface → background. (Originally a
+            // hardcoded Surface0 → Black band — jarring in light mode.)
+            .background(Brush.verticalGradient(listOf(Surface1, Surface0)))
             .imePadding()
     ) {
         Column(Modifier.fillMaxSize()) {
-            MinimalTopBar(mode?.label, step, "mode" in selMap, primary) {
-                if ("mode" in selMap) viewModel.popLastSelection() else onNavigateBack()
+
+            // ── top bar ──
+            MinimalTopBar(mode?.label, step, "mode" in selMap, primary, existingPicks.isNotEmpty()) {
+                // Editing an existing station ENTERED this flow at the line
+                // step — the mode and the station were never picked here, they
+                // came from the card the user tapped. Stepping back through them
+                // walks the user forwards through screens they did not choose
+                // and strands them at the mode list; back has to mean "leave",
+                // which returns to the station settings screen it came from.
+                if (editStation == null && "mode" in selMap) viewModel.popLastSelection()
+                else onNavigateBack()
             }
 
+            // ── content ──
             AnimatedContent(
                 targetState = idx,
                 transitionSpec = {
@@ -223,47 +357,65 @@ fun SelectionScreen(
                 modifier = Modifier.weight(1f)
             ) { i ->
                 when (i) {
+                    // Screen 0 — Mode
                     0 -> ModeScreen(
                         st.layout, modes, "mode" in st.failedFetches, primary,
-                        { viewModel.onDropdownSelected("mode", it.id) },
-                        { viewModel.retryLoad() }
+                        { viewModel.onDropdownSelected("mode", it.id) }, { viewModel.retryLoad() }
                     )
+
+                    // Screen 1 — Station (nearby + search combined)
                     1 -> StationScreen(
-                        layout         = st.layout,
-                        stations       = dropdownData["station"] ?: emptyList(),
-                        recentStations = run {
+                        layout          = st.layout,
+                        stations        = dropdownData["station"] ?: emptyList(),
+                        recentStations  = run {
                             val currentIds = dropdownData["station"]?.map { it.id }?.toSet() ?: emptySet()
                             recentStations.filter { it.id in currentIds }
                         },
-                        selectedId     = selMap["station"],
-                        locating       = st.isLocating,
-                        noNearby       = st.isGpsUnavailable,
-                        searchEmpty    = st.isSearchEmpty,
-                        primary        = primary,
-                        modeIcon       = mode?.iconUrl,
-                        mode           = selMap["mode"],
-                        onSelect       = { viewModel.onDropdownSelected("station", it.id) },
-                        onSearch       = { viewModel.searchStations(it) }
+                        selectedId      = selMap["station"],
+                        locating        = st.isLocating,
+                        noNearby        = st.isGpsUnavailable,
+                        searchEmpty     = st.isSearchEmpty,
+                        primary         = primary,
+                        modeIcon        = mode?.iconUrl,
+                        mode            = selMap["mode"],
+                        modeLabel       = mode?.label,
+                        onSelect        = { viewModel.onDropdownSelected("station", it.id) },
+                        onSearch        = { viewModel.searchStations(it) }
                     )
+
+                    // Screen 2 — Lines (multi-select) + a direction per line
                     2 -> LineDirectionScreen(
-                        layout         = st.layout,
-                        lines          = dropdownData["line"] ?: emptyList(),
-                        selectedLineId = selMap["line"],
-                        directions     = dropdownData["direction"] ?: emptyList(),
-                        selectedDirId  = selMap["direction"],
-                        loadingLines   = dropdownData["line"] == null && "line" !in st.failedFetches,
-                        loadingDirs    = dropdownData["direction"] == null && "direction" !in st.failedFetches,
-                        errLines       = "line" in st.failedFetches,
-                        primary        = primary,
-                        mode           = selMap["mode"],
-                        onSelectLine   = { viewModel.onDropdownSelected("line", it.id) },
-                        onSelectDir    = { viewModel.onDropdownSelected("direction", it.id) },
-                        onRetry        = { viewModel.retryDropdown("line") }
+                        layout            = st.layout,
+                        lines             = dropdownData["line"] ?: emptyList(),
+                        linePicks         = linePicks,
+                        existingPicks     = existingPicks,
+                        directionsByLine  = directionsByLine,
+                        loadingDirections = loadingDirections,
+                        failedDirections  = failedDirections,
+                        loadingLines      = dropdownData["line"] == null && "line" !in st.failedFetches,
+                        errLines          = "line" in st.failedFetches,
+                        primary           = primary,
+                        mode              = selMap["mode"],
+                        modeIcon          = mode?.iconUrl,
+                        modeLabel         = mode?.label,
+                        stationName       = stationName,
+                        boardFilters      = boardFilters,
+                        expandedLine      = expandedLine,
+                        onExpandLine      = { viewModel.toggleExpandedLine(it) },
+                        onToggleLine      = { viewModel.toggleLine(it.id) },
+                        onToggleDir       = { lineId, dir -> viewModel.toggleDirection(lineId, dir.id) },
+                        onToggleAllDirs   = { viewModel.toggleAllDirections(it) },
+                        onToggleAllLines  = { viewModel.toggleAllLines(it) },
+                        onOpenFilter      = { line, dir -> filterTarget = line to dir },
+                        onRetryDirections = { viewModel.retryDirections(it) },
+                        onRetry           = { viewModel.retryDropdown("line") }
                     )
+
                     else -> Box(Modifier.fillMaxSize())
                 }
             }
 
+            // ── CTA ──
             val ctaBtn = st.layout?.components?.filterIsInstance<SduiAppComponent.Button>()?.firstOrNull()
             AnimatedVisibility(
                 done,
@@ -274,7 +426,9 @@ fun SelectionScreen(
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.95f), Color.Black)))
+                        // CTA backdrop fades from transparent into the canvas
+                        // background so the floating CTA doesn't sit on bare content.
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, Surface0.copy(0.95f), Surface0)))
                         .navigationBarsPadding()
                         .padding(horizontal = 20.dp)
                         .padding(top = 16.dp, bottom = 20.dp)
@@ -288,25 +442,79 @@ fun SelectionScreen(
             }
         }
 
+        // Per-board departure filter. Hosted at the screen root rather than
+        // inside the LazyColumn item so it survives the row scrolling out of
+        // view and isn't clipped by the list.
+        filterTarget?.let { (line, dir) ->
+            BoardFilterSheet(
+                lineLabel = line.label,
+                originName = stationName ?: "your station",
+                directionOption = dir,
+                filter = boardFilters[SelectionViewModel.boardFilterKey(line.id, dir.id)]
+                    ?: BoardFilter(),
+                mode = selMap["mode"],
+                primary = primary,
+                // The line's own TfL colour, so the route map reads as THAT
+                // line rather than as generic app chrome.
+                lineColor = lineColorForTheme(line.id, isDarkTheme()),
+                onSetMode = { viewModel.setFilterMode(line.id, dir.id, it) },
+                onToggleDestination = { viewModel.toggleFilterDestination(line.id, dir.id, it) },
+                onToggleVia = { stop -> viewModel.toggleFilterVia(line.id, dir.id, stop.id, stop.name) },
+                // Selecting a whole branch = selecting its FIRST unique stop.
+                // Everything past a divergence is only reachable through it, so
+                // that one id already implies the entire branch downstream.
+                // A chip means "this whole service", stored as the pattern it
+                // names. It no longer ticks a stop, so nothing in the middle of
+                // the branch lights up as though the user had chosen it.
+                onToggleBranch = { patterns ->
+                    viewModel.toggleFilterBranch(
+                        line.id, dir.id,
+                        patterns.map { it.id to it.label },
+                    )
+                },
+                onDismiss = { filterTarget = null },
+            )
+        }
+
+        // overlays
         AnimatedVisibility(st.isSaving, enter = fadeIn(), exit = fadeOut()) {
             Saving(primary, st.layout?.loadingMessage ?: "Preparing Your Live Board")
         }
-
         AnimatedVisibility(
             st.layout == null && st.isBackendOffline,
             enter = fadeIn(tween(400)), exit = fadeOut(tween(300))
         ) {
             ServiceUnavailableScreen(
-                error = st.error,
-                onRetry = { viewModel.retryLoad() },
-                onDismiss = onNavigateBack
+                context                = "selection",
+                overridingErrorMessage = st.error,
+                onRetry                = { viewModel.retryLoad() },
+                onDismiss              = onNavigateBack
             )
         }
+
+        StationLimitSheet(
+            visible = st.showStationLimitDialog,
+            onDismiss = { viewModel.dismissStationLimitDialog() },
+        )
+        LineLimitSheet(
+            visible = st.showLineLimitDialog,
+            onDismiss = { viewModel.dismissLineLimitDialog() },
+        )
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Top bar — thin, elegant, animated progress dots
+   ═══════════════════════════════════════════════════════════════ */
 @Composable
-private fun MinimalTopBar(modeName: String?, step: Int, showProgress: Boolean, primary: Color, onBack: () -> Unit) {
+private fun MinimalTopBar(
+    modeName: String?,
+    step: Int,
+    showProgress: Boolean,
+    primary: Color,
+    isEditing: Boolean = false,
+    onBack: () -> Unit,
+) {
     Column(Modifier.fillMaxWidth().statusBarsPadding()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
@@ -317,7 +525,15 @@ private fun MinimalTopBar(modeName: String?, step: Int, showProgress: Boolean, p
             }
             Spacer(Modifier.weight(1f))
             Text(
-                if (modeName != null) "New $modeName Board" else "Set up a Board",
+                when {
+                    // Landing on a station that already has a card is an edit,
+                    // not a new board — saying "New" while the list opens
+                    // prefilled reads as though the app is about to duplicate it.
+                    isEditing && modeName != null -> "Edit $modeName Board"
+                    isEditing                     -> "Edit Board"
+                    modeName != null              -> "New $modeName Board"
+                    else                          -> "Set up a Board"
+                },
                 color = White90, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, letterSpacing = 0.3.sp
             )
             Spacer(Modifier.weight(1f))
@@ -325,10 +541,7 @@ private fun MinimalTopBar(modeName: String?, step: Int, showProgress: Boolean, p
         }
 
         if (showProgress) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 6.dp),
-                Arrangement.spacedBy(5.dp)
-            ) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 6.dp), Arrangement.spacedBy(5.dp)) {
                 repeat(3) { i ->
                     val filled by animateFloatAsState(if (step > i) 1f else 0f, tween(400), label = "bar$i")
                     Box(Modifier.weight(1f).height(2.5.dp).clip(RoundedCornerShape(2.dp)).background(White08)) {
@@ -342,29 +555,65 @@ private fun MinimalTopBar(modeName: String?, step: Int, showProgress: Boolean, p
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Step header — title + subtitle, with the chosen mode's icon carried
+   forward as a roundel so the user always sees what they picked.
+   ═══════════════════════════════════════════════════════════════ */
+@Composable
+private fun StepHeader(modeIcon: String?, primary: Color, title: String, subtitle: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (!modeIcon.isNullOrEmpty()) {
+            // White roundel — TfL mode glyphs are drawn for a white field.
+            Box(
+                Modifier.size(40.dp).background(Color.White, CircleShape)
+                    .border(1.5.dp, primary.copy(0.3f), CircleShape).padding(7.dp),
+                Alignment.Center
+            ) {
+                coil3.compose.AsyncImage(
+                    model = modeIcon, contentDescription = null, modifier = Modifier.fillMaxSize()
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp,
+                lineHeight = 26.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(3.dp))
+            Text(subtitle, color = White55, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Screen 0 — Mode picker
+   ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun ModeScreen(
     layout: SduiAppScreen?, modes: List<SduiDropdownOption>, err: Boolean, primary: Color,
     onSelect: (SduiDropdownOption) -> Unit, onRetry: () -> Unit
 ) {
     when {
-        err   -> Err("Couldn't load modes", primary, onRetry)
+        err -> Err("Couldn't load modes", primary, onRetry)
         modes.isEmpty() -> Loader(primary)
-        else  -> Column(Modifier.fillMaxSize()) {
+        else -> Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.height(24.dp))
-            Text(
-                layout?.sdText("screen_mode_title") ?: "Pick your\nchariot.",
+            // Copy is backend-owned (screen_mode_*); these are the offline
+            // fallbacks. Functional/clear tone, not the old "Pick your chariot".
+            Text(layout?.sdText("screen_mode_title") ?: "How are you travelling?",
                 color = White90, fontWeight = FontWeight.Bold, fontSize = 24.sp,
-                lineHeight = 30.sp, modifier = Modifier.padding(horizontal = 24.dp)
-            )
+                lineHeight = 30.sp, modifier = Modifier.padding(horizontal = 24.dp))
             Spacer(Modifier.height(6.dp))
-            Text(
-                layout?.sdText("screen_mode_subtitle") ?: "Bus, tube, or DLR — we're not judging.",
-                color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp)
-            )
+            Text(layout?.sdText("screen_mode_subtitle") ?: "Pick a transport mode to track.",
+                color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp))
             Spacer(Modifier.height(20.dp))
+            // Adaptive grid — auto-grows columns as the screen gets wider. 170dp
+            // min gives 2 columns on a phone and 4-5 on a tablet.
             LazyVerticalGrid(
-                columns = GridCells.Fixed(2), modifier = Modifier.fillMaxSize(),
+                columns = GridCells.Adaptive(minSize = 170.dp),
+                modifier = Modifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp)
@@ -386,33 +635,35 @@ private fun ModeCard(mode: SduiDropdownOption, primary: Color, onClick: () -> Un
             Modifier.fillMaxSize().padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
         ) {
+            // White roundel container — always white because TfL line icons are
+            // designed to sit on a white field. The fallback letter is forced to
+            // black for the same reason: black-on-white roundel typography.
             Box(contentAlignment = Alignment.Center) {
                 Box(Modifier.size(72.dp).background(primary.copy(0.08f), CircleShape))
                 Box(
                     Modifier.size(60.dp).background(Color.White, CircleShape)
-                        .border(2.dp, primary.copy(0.35f), CircleShape),
+                        .border(2.dp, primary.copy(0.35f), CircleShape).padding(12.dp),
                     Alignment.Center
                 ) {
-                    if (mode.iconUrl != null) {
+                    if (!mode.iconUrl.isNullOrEmpty())
                         coil3.compose.AsyncImage(
-                            model = mode.iconUrl,
-                            contentDescription = mode.label,
-                            modifier = Modifier.size(36.dp)
+                            model = mode.iconUrl, contentDescription = mode.label,
+                            modifier = Modifier.fillMaxSize()
                         )
-                    } else {
-                        Text(mode.label.take(1), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Surface0)
-                    }
+                    else
+                        Text(mode.label.take(1), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.Black)
                 }
             }
             Spacer(Modifier.height(14.dp))
-            Text(
-                mode.label, color = White90, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
-                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis
-            )
+            Text(mode.label, color = White90, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
+                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Screen 1 — Station picker (nearby + search in one screen)
+   ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun StationScreen(
     layout: SduiAppScreen?,
@@ -420,27 +671,61 @@ private fun StationScreen(
     recentStations: List<SduiDropdownOption>,
     selectedId: String?,
     locating: Boolean, noNearby: Boolean, searchEmpty: Boolean,
-    primary: Color, modeIcon: String?, mode: String?,
+    primary: Color, modeIcon: String?, mode: String?, modeLabel: String?,
     onSelect: (SduiDropdownOption) -> Unit,
     onSearch: (String) -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+
+    /**
+     * Put the keyboard away and drop focus.
+     *
+     * Both are needed: hiding the keyboard alone leaves the field focused, so
+     * the caret keeps blinking and the next tap re-opens the keyboard.
+     */
+    fun dismissKeyboard() {
+        keyboard?.hide()
+        focusManager.clearFocus()
+    }
+
+    // Dismiss on scroll, the way every native iOS list behaves. Guarded on
+    // `available.y` so a settling fling or a horizontal gesture doesn't trigger
+    // it, and it is cheap to call repeatedly once already hidden.
+    val dismissOnScroll = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput && available.y != 0f) dismissKeyboard()
+                return Offset.Zero
+            }
+        }
+    }
 
     LaunchedEffect(searchQuery) { delay(300); onSearch(searchQuery) }
+
+    // Auto-focus search when GPS is unavailable
     LaunchedEffect(noNearby) { if (noNearby && stations.isEmpty()) focusRequester.requestFocus() }
+
+    // Interpolation vars + functional fallbacks. Backend owns the wording via
+    // screen_station_title / screen_station_subtitle; templates may use {mode}
+    // and {stop} (the mode-correct "station"/"stop" noun).
+    val noun = stopNounSingular(mode)
+    val vars = mapOf("mode" to modeLabel, "stop" to noun)
+    val titleFallback =
+        if (!modeLabel.isNullOrBlank()) "Find a $modeLabel $noun" else "Find your $noun"
+    val subtitleFallback =
+        if (noNearby) "Location off. Search by name."
+        else "Nearby ${noun}s first, or search for another."
 
     Column(Modifier.fillMaxSize()) {
         Spacer(Modifier.height(16.dp))
-        Text(
-            layout?.sdText("screen_station_title") ?: "Find Your Stop",
-            color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp,
-            modifier = Modifier.padding(horizontal = 24.dp)
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            layout?.sdText("screen_station_subtitle") ?: "Nearby stops shown first. Search to find others.",
-            color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp)
+        StepHeader(
+            modeIcon = modeIcon,
+            primary  = primary,
+            title    = layout?.sdText("screen_station_title", vars) ?: titleFallback,
+            subtitle = layout?.sdText("screen_station_subtitle", vars) ?: subtitleFallback,
         )
         Spacer(Modifier.height(12.dp))
 
@@ -452,7 +737,7 @@ private fun StationScreen(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 10.dp)
                 .focusRequester(focusRequester),
-            placeholder = { Text("Search stations…", color = White25, fontSize = 15.sp) },
+            placeholder = { Text(layout?.sdText("station_search_placeholder", vars) ?: "Search ${noun}s…", color = White25, fontSize = 15.sp) },
             leadingIcon  = { Icon(Icons.Rounded.Search, null, tint = primary.copy(0.6f), modifier = Modifier.size(20.dp)) },
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) IconButton({ searchQuery = "" }) {
@@ -461,7 +746,10 @@ private fun StationScreen(
             },
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { onSearch(searchQuery) }),
+            // The Search key previously did nothing at all — results are already
+            // live-filtered as you type, so the only thing left for it to do is
+            // get out of the way and reveal them.
+            keyboardActions = KeyboardActions(onSearch = { dismissKeyboard() }),
             shape = RoundedCornerShape(12.dp),
             textStyle = LocalTextStyle.current.copy(fontSize = 15.sp),
             colors = OutlinedTextFieldDefaults.colors(
@@ -486,6 +774,8 @@ private fun StationScreen(
                     Text("Letting GPS do the legwork", color = White25, fontSize = 12.sp)
                 }
             }
+
+            // Search returned zero results — don't spin
             searchEmpty -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
                     Icon(Icons.Rounded.SearchOff, null, tint = White25, modifier = Modifier.size(40.dp))
@@ -495,34 +785,45 @@ private fun StationScreen(
                     Text("Try a different search term", color = White25, fontSize = 12.sp)
                 }
             }
+
+            // GPS unavailable but no search active — prompt to search
             stations.isEmpty() && noNearby -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
                     Icon(Icons.Rounded.Search, null, tint = White25, modifier = Modifier.size(40.dp))
                     Spacer(Modifier.height(12.dp))
                     Text("Search for a station", color = White55, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
-                    Text("Location unavailable — type to find stops", color = White25, fontSize = 12.sp)
+                    Text("Location off. Type to find stops", color = White25, fontSize = 12.sp)
                 }
             }
+
             stations.isEmpty() -> Loader(primary)
+
             else -> {
                 val showRecent = searchQuery.isBlank() && recentStations.isNotEmpty()
                 val sectionLabel = if (searchQuery.isBlank()) "Nearby" else "Results"
                 LazyColumn(
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 2.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize().nestedScroll(dismissOnScroll)
                 ) {
+                    // Picking a station ADVANCES to the line step, so the
+                    // keyboard has to go with it — otherwise it stays up over
+                    // the line list, hiding most of it and the CTA below.
                     if (showRecent) {
                         item { SectionHeader("Recent") }
                         items(recentStations, key = { "r_${it.id}" }) { s ->
-                            OptRow(s, s.id == selectedId, primary, modeIcon, mode) { onSelect(s) }
+                            OptRow(s, s.id == selectedId, primary, modeIcon, mode) {
+                                dismissKeyboard(); onSelect(s)
+                            }
                         }
                         item { Spacer(Modifier.height(4.dp)) }
                     }
                     item { SectionHeader(sectionLabel) }
                     items(stations, key = { it.id }) { s ->
-                        OptRow(s, s.id == selectedId, primary, modeIcon, mode) { onSelect(s) }
+                        OptRow(s, s.id == selectedId, primary, modeIcon, mode) {
+                            dismissKeyboard(); onSelect(s)
+                        }
                     }
                     item { Spacer(Modifier.height(20.dp)) }
                 }
@@ -531,75 +832,264 @@ private fun StationScreen(
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Screen 2 — Line + Direction (merged)
+   ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun LineDirectionScreen(
     layout: SduiAppScreen?,
     lines: List<SduiDropdownOption>,
-    selectedLineId: String?,
-    directions: List<SduiDropdownOption>,
-    selectedDirId: String?,
-    loadingLines: Boolean, loadingDirs: Boolean, errLines: Boolean,
-    primary: Color, mode: String?,
-    onSelectLine: (SduiDropdownOption) -> Unit,
-    onSelectDir: (SduiDropdownOption) -> Unit,
+    linePicks: Map<String, Set<String>>,
+    existingPicks: Map<String, Set<String>>,
+    directionsByLine: Map<String, List<SduiDropdownOption>>,
+    loadingDirections: Set<String>,
+    failedDirections: Set<String>,
+    loadingLines: Boolean,
+    errLines: Boolean,
+    primary: Color,
+    mode: String?,
+    modeIcon: String?,
+    modeLabel: String?,
+    stationName: String?,
+    boardFilters: Map<String, BoardFilter>,
+    expandedLine: String?,
+    onExpandLine: (String) -> Unit,
+    onToggleLine: (SduiDropdownOption) -> Unit,
+    onToggleDir: (String, SduiDropdownOption) -> Unit,
+    onToggleAllDirs: (String) -> Unit,
+    onToggleAllLines: (List<SduiDropdownOption>) -> Unit,
+    onOpenFilter: (SduiDropdownOption, SduiDropdownOption) -> Unit,
+    onRetryDirections: (String) -> Unit,
     onRetry: () -> Unit
 ) {
-    val lineSelected = selectedLineId != null
-    val funFactTitle = layout?.sdText("screen_direction_funfact_title")
-    val funFactText  = layout?.sdText("screen_direction_funfact")
+    val lineSelected = linePicks.isNotEmpty()
+    // Only meaningful for the single-pick copy templates; with several lines
+    // checked the backend's "{line}" wording no longer has one answer, so the
+    // header falls back to the count-based copy below.
+    val lineName = linePicks.keys.singleOrNull()?.let { id -> lines.find { it.id == id }?.label }
+
+    // Interpolation vars shared by both sub-steps. Backend owns the wording via
+    // the screen_line_* / screen_direction_* keys. Templates may use {station},
+    // {line}, {mode}, plus the mode-correct nouns {lines}, {line_noun} and
+    // {vehicle}. These local strings only show offline.
+    val vars = mapOf(
+        "mode"      to modeLabel,
+        "station"   to stationName,
+        "line"      to lineName,
+        "lines"     to lineNounPluralCap(mode),
+        "line_noun" to lineNounSingular(mode),
+        "vehicle"   to vehicleNounPlural(mode),
+    )
+    val fromStation = if (!stationName.isNullOrBlank()) " from $stationName" else ""
+
+    val title = if (!lineSelected)
+        layout?.sdText("screen_line_title", vars)
+            ?: "${lineNounPluralCap(mode)}$fromStation"
+    else
+        layout?.sdText("screen_direction_title", vars) ?: "Which direction?"
+
+    // The line step is now multi-select, so the subtitle has to say so — the
+    // old copy ("Which line are you taking?") reads as a single choice and
+    // would leave the checkbox affordance looking like a rendering bug.
+    val pendingDirections = linePicks.count { it.value.isEmpty() }
+    val subtitle = when {
+        !lineSelected ->
+            layout?.sdText("screen_line_multi_subtitle", vars)
+                ?: "Pick every ${lineNounSingular(mode)} you want on this board"
+        pendingDirections > 0 ->
+            layout?.sdText("screen_direction_subtitle", vars)
+                ?: "Choose a direction for each ${lineNounSingular(mode)}"
+        else -> {
+            val n = linePicks.size
+            "$n ${if (n == 1) lineNounSingular(mode) else lineNounPluralCap(mode).lowercase()} selected"
+        }
+    }
+
+    // Bring a newly ticked line into view. Its direction cards expand BELOW the
+    // row, so ticking a line near the bottom of the list would otherwise open
+    // them off-screen — the user taps, apparently nothing happens, and the CTA
+    // stays disabled with no visible reason.
+    val lineListState = rememberLazyListState()
+    LaunchedEffect(expandedLine) {
+        val target = expandedLine ?: return@LaunchedEffect
+        val idx = lines.indexOfFirst { it.id == target }
+        if (idx < 0) return@LaunchedEffect
+        // Let the expand animation start first, so the scroll lands on the row's
+        // settled position rather than fighting the growing item.
+        delay(120)
+        // +1 for the "Lines" header item above the list.
+        runCatching { lineListState.animateScrollToItem(idx + 1) }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Spacer(Modifier.height(16.dp))
-        Text(
-            if (!lineSelected) layout?.sdText("screen_line_title") ?: "Select Line"
-            else layout?.sdText("screen_direction_title") ?: "Which direction?",
-            color = White90, fontWeight = FontWeight.Bold, fontSize = 22.sp,
-            modifier = Modifier.padding(horizontal = 24.dp)
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            if (!lineSelected) layout?.sdText("screen_line_subtitle") ?: "Lines stopping here."
-            else layout?.sdText("screen_direction_subtitle") ?: "Which way are you going?",
-            color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp)
-        )
+        StepHeader(modeIcon = modeIcon, primary = primary, title = title, subtitle = subtitle)
         Spacer(Modifier.height(14.dp))
 
         when {
             errLines -> Err("Couldn't load lines", primary, onRetry)
             loadingLines -> Loader(primary)
             else -> LazyColumn(
+                state = lineListState,
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 2.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                item { SectionHeader("Lines") }
+                item {
+                    // "Select all" turns an interchange from one tap per line
+                    // into one tap total — King's Cross alone serves six.
+                    val maxLines = BoardPolicyStore.current.maxLinesPerStation
+                    val currentLineCount = linePicks.keys.size
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        SectionHeader("Lines")
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "$currentLineCount / $maxLines",
+                            color = if (currentLineCount >= maxLines) primary else White55,
+                            fontSize = 12.sp,
+                            fontWeight = if (currentLineCount >= maxLines) FontWeight.Bold else FontWeight.Medium
+                        )
+                        Spacer(Modifier.weight(1f))
+                        if (lines.size > 1) {
+                            val allPicked = lines.all { it.id in linePicks }
+                            TextButton(
+                                onClick = { onToggleAllLines(lines) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                            ) {
+                                Text(
+                                    if (allPicked) "Clear all" else "Select all",
+                                    color = primary, fontSize = 12.sp, fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
                 items(lines, key = { it.id }) { line ->
-                    OptRow(line, line.id == selectedLineId, primary, null, mode) { onSelectLine(line) }
-                    AnimatedVisibility(
-                        visible = line.id == selectedLineId,
-                        enter = expandVertically(tween(280)) + fadeIn(tween(220)),
-                        exit  = shrinkVertically(tween(200)) + fadeOut(tween(150))
-                    ) {
-                        Column(Modifier.padding(start = 8.dp, top = 10.dp)) {
-                            SectionHeader("Direction")
-                            Spacer(Modifier.height(8.dp))
-                            if (loadingDirs) {
-                                Box(Modifier.fillMaxWidth().height(56.dp), Alignment.Center) {
-                                    CircularProgressIndicator(color = primary, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
+                    Column(Modifier.fillMaxWidth()) {
+                        val isChecked = line.id in linePicks
+                        val isExpanded = expandedLine == line.id
+                        OptRow(
+                            line, isChecked, primary, null, mode,
+                            multiSelect = true,
+                            // Rows already saved on this station's card are marked
+                            // so a returning user can tell at a glance what the board
+                            // holds, instead of reading a prefilled tick as
+                            // something they just did.
+                            onBoard = line.id in existingPicks
+                        ) {
+                            // A chosen-but-collapsed line EXPANDS on tap rather than
+                            // unticking. With the accordion the row is the only large
+                            // target on screen, and having it silently discard a line
+                            // the user had already configured (directions + filter)
+                            // is a far worse mistake than an extra tap to remove one.
+                            if (isChecked && !isExpanded) onExpandLine(line.id) else onToggleLine(line)
+                        }
+
+                        // Inline direction picker expands below EACH checked line.
+                        // Each line owns its own direction list — Circle's
+                        // inner/outer rail and Jubilee's north/south are different
+                        // vocabularies, so there is no shared "Direction" step.
+                        // Collapsed summary for a line that is chosen but not being
+                        // worked on. It has to state WHAT is chosen — a bare collapsed
+                        // row would leave the user unable to see their own answers
+                        // without reopening each line one at a time.
+                        AnimatedVisibility(
+                            visible = isChecked && !isExpanded,
+                            enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+                            exit  = shrinkVertically(tween(160)) + fadeOut(tween(120))
+                        ) {
+                            CollapsedLineSummary(
+                                picks = linePicks[line.id] ?: emptySet(),
+                                directions = directionsByLine[line.id],
+                                filters = boardFilters,
+                                lineId = line.id,
+                                modeId = mode,
+                                primary = primary,
+                                onClick = { onExpandLine(line.id) },
+                            )
+                        }
+
+                        AnimatedVisibility(
+                            visible = isExpanded,
+                            enter = expandVertically(tween(280)) + fadeIn(tween(220)),
+                            exit  = shrinkVertically(tween(200)) + fadeOut(tween(150))
+                        ) {
+                            Column(Modifier.padding(start = 8.dp, top = 10.dp)) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    SectionHeader("Direction")
+                                    Spacer(Modifier.weight(1f))
+                                    // "Both ways" is the single most common
+                                    // multi-pick — trains each way at one platform —
+                                    // and is otherwise a tap per direction.
+                                    val opts = directionsByLine[line.id]
+                                    if (opts != null && opts.size > 1) {
+                                        val picked = linePicks[line.id] ?: emptySet()
+                                        val allPicked = opts.all { it.id in picked }
+                                        TextButton(
+                                            onClick = { onToggleAllDirs(line.id) },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                        ) {
+                                            Text(
+                                                if (allPicked) "Clear" else "Both ways",
+                                                color = primary, fontSize = 12.sp, fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
                                 }
-                            } else {
-                                directions.forEach { dir ->
-                                    DirCard(dir, dir.id == selectedDirId, primary) { onSelectDir(dir) }
-                                    Spacer(Modifier.height(8.dp))
-                                }
-                                if (funFactText != null && selectedDirId != null) {
-                                    Spacer(Modifier.height(4.dp))
-                                    DirFunFact(primary, funFactTitle, funFactText)
+                                Spacer(Modifier.height(8.dp))
+                                when {
+                                    line.id in failedDirections ->
+                                        InlineErr("Couldn't load directions", primary) {
+                                            onRetryDirections(line.id)
+                                        }
+
+                                    line.id in loadingDirections ||
+                                        directionsByLine[line.id] == null ->
+                                        Box(Modifier.fillMaxWidth().height(56.dp), Alignment.Center) {
+                                            StationlySpinner(size = 22.dp, color = primary)
+                                        }
+
+                                    // Directions side by side, two per row, each
+                                    // independently checkable — both directions of a
+                                    // line is a valid choice and yields two boards.
+                                    else -> directionsByLine[line.id]!!.chunked(2).forEach { pair ->
+                                        // IntrinsicSize.Max + fillMaxHeight makes both
+                                        // cards in a row match the taller one. Without
+                                        // it a direction with more destinations grows
+                                        // and its neighbour sits short, which reads as
+                                        // a rendering fault rather than a difference in
+                                        // content.
+                                        Row(
+                                            Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            pair.forEach { dir ->
+                                                DirChoiceCard(
+                                                    opt = dir,
+                                                    sel = dir.id in (linePicks[line.id] ?: emptySet()),
+                                                    primary = primary,
+                                                    layout = layout,
+                                                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                                                    filter = boardFilters[
+                                                        SelectionViewModel.boardFilterKey(line.id, dir.id)
+                                                    ] ?: BoardFilter(),
+                                                    modeId = mode,
+                                                    onOpenFilter = { onOpenFilter(line, dir) },
+                                                ) { onToggleDir(line.id, dir) }
+                                            }
+                                            // Keep a lone card at half width instead
+                                            // of letting it stretch across the row.
+                                            if (pair.size == 1) Spacer(Modifier.weight(1f))
+                                        }
+                                        Spacer(Modifier.height(8.dp))
+                                    }
                                 }
                             }
                         }
                     }
                 }
+
                 item { Spacer(Modifier.height(20.dp)) }
             }
         }
@@ -608,12 +1098,19 @@ private fun LineDirectionScreen(
 
 @Composable
 private fun OptRow(
-    opt: SduiDropdownOption, sel: Boolean, primary: Color,
-    modeIcon: String?, mode: String? = null, onClick: () -> Unit
+    opt: SduiDropdownOption,
+    sel: Boolean,
+    primary: Color,
+    modeIcon: String?,
+    mode: String? = null,
+    multiSelect: Boolean = false,
+    onBoard: Boolean = false,
+    onClick: () -> Unit
 ) {
     val displayLabel = remember(opt.label, mode) {
         if (mode == "bus" && opt.label.all { it.isDigit() || it == ' ' } && opt.label.trim().isNotEmpty())
-            "Bus ${opt.label.trim()}" else opt.label
+            "Bus ${opt.label.trim()}"
+        else opt.label
     }
     val lineColor = remember(opt.color, mode) {
         val c = opt.color
@@ -634,78 +1131,160 @@ private fun OptRow(
             } else Spacer(Modifier.width(14.dp))
 
             if (modeIcon != null) {
-                Box(
-                    Modifier.size(34.dp).background(Color.White, CircleShape)
-                        .border(1.dp, primary.copy(0.25f), CircleShape),
-                    Alignment.Center
-                ) {
-                    coil3.compose.AsyncImage(
-                        model = modeIcon,
-                        contentDescription = null,
-                        modifier = Modifier.size(22.dp)
-                    )
+                Box(Modifier.size(34.dp).background(Color.White, CircleShape)
+                    .border(1.dp, primary.copy(0.25f), CircleShape).padding(5.dp), Alignment.Center) {
+                    coil3.compose.AsyncImage(model = modeIcon, contentDescription = null, modifier = Modifier.fillMaxSize())
                 }
                 Spacer(Modifier.width(12.dp))
+            } else if (opt.iconUrl != null) {
+                coil3.compose.AsyncImage(model = opt.iconUrl, contentDescription = null, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(10.dp))
             }
 
             Column(Modifier.weight(1f)) {
-                Text(
-                    displayLabel, color = if (sel) primary else White90,
-                    fontWeight = FontWeight.Medium, fontSize = 15.sp,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis
-                )
+                // Station name — always high-contrast onSurface. Selected state is
+                // indicated by the card's border + tick, not by recolouring the
+                // title (which made it disappear on light theme).
+                Text(displayLabel, color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Medium,
+                    fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val hasDistance = opt.secondaryLabel != null
                 val hasTags = !opt.tags.isNullOrEmpty()
                 if (hasDistance || hasTags) {
                     Spacer(Modifier.height(5.dp))
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         opt.secondaryLabel?.let { secondary ->
-                            Text(secondary, color = primary.copy(0.6f), fontSize = 12.sp)
+                            // Muted onSurfaceVariant so it reads as supporting text
+                            // in both themes (the old primary tint vanished on light).
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Rounded.NearMe, null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(11.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(secondary,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 12.sp)
+                            }
                         }
                         opt.tags?.forEach { hex ->
-                            val dotColor = parseColorSafe(hex)
+                            val dotColor = remember(hex) { parseColorSafe(hex) }
                             if (dotColor != null) {
-                                Box(Modifier.size(8.dp).background(dotColor, CircleShape))
+                                Box(Modifier.size(8.dp).background(dotColor, CircleShape)
+                                    .border(0.5.dp, White25.copy(alpha = 0.6f), CircleShape))
                             }
                         }
                     }
                 }
             }
+
+            // On single-pick steps (mode, station) the tick only appears once
+            // something is chosen. On the multi-select line step an EMPTY
+            // affordance is drawn on every row as well, because a list where
+            // unselected rows show nothing reads as "pick one" — the user has
+            // no way to discover they can tick several.
+            if (onBoard) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "On board",
+                    color = White55, fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                    letterSpacing = 0.4.sp
+                )
+            }
+
             if (sel) {
                 Spacer(Modifier.width(8.dp))
                 Box(Modifier.size(22.dp).background(primary, CircleShape), Alignment.Center) {
-                    Icon(Icons.Rounded.Check, null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(14.dp))
                 }
+            } else if (multiSelect) {
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    Modifier.size(22.dp)
+                        .border(1.5.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(0.35f), CircleShape)
+                )
             }
         }
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Small section header
+   ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun SectionHeader(label: String) {
-    Text(
-        label.uppercase(), color = White25, fontSize = 11.sp,
+    Text(label.uppercase(), color = White25, fontSize = 11.sp,
         fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
-        modifier = Modifier.padding(bottom = 4.dp)
-    )
+        modifier = Modifier.padding(bottom = 4.dp))
 }
 
 @Composable
-private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, onClick: () -> Unit) {
-    val dirName     = opt.directionName ?: opt.label
-    val primaryDest = opt.towards ?: dirName
-    val branchDests = opt.destinations ?: emptyList()
-    val stops       = opt.upcomingStations
+private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, layout: SduiAppScreen?, onClick: () -> Unit) {
+    // Static chrome labels are backend-overridable via SDUI (dir_* keys); the
+    // strings below are only offline fallbacks.
+    val towardsLabel  = layout?.sdText("dir_towards_label") ?: "towards"
+    val stationsLabel = layout?.sdText("dir_stations_label") ?: "STATIONS THIS WAY"
+    val stationsToTpl = layout?.sdText("dir_stations_to_label") ?: "STATIONS TO {dest}"
+    val splitHint     = layout?.sdText("dir_split_hint") ?: "This direction splits. Tap a destination above for its full line of stops."
+    // Bind to the STRUCTURED route fields the backend sends (directionName /
+    // towards / destinations / upcomingStations). Fall back to parsing the
+    // legacy label / secondaryLabel strings so older payloads still render.
+    val lbl  = opt.label
+    val tIdx = lbl.indexOf(" towards", ignoreCase = true)
+    val parsedDir     = if (tIdx > 0) lbl.substring(0, tIdx).trim() else lbl.trim()
+    val parsedTowards = if (tIdx > 0) lbl.substring(tIdx + 8).trim().substringBefore('\n').trim() else ""
 
-    val dirIcon: ImageVector = when {
-        opt.id.contains("inbound",  true) || dirName.contains("inbound",  true) -> Icons.Filled.CallReceived
-        opt.id.contains("outbound", true) || dirName.contains("outbound", true) -> Icons.Filled.CallMade
-        dirName.contains("north", true) -> Icons.Filled.North
-        dirName.contains("south", true) -> Icons.Filled.South
-        dirName.contains("east",  true) -> Icons.Filled.East
-        dirName.contains("west",  true) -> Icons.Filled.West
-        else                            -> Icons.Filled.Explore
+    // "towards X" — the most relevant NEXT station in this direction (what the
+    // platform signage shows), not the terminus.
+    val towards = opt.towards?.takeIf { it.isNotBlank() }
+        ?: opt.upcomingStations?.firstOrNull()
+        ?: parsedTowards.takeIf { it.isNotBlank() }
+        ?: parsedDir
+
+    // Reachable destinations as FULL objects — each carries its own branch stops
+    // in `upcomingStations`, so tapping a chip swaps the timeline to that branch.
+    val destObjs = opt.destinations ?: emptyList()
+    val fallbackDestLabels = if (destObjs.isEmpty() && tIdx > 0)
+        lbl.substring(tIdx + 8).trim().split('\n').map { it.trim() }.filter { it.isNotBlank() }.drop(1)
+    else emptyList()
+
+    // Default timeline = the common trunk shared by all branches
+    // (direction-level upcomingStations). Empty at a hard junction.
+    val commonStops = opt.upcomingStations
+        ?: opt.secondaryLabel?.split(" · ")?.map { it.trim() }?.filter { it.isNotBlank() }
+        ?: emptyList()
+
+    // Tapping a destination chip selects that branch; null = the default view.
+    var selectedDestId by remember(opt.id) { mutableStateOf<String?>(null) }
+    val selectedDest = destObjs.firstOrNull { it.id == selectedDestId }
+    val routeSplits = destObjs.size > 1
+
+    // Timeline stops: a selected branch → else the common trunk. At a hard
+    // junction (no common trunk) we deliberately DON'T preview an arbitrary
+    // branch; the headline lists the destinations and a note invites a tap.
+    val activeStops = selectedDest?.upcomingStations?.takeIf { it.isNotEmpty() } ?: commonStops
+
+    // Headline target: a chosen branch's NEXT stop → else the next common stop →
+    // else (junction, nothing chosen) the destination list itself.
+    val displayedTowards = when {
+        selectedDest != null -> selectedDest.upcomingStations?.firstOrNull() ?: selectedDest.label
+        commonStops.isNotEmpty() -> towards
+        destObjs.isNotEmpty() -> summariseDestinations(destObjs.map { it.label })
+        else -> towards
     }
+
+    // Compass badge only for rail/tube/overground (Northbound … / Clockwise).
+    // Buses report directionName="Towards" and inbound/outbound is meaningless to
+    // passengers, so those get no badge — the "towards X" headline carries it.
+    val dir = (opt.directionName ?: parsedDir).lowercase()
+    val compassIcon: ImageVector? = when {
+        dir.contains("north")        -> Icons.Filled.North
+        dir.contains("south")        -> Icons.Filled.South
+        dir.contains("east")         -> Icons.Filled.East
+        dir.contains("west")         -> Icons.Filled.West
+        dir.contains("clockwise")    -> Icons.Rounded.Loop   // covers anticlockwise too
+        else                         -> null
+    }
+    val badgeText = (opt.directionName ?: parsedDir).takeIf { compassIcon != null }
 
     Surface(
         onClick = onClick,
@@ -716,68 +1295,148 @@ private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, onCli
     ) {
         Row(Modifier.fillMaxWidth()) {
             Box(
-                Modifier.width(4.dp).fillMaxHeight()
-                    .background(if (sel) primary else primary.copy(0.25f), RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp))
+                Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(
+                        if (sel) primary else primary.copy(0.25f),
+                        RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp)
+                    )
             )
             Column(Modifier.weight(1f).padding(start = 14.dp, end = 16.dp, top = 16.dp, bottom = 16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier.background(
-                            if (sel) primary.copy(0.20f) else primary.copy(0.10f), RoundedCornerShape(8.dp)
-                        ).padding(horizontal = 10.dp, vertical = 5.dp)
+                // Compass cue + tick header — RAIL ONLY (compassIcon != null).
+                // Gated purely on compass presence, NEVER on `sel`, and pinned to
+                // the tick's height so selecting a card only fades the tick in/out
+                // *inside* an already-reserved row — the card never changes height.
+                if (compassIcon != null) {
+                    Row(
+                        Modifier.fillMaxWidth().heightIn(min = 22.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Icon(dirIcon, null, tint = if (sel) primary else primary.copy(0.7f), modifier = Modifier.size(12.dp))
-                            Text(
-                                dirName.uppercase(),
-                                color = if (sel) primary else primary.copy(0.7f),
-                                fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp
-                            )
+                        if (badgeText != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(compassIcon, null, tint = White55, modifier = Modifier.size(13.dp))
+                                Text(badgeText.uppercase(), color = White55,
+                                    fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                            }
+                        }
+                        Spacer(Modifier.weight(1f))
+                        if (sel) {
+                            Box(Modifier.size(22.dp).background(primary, CircleShape), Alignment.Center) {
+                                Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(13.dp))
+                            }
                         }
                     }
-                    Spacer(Modifier.weight(1f))
-                    if (sel) {
-                        Box(Modifier.size(24.dp).background(primary, CircleShape), Alignment.Center) {
-                            Icon(Icons.Rounded.Check, null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.height(8.dp))
+                }
+
+                // "towards {next station}" — the HIGHLIGHTED headline. The station
+                // name is the boldest element on the card; "towards" is a quiet
+                // muted lead-in, baseline-aligned so they read as one phrase.
+                Row(Modifier.fillMaxWidth()) {
+                    Text("$towardsLabel ", color = White55, fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium, modifier = Modifier.alignByBaseline())
+                    Text(
+                        displayedTowards,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).alignByBaseline()
+                    )
+                    // Bus cards have no compass header, so the selected tick rides
+                    // at the end of the headline row instead. The 18sp headline is
+                    // already ~tick-tall, so toggling it doesn't grow the row.
+                    if (sel && compassIcon == null) {
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier.align(Alignment.CenterVertically)
+                                .size(22.dp).background(primary, CircleShape),
+                            Alignment.Center
+                        ) {
+                            Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(13.dp))
                         }
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                Text("towards", color = White25, fontSize = 11.sp, letterSpacing = 0.5.sp)
-                Spacer(Modifier.height(2.dp))
-                Text(primaryDest, color = primary, fontWeight = FontWeight.ExtraBold, fontSize = 21.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
 
-                if (branchDests.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        branchDests.take(3).forEach { dest ->
+                // Destination chips. With >1 destination they're TAPPABLE: tapping
+                // one swaps the timeline below to that branch's stops; tapping
+                // again returns to the common trunk.
+                if (destObjs.isNotEmpty() || fallbackDestLabels.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState())
+                    ) {
+                        Icon(Icons.Rounded.Place, null, tint = primary.copy(0.7f), modifier = Modifier.size(13.dp))
+                        destObjs.forEach { d ->
+                            val isSel = d.id == selectedDestId
+                            // Only worth tapping if this branch has its own stops AND
+                            // there's more than one destination to disambiguate.
+                            val tappable = destObjs.size > 1 && !d.upcomingStations.isNullOrEmpty()
                             Box(
-                                Modifier.background(White08, RoundedCornerShape(6.dp))
-                                    .border(0.5.dp, White25, RoundedCornerShape(6.dp))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                                Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSel) primary.copy(0.22f) else primary.copy(0.10f))
+                                    .border(0.5.dp, if (isSel) primary.copy(0.6f) else primary.copy(0.30f), RoundedCornerShape(8.dp))
+                                    .then(if (tappable) Modifier.clickable { selectedDestId = if (isSel) null else d.id } else Modifier)
+                                    .padding(horizontal = 9.dp, vertical = 4.dp)
                             ) {
-                                Text(dest.label, color = White55, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(d.label, color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 12.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.SemiBold,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                        fallbackDestLabels.forEach { dest ->
+                            Box(
+                                Modifier
+                                    .background(primary.copy(0.10f), RoundedCornerShape(8.dp))
+                                    .border(0.5.dp, primary.copy(0.30f), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 9.dp, vertical = 4.dp)
+                            ) {
+                                Text(dest, color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
                 }
 
-                if (!stops.isNullOrEmpty()) {
+                // Stations sequence. By default we ALWAYS show a sequence: the
+                // common trunk if branches share one, otherwise the selected
+                // branch. Tapping a chip swaps to that branch.
+                if (activeStops.isNotEmpty()) {
+                    val timelineLabel = if (selectedDest != null)
+                        interpolate(stationsToTpl, mapOf("dest" to selectedDest.label.uppercase()))
+                    else stationsLabel
                     Spacer(Modifier.height(12.dp))
                     Box(
-                        Modifier.fillMaxWidth().background(White08, RoundedCornerShape(10.dp))
+                        Modifier
+                            .fillMaxWidth()
+                            .background(White08, RoundedCornerShape(10.dp))
                             .padding(horizontal = 10.dp, vertical = 7.dp)
                     ) {
                         Column {
-                            Text("NEXT STATIONS", color = White25, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = 0.8.sp, modifier = Modifier.padding(bottom = 5.dp))
+                            Text(
+                                timelineLabel,
+                                color = White25,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.8.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(bottom = 5.dp)
+                            )
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.horizontalScroll(rememberScrollState())
                             ) {
-                                stops.forEachIndexed { i, stop ->
-                                    if (i > 0) Text("  →  ", color = primary.copy(0.55f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                activeStops.forEachIndexed { i, stop ->
+                                    if (i > 0) {
+                                        Text("  →  ", color = primary.copy(0.55f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                         Box(Modifier.size(5.dp).background(primary.copy(0.6f), CircleShape))
                                         Text(stop, color = White90, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
@@ -787,34 +1446,28 @@ private fun DirCard(opt: SduiDropdownOption, sel: Boolean, primary: Color, onCli
                         }
                     }
                 }
-            }
-        }
-    }
-}
 
-@Composable
-private fun DirFunFact(primary: Color, title: String?, body: String) {
-    Surface(
-        color = primary.copy(alpha = 0.07f), shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, primary.copy(alpha = 0.18f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
-            Icon(Icons.Rounded.Info, null, tint = primary.copy(0.8f), modifier = Modifier.size(18.dp).padding(top = 1.dp))
-            Spacer(Modifier.width(10.dp))
-            Column {
-                if (title != null) {
-                    Text(title, color = primary.copy(0.9f), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                    Spacer(Modifier.height(5.dp))
+                // "Routes split" note — sits BELOW the stops, shown when the
+                // direction branches and no specific destination is chosen yet.
+                if (routeSplits && selectedDest == null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(splitHint, color = White55, fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Medium, lineHeight = 15.sp)
                 }
-                Text(body, color = White55, fontSize = 11.5.sp, lineHeight = 16.sp)
             }
         }
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Shared utilities
+   ═══════════════════════════════════════════════════════════════ */
+/**
+ * The step's own content is still loading. Inline rather than an overlay: there
+ * is nothing behind it yet to protect, and the back button must stay live.
+ */
 @Composable private fun Loader(primary: Color) = Box(Modifier.fillMaxSize(), Alignment.Center) {
-    CircularProgressIndicator(color = primary, strokeWidth = 2.5.dp, modifier = Modifier.size(28.dp))
+    StationlySpinner(size = 28.dp, color = primary)
 }
 
 @Composable
@@ -827,41 +1480,23 @@ private fun Err(msg: String, primary: Color, onRetry: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             Button(onClick = onRetry, colors = ButtonDefaults.buttonColors(containerColor = primary),
                 shape = RoundedCornerShape(10.dp), modifier = Modifier.height(38.dp)) {
-                Icon(Icons.Rounded.Refresh, null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                Icon(Icons.Rounded.Refresh, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Retry", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text("Retry", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         }
     }
 }
 
-@Composable
-private fun ServiceUnavailableScreen(error: String?, onRetry: () -> Unit, onDismiss: () -> Unit) {
-    Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(0.95f)).padding(32.dp),
-        Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Icon(Icons.Rounded.WifiOff, null, tint = Color(0xFFF06292), modifier = Modifier.size(52.dp))
-            Text("Can't reach Stationly", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp, textAlign = TextAlign.Center)
-            Text(error ?: "Check your connection and try again.", color = White55, fontSize = 14.sp, textAlign = TextAlign.Center, lineHeight = 20.sp)
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onRetry, colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Color.Black),
-                shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Text("Try Again", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            }
-            OutlinedButton(onClick = onDismiss, shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, White25), modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Text("Go Back", color = White55, fontSize = 15.sp)
-            }
-        }
-    }
-}
-
+/* ═══════════════════════════════════════════════════════════════
+   Modern CTA
+   ═══════════════════════════════════════════════════════════════ */
 @Composable
 private fun ModernCtaButton(label: String, primary: Color, onClick: () -> Unit) {
-    val shape    = RoundedCornerShape(20.dp)
-    val gradient = Brush.horizontalGradient(colors = listOf(primary, Color(0xFFFFD96A), primary))
+    val shape = RoundedCornerShape(20.dp)
+    // Solid primary background — holds clean onPrimary contrast in both themes.
+    // (The earlier 3-stop gradient had a lemon mid-stop that swallowed the text
+    // on light theme.)
     var pressed by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (pressed) 0.97f else 1f, tween(100), label = "cta_scale")
 
@@ -869,7 +1504,7 @@ private fun ModernCtaButton(label: String, primary: Color, onClick: () -> Unit) 
         modifier = Modifier
             .fillMaxWidth().height(60.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(shape).background(gradient)
+            .clip(shape).background(primary)
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
@@ -882,9 +1517,13 @@ private fun ModernCtaButton(label: String, primary: Color, onClick: () -> Unit) 
         contentAlignment = Alignment.Center
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            Icon(Icons.Rounded.RocketLaunch, null, tint = Color.Black, modifier = Modifier.size(20.dp))
+            // A tick, not a rocket. This button only appears once the selection
+            // is complete, so its job is to read as "accept what I've chosen" —
+            // a confirmation glyph says that; a launch glyph says "something
+            // else is about to happen".
+            Icon(Icons.Rounded.CheckCircle, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(21.dp))
             Spacer(Modifier.width(10.dp))
-            Text(label, color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, letterSpacing = 0.3.sp)
+            Text(label, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, letterSpacing = 0.3.sp)
         }
     }
 }
@@ -899,7 +1538,7 @@ private fun Saving(primary: Color, text: String) {
     Box(
         Modifier.fillMaxSize()
             .pointerInput(Unit) { awaitPointerEventScope { while (true) { awaitPointerEvent() } } }
-            .background(Color.Black.copy(0.97f)).padding(32.dp),
+            .background(MaterialTheme.colorScheme.background.copy(0.97f)).padding(32.dp),
         Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -917,8 +1556,7 @@ private fun Saving(primary: Color, text: String) {
             Spacer(Modifier.height(32.dp))
             LinearProgressIndicator(
                 Modifier.fillMaxWidth(0.5f).height(1.5.dp).clip(RoundedCornerShape(1.dp)),
-                color = primary, trackColor = primary.copy(0.1f)
-            )
+                color = primary, trackColor = primary.copy(0.1f))
         }
     }
 }
@@ -933,4 +1571,286 @@ private fun parseColorSafe(hex: String): Color? {
         }
         Color(argb.toInt())
     } catch (_: Exception) { null }
+}
+
+/**
+ * Compact direction card, sized to sit two-per-row.
+ *
+ * The full [DirCard] carries a route timeline, destination branch chips and a
+ * split hint — none of which survives being squeezed into half an iPhone 11's
+ * width. This variant keeps only what you need to answer "which way am I
+ * going": the compass badge, the direction name, and the next station towards.
+ * It is a checkbox, not a radio: both directions of a line can be selected, and
+ * each one becomes its own board section.
+ */
+@Composable
+private fun DirChoiceCard(
+    opt: SduiDropdownOption,
+    sel: Boolean,
+    primary: Color,
+    layout: SduiAppScreen?,
+    modifier: Modifier = Modifier,
+    filter: BoardFilter = BoardFilter(),
+    modeId: String? = null,
+    onOpenFilter: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    val towardsLabel = layout?.sdText("dir_towards_label") ?: "towards"
+
+    // Same structured-first, parse-as-fallback binding the full DirCard uses, so
+    // both render identically off one payload.
+    val lbl = opt.label
+    val tIdx = lbl.indexOf(" towards", ignoreCase = true)
+    val parsedDir = if (tIdx > 0) lbl.substring(0, tIdx).trim() else lbl.trim()
+    val parsedTowards =
+        if (tIdx > 0) lbl.substring(tIdx + 8).trim().substringBefore('\n').trim() else ""
+
+    // Buses report directionName as the literal word "Towards" and some modes
+    // send nothing at all, which rendered a card titled "Towards" above
+    // "towards Gordon Cottages". Fall back to the full label in that case, and
+    // suppress the now-duplicate second line.
+    val rawDirName = opt.directionName?.trim().orEmpty()
+    val hasCompass = rawDirName.isNotBlank() && !rawDirName.equals("Towards", ignoreCase = true)
+    val dirName = when {
+        hasCompass -> rawDirName
+        opt.label.isNotBlank() -> opt.label.trim()
+        else -> parsedDir
+    }
+    val towards = opt.towards?.takeIf { it.isNotBlank() }
+        ?: opt.upcomingStations?.firstOrNull()
+        ?: parsedTowards.takeIf { it.isNotBlank() }
+
+    val dir = dirName.lowercase()
+    val compassIcon: ImageVector? = when {
+        dir.contains("north")     -> Icons.Filled.North
+        dir.contains("south")     -> Icons.Filled.South
+        dir.contains("east")      -> Icons.Filled.East
+        dir.contains("west")      -> Icons.Filled.West
+        dir.contains("clockwise") -> Icons.Rounded.Loop   // covers anticlockwise too
+        else                      -> null
+    }
+
+    Surface(
+        onClick = onClick,
+        color = if (sel) primary.copy(0.10f) else Surface1,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(if (sel) 1.5.dp else 1.dp, if (sel) primary.copy(0.6f) else White08),
+        modifier = modifier
+    ) {
+        Column(Modifier.padding(12.dp).fillMaxHeight()) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                if (compassIcon != null) {
+                    Icon(compassIcon, null, tint = primary, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(5.dp))
+                }
+                Spacer(Modifier.weight(1f))
+                // Tick box on every card, filled when checked — the affordance
+                // has to read as multi-select even before anything is picked.
+                if (sel) {
+                    Box(Modifier.size(19.dp).background(primary, CircleShape), Alignment.Center) {
+                        Icon(
+                            Icons.Rounded.Check, null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
+                } else {
+                    Box(
+                        Modifier.size(19.dp).border(
+                            1.5.dp,
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(0.35f),
+                            CircleShape
+                        )
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                dirName.replaceFirstChar { it.uppercase() },
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+            // Only when the title is a compass bearing — otherwise the title
+            // ALREADY says "Towards X" and this repeats it.
+            if (hasCompass && !towards.isNullOrBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "$towardsLabel $towards",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp, lineHeight = 14.sp,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            // Where this direction ENDS UP.
+            //
+            // `towards` is the next stop — correct platform signage, but it
+            // answers the wrong question when you are choosing a board. "Towards
+            // Russell Square" gives no hint that this is the Heathrow direction,
+            // which is the thing people actually decide on. The termini were
+            // already in the payload and simply weren't shown.
+            val destLabels = opt.destinations?.map { it.label }.orEmpty()
+            if (destLabels.isNotEmpty()) {
+                Spacer(Modifier.height(5.dp))
+                // One per line rather than a run-on summary: on a junction these
+                // are genuinely different journeys and a comma-joined list made
+                // them read as one place.
+                destLabels.forEach { dest ->
+                    Row(verticalAlignment = Alignment.Top) {
+                        Icon(
+                            Icons.Rounded.ArrowRightAlt, null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(0.7f),
+                            modifier = Modifier.size(12.dp).padding(top = 1.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            dest,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(0.85f),
+                            fontSize = 10.sp, lineHeight = 13.sp,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(Modifier.height(2.dp))
+                }
+                // No split warning here: listing several destinations already
+                // says the direction divides, so the extra sentence was saying
+                // the same thing twice on a card that has little room.
+            }
+
+            // Filter row — only once the direction is actually chosen. Showing it
+            // on unpicked cards would put a second tap target on something the
+            // user hasn't committed to, and read as clutter on a half-width card.
+            if (sel && onOpenFilter != null) {
+                // Push the filter row to the card's BOTTOM edge. Both cards in a
+                // row are the same height now, so without this the control sits
+                // at a different vertical position on each — and it reads as the
+                // card's footer, which it should look like.
+                Spacer(Modifier.weight(1f).heightIn(min = 8.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(0.15f))
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.fillMaxWidth().clickable(onClick = onOpenFilter),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Rounded.FilterList, null,
+                        tint = if (filter.isActive) primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        filter.summary(modeId),
+                        color = if (filter.isActive) primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 10.sp, lineHeight = 13.sp,
+                        fontWeight = if (filter.isActive) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+
+/**
+ * A chosen line, collapsed while the user works on another.
+ *
+ * States the answers rather than merely showing the line is closed: which
+ * directions were picked and any filter on each. Without that the user has to
+ * reopen lines one at a time to remember what they already decided, which is
+ * exactly the cost the accordion was meant to remove.
+ */
+@Composable
+private fun CollapsedLineSummary(
+    picks: Set<String>,
+    directions: List<SduiDropdownOption>?,
+    filters: Map<String, BoardFilter>,
+    lineId: String,
+    modeId: String?,
+    primary: Color,
+    onClick: () -> Unit,
+) {
+    // Resolve ids to labels where the direction list is loaded; fall back to the
+    // raw id so a collapsed line is never blank while its fetch is in flight.
+    val parts = picks.map { dirId ->
+        val label = directions?.find { it.id == dirId }
+            ?.let { it.directionName ?: it.label }
+            ?: dirId.replaceFirstChar { c -> c.uppercase() }
+        val filter = filters[SelectionViewModel.boardFilterKey(lineId, dirId)] ?: BoardFilter()
+        if (filter.isActive) "$label (${filter.summary(modeId)})" else label
+    }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 8.dp, top = 6.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .background(primary.copy(0.07f))
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Rounded.Check, null,
+            tint = primary, modifier = Modifier.size(13.dp)
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            if (parts.isEmpty()) "No direction chosen yet" else parts.joinToString(" · "),
+            color = if (parts.isEmpty()) MaterialTheme.colorScheme.error else White90,
+            fontSize = 11.sp, lineHeight = 14.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 2, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            "Edit",
+            color = primary, fontSize = 10.sp, fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+/**
+ * One-line description of a filter, for the direction card.
+ *
+ * Takes the transport mode because "All trains" is wrong on a bus, tram or river
+ * board — it was hardcoded and shipped that way.
+ */
+private fun BoardFilter.summary(modeId: String? = null): String = when {
+    !isActive -> "All ${vehicleNounPlural(modeId).lowercase()}"
+    mode == FilterMode.VIA -> "via $viaSummary"
+    destinationIds.size == 1 -> "1 destination"
+    else -> "${destinationIds.size} destinations"
+}
+
+
+/**
+ * Compact inline error + retry, sized for a row inside a LazyColumn item.
+ *
+ * The full-screen [Err] centres itself with `fillMaxSize()`, which inside a lazy
+ * item has an unbounded height constraint — it degrades to wrap-content and
+ * renders a large icon block in the middle of the line list. This is the same
+ * affordance at row scale.
+ */
+@Composable
+private fun InlineErr(msg: String, primary: Color, onRetry: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Rounded.WifiOff, null, tint = White25, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(msg, color = White55, fontSize = 12.sp, modifier = Modifier.weight(1f))
+        TextButton(onClick = onRetry) {
+            Text("Retry", color = primary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        }
+    }
 }

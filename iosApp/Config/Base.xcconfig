@@ -1,0 +1,74 @@
+// Stationly iOS — settings shared by BOTH environments.
+//
+// The environment split lives in Staging.xcconfig / Production.xcconfig, one
+// file per environment, wired up in project.yml under `configFiles:`. Anything
+// that is the same in staging and production belongs here instead, so the two
+// environment files stay short enough to diff by eye.
+//
+// ── Two axes, do not confuse them ──
+// This project has FOUR build configurations, which are the cross product of
+// two independent axes:
+//
+//   environment (staging | production) → THIS file and its two siblings
+//   build type  (debug   | release)    → project.yml `settings.configs`
+//
+// APS_ENVIRONMENT is the clearest example of the second axis: it tracks
+// debug/release (sandbox vs production APNs gateway), NOT staging/production,
+// so it is deliberately absent from these files.
+//
+// ── Precedence warning ──
+// Xcode target build settings BEAT the xcconfig. Every setting defined here
+// must therefore NOT also appear in project.yml's `settings:` blocks, or the
+// project.yml value silently wins and this file becomes decoration. If a value
+// here appears not to take effect, that is the first thing to check.
+//
+// ── Comment syntax warning ──
+// `//` starts a comment ANYWHERE on a line, including inside a value. This is
+// why STATIONLY_URL_SCHEME below stores the bare scheme name rather than a
+// full `scheme://` URL — the `//` would truncate the value to `scheme:`.
+
+// Bundle identifier for the app target. The widget's is derived from it in
+// project.yml (`$(PRODUCT_BUNDLE_IDENTIFIER).StationlyWidget` cannot be used
+// there because the widget target has its own PRODUCT_BUNDLE_IDENTIFIER, so it
+// is composed from the same base + suffix).
+STATIONLY_BUNDLE_BASE = com.stationly.mobile
+
+// ── Versioning: ONE definition, both targets ──
+//
+// These used to be declared separately in each target's `settings.base` in
+// project.yml, holding equal values by hand. That is a drift waiting to
+// happen, and the drift is not cosmetic: App Store Connect REFUSES an upload
+// whose extension CFBundleVersion differs from its containing app's ("The
+// CFBundleVersion of an app extension ('1') must match that of its containing
+// parent app ('4')"). Defined here, both targets inherit one value and cannot
+// disagree.
+//
+// MARKETING_VERSION is the user-visible "1.0" and changes only for a real
+// release. CURRENT_PROJECT_VERSION is the build number: it must be UNIQUE and
+// INCREASING within a marketing version, so every TestFlight upload needs a
+// bump. `scripts/ios-testflight.sh` takes it as an argument and passes it on
+// the xcodebuild command line (which overrides this), so the committed value
+// here is only the floor for local builds.
+MARKETING_VERSION = 1.0
+CURRENT_PROJECT_VERSION = 4
+
+// Which Kotlin XCFramework the Xcode targets link against — see the
+// "Select Kotlin XCFramework" build phase in project.yml. `debug` for local
+// device work, `release` for anything archived. Overridden per configuration
+// below rather than per environment, because it tracks the build TYPE.
+STATIONLY_KOTLIN_BUILD = debug
+
+// Secrets (currently only the production backend API key) live in a
+// git-ignored file. See Secrets.example.xcconfig for the template. The
+// `#include?` form — with the question mark — does not fail the build when the
+// file is absent, which is what lets a fresh clone build staging without any
+// setup at all.
+//
+// NOTE the indirection this forces. The environment files include *this* file
+// at their top, so anything assigned here is overwritten by their own later
+// assignments — a secret named STATIONLY_API_KEY would therefore always lose
+// to the placeholder in Production.xcconfig. Secrets consequently use
+// environment-qualified names (STATIONLY_API_KEY_PRODUCTION) which the
+// environment file then reads through `$(…:default=…)`, so the fallback only
+// applies when the secrets file is genuinely absent.
+#include? "Secrets.xcconfig"

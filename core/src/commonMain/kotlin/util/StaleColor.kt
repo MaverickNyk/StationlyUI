@@ -1,5 +1,8 @@
 package com.stationly.core.util
 
+import com.stationly.core.config.BoardPolicy
+import com.stationly.core.config.BoardPolicyStore
+
 /**
  * Single source of truth for the "X ago" chronometer colour on every
  * Stationly surface (home Board, dream Board, home-screen widget).
@@ -22,9 +25,17 @@ package com.stationly.core.util
  *   ageMs ≥ STALE_MS  → red (likely a problem; sync may be broken)
  */
 object StaleColor {
-    /** Amber → grey transition threshold (data age in ms). */
+    /**
+     * Amber → grey transition threshold (data age in ms).
+     *
+     * The compiled default. [BoardPolicy.freshMs] is what is actually in force
+     * and the backend can retune it — and it is deliberately the same number as
+     * [BoardPolicy.retentionMinAgeMs], because the footer going grey and the
+     * rows going "Gone" are one statement about one payload. `BoardPolicyStore`
+     * keeps the pair from drifting apart when only one of them is served.
+     */
     const val FRESH_MS: Long = 60_000L
-    /** Grey → red transition threshold (data age in ms). */
+    /** Grey → red transition threshold (data age in ms). The compiled default. */
     const val STALE_MS: Long = 180_000L
 
     /** Standard TfL amber — "data is fresh". */
@@ -39,12 +50,12 @@ object StaleColor {
      * The age is clamped to ≥ 0 so a clock-skew "future" lastUpdatedMs
      * doesn't render as red.
      */
-    fun colorForAge(ageMs: Long): Int {
+    fun colorForAge(ageMs: Long, policy: BoardPolicy = BoardPolicyStore.current): Int {
         val clamped = if (ageMs < 0L) 0L else ageMs
         return when {
-            clamped < FRESH_MS -> AMBER
-            clamped < STALE_MS -> GREY
-            else               -> RED
+            clamped < policy.freshMs -> AMBER
+            clamped < policy.staleMs -> GREY
+            else                     -> RED
         }
     }
 
@@ -58,9 +69,13 @@ object StaleColor {
      * alarms; Compose surfaces don't need it because they read the
      * minute-tick state directly and recompute every minute.
      */
-    fun nextTransitionMs(lastUpdatedMs: Long, nowMs: Long): Long? {
-        val toGrey = lastUpdatedMs + FRESH_MS
-        val toRed  = lastUpdatedMs + STALE_MS
+    fun nextTransitionMs(
+        lastUpdatedMs: Long,
+        nowMs: Long,
+        policy: BoardPolicy = BoardPolicyStore.current,
+    ): Long? {
+        val toGrey = lastUpdatedMs + policy.freshMs
+        val toRed  = lastUpdatedMs + policy.staleMs
         return when {
             nowMs < toGrey -> toGrey
             nowMs < toRed  -> toRed

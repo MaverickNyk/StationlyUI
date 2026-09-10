@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Privacy manifest for the WIDGET EXTENSION.
+
+  An app extension is a separate bundle with its own binary, and Apple
+  evaluates it separately — the app target's manifest does not cover it. Hence
+  a second file rather than a shared one.
+
+  Required-reason APIs: UserDefaults only (CA92.1, this app's own App Group
+  container). That is how the extension receives every board it renders; see
+  `AppGroupStorage.swift`.
+
+  NSPrivacyCollectedDataTypes is deliberately EMPTY, and that is not an
+  oversight. The extension only READS what the app already wrote to the shared
+  container; it originates no network requests and sends nothing off device.
+  All collection is declared once, by the app target.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

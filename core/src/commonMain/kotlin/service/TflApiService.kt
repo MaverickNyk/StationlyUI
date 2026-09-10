@@ -17,7 +17,7 @@ interface TflApiService {
     suspend fun searchStations(searchKey: String): List<StationBrief>
     suspend fun getRoute(lineId: String): LineRouteResponse
     suspend fun getLineStatuses(lineId: String?, mode: String? = null): List<LineStatus>
-    suspend fun getPredictions(naptanId: String): FcmPayload
+    suspend fun getPredictions(naptanId: String): PredictionsPayload
 }
 
 /**
@@ -52,7 +52,7 @@ class TflApiServiceImpl(private val client: HttpClient) : TflApiService {
         }.body()
     }
     
-    override suspend fun getPredictions(naptanId: String): FcmPayload {
+    override suspend fun getPredictions(naptanId: String): PredictionsPayload {
         return client.get("$baseUrl/stations/predictions/$naptanId").body()
     }
 }

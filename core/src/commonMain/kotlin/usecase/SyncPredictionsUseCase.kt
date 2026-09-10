@@ -3,6 +3,7 @@ package com.stationly.core.usecase
 import com.stationly.core.model.*
 import com.stationly.core.repository.SqlStorage
 import com.stationly.core.util.GlobalBoardProcessor
+import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +25,7 @@ class SyncPredictionsUseCase(
      * @param selection The user's specific board selection (Line/Direction)
      * @return Formatted predictions for display
      */
-    suspend fun execute(payload: FcmPayload, selection: UserSelection): List<PredictionDisplay> {
+    suspend fun execute(payload: PredictionsPayload, selection: UserSelection): List<PredictionDisplay> {
         // ONE timestamp for this whole sync. We stamp the board's "last
         // backend update" time the moment the payload lands — BEFORE we know
         // whether it even contains rows for this line/direction — so a 0-row
@@ -33,7 +34,7 @@ class SyncPredictionsUseCase(
         // rows agree to the millisecond and all three surfaces (home, widget,
         // dream) read one consistent time via getLastUpdatedTimestamp.
         val syncMs = Clock.System.now().toEpochMilliseconds()
-        sqlStorage.saveSyncTimestamp(selection.station, selection.line, syncMs)
+        sqlStorage.saveSyncTimestamp(selection.station, selection.line, selection.direction, syncMs)
 
         // 1. Extract line data (Loose matching for casing)
         val lineIdLower = selection.line.lowercase()
@@ -48,6 +49,17 @@ class SyncPredictionsUseCase(
             ?: lineData.dirs.entries.find { it.key.lowercase() == dirIdLower }?.value
         
         val rawPreds = dirData?.preds ?: emptyList()
+
+        // The board's destination/via allow-list, materialised ONCE per stream
+        // frame rather than per row and never at render time. This is the whole
+        // performance argument for the design: predictions are written once per
+        // frame but read on every recomposition and every one-second countdown
+        // tick, so the filter is evaluated on the write side and the answer is
+        // persisted as a boolean per row.
+        val allowedDestIds = selection.destinationIds.toSet()
+        // The branch half of the same check, materialised alongside it. Empty
+        // for every board that does not need it, which is nearly all of them.
+        val allowedViaKeys = selection.viaKeys.toSet()
 
         // 3. Format predictions for display. Capture the absolute arrival
         //    time (parsed from the FCM's ISO timestamp) alongside the
@@ -68,6 +80,11 @@ class SyncPredictionsUseCase(
                 eta = etaString,
                 isDue = etaString == "Due",
                 stopLetter = pred.stopLetter,
+                destId = pred.destId,
+                viaKey = pred.viaKey,
+                matchesFilter = SqlStorage.matchesFilter(
+                    pred.destId, allowedDestIds, pred.viaKey, allowedViaKeys,
+                ),
                 targetEpochMs = StationlyFormatters.parseTargetEpochMs(pred.eta),
             )
         // Dedupe on absolute arrival time, NOT the formatted eta string.
@@ -82,19 +99,45 @@ class SyncPredictionsUseCase(
         }.distinctBy { "${it.destination}_${it.platform}_${it.targetEpochMs ?: it.eta}" }
         
         // 5. Use unified processor for sorting and platform grouping.
-        //    Cap at 8 per platform (not 3) so the in-memory tick layer
-        //    has a buffer of upcoming trains to shift into the visible
-        //    3-row window once the current top row has departed. The
-        //    display layer still caps at 3 — these are reserves, not
-        //    everything shown.
-        val processedPredictions = GlobalBoardProcessor.processPredictions(
-            predictions = formattedPredictions,
-            perPlatformCap = 8,
-        )
+        //    Capped at the RESERVE depth, not the display depth: the tick layer
+        //    needs a buffer of upcoming trains to shift into the visible rows as
+        //    the top one departs, and the board applies the user's own
+        //    `rowsPerPlatform` at render. See MultiLineBoardProcessor.rowReserve,
+        //    which is the served depth when the backend has set one.
+        //    for the measurement behind the number — it is deliberately above
+        //    what TfL actually returns per platform, so nothing is trimmed here
+        //    in practice.
+        val processedPredictions = if (allowedDestIds.isEmpty()) {
+            GlobalBoardProcessor.processPredictions(
+                predictions = formattedPredictions,
+                perPlatformCap = MultiLineBoardProcessor.rowReserve,
+            )
+        } else {
+            // Cap matching and excluded rows SEPARATELY.
+            //
+            // Sharing one per-platform budget would let excluded trains crowd
+            // out the ones the user actually asked for: on a busy platform,
+            // eight Uxbridge departures would fill the cap and a board filtered
+            // to Heathrow would render thin or empty despite Heathrow trains
+            // being in the payload.
+            //
+            // Excluded rows are still persisted rather than dropped — they are
+            // what the fail-open read falls back to, and what lets a filter
+            // change be re-applied on device without waiting for a refetch.
+            val matching = GlobalBoardProcessor.processPredictions(
+                predictions = formattedPredictions.filter { it.matchesFilter },
+                perPlatformCap = MultiLineBoardProcessor.rowReserve,
+            )
+            val excluded = GlobalBoardProcessor.processPredictions(
+                predictions = formattedPredictions.filterNot { it.matchesFilter },
+                perPlatformCap = MultiLineBoardProcessor.rowReserve,
+            )
+            matching + excluded
+        }
 
         // 6. Save to SQL storage — same `syncMs` so the row timestamps match
         //    the sync stamp recorded above.
-        sqlStorage.savePredictions(selection.station, selection.line, processedPredictions, syncMs)
+        sqlStorage.savePredictions(selection.station, selection.line, selection.direction, processedPredictions, syncMs)
 
         return processedPredictions
     }

@@ -1,0 +1,8 @@
+{
+  "images" : [
+    { "filename" : "widget-roundel.png",    "idiom" : "universal", "scale" : "1x" },
+    { "filename" : "widget-roundel@2x.png", "idiom" : "universal", "scale" : "2x" },
+    { "filename" : "widget-roundel@3x.png", "idiom" : "universal", "scale" : "3x" }
+  ],
+  "info" : { "author" : "xcode", "version" : 1 }
+}

@@ -17,17 +17,16 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.stationly.app.ui.theme.TflAmber
+import com.stationly.app.ui.theme.LocalThemeTokens
 import com.stationly.core.model.sdui.SduiAppComponent
 
 @Composable
@@ -35,12 +34,19 @@ fun AnnouncementBanner(
     announcement: SduiAppComponent.Announcement,
     onDismiss: () -> Unit
 ) {
-    val uriHandler = LocalUriHandler.current
+    val openUrl = LocalOpenUrl.current
+    // Theme-aware variant palette, matching Android's SduiComponentRenderer:
+    // each variant is a faint tint of its semantic token so the banner reads
+    // correctly in BOTH light and dark themes (the old hardcoded near-black
+    // backgrounds disappeared into dark mode and glared in light mode).
+    val tokens      = LocalThemeTokens.current
+    val warningTint = MaterialTheme.colorScheme.primary
     val (bgColor, borderColor, iconColor) = when (announcement.variant) {
-        "warning" -> Triple(Color(0xFF1A0E00), TflAmber.copy(alpha = 0.4f), TflAmber)
-        "tip"     -> Triple(Color(0xFF001A0A), Color(0xFF4CAF50).copy(alpha = 0.4f), Color(0xFF4CAF50))
-        else      -> Triple(Color(0xFF0A0E1A), Color(0xFF4A90D9).copy(alpha = 0.4f), Color(0xFF4A90D9))
+        "warning" -> Triple(warningTint.copy(alpha = 0.10f), warningTint.copy(alpha = 0.40f), warningTint)
+        "tip"     -> Triple(tokens.live.copy(alpha = 0.10f), tokens.live.copy(alpha = 0.40f), tokens.live)
+        else      -> Triple(tokens.info.copy(alpha = 0.10f), tokens.info.copy(alpha = 0.40f), tokens.info)
     }
+    val onBg = MaterialTheme.colorScheme.onBackground
 
     Surface(
         color = bgColor,
@@ -73,7 +79,7 @@ fun AnnouncementBanner(
                 Spacer(Modifier.height(3.dp))
                 Text(
                     announcement.body,
-                    color = Color.White.copy(alpha = 0.55f),
+                    color = onBg.copy(alpha = 0.55f),
                     fontSize = 12.sp,
                     lineHeight = 17.sp
                 )
@@ -86,7 +92,7 @@ fun AnnouncementBanner(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.clickable {
-                            runCatching { uriHandler.openUri(announcementUrl) }
+                            openUrl(announcementUrl, announcement.title)
                         }
                     )
                 }
@@ -95,7 +101,7 @@ fun AnnouncementBanner(
             Icon(
                 Icons.Outlined.Close,
                 contentDescription = "Dismiss",
-                tint = Color.White.copy(alpha = 0.25f),
+                tint = onBg.copy(alpha = 0.25f),
                 modifier = Modifier.size(16.dp).clickable { onDismiss() }
             )
         }
