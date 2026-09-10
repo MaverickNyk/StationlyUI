@@ -492,7 +492,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX)";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Debug Production";
 		};
@@ -576,7 +576,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX)";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Release Production";
 		};
@@ -602,7 +602,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX)";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Debug Staging";
 		};
@@ -623,7 +623,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).StationlyWidget";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Release Staging";
 		};
@@ -702,7 +702,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).StationlyWidget";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Debug Production";
 		};
@@ -723,7 +723,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).StationlyWidget";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Debug Staging";
 		};
@@ -813,7 +813,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX)";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Release Staging";
 		};
@@ -834,7 +834,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).StationlyWidget";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Release Production";
 		};

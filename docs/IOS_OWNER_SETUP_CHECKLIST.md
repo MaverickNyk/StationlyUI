@@ -199,8 +199,17 @@ asks for:
 | What to Test | see below |
 
 **The demo account is the most common cause of a beta rejection.** Stationly requires
-sign-in, so create a real account on the **staging** backend and hand the reviewer those
-credentials. Without them the reviewer opens the app, hits the sign-in wall, and rejects.
+sign-in, so create a real account and hand the reviewer those credentials. Without them the
+reviewer opens the app, hits the sign-in wall, and rejects.
+
+**The account must live in the environment the build talks to**, and the two are different
+Firebase projects. A staging build authenticates against `mindthetimefcm`; a **production**
+build against `stationly-prod`, so a staging account simply does not exist for it and fails
+in the most confusing way available — correct-looking credentials, refused. Android *prod*
+shares `stationly-prod`, so a Play Console demo account is valid for iOS production.
+
+It must also be an **email/password** account. A Google or Apple account has no password to
+hand over, and the reviewer cannot use yours.
 
 Suggested "What to Test" note:
 
@@ -219,7 +228,19 @@ click through the encryption question.
 
 ---
 
-## Task D — production Firebase (later; blocks nothing above)
+## Task D — production Firebase
+
+> **DONE 2026-09-10. Kept for the record; do not work through it again.**
+> `stationly-prod` is registered for `com.stationly.mobile`, the real plist is committed,
+> the script's production refusal is gone, and **v1.0 build 2 is submitted to App Review**.
+> What actually happened, including what went wrong, is in
+> `docs/IOS_PRODUCTION_RELEASE.md` — read that, not this.
+>
+> One item below was NOT in this list and cost a day: the APNs `.p8` must be copied by hand
+> to `APNS_P8_PATH` on the backend server. No deploy script ships it, deliberately. Production
+> never had it, so every push failed silently as `ApnsNotConfigured` until 2026-09-10.
+
+Historical text follows.
 
 Production is deliberately placeholders. A production build compiles and runs but skips
 `FirebaseApp.configure()` and logs why, and `scripts/ios-testflight.sh --env production`
