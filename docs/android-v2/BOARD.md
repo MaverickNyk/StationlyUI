@@ -7,86 +7,87 @@
 ## Live state
 
 ```
-SPRINT:            4 — widget  (sprints 1-2 complete; sprint 3 in progress)
+SPRINT:            5-6 — release surfaces + rollout (sprints 1-4 complete)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S013 (2026-09-06) — AV2-5.1 + AV2-5.2. Each widget shows its
-                   own station, and every widget can be reassigned from the app
-                   or from the widget itself.
-GATE:              GREEN
-                   :core:testDebugUnitTest                  PASS  (418 tests)
+LAST SESSION:      S016 (2026-09-11) — EPIC-04, EPIC-05, EPIC-06 and EPIC-07
+                   closed. Eleven stories. The headline is AV2-4.3: Android was
+                   writing `boards` and reading `stations`, so every board a
+                   user saved was deleted by their own next foreground.
+GATE:              GREEN (see the close-out log)
+                   :core:testDebugUnitTest                  PASS
                    :core:verify…DatabaseMigration           PASS
-                   :composeApp:testDebugUnitTest            PASS  (58 tests)
-                   :android:app:testStagingDebugUnitTest    PASS  (30 tests, +4)
+                   :composeApp:testDebugUnitTest            PASS
+                   :android:app:testStagingDebugUnitTest    PASS
                    :android:app:compileStaging/ProdDebugKotlin  PASS
                    :composeApp:compileDebugKotlinAndroid    PASS
+                   :composeApp:compileKotlinIosArm64        PASS
                    :composeApp:assembleComposeAppDebugXCFramework  PASS
-                                                            (commonMain CHANGED —
-                                                            all additive, defaults
-                                                            preserve iOS exactly)
+                                                            (commonMain CHANGED
+                                                            in six places — all
+                                                            additive or shared
+                                                            fixes iOS wants too)
 WORKING TREE:      clean
-DEVICE:            Pixel 7 Pro. The config Activity launches and lays out (no
-                   exception), but the widget flow COULD NOT be verified: adb
-                   cannot drag a widget onto a home screen, and the phone locked
-                   itself mid-session. The four-minute manual script is in
-                   AV2-5.1's handoff and it is the next thing to do.
-BLOCKED ON OWNER:  Q7 the prediction primary key collapses two real trains.
-                   Q3 blocks EPIC-06 and holds the last v1 code.
-                   Q4 CI. Q5 iOS testers. Q6 one applicationId.
-                   EPIC-03 STILL HAS NOT HAD ITS UPGRADE-IN-PLACE PASS.
-NEXT UP:           AV2-4.2 (topic lifecycle) or AV2-5.3 (targeted redraw). 5.3 is
-                   the smaller one and the widget work just made it easy: a push
-                   for station A still redraws every widget, and the binding
-                   store now says which ones actually care.
+MASTER:            merged in at 91a51f7 — the eight iOS commits that shipped
+                   v1.0 (production Firebase, the iOS 26 icon, iPhone-only,
+                   the TestFlight scripts). No conflicts; none of it is Android.
+DEVICE:            NOTHING IN THIS SESSION HAS BEEN RUN ON A PHONE. Eleven
+                   stories, all reasoned + unit-tested, zero device passes. The
+                   per-story handoffs each carry their own device script; the
+                   three that most need one are AV2-4.3 (add a board, cold
+                   start, is it still there), AV2-6.2 (the screensaver renders
+                   at all) and AV2-8.1 (walk every screen on a release build).
+BLOCKED ON OWNER:  Q7 the prediction primary key collapses two real trains —
+                   now the only OPEN question that changes code.
+                   Q1/Q2/Q4/Q5/Q6 are decisions or console work, not blockers.
+                   Q3 answered by taking the reversible option (EPIC-06 header).
+NEXT UP:           AV2-8.1 (b)-(d): install the release build and walk it. Then
+                   AV2-8.2 on hardware, then AV2-8.3.
+                   Everything else on this board is in Review.
 ```
-
-
-
----
-
-## Board
-
-Move a story by cutting its row and pasting it into the new column. Do not
-duplicate rows. `Backlog → Ready` happens when every dependency is **Done**.
 
 ### 🅑 Backlog — dependencies not yet met
 
 | Story | Epic | Title | Waiting on |
 |---|---|---|---|
-| AV2-4.3 | 04 | Cloud state dual-write | AV2-4.2 |
-| AV2-4.4 | 04 | Sessions and activity | AV2-4.3 |
-| AV2-5.4 | 05 | Widget guide | AV2-5.1, AV2-3.3 |
-| AV2-6.1 | 06 | Real dream actuals | AV2-3.2, **Q3** |
-| AV2-6.2 | 06 | Host the shared dream | AV2-6.1 |
-| AV2-7.1 | 07 | The update gate | AV2-3.5 |
-| AV2-7.2 | 07 | Config and quotas | AV2-3.5 |
-| AV2-7.3 | 07 | Support, built and off | AV2-3.5 |
-| AV2-8.1 | 08 | Release build integrity | all |
-| AV2-8.2 | 08 | Upgrade verification on hardware | AV2-2.2, AV2-8.1 |
+| AV2-8.2 | 08 | Upgrade verification on hardware | AV2-8.1, a phone |
 | AV2-8.3 | 08 | Ship | AV2-8.2 |
 
 ### 🅡 Ready — take the top one
 
 | Story | Epic | Title | Size |
 |---|---|---|---|
-| _(none)_ | | | |
+| _(none — AV2-8.1 is the live one)_ | | | |
 
 ### 🅘 In Progress — WIP limit 2
 
 | Story | Claimed by | Since | Note |
 |---|---|---|---|
-| _(none)_ | | | |
+| AV2-8.1 | S016 | 2026-09-11 | Task (a) done twice now — the release APK and AAB build with the post-cutover graph plus Play Core. **(b) is the one that matters and needs a phone**: a release build that compiles is not a release build that runs. |
 
 ### 🅥 Review — done, awaiting owner sign-off
 
+Twenty stories. In the order somebody signing off should read them:
+
 | Story | Session | What to look at |
 |---|---|---|
-| AV2-5.1 + AV2-5.2 | S013 | **"Widget stacking is not an option on Android — what can be done?"** Nothing needs inventing: Android's home screen has always allowed many instances of one provider, each with its own `appWidgetId`. Two stations is two widgets. What was missing was a binding — `updateFromStorage` pushed `selections.first()` to every widget id, so a widget could not show the wrong station only because it never showed a particular one. Each now resolves its own. Read the epic header for the full design answer and the three things Android can do here that iOS cannot, and AV2-5.1's finding that its AV2-4.3 dependency did not hold. Then run the four-minute device script in AV2-5.1's handoff — **none of this has been driven by a human yet**, because adb cannot place a widget. |
-| AV2-4.1 | S012 | **The story's premise was stale and the real bug was somewhere else.** Direction scoping, per-board fan-out and the `matchesFilter` precompute were all already done in `SyncPredictionsUseCase`; they got pinned, not written. What was actually broken: since AV2-3.5, an FCM push wrote fresh departures to SQLite and **the open board did not move** — the fan-out was pinging a SharedPreferences key whose only listener was v1's deleted view model, and nothing emitted to the shared flow the new home screen collects. Fixed, logged, and verified from real pushes on the Pixel. Two more found on the way: Android was signing people out with no explanation (the receiving end already existed — closes AV2-4.4 (e) early), and the home screen was rendering the same departure twice off duplicate rows. One defect is left deliberately unfixed and is now **Q7**. |
-| AV2-3.5 | S011 | **The irreversible one, and nothing has been run on a phone.** The shared UI is now the Android app: one launcher, one manifest, ~8,000 lines of v1 deleted, `navigation-compose` and the downloadable-fonts pipeline gone with it. Four things to read rather than re-derive: the **Apple button** is finally hidden on Android — and hiding it left the screen with no primary action, which is the half AV2-3.4 did not see; the **theme carry-over needed no migration** and the real bug was the screensaver reading a different file from the app; **two deep links** would have been registered and silently dropped; and **two v1 behaviours are gone** and are now written into EPIC-04 as tasks. Then two things nobody asked for and both worth knowing: the shared **Screensaver** row opened a settings screen whose Android actuals discard everything written to them (now routed to system settings, as v1 did), and the **update gate is live on Android** as of this commit — read the warning at the top of AV2-7.1 before anyone changes a release policy. Then do the upgrade-in-place pass in §"for the reviewer" — it is the only check this branch cannot recover from getting wrong. |
-| AV2-3.3 | S010 | Three stubs became real, both behavioural criteria **verified on the Pixel**: the POST_NOTIFICATIONS prompt fires on a fresh install, and nearby-station search returns stations on *Approximate* location, which v1 refuses. The thing to read is the finding: `AndroidAppContext` tracked the Activity lazily and so never saw the first resume, which silently disarmed that prompt entirely — one of the two prompts Android gives you a single chance at. Fixed with a content provider, staging-only. |
-| AV2-3.4 | S009 | All three tasks done and the first two criteria **verified on hardware**: Google sign-in completes from the shared landing screen, and `stationly://` no longer resolves on a staging build while `stationly-staging://` does. Criterion 3 is unreachable (Q6). Two things to read rather than re-test: the **crash** found by backing out of a slow sign-in (fixed, in `commonMain` — one guard, nine call sites), and the still-visible **"Continue with Apple"** button on Android, deliberately left for AV2-3.5. |
-| AV2-3.2 | S008 · device pass S009 | Both criteria now **verified on a Pixel 7 Pro** and the epic updated. One correction worth reading: there is no offline *banner* over a live board and there should not be — `computeBoardFallbackState` short-circuits on `hasPredictions`, so a board with cached departures keeps ticking. The offline surface is the cold-start "Can't reach servers", and it appeared. Device id held one value across a crash, force-stops, an update install and a sign-out. |
-| AV2-3.1 | S007 · device pass S009 | **Half passes, half fails, and the failure is not this story's.** Two launcher icons; **Stationly v2** opens the shared UI, signs in and navigates. **Stationly Staging** (v1) now *crashes on launch* on any account that has opened v2 — duplicate LazyColumn key, because the v2 board model keeps one selection per direction and v1's keys by station+line. Read that finding before signing off; it is a trap set for AV2-8.2. Prod remains untouched and proven so at the dependency graph and the merged manifest. |
+| **AV2-4.3** | S016 | **The worst bug on the branch, and it had been live since the cutover.** Android wrote `boards` (the shared SelectionViewModel) and reconciled against `stations` (the legacy path), and the backend derives neither from the other on a write. So a board saved on Android left no trace in the array its own next foreground compared against — and that reconcile DELETES any local selection the cloud list does not have. On an account whose `stations` is empty, which is every account created on v2, that is every board the user has, gone within fifteen minutes, silently. Four device passes missed it because the test account's legacy array already described its one board. |
+| AV2-6.2 | S016 | **Unverified on hardware, and it is the one surface you cannot open by tapping.** The screensaver is the shared one now and v1's `dream/` package is deleted. Failure mode is a blank screen on a bedside table with no crash dialog. Four-step device script in the handoff. |
+| AV2-4.2 | S016 | The FCM topic ledger only ever grew — `unsubscribe` never removed from it — so the diff this story asks for would have made a re-added board silently never receive another push. Also: a token rotation was dropping `stationly_all` permanently, on a device that went on reporting itself subscribed. |
+| AV2-7.3 | S016 | The support stub's reason for being safe had stopped being true. `enabled` comes from the BACKEND, and these composables are the Android app now — one config change would have put the money surface in front of Android users with a checkout that does nothing. Fixed with a platform capability rather than a bigger comment. |
+| AV2-4.4 | S016 | Android has never uploaded a single activity event: `ActivityUploader` was complete and nothing called it. Also two objects could MINT the device id, one of them during logout. |
+| AV2-5.3 | S016 | `Board.widget` was empty on every Android device, so deleting a station never warned about the widget it was blanking, and `widget.count` reported zero for a phone covered in them. `board.count` was counting the widget map — wrong on both platforms. |
+| AV2-7.1 | S016 | The trap the story opens with is NOT set (the backend serves Play links correctly). What is new is Play In-App Updates: flexible for the nudge, immediate for the block. **Cannot be verified before an internal-track release.** |
+| AV2-5.4 | S016 | The guide is wired and deliberately has no Android door — every instruction in the served payload is an iOS gesture. The exact config change is written out in the epic. |
+| AV2-7.2 | S016 | Built nothing, which is the right outcome. The audit found there is no platform key to audit: one payload for both platforms, and three payloads whose content is platform-specific. One of them is an **iOS** bug (the About screen's `market://` rate link). |
+| AV2-6.1 | S016 | Four placeholders became real. The prefs FILE NAME is the whole upgrade path, and the shared store's per-account scoping would have defeated it — fixed with a read-side fallback that helps iOS too. |
+| AV2-5.1 + AV2-5.2 | S013 | Two stations is two widgets; each resolves its own binding. Still never driven by a human. |
+| _(the S015 rework)_ | S015 | `requestPinAppWidget`, the two settings rows collapsed into one, "Add to Home Screen" on the station itself. Unlogged at the time — see SESSIONS.md. |
+| AV2-4.1 | S012 | The push→board gap, the silent sign-out, the duplicate hero departure. Raised Q7. |
+| AV2-3.5 | S011 | The irreversible one. ~8,000 lines of v1 deleted. |
+| AV2-3.3 | S010 | The POST_NOTIFICATIONS prompt that never fired. |
+| AV2-3.4 | S009 | Sign-in, and a scheme the two builds cannot confuse. |
+| AV2-3.2 | S008 · device pass S009 | Real actuals, batch A. |
+| AV2-3.1 | S007 · device pass S009 | Half passes, half fails — and the failure is a trap set for AV2-8.2. |
 
 ### 🅧 Blocked
 
@@ -117,7 +118,7 @@ Do not block on these unless a story names one as a dependency. Log and continue
 | Q2 | At what remaining-v1-install count do we drop the `stations` dual-write? | S000 | AV2-8.3 | OPEN |
 | Q5 | **iOS TestFlight testers must delete and reinstall once** when the schema-version bump ships. Their databases are stamped version 1 but already hold the v2 schema, so `1.sqm` refuses to run on them (safely — see MIGRATION.md §1.4b). Standing iOS policy already says wipe-on-schema-change and boards restore from the cloud, but these are live testers. Tell them, or hold the bump until the next TestFlight build? | S004 | iOS TestFlight | OPEN |
 | Q4 | Add `GOOGLE_SERVICES_STAGING_B64` as a repo secret so CI can compile and test `:android:app`? The file is gitignored, so CI skips those steps today and says so with a warning annotation. | S001 | `:android:app` coverage in CI | OPEN |
-| Q3 | Does Daydream survive into v2? It is deprecated on newer Android, v1 ships it, and users may rely on it. Two sessions ride on the answer. **Now also the last thing holding v1 code in the app** — AV2-3.5 deleted every v1 screen and stopped at what `dream/` imports (`ui/theme`, `ui/util`). A "no" deletes that residue for free. | S000 | **EPIC-06 entirely**, and the last of `com.stationly.mobile.ui` | OPEN |
+| Q3 | Does Daydream survive into v2? | S000 | **EPIC-06 — no longer** | **ANSWERED S016, by taking the reversible option.** The premise was wrong: *Daydream* the VR platform is dead, `DreamService` the **screen saver** is not — it is in Settings → Display on current Android and v1 ships it. Keeping and porting is undoable in an hour; deleting a live feature is not. EPIC-06 shipped, and the question is now cheap: saying no deletes two files, not a package. |
 | Q7 | **The prediction primary key throws away real trains.** `PRIMARY KEY (stationId, lineId, direction, destination, platform, eta)` keys on the FORMATTED eta string, and `insertPrediction` is `INSERT OR REPLACE` — so two trains to the same destination on the same platform 40 seconds apart both format as "1 min" and the second overwrites the first. The rider sees one train where two are coming. `SyncPredictionsUseCase` already dedupes on `targetEpochMs` specifically to keep both; the schema undoes it one layer down. Fix is `targetEpochMs` in the key instead of `eta`, which needs `2.sqm` in a `.sq` shared with a build going to TestFlight. **The migration itself is cheap** — `1.sqm` already clears `PredictionEntity`, since cached departures are replaced within seconds of the next push, so `2.sqm` can just rebuild the table. The question is whether to add a second migration on top of the one Q5 is already about. Pinned by a test that asserts the wrong behaviour on purpose. | S012 | nothing blocking; a live correctness bug on both platforms | OPEN |
 | Q6 | *(Now blocks AV2-3.5's own device pass too: verifying an upgrade in place means a v1 build and this one on the same phone.)* Should staging get its own `applicationId` (e.g. `com.stationly.mobile.staging`)? Today both flavours are `com.stationly.mobile`, so staging and prod **cannot be installed side by side** — which is why AV2-3.4's third criterion is unreachable rather than unverified. Not a build-file change: the google-services plugin fails unless that exact package is registered as an Android app in the staging Firebase project, and Google sign-in additionally needs the (package, SHA-1) pair registered there. Owner-side console work. iOS already did this split (`com.stationly.mobile.staging`). | S009 | AV2-3.4 criterion 3 · AV2-8.2 side-by-side testing | OPEN |
 
@@ -145,17 +146,21 @@ the users, 03 is the foundation 04 builds on.
 
 ## Burn-up
 
-| Epic | Stories | Done | Points | Done |
+| Epic | Stories | Done | In review | Points |
 |---|---|---|---|---|
-| 01 Safety net | 3 | **3** ✅ | 9 | **9** |
-| 02 Database | 3 | **3** ✅ | 11 | **11** |
-| 03 Host cutover | 5 | 0 (5 in review) | 21 | 0 |
-| 04 Data plane | 4 | 0 (1 in review) | 18 | 0 |
-| 05 Widget | 4 | 0 (2 in review) | 16 | 0 |
-| 06 Dream | 2 | 0 | 6 | 0 |
-| 07 Release surfaces | 3 | 0 | 10 | 0 |
-| 08 Rollout | 3 | 0 | 11 | 0 |
-| **Total** | **27** | **6** | **102** | **20** |
+| 01 Safety net | 3 | **3** ✅ | — | 9 |
+| 02 Database | 3 | **3** ✅ | — | 11 |
+| 03 Host cutover | 5 | 0 | 5 | 21 |
+| 04 Data plane | 4 | 0 | **4** ✅ | 18 |
+| 05 Widget | 4 | 0 | **4** ✅ | 16 |
+| 06 Dream | 2 | 0 | **2** ✅ | 6 |
+| 07 Release surfaces | 3 | 0 | **3** ✅ | 10 |
+| 08 Rollout | 3 | 0 | 0 (8.1 in progress) | 11 |
+| **Total** | **27** | **6** | **18** | **102** |
+
+**24 of 27 stories are built.** What is left is three, and all three need a phone
+or the owner: finish AV2-8.1 by walking a release build, AV2-8.2's two upgrade
+paths on hardware, and AV2-8.3's rollout.
 
 Sizes: `S`=2, `M`=3, `L`=5, `XL`=8. One point is roughly one focused hour, so a
 5h session is a `L` with room to close out, or an `XL` that will need two.

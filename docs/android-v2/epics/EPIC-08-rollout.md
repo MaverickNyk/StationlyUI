@@ -14,7 +14,7 @@ hardware rather than on a synthesized database.
 
 ---
 
-## AV2-8.1 — Release build integrity · `L` · Backlog
+## AV2-8.1 — Release build integrity · `L` · In Progress (S016) — **(b) needs a phone**
 
 **Depends on:** everything **Files:** `proguard-rules.pro`, `android/app/build.gradle.kts`
 
@@ -43,23 +43,102 @@ navigation and lifecycle, Coil 3, kotlinx-serialization across new types.
 > opened. Nothing has been installed or walked. Keep the story open.
 
 ### Tasks
-- [x] **a.** ~~Build~~ a release APK. *(Built, not yet installed — see above.
-      Still to do: the AAB, and installing it.)*
-- [ ] **b.** Walk every screen. Serialization and reflection failures under R8
-      surface as runtime crashes on screens nobody opened during testing.
-- [ ] **c.** Add keep rules for anything the new graph needs. Existing rules
-      cover Gson, kotlinx-serialization and Firebase; the new UI stack is not
-      covered.
-- [ ] **d.** Confirm `debugSymbolLevel = "FULL"` still applies so Play can
-      symbolicate native crashes.
-- [ ] **e.** Check the bundle size delta and note it.
+- [x] **a.** Build a release APK **and the AAB**. *(Both, S016, on the full
+      post-cutover graph including Play Core. Numbers below.)*
+- [ ] **b.** Walk every screen. **Still the one that matters, and it needs a
+      phone.** Serialization and reflection failures under R8 surface as runtime
+      crashes on screens nobody opened during testing.
+- [x] **c.** Add keep rules for anything the new graph needs. *(Audited — none
+      needed. See the findings.)*
+- [x] **d.** Confirm `debugSymbolLevel = "FULL"` still applies. *(It applies and
+      it has nothing to do — see the findings, because "no symbols in the AAB"
+      looks exactly like the setting having been lost.)*
+- [x] **e.** Check the bundle size delta and note it.
+
+### Measured, S016 (2026-09-11)
+
+| | S014 (2026-09-06) | S016 | Δ |
+|---|---|---|---|
+| `app-staging-release-unsigned.apk` | 7,320,203 B (6.98 MB) | 7,304,145 B (6.96 MB) | **−16 KB** |
+| `app-staging-release.aab` | not built | 12,416,447 B (11.84 MB) | — |
+| Build time | 10m 31s | 6m 56s (`--no-build-cache`) | — |
+
+**Smaller, after a session that added a dependency.** Play In-App Updates went in
+(AV2-7.1) and ~10 dream files plus the whole of `com.stationly.mobile.ui.theme`
+came out (AV2-6.2); the deletions won. Worth recording because the intuition
+runs the other way, and because a size jump on the next release now has a real
+baseline to be a jump FROM.
+
+The AAB is larger than the APK by design: `BUNDLE-METADATA/` carries a 76 MB
+uncompressed `proguard.map` for Play's de-obfuscation, and none of it is
+delivered to a device.
+
+### Findings
+
+#### The `shrinkResources` failure is a Gradle cache bug, not a build failure
+
+The first attempt failed at `:android:app:shrinkStagingReleaseRes` with
+
+```
+Failed to store cache entry … Could not pack tree 'params.logFile':
+Request to write '64403' bytes exceeds size in header of '1630207' bytes
+```
+
+That is the build CACHE failing to store the task's log file, after the task
+itself ran. `--no-build-cache` makes it go away. Worth knowing before somebody
+reads it as R8 refusing the graph — which is what it looks like, because it is
+the one task in the build most likely to genuinely fail.
+
+#### No new keep rules are needed, and the reason is worth keeping
+
+The new graph is mostly Compose Multiplatform, Coil 3, JetBrains lifecycle and
+Play Core, and every one of those ships **consumer ProGuard rules** in its own
+artifact. The reflection in our code is unchanged: Gson over `com.stationly.core.model.**`
+(kept wholesale) and kotlinx-serialization, whose generated `$$serializer`s and
+`Companion`s are pinned explicitly under `com.stationly.**` so an SDK bump cannot
+silently drop them.
+
+The shared UI adds exactly **three** `@Serializable` files in `com.stationly.app.**`
+(`SduiConditions`, `SupportStore`, `SupportMoneyConfig`) and the existing
+wildcards already cover them. Checked rather than assumed — this is the story
+whose whole point is that "it built" is not evidence.
+
+#### `debugSymbolLevel = "FULL"` is applied and has nothing to extract
+
+The AAB carries no native-symbols entry, and that is correct: the app has exactly
+**four** `.so` files, all of them `libandroidx.graphics.path.so`, and AndroidX
+ships it already stripped. There is nothing for the packaging step to bundle.
+
+Left in the build file, because the moment a dependency arrives with unstripped
+natives the setting is what puts them in the AAB — and because deleting it would
+make the Play Console's "no debug symbols" warning permanent and unexplained.
 
 ### Acceptance criteria
-- [ ] A minified release build runs, and every screen opens.
+- [ ] A minified release build runs, and every screen opens. **Needs a phone.**
 - [ ] Widget, dream and FCM all work in the release build, not just in debug.
+      **Needs a phone**, and the dream half of it has never run at all — see
+      AV2-6.2.
 
-### Handoff notes
-_(none yet)_
+### Handoff notes — S016, 2026-09-11
+
+**This story is the gate for everything left, and it is one install away.**
+
+```bash
+# Sign it (staging uses the debug key) and put it on the Pixel:
+apksigner sign \
+  --ks ~/.android/debug.keystore --ks-pass pass:android \
+  --out /tmp/stationly-staging-release.apk \
+  android/app/build/outputs/apk/staging/release/app-staging-release-unsigned.apk
+adb install -r /tmp/stationly-staging-release.apk
+```
+
+Then walk: login, home, station settings, line picker, the filter sheet, profile,
+the widget manager, add a widget, the screensaver, and a push arriving on each.
+R8 failures land as `ClassNotFoundException` / `SerializationException` on the
+screen nobody opened — so the walk has to be every screen, not a smoke test.
+
+**The mapping file for any crash you get is at**
+`android/app/build/outputs/mapping/stagingRelease/mapping.txt`.
 
 ---
 
