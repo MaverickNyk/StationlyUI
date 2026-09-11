@@ -42,6 +42,13 @@ import platform.UIKit.UIWindowScene
  */
 private var presentedCheckout: SFSafariViewController? = null
 
+/**
+ * iOS can complete a checkout: `SFSafariViewController` with Apple Pay
+ * available. See [checkoutSupported] in `commonMain` for why this is a platform
+ * capability and not just a config flag.
+ */
+actual val checkoutSupported: Boolean = true
+
 actual fun openCheckout(url: String) {
     val nsUrl = NSURL.URLWithString(url) ?: return
     // SFSafariViewController rejects anything that is not http(s) — a malformed

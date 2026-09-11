@@ -50,9 +50,27 @@ data class SupportMoneyConfig(
     val defaultTier: SupportTier?
         get() = tiers.firstOrNull { it.id == defaultTierId } ?: tiers.firstOrNull()
 
-    /** True when there is something the user can actually pay through. */
+    /**
+     * True when the DOCUMENT describes something payable.
+     *
+     * About the config and nothing else, which is why [isOfferable] exists
+     * beside it: this one is what the operator turned on, that one is whether
+     * this device can honour it.
+     */
     val isPayable: Boolean
         get() = enabled && (tiers.any { it.checkoutUrl.isNotBlank() } || cta.urlOneoff.isNotBlank())
+
+    /**
+     * [isPayable], and this platform can actually complete a checkout.
+     *
+     * **What every surface gates on.** See [checkoutSupported] for why the
+     * config alone is not enough: `enabled` is a server-side switch, and after
+     * the Android cutover these are the Android app's screens too — so the
+     * document on its own could put a money surface in front of a platform whose
+     * checkout is a deliberate no-op.
+     */
+    val isOfferable: Boolean
+        get() = isPayable && checkoutSupported
 }
 
 @Serializable

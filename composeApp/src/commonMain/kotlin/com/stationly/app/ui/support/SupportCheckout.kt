@@ -28,6 +28,29 @@ package com.stationly.app.ui.support
 expect fun openCheckout(url: String)
 
 /**
+ * Whether this platform can actually complete a checkout.
+ *
+ * ## Why a capability and not just a config flag
+ * `SupportMoneyConfig.enabled` comes from the BACKEND, so it can be turned on
+ * for every client at once with no release. Before this existed, doing that
+ * would have put the whole support surface in front of Android users — the
+ * banner, the sheet, the tier ladder — attached to an [openCheckout] that is
+ * deliberately empty there. A button that does nothing, shipped by a config
+ * change, on a screen about taking somebody's money.
+ *
+ * The old reasoning said an Android build "has neither `enabled` nor a checkout
+ * URL", which was true only while `:android:app` had its own screens and did not
+ * run this code at all. The cutover ended that: these composables ARE the
+ * Android app now, reading the same document iOS reads.
+ *
+ * So the surfaces gate on `SupportMoneyConfig.isOfferable`, which is the config
+ * AND this. Turning support on for Android becomes a two-part decision — a
+ * config change and a platform that can honour it — which is what D4 means by
+ * "built, and off", and what Q1 is still deciding the route for.
+ */
+expect val checkoutSupported: Boolean
+
+/**
  * Close the checkout browser, if one is open.
  *
  * ## Why this is not optional
