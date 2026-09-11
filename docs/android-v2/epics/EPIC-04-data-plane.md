@@ -381,7 +381,7 @@ will disagree the first time a board exists in the cloud that has no local row.
 
 ---
 
-## AV2-4.3 — Cloud state dual-write · `L` · Backlog
+## AV2-4.3 — Cloud state dual-write · `L` · Review (S016)
 
 **Depends on:** AV2-4.2 **Reads:** [`MIGRATION.md`](../analysis/MIGRATION.md) §2 · **Risk R2, and R2 is proven**
 
@@ -412,33 +412,151 @@ reads the full list out of SQLite before posting.
 > which one Android believes, not about collapsing them.
 
 ### Tasks
-- [ ] **a.** **Verify on the backend** that `syncStations` does not touch
-      `boards` and `syncBoards` does not touch `stations`. The whole plan rests
-      on it and it has not been read. If it is false, stop and re-plan.
-      **Also check whether the account's `stations` array carries duplicates
-      today** — AV2-4.1's evidence says at least one does, and if the backend is
-      appending rather than replacing, that is a server-side bug this story
-      inherits rather than fixes.
-- [ ] **b.** Adopt `/user/sync/boards` as the authoritative write. `reconcileBoards`
-      already exists in `UserSyncRepository` and is the path iOS uses; Android's
-      `UserSyncCoordinator.reconcile` still calls the `stations` variant.
-- [ ] **c.** **Dual-write** the same list flattened to `SubscribedStation` via
-      `/user/sync/stations`, for the transition window. `Board.toSelections()`
-      already produces exactly that shape (AV2-1.2 proves the fold is total).
-      A v1 device on a shared account then sees a degraded-but-correct view
-      instead of a stale or emptied one.
-- [ ] **d.** First-run fold-up: `boards` wins if non-empty; else fold `stations`;
-      else fall back to the local `UserSelectionEntity` rows the migration
-      preserved. Rely on `Board.isUsable` — it already makes an empty board list
-      read as ABSENT rather than as "delete everything".
+- [x] **a.** **Verify on the backend** that `syncStations` does not touch
+      `boards` and `syncBoards` does not touch `stations`. *(Read, and both hold
+      — see the findings. The duplicate `stations` question is answered too, and
+      the answer is not the one the story expected.)*
+- [x] **b.** Adopt `/user/sync/boards` as the authoritative write. *(The WRITE
+      was already boards, since the cutover. The **read** was not, and that was a
+      live bug that deleted boards — the headline finding.)*
+- [x] **c.** **Dual-write** the same list flattened to `SubscribedStation` via
+      `/user/sync/stations`, for the transition window. *(In
+      `UserStateRepository.pushBoards`, after an ACCEPTED boards write and only
+      then — that ordering is the whole safety argument.)*
+- [x] **d.** First-run fold-up: `boards` wins if non-empty; else fold `stations`;
+      else fall back to the local rows. *(`effectiveBoards()`, one definition,
+      replacing three. Rung three lives where local state is visible.)*
 
 ### Acceptance criteria
-- [ ] A v1 save on a shared account no longer prunes v2 boards.
-- [ ] A user who has never signed in keeps their boards through the upgrade.
-- [ ] The dual-write has a documented retirement condition (Q2), not an open end.
+- [x] A v1 save on a shared account no longer prunes v2 boards. *(Structural:
+      `syncStations` cannot reach `boards`, verified in the backend source, and
+      the subscription registry diffs the UNION so a v1 write releases nothing a
+      v2 board still holds.)*
+- [x] A user who has never signed in keeps their boards through the upgrade.
+      *(`reconcileBoards` returns early when `boardsUpdatedAt == 0` and this
+      device holds boards; the migration preserved the rows; nothing on the
+      reconcile path can now delete them.)*
+- [x] The dual-write has a documented retirement condition (Q2), not an open end.
+      *(Named at both the call site and on `SduiApiService.syncStations`: a
+      remaining-v1-install count, not a date.)*
 
-### Handoff notes
-_(none yet)_
+### Findings
+
+#### Android was writing one list and reading the other, and the reconcile deleted the difference
+
+**This is the bug of the story, and it was not the one the story describes.** The
+task list reads as a migration: adopt the boards write, dual-write the legacy
+array, fold on first run. But the write had already moved — AV2-3.5 made the
+shared `SelectionViewModel` the Android save path, and that calls
+`UserStateSync.boardsChanged()`, which posts `/user/sync/boards`. What did not
+move was the READ: `UserSyncCoordinator.reconcile` still called
+`UserSyncRepository.reconcile`, the legacy diff against `profile.stations`.
+
+The backend never derives one array from the other on write — verified in
+`UserService`: `syncStations` writes `stations`, `syncBoards` writes `boards`,
+and only a **missing** `boards` is derived, on read. So since the cutover, every
+board saved on Android left no trace in the array its own next foreground
+compared against. That reconcile removes any local selection absent from the
+cloud list:
+
+```kotlin
+local.filter { key(it) !in cloudKeys }.forEach { lifecycle.discardStation(it, …) }
+```
+
+On an account whose `stations` array was empty — every account created on v2, and
+any account whose v1 device never saved — **that is every board the user has,
+deleted within fifteen minutes of adding it**, with no error and nothing on
+screen. It reads exactly like the app forgetting.
+
+It survived four device passes because the test account's `stations` array
+happened to already describe the boards the device held: one station, saved by v1
+before the cutover, unchanged since. Nothing in the sessions before this one
+added a board and then waited.
+
+Android now calls `reconcileBoards`, the same path iOS runs. Three things come
+with it: filters and the resolved hub are restored (the flat list carries
+neither), the `boardsUpdatedAt == 0` guard stops a never-written account deleting
+a device's boards, and the revision gate means an unchanged account costs zero
+Firestore reads per foreground instead of one.
+
+The legacy `UserSyncRepository.reconcile` is **deleted**, not deprecated. Left in
+place it would be a correctly-named, obviously-useful function that quietly
+destroys the user's boards — the same shape as `updateWidgetContent` in AV2-5.1,
+removed for the same reason.
+
+#### The duplicate `stations` rows were not the backend appending
+
+AV2-4.1 suspected a server-side append. It is not: `syncStations` is
+`userRef.update({ stations })`, a straight replace of whatever the client sends.
+The duplicates came back after a **restore**, and the restore is where they were
+made — `syncUserAndGetSavedStations` wiped SQLite and then wrote
+`profile.stations.toUserSelections()` verbatim, so three entries in the cloud
+array became three rows, every time, forever.
+
+And the array could hold a board the user had already deleted on v2, because
+nothing was updating it. So the restore's own fallback was reviving deleted
+boards on each sign-in. It now restores from `effectiveBoards()` — the board list
+where there is one — which is the same rule the mid-session reconcile and the
+board setup use, and used to be decided separately in all three places.
+
+#### The dual-write borrows its guards from the write it follows
+
+`/user/sync/stations` has **no staleness check and no empty guard**: it stores
+exactly what it is handed. `/user/sync/boards` has both — it rejects a write
+whose `clientUpdatedAt` is at or before the stored one, and refuses to empty a
+non-empty list without `allowEmpty`. So the projection is written **after** the
+boards write and only when the server reports `applied == true`. A stale replay
+and an unjustified empty list are both refused before the legacy line is reached,
+and the content written is content the server has just agreed to keep.
+
+Writing it first — which is tempting, because then the boards response carries
+the revision that accounts for both writes — would have meant a client with a
+momentarily empty database wiping the legacy array while the guarded endpoint
+protected the real one.
+
+#### Two writes are two revision bumps, and the stamp has to be the second one
+
+The echo-suppression stamp (`LocalRevStore`) now takes the rev from the LEGACY
+response when there was one, because that is the later of the two writes.
+Stamping the boards rev would leave the device one revision behind its own write
+and cost it exactly the fetch the stamp exists to avoid.
+
+`SduiApiService.syncStations` returned `Boolean` and threw the rev away. It now
+returns the same `SyncStateResponse` the boards write does — no wire change, the
+endpoint has always sent `{ success, count, rev }`.
+
+The cost that remains is on the OTHER devices: one board change is two `user.sync`
+fan-outs, so each of them reads the profile twice instead of once. Board changes
+are rare (a few per session, debounced, and gated by `BoardPushGate`), and this
+ends when the dual-write does — Q2.
+
+### Handoff notes — S016, 2026-09-11
+
+**Not verified on hardware.** Everything here is reasoned from the two sources
+plus unit tests, and the failure it fixes is a timing one: add a board, wait for
+a foreground reconcile, see whether it survives. That is the four-minute device
+check this needs and did not get:
+
+```
+1. Add a board on the Pixel. Confirm it appears.
+2. adb shell am force-stop com.stationly.mobile ; reopen (cold start always reconciles)
+3. The board is still there, and `D/UserSync: Reconcile complete: N board(s), rev R`
+   names the board count — not `N station(s)`, which was the legacy path.
+4. adb logcat -s UserSync:D  — a second open within 15 min should say
+   "Reconcile skipped — account unchanged (rev gate)".
+```
+
+**One behaviour deliberately changed beyond the story.**
+`FreshDataNotifier.notifyAll` used to fire on every reconcile; it now fires only
+when the reconcile actually read a profile. Every foreground used to reload every
+board on the phone to discover that nothing had changed. The screen's own
+`ON_RESUME` reload covers the ordinary case.
+
+**What AV2-4.4 inherits:** the topic reconcile added in AV2-4.2 derives its
+desired set from `UserSelectionEntity`. That is now correct by construction —
+`reconcileBoards` writes those rows from the board list — but it is worth knowing
+the two are coupled: a board that exists in the cloud and fails to set up locally
+is also a topic this device will not subscribe to.
 
 ---
 

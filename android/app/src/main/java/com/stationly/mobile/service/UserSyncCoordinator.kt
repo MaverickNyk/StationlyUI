@@ -37,6 +37,26 @@ import kotlinx.coroutines.tasks.await
  *
  * All work runs on a detached app-level scope — these are triggered from
  * a background service / lifecycle callback with no ViewModel to host them.
+ *
+ * ## AV2-4.3: this reconciles against `boards`, and until now it did not
+ * The account holds two lists. `boards` is the v2 model, carrying each board's
+ * filter and its resolved hub; `stations` is v1's flat rows. They are separate
+ * fields on purpose and the backend never derives one from the other on write —
+ * verified, because the whole plan rests on it (`UserService.syncStations` and
+ * `syncBoards` each touch only their own array; only a MISSING `boards` is
+ * derived, and only on read).
+ *
+ * Since the cutover this device has **written** `boards` — the shared
+ * `SelectionViewModel` calls `UserStateSync.boardsChanged()` — and **read**
+ * `stations`. Saving a board therefore left no trace in the array this class
+ * diffed against, so the next foreground found a local selection the cloud did
+ * not have and deleted it. On an account whose `stations` was empty, that is
+ * every board the user had just added, silently, within fifteen minutes. It
+ * survived to here because the test device's local boards happened to match the
+ * array v1 had last written.
+ *
+ * Reading `boards` also restores what the flat list cannot carry: filters, and
+ * the hub a bus board is grouped on.
  */
 object UserSyncCoordinator {
 
@@ -75,20 +95,25 @@ object UserSyncCoordinator {
      * on a device that has since signed in as someone else (or out), and acting
      * on it would reconcile/log-out the wrong account.
      */
-    fun handleUserSync(context: Context, reason: String?, pushUid: String?) {
+    fun handleUserSync(context: Context, reason: String?, pushUid: String?, pushRev: Long? = null) {
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid
         if (pushUid != null && currentUid != null && pushUid != currentUid) {
             Log.w("UserSync", "Ignoring user_sync for $pushUid — current user is $currentUid")
             return
         }
-        Log.d("UserSync", "user_sync push received, reason=$reason")
+        Log.d("UserSync", "user_sync push received, reason=$reason rev=$pushRev")
         when (reason) {
             "deleted" -> {
                 // Only force-logout if the deleted account is the one signed in
                 // here (or the push omitted a uid — legacy/safety).
                 if (pushUid == null || pushUid == currentUid) forceLogout(context)
             }
-            else -> reconcile(context, force = true)   // "stations" / "profile" / null
+            // "stations" / "boards" / "profile" / null. The reason is not
+            // branched on: all three mean the account document moved, and the
+            // reconcile below diffs whatever it finds. Branching would mean
+            // trusting a reason string to be complete, and a reason this client
+            // does not recognise must still be acted on.
+            else -> reconcile(context, force = true, observedRev = pushRev)
         }
     }
 
@@ -97,7 +122,7 @@ object UserSyncCoordinator {
      * set of changes. [force] bypasses the foreground debounce (used for
      * push-triggered syncs, which are precise and should always run).
      */
-    fun reconcile(context: Context, force: Boolean = false) {
+    fun reconcile(context: Context, force: Boolean = false, observedRev: Long? = null) {
         val user = FirebaseAuth.getInstance().currentUser ?: return
         val uid = user.uid
 
@@ -124,7 +149,16 @@ object UserSyncCoordinator {
                     val sdui = SduiApiServiceFactory.create()
                     val repo = UserSyncRepository(sdui, Platform.sqlStorage, Platform.storageManager)
                     val lifecycle = buildLifecycle()
-                    val profile = repo.reconcile(uid, lifecycle)
+
+                    // ── BOARDS, not stations. See the class KDoc. ──
+                    //
+                    // Null means the revision gate was closed: nothing was
+                    // fetched, nothing changed, and there is nothing to announce.
+                    val profile = repo.reconcileBoards(uid, lifecycle, observedRev)
+                    if (profile == null) {
+                        Log.d("UserSync", "Reconcile skipped — account unchanged (rev gate)")
+                        return@withLock
+                    }
 
                     // Surface a display-name change made on another device.
                     try { FirebaseAuth.getInstance().currentUser?.reload()?.await() } catch (_: Exception) {}
@@ -136,6 +170,12 @@ object UserSyncCoordinator {
                     // and by nothing since AV2-3.5; the explicit
                     // `updateWidgetFromStorage` that followed it is inside
                     // notifyAll.)
+                    //
+                    // Now only on a reconcile that actually READ something. It
+                    // used to run on every pass, so every foreground reloaded
+                    // every board on the phone to discover that nothing had
+                    // changed. The screen's own ON_RESUME reload covers the
+                    // ordinary case.
                     FreshDataNotifier.notifyAll(context)
 
                     // The board list may have just been rewritten from the
@@ -143,7 +183,7 @@ object UserSyncCoordinator {
                     // without anybody subscribing or unsubscribing for it.
                     runCatching { lifecycle.reconcileTopics() }
 
-                    Log.d("UserSync", "Reconcile complete: ${profile.stations.size} station(s)")
+                    Log.d("UserSync", "Reconcile complete: ${profile.boards.size} board(s), rev ${profile.stateRev}")
                 } catch (e: com.stationly.core.service.UserNotFoundException) {
                     // The account was deleted (here or on another device) and we
                     // missed / never got the `user_sync` deleted push. Treat the

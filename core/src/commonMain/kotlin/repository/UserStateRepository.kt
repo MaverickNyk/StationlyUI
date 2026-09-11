@@ -3,6 +3,7 @@ import com.stationly.core.session.SessionStore
 
 import com.stationly.core.model.sdui.UserProfileResponse
 import com.stationly.core.model.user.Board
+import com.stationly.core.model.user.toSubscribedStations
 import com.stationly.core.platform.Platform
 import com.stationly.core.service.SduiApiService
 import kotlinx.coroutines.CoroutineScope
@@ -286,6 +287,28 @@ class UserStateRepository(
             deviceId = deviceId,
         )
 
+        // ── The legacy projection, for as long as a v1 device can exist ──
+        //
+        // AFTER the boards write and only when it was ACCEPTED, which is the
+        // whole safety argument: `/user/sync/stations` has no staleness check
+        // and no empty guard, so it will store an empty array as readily as a
+        // full one. `syncBoards` has both, so writing in this order borrows
+        // them — a stale replay and an unexplained empty list are refused
+        // before this line is reached, and the content here is the same content
+        // the server just agreed to keep.
+        //
+        // Best-effort. The boards write is the one that must succeed; a v1
+        // device seeing a slightly older flat list is the degraded case this
+        // whole mechanism is for, and the next accepted board change re-sends
+        // everything because both payloads are full replacements.
+        //
+        // Retirement is Q2's answer, not a date. See [toSubscribedStations].
+        val legacy = if (response.success && response.applied) {
+            runCatching { api.syncStations(uid, boards.toSubscribedStations(), deviceId) }.getOrNull()
+        } else {
+            null
+        }
+
         // Stamp the revision this write produced, so this device does not turn
         // round on its next foreground and read back the profile it just wrote.
         //
@@ -298,7 +321,15 @@ class UserStateRepository(
         // Only on an ACCEPTED write. A declined one (`stale`, `empty_rejected`)
         // changed nothing on the server, so there is no new revision — and
         // stamping a rev the account never reached would suppress a real fetch.
-        response.rev?.let { rev ->
+        //
+        // From the LEGACY response when there was one: two writes mean two
+        // revision bumps, and the second one is the account's real state. Taking
+        // the first would leave this device one behind its own write and cost it
+        // exactly the fetch this stamp exists to avoid. If the projection failed
+        // or was skipped, the boards rev is correct because it is then the only
+        // write that happened.
+        val stamped = legacy?.rev?.takeIf { legacy.success } ?: response.rev
+        stamped?.let { rev ->
             if (response.success && response.applied) {
                 LocalRevStore.store(Platform.storageManager, uid, rev)
             }

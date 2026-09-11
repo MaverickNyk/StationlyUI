@@ -64,7 +64,14 @@ class FcmMessagingService : FirebaseMessagingService() {
                 UserSyncCoordinator.handleUserSync(
                     applicationContext,
                     remoteMessage.data["reason"],
-                    remoteMessage.data["uid"]
+                    remoteMessage.data["uid"],
+                    // The account revision this push is announcing. Present only
+                    // when the server knows it, and stringly-typed because an
+                    // FCM data payload carries nothing else. Passing it saves
+                    // the reconcile a `GET /user/state/rev` round trip; absent,
+                    // the reconcile goes and asks, which is what it did for
+                    // every push before this.
+                    remoteMessage.data["rev"]?.toLongOrNull(),
                 )
             }
             remoteMessage.data.containsKey("sdui_payload") -> {

@@ -2,6 +2,7 @@ package com.stationly.core.model.user
 
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.sdui.SubscribedStation
+import com.stationly.core.model.sdui.UserProfileResponse
 
 /**
  * The v1 flat station list — `users/{uid}.stations` — as a pair of conversions.
@@ -86,3 +87,35 @@ fun List<SubscribedStation>.toUserSelections(): List<UserSelection> =
             destinationIds = emptyList(),
         )
     }
+
+/**
+ * Which of the account's two lists **is** the account, right now.
+ *
+ * `boards` wins whenever it says anything, and `stations` answers when it does
+ * not. That order is the whole of AV2-4.3's task (d), and it is one function
+ * because it was three: the login restore, the board setup that follows it, and
+ * the mid-session reconcile each decided it separately, and one of the three
+ * hand-built [UserSelection] from [SubscribedStation] inline — a fifth copy of
+ * the conversion whose other four copies are what this file exists to end.
+ *
+ * ## `isUsable` is load-bearing in both directions
+ * A board with no selections says nothing: it is what a truncated payload, or a
+ * response from a backend that predates this shape, decodes to. Those must not
+ * suppress the legacy fallback — a caller seeing "one board" that happens to be
+ * empty would restore nothing and show a home screen of cards that never
+ * populate. Equally, a genuinely EMPTY `boards` array is a real answer (the user
+ * deleted their last board on another device) and the fallback is then correct
+ * too: an account with no boards and no stations folds to nothing either way.
+ *
+ * ## The third rung is not here
+ * "Else fall back to the local rows the migration preserved" cannot be expressed
+ * against a profile, because it is the decision to leave local state ALONE. It
+ * lives where local state is visible: `UserSyncRepository.reconcileBoards`
+ * returns early when the account has never had a board written
+ * (`boardsUpdatedAt == 0`) and this device holds boards, and the login restore
+ * only ever runs against a cloud profile it has just fetched.
+ */
+fun UserProfileResponse.effectiveBoards(): List<Board> {
+    val usable = boards.filter { it.isUsable }
+    return usable.ifEmpty { Board.fromSelections(stations.toUserSelections()) }
+}

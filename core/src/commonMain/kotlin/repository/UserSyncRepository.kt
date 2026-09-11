@@ -3,7 +3,7 @@ package com.stationly.core.repository
 import com.stationly.core.model.sdui.*
 import com.stationly.core.service.SduiApiService
 import com.stationly.core.model.UserSelection
-import com.stationly.core.model.user.toUserSelections
+import com.stationly.core.model.user.effectiveBoards
 import com.stationly.core.platform.StorageManager
 import com.stationly.core.usecase.StationLifecycleUseCase
 import kotlinx.coroutines.flow.first
@@ -46,7 +46,20 @@ class UserSyncRepository(
             sqlStorage.clearAllData()
             storageManager.clearCache()
             
-            // 3. Restore local selections from the cloud profile.
+            // 3. Restore local selections from the cloud profile — from the
+            //    BOARD list where there is one.
+            //
+            // The two arrays can disagree, and when they do the board list is
+            // the account: a board deleted on a v2 device leaves `boards`
+            // immediately and leaves `stations` only when a v2 client gets round
+            // to writing the projection. Restoring from `stations` regardless is
+            // how a board the user deleted comes back at the next sign-in —
+            // observed on the Pixel in AV2-4.1, where three rows returned after
+            // a restore with their ids jumped, in the same shape they had before.
+            //
+            // `isUsable` drops boards that say nothing (a truncated payload, a
+            // response from a backend that predates the field), because those
+            // must degrade to the legacy list rather than suppress it.
             //
             // The unpacking lives in `toUserSelections` rather than here: it is
             // one half of a pair with `toSubscribedStations`, and the two were
@@ -54,8 +67,10 @@ class UserSyncRepository(
             // `parentStationId` was worth carrying. Two of them dropped it, and
             // a restore without it groups bus boards per POLE — one stop coming
             // back as several identically-named cards.
-            profile.stations.toUserSelections().forEach { sqlStorage.saveSelection(it) }
-            
+            profile.effectiveBoards()
+                .flatMap { it.toSelections() }
+                .forEach { sqlStorage.saveSelection(it) }
+
             profile.stations
         } catch (e: Exception) {
             println("[UserSyncRepository] Profile sync failed: ${e.message}")
@@ -220,63 +235,20 @@ class UserSyncRepository(
         return profile
     }
 
-    /**
-     * Non-destructive reconcile against the **legacy** `stations` list.
+    /*
+     * `reconcile(uid, lifecycle)` — the LEGACY `stations` diff — used to live
+     * here, and it was Android's only reconcile until AV2-4.3.
      *
-     * Android's path, unchanged. iOS uses [reconcileBoards] — pointing it here
-     * would diff against a list Android replaces wholesale, so an iPhone would
-     * delete its own boards the first time the account's Android device saved
-     * one.
+     * Deleted rather than deprecated. It read the array the app had stopped
+     * writing at the cutover, so on every foreground it compared the boards on
+     * the device against a list nothing had updated since v1 and deleted the
+     * difference. Left in place it would have been a correctly-named,
+     * obviously-useful function that quietly destroys the user's boards — the
+     * same shape as `updateWidgetContent` in AV2-5.1, and deleted for the same
+     * reason.
+     *
+     * `reconcileBoards` above is the one reconcile now, on both platforms. The
+     * `stations` array is still written (see `UserStateRepository.pushBoards`)
+     * and still read — by a v1 device, which is the only client that can.
      */
-    suspend fun reconcile(uid: String, lifecycle: StationLifecycleUseCase): UserProfileResponse {
-        val profile = apiService.getUserProfile(uid)
-
-        // Safety: only reconcile against the profile we actually asked for. If
-        // the response doesn't match (shouldn't happen — getUserProfile throws
-        // on non-200), leave local state untouched rather than risk wiping a
-        // board the user is watching.
-        if (profile.uid != uid) return profile
-
-        // Identity = station id + line (matches the uniqueness UserService
-        // uses when adding/removing a station server-side).
-        // DIRECTION is part of the key. Without it, both directions of one line
-        // that resolve to the SAME naptan (the normal case on tube) collapse to
-        // one key, and a restore silently drops one of them.
-        fun key(id: String, line: String, direction: String) = "$id|$line|$direction"
-
-        val cloud = profile.stations
-        val local = sqlStorage.getAllSelections()
-        val cloudKeys = cloud.map { key(it.id, it.line, it.direction) }.toSet()
-        val localKeys = local.map { key(it.station, it.line, it.direction) }.toSet()
-
-        // Remove local selections no longer present in the cloud.
-        local.filter { key(it.station, it.line, it.direction) !in cloudKeys }.forEach { sel ->
-            // Pass the survivors so shared topics are not torn down: several
-            // boards can sit on one naptan (two routes at one bus pole, several
-            // lines at one station).
-            val remaining = sqlStorage.getAllSelections().filterNot {
-                it.station == sel.station && it.line == sel.line && it.direction == sel.direction
-            }
-            lifecycle.discardStation(sel, clearSelectionInRepo = true, remaining = remaining)
-        }
-
-        // Add cloud stations missing locally.
-        cloud.filter { key(it.id, it.line, it.direction) !in localKeys }.forEach { st ->
-            lifecycle.setupStation(
-                UserSelection(
-                    mode = st.mode,
-                    line = st.line,
-                    station = st.id,
-                    parentStationId = st.parentStationId.orEmpty(),
-                    stationName = st.name,
-                    direction = st.direction,
-                    destinations = emptyList(),
-                    destinationIds = emptyList()
-                ),
-                isFirstTime = false
-            )
-        }
-
-        return profile
-    }
 }
