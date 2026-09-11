@@ -57,6 +57,12 @@ class DepartureWidgetProvider : AppWidgetProvider() {
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
         super.onDeleted(context, appWidgetIds)
         WidgetBindingStore.unbind(context, appWidgetIds)
+        // Tell the app, in case it is open behind the home screen — the station
+        // screen's delete warning and the SDUI `widget.count` fact both read
+        // this, and both would otherwise describe a widget the user has just
+        // dragged off. The foreground probe catches it eventually; this makes it
+        // immediate when the app is alive to care.
+        WidgetPlacementProbe.observe(context)
     }
 
     override fun onDisabled(context: Context) {
@@ -334,17 +340,15 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             if (appWidgetIds.isEmpty()) return
 
             val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
-            val affectedHubs = selections
-                .filter { it.station.equals(pushedStationId, ignoreCase = true) }
-                .map { it.groupingId }
-                .toSet()
+            val affectedHubs = WidgetRedrawTargets.hubsFedBy(selections, pushedStationId)
             if (affectedHubs.isEmpty()) return
 
-            for (id in appWidgetIds) {
-                val bound = WidgetBindingStore.boundStation(context, id) ?: continue
-                if (bound in affectedHubs) {
-                    renderWidget(context, appWidgetManager, id, selections)
-                }
+            val targets = WidgetRedrawTargets.widgetsShowing(
+                bindings = appWidgetIds.toList().associateWith { WidgetBindingStore.boundStation(context, it) },
+                hubs = affectedHubs,
+            )
+            for (id in targets) {
+                renderWidget(context, appWidgetManager, id, selections)
             }
         }
 
