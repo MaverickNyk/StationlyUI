@@ -4,7 +4,6 @@ import com.stationly.app.platform.DeviceIdentity
 import com.stationly.app.platform.NotificationPermissionStore
 import com.stationly.app.platform.ModeIconStore
 import com.stationly.app.platform.modeIconFileName
-import com.stationly.mobile.service.DeviceIdProvider
 import com.stationly.mobile.util.ModeIconCache
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -26,14 +25,16 @@ import org.junit.Test
  * are still out there, so `NotificationPermissionStore` has to keep reading the
  * name v1 used whether or not v1's code still exists to be compared with.
  *
- * The other two halves are NOT historical. `DeviceIdProvider` and
- * `ModeIconCache` survived the cutover because the FCM registrar and the
- * home-screen widget still use them, so both are live contracts between two
- * live implementations until EPIC-04 and EPIC-05 retire them.
+ * `ModeIconCache` is the one live two-sided contract left: the home-screen
+ * widget still reads its PNGs, so v1's cache and the shared UI's have to agree
+ * about a directory and a filename until EPIC-05 retires one of them.
+ * `DeviceIdProvider` was the other, and AV2-4.4 deleted it — its assertion
+ * below is now one-sided, against the names on disk rather than against a second
+ * implementation.
  *
  * The failures this catches are all silent:
  *
- * - Change `DeviceIdProvider`'s preferences file and every v1 user opening the
+ * - Change `DeviceIdentity`'s preferences file and every v1 user opening the
  *   shared UI is issued a **new device id**. The backend keys its `sessions` map
  *   by that id and releases a station's subscription only when the last device
  *   signs out, so the old session becomes a ghost that logout can never clear —
@@ -56,20 +57,18 @@ import org.junit.Test
 class V1V2StorageContractTest {
 
     @Test
-    fun `both device identities read the same preferences file and key`() {
-        assertEquals(
-            "the SharedPreferences file name drifted between v1 and the shared UI",
-            constant(DeviceIdProvider::class.java, "PREFS"),
-            constant(DeviceIdentity::class.java, "PREFS"),
-        )
-        assertEquals(
-            "the device-id key drifted between v1 and the shared UI",
-            constant(DeviceIdProvider::class.java, "KEY"),
-            constant(DeviceIdentity::class.java, "KEY"),
-        )
-        // Spelled out as well as compared, so a change to BOTH sides at once —
-        // which would keep them agreeing with each other while abandoning every
-        // id already on disk — still fails.
+    fun `the device id is read from where v1 left it`() {
+        // v1's half of this comparison — `DeviceIdProvider` — was deleted in
+        // AV2-4.4, so this is now one-sided, the same shape as the notification
+        // assertion below and for the same reason. The data did not go anywhere:
+        // every install that has ever run this app has an id under these names,
+        // and the backend keys its `sessions` map by it.
+        //
+        // The two objects agreed, which is why deleting one was safe. Keeping
+        // both was not: each could MINT an id, on a path (logout) that runs
+        // while the app is being torn down, and a second id means a session no
+        // logout can ever release — a ghost holding station subscriptions for a
+        // device that does not exist. iOS lost two days to that exact shape.
         assertEquals("StationlyDevice", constant(DeviceIdentity::class.java, "PREFS"))
         assertEquals("device_id", constant(DeviceIdentity::class.java, "KEY"))
     }

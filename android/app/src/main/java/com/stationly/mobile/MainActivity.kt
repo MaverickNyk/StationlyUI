@@ -19,6 +19,7 @@ import com.stationly.app.AndroidPlatformAuthProvider
 import com.stationly.app.App
 import com.stationly.core.model.deeplink.DeepLinkRoute
 import com.stationly.core.model.deeplink.parseDeepLink
+import com.stationly.mobile.service.ActivityUploadWorker
 import com.stationly.mobile.service.UserSyncCoordinator
 import com.stationly.mobile.ui.common.StagingBanner
 import com.stationly.mobile.widget.WidgetConfigureActivity
@@ -195,6 +196,33 @@ class MainActivity : ComponentActivity() {
         // prefs read and answers a different question — does FCM still think
         // this device wants what it is being sent? See its KDoc.
         UserSyncCoordinator.reconcileTopics()
+        // The activity queue's safety net for a device whose nightly work never
+        // runs — an OEM battery manager, or a phone that is never on a network
+        // during the flex window. Reads one integer out of SQLite on a healthy
+        // device and returns. See `ActivityUploadWorker`.
+        ActivityUploadWorker.flushIfStaleOnForeground()
+    }
+
+    /**
+     * Get the user's last board change off the device before it stops being
+     * running.
+     *
+     * Board pushes are debounced by 2.5 seconds to collapse a burst — ticking
+     * four lines at one station is one save and one write — and an app killed
+     * inside that window loses it. iOS flushes on `scenePhase` leaving active
+     * (`ActivityBridge`); Android had nothing, so a user who added a board and
+     * immediately swiped the app away kept it locally and never told the
+     * account. It would come back on the next EDIT, because the payload is a
+     * full replacement — and until then their other device does not have it.
+     *
+     * Free when there is nothing pending: `BoardPushGate` counts user changes
+     * against the last accepted write, so a flush with an empty gate makes no
+     * request at all. Which is why this can sit on `onStop`, where it also fires
+     * for the widget configuration Activity opening in front of this one.
+     */
+    override fun onStop() {
+        super.onStop()
+        UserSyncCoordinator.flushPendingBoardWrite()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

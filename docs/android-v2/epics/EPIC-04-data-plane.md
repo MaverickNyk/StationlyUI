@@ -560,37 +560,126 @@ is also a topic this device will not subscribe to.
 
 ---
 
-## AV2-4.4 — Sessions and activity · `M` · Backlog
+## AV2-4.4 — Sessions and activity · `M` · Review (S016)
 
 **Depends on:** AV2-4.3 **Files:** device registration, WorkManager
 
 ### Tasks
-- [ ] **a.** Device registration and session records against `/device/register`.
-      Needs the real `DeviceIdentity` from AV2-3.2.
-- [ ] **b.** `stateRev` read budget wiring — observed rev 0 means FETCH, and
-      there are five bump sites, not three.
-- [ ] **c.** Activity trail upload on WorkManager. `work-runtime-ktx` is already
-      a dependency. iOS drives this from `ActivityUploadScheduler.swift`.
-- [ ] **d.** `ActivityEventEntity` must survive `clearAllData()` — the events
-      worth having most are the ones around an auth change, and a queue emptied
-      by the event it is recording can never report it. `clearAllData` names its
-      tables explicitly; keep it that way.
-- [ ] **e.** **Write `ACCOUNT_REMOVED_FLAG` from Android.** The shared UI has the
-      entire receiving end already — `UserStateSync.ACCOUNT_REMOVED_FLAG`, read
-      by `LoginViewModel`, rendered by `LoginScreen` — and the only writer is
-      `iosMain`'s `UserSyncBridge`. Android's writer was v1's
-      `UserSyncCoordinator`, into storage that only v1's deleted `AppNavigation`
-      read, so AV2-3.5 left Android silently without it. Today a user whose
-      account is deleted from another device is returned to the login screen
-      with no explanation at all. The flag is durable and common; this is a
-      writer, not a feature.
+- [x] **a.** Device registration and session records. *(Already running, from
+      the shared `SummaryViewModel.registerDeviceSession()` plus the login path,
+      both carrying the real `DeviceIdentity`. The story named `/device/register`
+      and that is the wrong endpoint for Android — see the findings.)*
+- [x] **b.** `stateRev` read budget wiring. *(Arrived with AV2-4.3:
+      `reconcileBoards` carries the gate, `pushBoards` stamps it, and the FCM
+      push's `rev` is now threaded through so a push-triggered reconcile skips
+      the `GET /user/state/rev` round trip entirely.)*
+- [x] **c.** Activity trail upload on WorkManager. *(`ActivityUploadWorker` —
+      nightly, plus the foreground staleness net. Android had NO driver at all;
+      see the findings.)*
+- [x] **d.** `ActivityEventEntity` must survive `clearAllData()`. *(It already
+      did, by omission. Now pinned by a test, because "survives by omission" is
+      broken by ADDING a line, which is what the next person adding a table
+      does.)*
+- [x] **e.** **Write `ACCOUNT_REMOVED_FLAG` from Android.** *(Closed early in
+      AV2-4.1 — it lived in the same file as that story's task (f).)*
 
 ### Acceptance criteria
-- [ ] An Android device appears in the device list.
-- [ ] Deleting the account from another device returns this one to login **with
-      the account-removed notice**, not silently.
-- [ ] Logging out releases its subscriptions — no ghost sessions.
-- [ ] The activity queue survives a logout and uploads under the next uid.
+- [x] An Android device appears in the device list. *(Code path verified end to
+      end; not re-checked on hardware this session — AV2-3.2's device pass
+      confirmed the id survives a crash, force-stop, update and sign-out.)*
+- [x] Deleting the account from another device returns this one to login **with
+      the account-removed notice**, not silently. *(AV2-4.1. Still needs the
+      two-device check.)*
+- [x] Logging out releases its subscriptions — no ghost sessions. *(`/user/logout`
+      carries the device id, and the id can no longer be minted twice — see the
+      findings. Topics are released off the ledger now, AV2-4.2.)*
+- [x] The activity queue survives a logout and uploads under the next uid.
+      *(`ActivityQueueSurvivalTest`, both sides of the session boundary.)*
 
-### Handoff notes
-_(none yet)_
+### Findings
+
+#### Android has never uploaded a single activity event
+
+`ActivityUploader` is shared, complete, and has been since before this branch:
+batching, the three-outcome response handling, the queue cap, the staleness
+fallback. What it has never had on Android is anything to **call** it. iOS drives
+it from `ActivityUploadScheduler` (a `BGProcessingTask` at 03:00 on a charger)
+and from `uploadActivityIfStale()` on foreground. Android had neither — so every
+event `ActivityLog.record` wrote went into `ActivityEventEntity` and stayed
+there, filling to the cap and dropping its oldest rows, on every Android install
+since the trail shipped.
+
+Nothing failed. There is no error path for a queue nobody drains.
+
+`ActivityUploadWorker` is the driver: a `PeriodicWorkRequest`, 24 hours with a
+six-hour flex window, `CONNECTED` and battery-not-low, first run aimed at 03:00
+local. `KEEP` rather than `REPLACE` on a unique name, because `REPLACE` on every
+cold start pushes the next run a full period into the future *every time the user
+opens the app* — the schedule would exist and never fire.
+
+Not charging-only. iOS requires a charger because its task type does; requiring
+one on Android would mean a phone that only ever charges in the morning never
+reports at all.
+
+#### The story named an iOS endpoint
+
+Task (a) says "session records against `/device/register`". That route registers
+**APNs tokens** — the app's and the widget extension's — onto
+`users/{uid}/devices/{deviceId}`, and it exists because iOS addresses a device by
+APNs token. Android does not have one. Its push address is the FCM token, posted
+by `FcmTokenRegistrar` to `/user/fcm/register`, and its device SESSION record
+comes from `syncProfile(deviceId, deviceInfo)`, which the cutover already put on
+both the login path and the home screen's first authenticated moment.
+
+So the task was done before it was read, by a route the story does not mention.
+Worth writing down rather than silently ticking: the next person to look for
+Android's device registration will otherwise go looking at `/device/register`
+and find nothing.
+
+#### Two objects could mint the device id, and one of them ran during logout
+
+`DeviceIdProvider` (`:android:app`) and `DeviceIdentity` (`:composeApp`) read the
+same preferences file and the same key — `V1V2StorageContractTest` existed
+precisely to keep them agreeing — but **both could also generate one**. The
+generator is the dangerous half: this id is how the backend tells devices apart
+in its `sessions` map, and a station's subscription is released only when the
+last device signs out. An id that changes leaves a session no logout can ever
+clear, holding subscriptions for a device that does not exist. iOS lost two days
+to exactly this.
+
+The surviving caller of the old one was `FirebaseAuthManager.logout`, which runs
+while the app is being torn down, with `apply()` where the other uses `commit()`.
+`DeviceIdProvider` is deleted; the contract test is now one-sided against the
+names on disk, which is the shape it already uses for the notification flag.
+
+#### Android could lose a board change by being swiped away
+
+Board pushes are debounced 2.5 seconds so that ticking four lines at one station
+is one write. iOS flushes on scene-phase-leaving-active; Android flushed nowhere,
+so a user who added a board and immediately swiped the app away kept it locally
+and never told the account — recovering only on their next edit, and until then
+their other device simply does not have it.
+
+`MainActivity.onStop` now flushes, on the app-level scope rather than the
+Activity's, because the point is to outlive the thing that triggered it. Free
+when nothing is pending: `BoardPushGate` makes a flush with an empty gate cost no
+request at all, which is what lets it sit on a hook that also fires when the
+widget configuration Activity opens in front of the app.
+
+### Handoff notes — S016, 2026-09-11
+
+**What needs a device**, and none of it is reachable from adb alone:
+- Two phones, to see the account-removed notice arrive (AV2-4.1's writer, this
+  story's criterion).
+- `adb shell dumpsys jobscheduler | grep stationly` to confirm the periodic work
+  is registered after a cold start. The run itself is overnight; force it with
+  `adb shell am broadcast -a "androidx.work.diagnostics.REQUEST_DIAGNOSTICS" -p com.stationly.mobile`
+  to dump WorkManager's view, or trust the foreground staleness net.
+- The device list on another signed-in client, to see this phone appear.
+
+**The activity trail is now a live wire that has never carried current.** The
+first nightly run on a real device will upload a queue that may have been
+accumulating for months, in up to three batches of 200. The uploader caps it
+(`MAX_BATCHES_PER_FLUSH`), so a long backlog drains over several nights rather
+than in one request — that is deliberate, and it is worth knowing before somebody
+reads the first night's numbers as "the trail is broken".
