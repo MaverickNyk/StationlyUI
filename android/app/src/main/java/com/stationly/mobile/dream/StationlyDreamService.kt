@@ -1,11 +1,9 @@
 package com.stationly.mobile.dream
 
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.service.dreams.DreamService
 import androidx.compose.ui.platform.ComposeView
+import com.stationly.app.ui.dream.DreamHost
+import com.stationly.app.ui.theme.StationlyThemeHost
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -17,8 +15,6 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Stationly Android screensaver (Daydream).
@@ -33,29 +29,22 @@ import kotlinx.coroutines.flow.asStateFlow
  * owners on the ComposeView — that's what makes coroutines + Flow + animations
  * work inside the dream.
  *
- * Live updates: registers a BroadcastReceiver for [ACTION_DREAM_REFRESH]
- * — our own action, distinct from the widget's component-targeted broadcast.
- * FCM lands → predictions written to SQL → FCM service fires the dream
- * broadcast → [refreshTick] increments → composables observing it re-read
- * SQL and re-render.
+ * ## What it hosts, since AV2-6.2
+ * `:composeApp`'s `DreamHost` — the same screensaver iOS runs, reading the v2
+ * board model. v1's copy in this package rendered one selection; the shared one
+ * renders the whole board, filters applied, which is what the rest of the app
+ * has shown since the cutover.
+ *
+ * Live updates need no plumbing here any more. The shared host collects
+ * `FreshDataNotifier.events`, the process-wide flow that the FCM service already
+ * emits to after writing predictions to SQL — so the dream refreshes from the
+ * same signal as the home screen and the widget, rather than from a broadcast
+ * that existed only because v1's dream could not hear it.
  */
 class StationlyDreamService : DreamService(),
     LifecycleOwner,
     ViewModelStoreOwner,
     SavedStateRegistryOwner {
-
-    companion object {
-        /**
-         * Broadcast action the FCM service fires after writing fresh predictions /
-         * line status to SQL. The dream subscribes to this to trigger a re-read.
-         *
-         * Why not reuse ACTION_UPDATE_WIDGET? That intent is dispatched with
-         * `setComponent(...DepartureWidgetProvider)` — component-targeted intents
-         * only reach the named receiver, so a dynamically-registered listener in
-         * a different component (like us) would never see them.
-         */
-        const val ACTION_DREAM_REFRESH = "com.stationly.mobile.ACTION_DREAM_REFRESH"
-    }
 
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val savedStateController = SavedStateRegistryController.create(this)
@@ -64,17 +53,6 @@ class StationlyDreamService : DreamService(),
     override val lifecycle: Lifecycle get() = lifecycleRegistry
     override val savedStateRegistry: SavedStateRegistry get() = savedStateController.savedStateRegistry
     override val viewModelStore: ViewModelStore get() = store
-
-    /** Monotonic tick incremented whenever FCM lands a new prediction. */
-    private val _refreshTick = MutableStateFlow(0L)
-    val refreshTick = _refreshTick.asStateFlow()
-
-    private val updateReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            android.util.Log.d("Dream", "Dream refresh broadcast received → re-reading SQL")
-            _refreshTick.value = System.currentTimeMillis()
-        }
-    }
 
     override fun onCreate() {
         super.onCreate()
@@ -115,18 +93,13 @@ class StationlyDreamService : DreamService(),
             }
         }
 
-        // Listen for the dedicated dream-refresh broadcast that the FCM service
-        // fires after writing fresh predictions / line status to SQL. (We can't
-        // reuse the widget broadcast — it's component-targeted to the widget
-        // provider and never reaches dynamically-registered receivers.)
-        val filter = IntentFilter(ACTION_DREAM_REFRESH)
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(updateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            registerReceiver(updateReceiver, filter)
-        }
-        android.util.Log.d("Dream", "Dream attached — listening for $ACTION_DREAM_REFRESH")
+        // No broadcast receiver any more. The shared `DreamHost` collects
+        // `com.stationly.core.util.FreshDataNotifier.events` — the same flow the
+        // home screen and the widget refresh from, in this same process — so a
+        // push that writes predictions reaches the dream directly. The old
+        // ACTION_DREAM_REFRESH broadcast existed because v1's dream had no way
+        // to hear the shared flow: it was a second delivery mechanism for one
+        // signal, and two mechanisms for one signal is how they stop agreeing.
 
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
@@ -136,7 +109,15 @@ class StationlyDreamService : DreamService(),
             setViewTreeViewModelStoreOwner(this@StationlyDreamService)
             setViewTreeSavedStateRegistryOwner(this@StationlyDreamService)
             setContent {
-                DreamHost(refreshTick = refreshTick)
+                // The SHARED dream, as of AV2-6.2. `StationlyThemeHost` is what
+                // provides `LocalAppTheme`, which is how the dream's SYSTEM
+                // theme setting resolves to the APP's choice rather than to the
+                // device's — the same precedence v1 had, now expressed by
+                // composing the app's theme host rather than by reading a
+                // preferences file twice.
+                StationlyThemeHost {
+                    DreamHost(onExit = { finish() })
+                }
             }
         }
         setContentView(composeView)
@@ -144,7 +125,6 @@ class StationlyDreamService : DreamService(),
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        runCatching { unregisterReceiver(updateReceiver) }
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
     }
