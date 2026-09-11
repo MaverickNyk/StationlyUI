@@ -241,7 +241,7 @@ gone. Screenshots before and after are in the session scratchpad.
 
 ---
 
-## AV2-4.2 — Topic lifecycle · `L` · Backlog
+## AV2-4.2 — Topic lifecycle · `L` · Review (S016)
 
 **Depends on:** AV2-4.1 **Files:** `StationLifecycleUseCase` callers, `FirebaseAuthManager`, `AndroidNotificationManager`
 
@@ -250,24 +250,134 @@ Topic shapes are **unchanged** between v1 and v2 — `Station_{naptan}` and
 change: who emits them, and how many.
 
 ### Tasks
-- [ ] **a.** Move subscription onto `StationLifecycleUseCase` (`commonMain`).
-- [ ] **b.** Delete v1's parallel paths in `FirebaseAuthManager` and
-      `SelectionViewModel`. Two systems subscribing to the same topics is how a
-      topic gets unsubscribed out from under a board that still needs it.
-- [ ] **c.** Diff against the persisted `StationlyPrefs.fcm_topics` set and
-      subscribe only the difference. Risk R6: on upgrade day every device would
-      otherwise re-subscribe its entire set at once.
-- [ ] **d.** Keep `stationly_all` and its `subscribed_all_topic` guard. It is how
-      `audience: {type:"all"}` pushes fan out with zero Firestore reads.
+- [x] **a.** Move subscription onto `StationLifecycleUseCase` (`commonMain`).
+      *(`topicsFor` / `topicsToRelease` / `subscribeTopicsFor` / `reconcileTopics`
+      — the vocabulary and every emission now start here.)*
+- [x] **b.** Delete v1's parallel paths in `FirebaseAuthManager` and
+      `SelectionViewModel`. *(Both gone. `SelectionViewModel`'s was in
+      `commonMain` and spelled the topic names itself, four lines above a call
+      that spelled them correctly.)*
+- [x] **c.** Diff against the persisted `StationlyPrefs.fcm_topics` set and
+      subscribe only the difference. *(`TopicLedger.plan`, and the diff runs in
+      both directions — see the findings for why one direction alone would have
+      been a new silent bug.)*
+- [x] **d.** Keep `stationly_all` and its `subscribed_all_topic` guard. *(Kept,
+      and given the one event that invalidates it. `BroadcastTopic`.)*
 
 ### Acceptance criteria
-- [ ] Topics are emitted from exactly one place.
-- [ ] Removing one board of two at a shared station does **not** unsubscribe the
-      station topic the other still needs.
-- [ ] Upgrade is a diff, not a flood.
+- [x] Topics are emitted from exactly one place. *(`StationLifecycleUseCase` for
+      every board topic; `BroadcastTopic` for the one topic that is not a board.
+      Nothing else reaches `FirebaseMessaging.subscribeToTopic`.)*
+- [x] Removing one board of two at a shared station does **not** unsubscribe the
+      station topic the other still needs. *(Was already true. It is now pinned
+      against the SHIPPING rule: `V1GoldenTest` used to re-implement it in the
+      test file, so the v1 fixtures were asserting a restatement.)*
+- [x] Upgrade is a diff, not a flood. *(An upgrading device arrives with its
+      ledger already written under the same key by the same class, so the first
+      reconcile has nothing to do. `TopicLedgerTest`.)*
 
-### Handoff notes
-_(none yet)_
+### Findings
+
+#### The ledger only ever grew, and the story's own task (c) would have weaponised it
+
+`AndroidNotificationManager.subscribeToTopics` added to `StationlyPrefs.fcm_topics`
+and `unsubscribeFromTopics` **did not remove from it**. Harmless while nothing
+read it — it is only a list — and a live bug the moment anything diffs against
+it, which is exactly what task (c) asks for. A topic subscribed, removed, then
+re-added would read as "already subscribed", get skipped, and that board would
+never receive another push. No error, no log; it looks like a quiet line.
+
+So the ledger had to become honest before the diff could be added, and both
+halves shipped in the same change. The ledger is now maintained on every path,
+and dropped from **only on success** — a failed unsubscribe leaves a live
+subscription whose ledger row is the only thing that will ever find it again.
+
+#### The reconcile has to run in both directions, and an empty list is not an answer
+
+`TopicLedger.plan(ledger, desired)` subscribes what is missing and releases what
+is stale. Releasing alone would have been the obvious reading of task (c), and
+it would have missed the case where the ledger is BEHIND reality — a board added
+on another device, or a subscription lost with a rotated token.
+
+The dangerous input is the empty one. `getAllSelections()` answers empty during a
+login restore, in the gap between a wipe and its refill, and before the database
+has opened — and each of those means "I do not know", not "this user has no
+boards". Reading it as a delete would unsubscribe a working device in the middle
+of signing in. So an empty `desired` changes nothing, and the two operations that
+genuinely mean it (`unsubscribeFromTopics`, `clearAllTopics`) say so explicitly.
+Same rule as `Board.isUsable`, for the same reason, and it is the first test in
+`TopicLedgerTest`.
+
+#### A token rotation silently dropped `stationly_all`, forever
+
+Found while doing task (d) rather than looked for. FCM topic subscriptions belong
+to the **token**, not to the app — which is why `onNewToken` re-subscribes the
+board topics. `stationly_all` was not in that list: it is subscribed once per
+install by `StationlyApplication`, guarded by a `subscribed_all_topic` boolean
+that stays `true` forever after. So a rotated token left the device unsubscribed
+from the global broadcast topic, with a flag saying it was subscribed and nothing
+anywhere to notice. Every `audience: {type:"all"}` push, gone, for that install.
+
+The guard is still right — it is what keeps cold launch off the network. It just
+needed the one event that invalidates it to lower it. `BroadcastTopic` now owns
+the topic name, the guard key, and both paths; it was spelled out in two files
+by the time this session had finished adding the second one.
+
+#### `onNewToken` re-subscribed the LEDGER, which carries a leak across the one event that would have ended it
+
+It now re-derives from the selections. On a healthy device that is the same set;
+when it differs it is because a subscription outlived its board, and a rotation
+is the one moment those genuinely disappear on their own.
+
+#### `cleanupAll` was protecting a mechanism that no longer exists
+
+Its comment said topic collection must happen before `clearAll()` "so the
+unsubscription queue written by `unsubscribeFromTopics()` is not immediately
+wiped" — a queue iOS wrote into `NSUserDefaults` for a Swift bridge to flush.
+That bridge is gone (iOS does not link FirebaseMessaging any more; its topics are
+live-stream subscriptions). Meanwhile the ordering cost Android the thing it
+does have: the ledger lives in the prefs file `storageManager.clearAll()` wipes,
+so by the time the old code asked, any subscription not derivable from the
+selections was already unnameable.
+
+Now `clearAllTopics()` runs first, off the platform's own record. Same set on a
+healthy device, strictly larger on one that has been running for a year — and the
+rows that differ are exactly the ones that must not be left on a phone somebody
+else is about to sign into. `FirebaseAuthManager.logout` had its own copy of the
+derive-from-selections loop (and a fourth copy of the topic names); it calls the
+same one line now.
+
+### What is NOT covered by a test
+
+`AndroidNotificationManager`'s ledger IO — the `SharedPreferences` read/write
+around `TopicLedger.plan` — has no test, because `:core`'s `androidUnitTest` has
+no Robolectric and `getSharedPreferences` throws in a plain JVM test. The rules
+are all pure and all tested; what is untested is a ten-line wrapper. Adding
+Robolectric to the gate for it is a bigger change than the risk justifies, but
+it is the reason the ledger discipline is written down in the class KDoc rather
+than left to be inferred.
+
+### Handoff notes — S016, 2026-09-11
+
+**The reconcile runs on every foreground** (`MainActivity.onResume` →
+`UserSyncCoordinator.reconcileTopics()`), deliberately NOT inside the profile
+reconcile next to it: that one costs a Firestore read and is debounced to 15
+minutes, this one costs a prefs read and answers a different question. It also
+runs at the tail of a successful profile reconcile, where the board list may have
+just been rewritten from the cloud.
+
+**On the device, this is verifiable in one command.** The two stale topics
+AV2-4.1 found should now disappear on the next app open:
+
+```bash
+adb shell run-as com.stationly.mobile cat shared_prefs/StationlyPrefs.xml | grep -A20 fcm_topics
+adb logcat -s NotificationManager:D BroadcastTopic:D   # "reconcile: +0 -2 (ledger 6 → 4)"
+```
+
+**Not yet done, and it belongs to AV2-4.3:** the desired set is derived from
+`UserSelectionEntity`. Once Android believes `boards`, it should be derived from
+the same list the boards array folds to — `Board.toSelections()` — or the two
+will disagree the first time a board exists in the cloud that has no local row.
 
 ---
 

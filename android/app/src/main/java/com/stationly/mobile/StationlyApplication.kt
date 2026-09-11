@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import com.stationly.core.platform.AppEnvironment
 import com.stationly.core.platform.Platform
 import com.stationly.mobile.service.AuthLog
+import com.stationly.mobile.service.BroadcastTopic
 import com.stationly.mobile.service.FcmTokenRegistrar
 import com.stationly.mobile.service.StationlyNotificationChannels
 import com.stationly.mobile.widget.DepartureWidgetProvider
@@ -37,18 +38,11 @@ class StationlyApplication : Application() {
         // user signs in — FcmTokenRegistrar bails out when no auth.
         FcmTokenRegistrar.ensureRegistered(this)
 
-        // Subscribe to the global broadcast topic. Powers
-        // `audience: { type: "all" }` admin pushes WITHOUT any
-        // Firestore reads — FCM handles the fan-out internally to every
-        // device subscribed. SharedPrefs tracks the subscription so we
-        // only hit the FCM SDK once per cold-launch (after a successful
-        // subscribe, the IO is local to the GMS process).
-        val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-        if (!prefs.getBoolean("subscribed_all_topic", false)) {
-            com.google.firebase.messaging.FirebaseMessaging.getInstance()
-                .subscribeToTopic("stationly_all")
-                .addOnSuccessListener { prefs.edit().putBoolean("subscribed_all_topic", true).apply() }
-        }
+        // Subscribe to the global broadcast topic, once per install. The topic,
+        // its guard and the one event that invalidates the guard all live in
+        // `BroadcastTopic` now — they were spelled out here and, after AV2-4.2
+        // added the token-rotation re-subscribe, in `FcmMessagingService` too.
+        BroadcastTopic.ensureSubscribed(this)
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_USER_PRESENT)

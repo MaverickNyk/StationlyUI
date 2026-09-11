@@ -72,6 +72,41 @@ interface NotificationManager {
     suspend fun handleNotification(payload: Map<String, String>)
     suspend fun registerDevice(): String
     suspend fun clearAllTopics()
+
+    /**
+     * Make this device's subscriptions equal [desired], and nothing else.
+     *
+     * The add/remove calls above are EDITS — "the user just added this board" —
+     * and they are correct for what they do. This is the STATEMENT of the whole
+     * set, for the places that know the whole set: app foreground, and the end
+     * of a cross-device reconcile. It exists because edits leak. A board removed
+     * while the app was killed, a wipe that cleared the ledger between the
+     * unsubscribe and the write, a v1-era path that deleted a selection without
+     * telling anybody — each leaves a live subscription with nothing behind it,
+     * and FCM has no "what am I subscribed to" call to discover them with. The
+     * device on 2026-09-06 was taking pushes for two stations it had not tracked
+     * for weeks (AV2-4.1's findings).
+     *
+     * ## Empty is never an instruction to unsubscribe
+     * An empty [desired] means "I do not know", not "the user has no boards" —
+     * `getAllSelections()` answers empty during a login restore and for the
+     * moment between a wipe and its refill, and the honest answer there is to
+     * leave the subscriptions alone. Deleting the last board goes through
+     * [unsubscribeFromTopics]; a logout goes through [clearAllTopics]. Both say
+     * so explicitly, which is the difference. Same rule as `Board.isUsable`, and
+     * the same reason.
+     *
+     * ## The default is the honest one for a platform with no ledger
+     * iOS keeps no record of what it asked for: a topic there is a live stream
+     * subscription, re-derived from the boards on every connect, so there is
+     * nothing to drift and nothing to repair. Subscribing the desired set is
+     * exactly right for it and costs one idempotent call. Android overrides this
+     * because its subscriptions outlive the process, the app and the account.
+     */
+    suspend fun reconcileTopics(desired: List<String>) {
+        if (desired.isEmpty()) return
+        subscribeToTopics(desired)
+    }
 }
 
 interface StorageManager {

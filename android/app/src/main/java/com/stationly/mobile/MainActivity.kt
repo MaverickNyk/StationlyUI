@@ -190,6 +190,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         UserSyncCoordinator.reconcile(this)
+        // Cheap, and deliberately NOT inside the reconcile above: that one costs
+        // a Firestore read and is debounced to 15 minutes, this one costs a
+        // prefs read and answers a different question — does FCM still think
+        // this device wants what it is being sent? See its KDoc.
+        UserSyncCoordinator.reconcileTopics()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

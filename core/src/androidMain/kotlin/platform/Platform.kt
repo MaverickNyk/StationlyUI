@@ -50,38 +50,76 @@ class AndroidWidgetManager(
     }
 }
 
-// Android NotificationManager implementation
+/**
+ * Android's FCM topics, and the ledger that is the only record of them.
+ *
+ * ## Why there is a ledger at all
+ * FCM has no "what is this device subscribed to" call. The subscription lives in
+ * the Google Play services process, survives the app being killed, updated and
+ * uninstalled-with-backup, and outlives the account that asked for it. So the
+ * only way to know what we asked for is to write it down, and the only way for
+ * the written record to be worth anything is for EVERY path that changes a
+ * subscription to maintain it. That is this class, and nothing else should
+ * reach `FirebaseMessaging.subscribeToTopic` directly.
+ *
+ * Two deliberate exceptions, both documented at their call sites:
+ *  - `StationlyApplication` subscribes `stationly_all`, tracked by its own
+ *    boolean because it is not a board and must never be reconciled away, and
+ *  - `FcmMessagingService.onNewToken` re-sends the ledger after a token
+ *    rotation, because the new token starts subscribed to nothing.
+ *
+ * ## The bug this class shipped with
+ * [subscribeToTopics] added to the ledger and [unsubscribeFromTopics] did not
+ * remove from it, so the record only ever grew. It read as harmless — it is only
+ * a list — right up until something diffs against it, at which point a topic
+ * that was subscribed, removed and re-added is "already subscribed" and the
+ * board it belongs to silently never receives another push.
+ */
 class AndroidNotificationManager(
     private val context: Context
 ) : NotificationManager {
-    
+
     override suspend fun subscribeToTopics(topics: List<String>) {
-        val fcm = FirebaseMessaging.getInstance()
-        val prefs = context.getSharedPreferences("StationlyPrefs", android.content.Context.MODE_PRIVATE)
-        val stored = (prefs.getStringSet("fcm_topics", emptySet()) ?: emptySet()).toMutableSet()
-        topics.forEach { topic ->
-            try {
-                fcm.subscribeToTopic(topic).await()
-                stored.add(topic)
-                android.util.Log.d("NotificationManager", "Successfully subscribed to $topic")
-            } catch (e: Exception) {
-                android.util.Log.e("NotificationManager", "Failed to subscribe to $topic", e)
-            }
-        }
-        prefs.edit().putStringSet("fcm_topics", stored).apply()
+        if (topics.isEmpty()) return
+        val added = topics.filter { subscribe(it) }
+        if (added.isNotEmpty()) writeLedger(readLedger() + added)
     }
-    
+
     override suspend fun unsubscribeFromTopics(topics: List<String>) {
-        val fcm = FirebaseMessaging.getInstance()
-        topics.forEach { topic ->
-            try {
-                fcm.unsubscribeFromTopic(topic).await()
-            } catch (e: Exception) {
-                android.util.Log.e("NotificationManager", "Failed to unsubscribe from $topic", e)
-            }
-        }
+        if (topics.isEmpty()) return
+        // Dropped from the ledger only on success. A failed unsubscribe leaves a
+        // live subscription behind, and the ledger entry is the only thing that
+        // will ever find it again — the next reconcile sees a topic no board
+        // wants and retries. Forgetting it here is how a leak becomes permanent.
+        val removed = topics.filter { unsubscribe(it) }
+        if (removed.isNotEmpty()) writeLedger(readLedger() - removed.toSet())
     }
-    
+
+    /**
+     * The whole set, stated. See [NotificationManager.reconcileTopics].
+     *
+     * Cheap when there is nothing to do, which is almost always: two set
+     * differences over a `SharedPreferences` read, and no FCM call at all. That
+     * matters more than it sounds — this runs on every foreground, and it is
+     * also what makes upgrade day a no-op. A v1 install arrives with its ledger
+     * already written by this same class under this same key, so the diff is
+     * empty and nobody re-subscribes anything (risk R6).
+     */
+    override suspend fun reconcileTopics(desired: List<String>) {
+        val ledger = readLedger()
+        val plan = TopicLedger.plan(ledger, desired)
+        if (plan.isEmpty) return
+
+        android.util.Log.d(
+            TAG,
+            "reconcile: +${plan.subscribe.size} -${plan.unsubscribe.size} " +
+                "(ledger ${ledger.size} → ${desired.distinct().size})",
+        )
+        val added = plan.subscribe.filter { subscribe(it) }
+        val removed = plan.unsubscribe.filter { unsubscribe(it) }
+        writeLedger(readLedger() + added - removed.toSet())
+    }
+
     override suspend fun handleNotification(payload: Map<String, String>) {
         // This would be called from FcmMessagingService
         // Would trigger ProcessPredictionsUseCase
@@ -95,14 +133,66 @@ class AndroidNotificationManager(
         }
     }
 
+    /**
+     * Everything, gone: sign-out, account deletion, forced logout.
+     *
+     * Deliberately driven off the LEDGER rather than off the selections. They
+     * are usually the same set, and when they are not it is because a
+     * subscription outlived its board — exactly the row that must not be left
+     * behind on a device somebody else is about to sign into.
+     */
     override suspend fun clearAllTopics() {
-        val fcm = FirebaseMessaging.getInstance()
-        // Android FCM doesn't expose a "get all subscriptions" API; tracked topics
-        // are stored in shared prefs under "fcm_topics" — unsubscribe each.
-        val prefs = context.getSharedPreferences("StationlyPrefs", android.content.Context.MODE_PRIVATE)
-        val topics = prefs.getStringSet("fcm_topics", emptySet()) ?: emptySet()
-        topics.forEach { runCatching { fcm.unsubscribeFromTopic(it).await() } }
-        prefs.edit().remove("fcm_topics").apply()
+        val topics = readLedger()
+        topics.forEach { unsubscribe(it) }
+        prefs().edit().remove(KEY_TOPICS).apply()
+    }
+
+    // ── the ledger ───────────────────────────────────────────────────────────
+
+    private fun prefs(): SharedPreferences =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    /**
+     * A COPY. `getStringSet` hands back the live set held by the
+     * `SharedPreferences` instance, and mutating it (or holding it across an
+     * `apply`) is documented as undefined.
+     */
+    private fun readLedger(): Set<String> =
+        (prefs().getStringSet(KEY_TOPICS, emptySet()) ?: emptySet()).toSet()
+
+    private fun writeLedger(topics: Set<String>) {
+        prefs().edit().putStringSet(KEY_TOPICS, HashSet(topics)).apply()
+    }
+
+    private suspend fun subscribe(topic: String): Boolean = try {
+        FirebaseMessaging.getInstance().subscribeToTopic(topic).await()
+        android.util.Log.d(TAG, "subscribed $topic")
+        true
+    } catch (e: Exception) {
+        android.util.Log.e(TAG, "Failed to subscribe to $topic", e)
+        false
+    }
+
+    private suspend fun unsubscribe(topic: String): Boolean = try {
+        FirebaseMessaging.getInstance().unsubscribeFromTopic(topic).await()
+        android.util.Log.d(TAG, "unsubscribed $topic")
+        true
+    } catch (e: Exception) {
+        android.util.Log.e(TAG, "Failed to unsubscribe from $topic", e)
+        false
+    }
+
+    private companion object {
+        const val TAG = "NotificationManager"
+        const val PREFS = "StationlyPrefs"
+
+        /**
+         * The key v1 writes, unchanged and load-bearing. An upgrading device
+         * carries its subscriptions in here; renaming it would make every v1
+         * install look unsubscribed, and the first reconcile would re-subscribe
+         * the lot on upgrade day.
+         */
+        const val KEY_TOPICS = "fcm_topics"
     }
 }
 

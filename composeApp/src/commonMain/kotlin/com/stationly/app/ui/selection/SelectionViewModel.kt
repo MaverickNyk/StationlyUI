@@ -1342,15 +1342,17 @@ class SelectionViewModel(
                 // 39 inbound and 639 inbound resolve to 490008805N — so a topic
                 // per board would re-subscribe the same topic repeatedly and, on
                 // FCM, wake us once per board for a single message.
-                val newTopics = newSelections.flatMap {
-                    listOf("Station_${it.station}", "LineStatus_${it.mode}_${it.line}")
-                }.distinct()
-                if (newTopics.isNotEmpty()) {
-                    try {
-                        Platform.notificationManager.subscribeToTopics(newTopics)
-                    } catch (_: Exception) {
-                        // Best-effort; completeSetupAsync re-subscribes below.
-                    }
+                //
+                // Through the use case rather than straight to the platform: the
+                // topic NAMES are spelled in exactly one place now
+                // (`StationLifecycleUseCase.topicsFor`), because a subscribe that
+                // disagrees with an unsubscribe by one character is a board that
+                // silently never updates again. This call site used to spell them
+                // itself, four lines below a call that spells them correctly.
+                try {
+                    stationLifecycleUseCase.subscribeTopicsFor(newSelections)
+                } catch (_: Exception) {
+                    // Best-effort; completeSetupAsync re-subscribes below.
                 }
                 for (sel in newSelections.reversed()) {
                     stationLifecycleUseCase.completeSetupAsync(sel, subscribeTopics = false)
