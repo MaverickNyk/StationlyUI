@@ -727,13 +727,18 @@ The forced path is the worst of them: it ends a session through
 subscription hold and the device binding survive a logout the server itself
 triggered. §4.2's teardown and §8's `PendingOps` between them close every row.
 
-**Device identity has two implementations, neither in `core`.**
-`android/…/DeviceIdProvider` keeps a UUID in a dedicated `StationlyDevice`
-prefs file and is correct and shipped; `composeApp/…/platform/DeviceIdentity`
-is an `expect object` whose **Android actual is a process-lifetime UUID that
-changes on every launch**. So the shipping app and the shared code disagree
-about what a device id is, while every reader of it (`ActivityLog`,
-`UserStateRepository`, the API layer) sits in `core`.
+**Device identity has ONE implementation, and it is not in `core`.**
+`composeApp/…/platform/DeviceIdentity` is an `expect object` whose Android
+actual keeps a UUID in a dedicated `StationlyDevice` prefs file — the same file
+and key the shipped v1 app wrote, so an upgrading device presents the same
+identity. Every reader of it (`ActivityLog`, `UserStateRepository`, the API
+layer) sits in `core` and is handed the value.
+
+*(Corrected 2026-09-11. This used to describe two implementations — `android/…/DeviceIdProvider`
+alongside `DeviceIdentity`, whose Android actual was once a process-lifetime
+UUID. Both halves are gone: the actual became real in AV2-3.2, and AV2-4.4
+deleted the duplicate. Two objects that can each MINT this id is how a device
+ends up with a session no logout can release.)*
 
 **And one file is dead code that reads as live wiring.**
 `composeApp/…/util/FcmTokenRegistrar` is called from four places, but on iOS

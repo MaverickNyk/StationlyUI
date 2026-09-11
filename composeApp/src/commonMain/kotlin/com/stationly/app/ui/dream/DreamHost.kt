@@ -59,7 +59,10 @@ import kotlinx.coroutines.withContext
  *
  * Refresh model — event-driven, no polling: FCM/refresh writes SQL then
  * emits [FreshDataNotifier]; we re-read SQL on each emission (plus once on
- * entry). Matches Android's ACTION_DREAM_REFRESH broadcast semantics.
+ * entry). **This is Android's refresh path too, since AV2-6.2** — its
+ * `StationlyDreamService` hosts this composable, in the same process the FCM
+ * service emits from, so the `ACTION_DREAM_REFRESH` broadcast this comment used
+ * to point at is deleted. One signal, one delivery.
  */
 @Composable
 fun DreamHost(onExit: () -> Unit) {

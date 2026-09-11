@@ -39,8 +39,12 @@ import Security
 /// simply left as it was and behaviour is exactly what it is today. A bug here
 /// can never make the churn worse than not having it.
 ///
-/// **Android is untouched by all of this** — it has its own `DeviceIdProvider`
-/// backed by a dedicated SharedPreferences file, and shares no code with this.
+/// **Android is untouched by all of this.** It reads the same id through
+/// `DeviceIdentity`'s Android actual, backed by its own `StationlyDevice`
+/// SharedPreferences file, and shares no code with this. (It used to have a
+/// SECOND implementation, `DeviceIdProvider`; AV2-4.4 deleted it, because two
+/// objects that can each MINT this id is how a device ends up with two sessions
+/// the server can never release.)
 enum DeviceIdentityStore {
 
     /// Must match `DeviceIdentity.deviceId()` in `composeApp/iosMain`.
