@@ -48,9 +48,9 @@ roughly one focused hour.
 | Story | Title | Size | Depends on |
 |---|---|---|---|
 | AV2-4.1 | FCM at v2 | L | AV2-3.5 |
-| AV2-4.2 | Topic lifecycle | L | AV2-4.1 |
-| AV2-4.3 | Cloud state dual-write | L | AV2-4.2 |
-| AV2-4.4 | Sessions and activity | M | AV2-4.3 |
+| AV2-4.2 | Topic lifecycle | L | ✅ S016 |
+| AV2-4.3 | Cloud state dual-write | L | ✅ S016 |
+| AV2-4.4 | Sessions and activity | M | ✅ S016 |
 
 ## EPIC-05 — Widget v2 · 16 pts · [detail](epics/EPIC-05-widget.md)
 
@@ -60,31 +60,32 @@ roughly one focused hour.
 |---|---|---|---|
 | AV2-5.1 | Per-instance widget binding | L | AV2-4.3 |
 | AV2-5.2 | In-app widget manager | L | AV2-5.1 |
-| AV2-5.3 | Widget updates and placement | M | AV2-5.1 |
-| AV2-5.4 | Widget guide | M | AV2-5.1, AV2-3.3 |
+| AV2-5.3 | Widget updates and placement | M | ✅ S016 |
+| AV2-5.4 | Widget guide | M | ✅ S016 |
 
 ## EPIC-06 — Daydream · 6 pts · [detail](epics/EPIC-06-dream.md)
 
-> ⚠️ Gated on **Q3**. Confirm Daydream survives into v2 before spending the sessions.
+> ✅ Done, S016. Q3 answered by taking the reversible option — the screensaver is
+> `DreamService`, which is alive and well, not Daydream the VR platform.
 
 | Story | Title | Size | Depends on |
 |---|---|---|---|
-| AV2-6.1 | Real dream actuals | M | AV2-3.2, Q3 |
-| AV2-6.2 | Host the shared dream | M | AV2-6.1 |
+| AV2-6.1 | Real dream actuals | M | ✅ S016 |
+| AV2-6.2 | Host the shared dream | M | ✅ S016 |
 
 ## EPIC-07 — Release surfaces · 10 pts · [detail](epics/EPIC-07-release-surfaces.md)
 
 | Story | Title | Size | Depends on |
 |---|---|---|---|
-| AV2-7.1 | The update gate | M | AV2-3.5 |
-| AV2-7.2 | Config and quotas | L | AV2-3.5 |
-| AV2-7.3 | Support, built and off | S | AV2-3.5 |
+| AV2-7.1 | The update gate | M | ✅ S016 |
+| AV2-7.2 | Config and quotas | L | ✅ S016 |
+| AV2-7.3 | Support, built and off | S | ✅ S016 |
 
 ## EPIC-08 — Rollout · 11 pts · [detail](epics/EPIC-08-rollout.md)
 
 | Story | Title | Size | Depends on |
 |---|---|---|---|
-| AV2-8.1 | Release build integrity | L | all |
+| AV2-8.1 | Release build integrity | L | 🔄 S016, needs a phone |
 | AV2-8.2 | Upgrade verification on hardware | M | AV2-2.2, AV2-8.1 |
 | AV2-8.3 | Ship | M | AV2-8.2 |
 
@@ -99,6 +100,7 @@ Recorded so they are not rediscovered as gaps.
 | Glance widget rewrite | D3 — the RemoteViews provider is tuned and works. Post-launch. |
 | WebSocket live stream on Android | Android has FCM. Porting an iOS workaround for an iOS-only constraint. |
 | Widget refresh budget on Android | `RefreshBudgetStore.android.kt` returns null deliberately. WidgetKit rations timeline builds; AppWidget does not. |
+| Play Billing | Q1 decides the route first. AV2-7.3 deliberately did not add the dependency — adding it pre-empts the decision. |
 | Sign in with Apple on Android | iOS-only surface. `signInWithAppleInteractive` correctly stays unavailable. |
 | Syncing appearance/arrangement state | Decided and reviewed: it is the highest-frequency, lowest-value state in the app. Device-local, per uid. |
-| Enabling the tip jar on Android | D4 — the surface ships built and off. Q1 resolves the policy route separately. |
+| Enabling the tip jar on Android | D4 — the surface ships built and off, and since AV2-7.3 that is a platform capability (`checkoutSupported`) rather than a config flag somebody could flip by accident. Q1 resolves the policy route separately. |

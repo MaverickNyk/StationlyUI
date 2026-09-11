@@ -18,6 +18,128 @@ Template:
 
 ---
 
+## S016 — 2026-09-11 — EPIC-04, EPIC-05, EPIC-06, EPIC-07 · **eleven stories**
+
+**Outcome:** DONE (11 stories to Review; AV2-8.1 In Progress)
+**Gate:** GREEN, including the XCFramework — `commonMain` changed in six places.
+**Commits:** `755273f` `91a51f7`(merge) `b6eacea` `d87e0df` `8116f93` `84b66d5` `bc6fa44`
+
+**Did.** Closed the data plane (4.2, 4.3, 4.4), the widget epic (5.3, 5.4), the
+dream (6.1, 6.2) and the release surfaces (7.1, 7.2, 7.3). Merged `master` in at
+the owner's request — the eight iOS commits that shipped v1.0. Started AV2-8.1.
+
+**Learned — the branch had a board-eating bug and it was structural, not subtle.**
+AV2-4.3 was written as a migration: adopt the boards write, dual-write the legacy
+array, fold on first run. The write had already moved at the cutover. The READ had
+not. Android was writing `boards` and reconciling against `stations`, the backend
+derives neither from the other on a write, and that reconcile **deletes any local
+selection the cloud list does not have**. On an account whose `stations` array is
+empty — every account created on v2 — that is every board the user has, within
+fifteen minutes of adding it, with no error and nothing on screen.
+
+It survived four device passes because the one test account's legacy array
+already described the one board its device held. Nobody had added a board and
+then waited.
+
+**The general shape, and it is the third time this branch has hit it:** the
+cutover moved a writer without moving its reader. AV2-3.5 did it with
+intent-filters, AV2-4.1 with the fan-out key, and this is the same thing at the
+level of a whole array. **Grep for what wrote TO a thing, not just for the thing.**
+
+**Learned — every stale comment on this branch has been load-bearing.** Four
+separate ones this session, each of them the only thing standing between a
+correct-looking file and a live defect:
+
+- `SupportCheckout.android` said an Android build "has neither `enabled` nor a
+  checkout URL". `enabled` comes from the backend. One config change would have
+  shipped a dead money button to Android.
+- `cleanupAll` ordered its teardown around an "unsubscription queue" that iOS
+  deleted when it dropped FirebaseMessaging — while that ordering cost Android
+  the ledger it actually has.
+- `UserStateSync` said "iOS only, deliberately" about a class Android had been
+  calling since the cutover.
+- `DeviceIdProvider` and `DeviceIdentity` were kept in step by a test, which is
+  not the same as being one implementation: both could MINT an id, and one of
+  them ran during logout.
+
+A comment explaining why something is safe is the first thing to rot when the
+thing it describes moves. The fix in three of the four was to make the safety
+STRUCTURAL — a capability, a single owner, one function — rather than to write a
+better comment.
+
+**Learned — "it compiles for Android" is still not "it works on Android", five
+stories later.** `ActivityUploader` was complete and had never been called.
+`Board.widget` was an empty map that two surfaces read as an answer.
+`board.count` counted the wrong map on both platforms. None of them error.
+
+**Next agent needs to know:**
+
+1. **Nothing in this session has been on a phone.** Eleven stories. Each handoff
+   carries its own device script; AV2-4.3's is four lines and would have caught
+   the headline bug in two minutes.
+2. **AV2-8.1 is the live story** and its task (b) is the one that matters: a
+   release build that compiles is not a release build that runs. R8 strips
+   reflection paths and the failures land on screens nobody opened.
+3. **Two config changes are owed to the backend**, both written out in full — the
+   widget guide's Android copy (AV2-5.4) and the About screen's `market://` rate
+   link, which is an iOS bug found by an Android audit (AV2-7.2).
+4. **Q7 is the last open question that changes code.** Every other one is a
+   decision or console work.
+
+---
+
+## S015 — 2026-09-06 — AV2-5.2 rework · **reconstructed, logged S016**
+
+**Outcome:** DONE (never written up at the time)
+**Gate:** not recorded
+**Commits:** `5b5b7c5`
+
+**Did.** Rebuilt the widget flow around where the want forms: "Add to Home
+Screen" on a station's own settings using `requestPinAppWidget`, the two
+settings rows collapsed into one destination, and the launcher-refused fallback
+spelled out in the manager's own copy.
+
+**The owner's report is the finding.** *"I don't see the widget settings yet —
+design a good dedicated flow, it's very different from iPhone."* The settings
+existed; AV2-5.2 had put them in a row called "Widget stations" NEXT TO a row
+called "Widgets" that opened a guide. Anyone looking for widget settings taps
+the obvious row, gets a page explaining what a widget is, and concludes there
+are none. **Two rows for one subject is worse than either alone.**
+
+**Next agent needed to know** (and this reached AV2-5.4 correctly): the guide
+now has nowhere to be reached from on Android, and the row for it belongs INSIDE
+the manager, never back in Home settings.
+
+---
+
+## S014 — 2026-09-06 — device QA + R8 · **reconstructed, logged S016**
+
+**Outcome:** PARTIAL (recorded its R8 result in EPIC-08 and nothing else)
+**Gate:** `:android:app:assembleStagingRelease` PASS — 10m 31s, 6.98 MB
+**Commits:** `ba560e0`
+
+**Did.** First minified build since the cutover — R8 full mode plus
+`shrinkResources` survives the whole Compose Multiplatform graph, which was the
+largest unknown in EPIC-08. Fixed the status bar following the PHONE's dark mode
+rather than the app's: `enableEdgeToEdge()` with no arguments reads the system
+setting, so a light app on a dark phone had white status icons on a cream canvas.
+Predates the cutover — v1 called it the same way.
+
+**Learned — the fix had to move to where the answer is resolved.**
+`enableEdgeToEdge()` runs once in `onCreate` and cannot know that
+`AppTheme.SYSTEM` later resolved to light. `StationlyThemeHost` does, and
+recomposes when the user flips the toggle, so the system-bar appearance is
+applied there in a `SideEffect`.
+
+**Not logged at the time, and one more change went unlogged entirely:** commit
+`fd9a627` (2026-09-08, "android v2 phase") implemented AV2-5.3's targeted widget
+redraw. No session entry, no board move — so S016 opened with the board claiming
+that story was untouched, and re-derived from the code what the board could have
+said. **A change that lands outside a session still has to be written onto the
+board.**
+
+---
+
 ## S013 — 2026-09-06 — AV2-5.1 + AV2-5.2 "the widget knows which station it is"
 
 **Built.** `WidgetBindingStore` (`appWidgetId` → `groupingId`), a configuration

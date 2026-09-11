@@ -137,3 +137,81 @@ new platform has to answer.
 `expect val`. Also rules out deleting `signInWithAppleInteractive` from the
 Android provider: a future screen that forgets to ask should find a failure
 carrying a sentence a user can read, not a `TODO()`.
+
+---
+
+## D7 — `boards` is the one list the client believes; `stations` is a projection
+**2026-09-11 · S016, on the owner's 2026-09-06 direction**
+
+Both platforms WRITE `boards` and READ `boards`. `stations` is written beside it,
+after an accepted boards write and never on its own, as a lossy flat projection
+for a v1 Android device on a shared account.
+
+**Why.** The alternative was already running and it deleted people's boards.
+Android wrote one array and reconciled against the other, and the backend derives
+neither from the other on a write — so a board saved on Android left no trace in
+the list its own next foreground diffed against, and that diff removes anything
+the cloud does not have.
+
+**Rules out.** Reading `stations` as an authority anywhere in the client. The
+legacy `UserSyncRepository.reconcile` is deleted rather than deprecated,
+because a correctly-named function that quietly destroys the user's boards is
+worse than no function.
+
+**The ordering is part of the decision.** The projection goes SECOND.
+`/user/sync/stations` has no staleness check and no empty guard;
+`/user/sync/boards` has both. Writing the projection first would mean a client
+with a momentarily empty database wiping the legacy array while the guarded
+endpoint protected the real one.
+
+**Revisit if.** Q2 answers. Retiring the dual-write is a deletion at one call
+site (`UserStateRepository.pushBoards`) and needs a measured v1 population, not a
+date.
+
+---
+
+## D8 — A platform capability, not a config flag, decides what a platform offers
+**2026-09-11 · S016**
+
+Where a surface needs the platform to be able to DO something, the gate is an
+`expect val` and the config is ANDed with it. `SupportCheckout.checkoutSupported`
+is the first; `InAppUpdate.supported` is the second.
+
+**Why.** `SupportMoneyConfig.enabled` comes from the backend, so it can be turned
+on for every client at once with no release. Since the cutover the shared
+composables ARE the Android app, so one config change would have put the whole
+money surface in front of Android users, attached to a checkout that is a
+deliberate no-op. The old protection was a comment explaining why that could not
+happen, and the comment had been false since AV2-3.5.
+
+**Rules out.** "Ships built and off" meaning a document somebody might edit. Off
+is a property of the platform until the platform can honour it.
+
+**Revisit if.** Q1 answers the Play policy route. The change is then one boolean
+and one function in `SupportCheckout.android.kt`, and no surface has to be found
+again.
+
+---
+
+## D9 — One delivery mechanism per signal
+**2026-09-11 · S016**
+
+A signal has exactly one path to each consumer. Three were removed this session
+for having two:
+
+- the dream's `ACTION_DREAM_REFRESH` broadcast, beside `FreshDataNotifier.events`
+- `DeviceIdProvider`, beside `DeviceIdentity` — both able to MINT the id
+- v1's `DreamSettingsActivity`, beside the shared `DreamSettingsScreen` — both
+  editing the same four values in the same file
+
+**Why.** Two mechanisms for one thing do not fail together. They drift, and the
+one the user reaches depends on which door they came through, which makes the
+symptom unreproducible.
+
+**Rules out.** "Keep the old path as a fallback." A fallback for a path that
+works is a second implementation with no tests and no readers.
+
+**Revisit if.** A platform genuinely cannot reach the shared mechanism. That was
+true of v1's dream, which is why the broadcast existed, and it stopped being true
+the moment the dream ran shared code.
+

@@ -137,11 +137,21 @@ configuration, and write the database migration the `.sq` file already says
 Android owes. The risk is not in building the features. It is that the features
 arrive all at once on a live app whose database has never been migrated.
 
-**As of AV2-3.5 (S011) the first three of those are done.** `MainActivity` is
-`setContent { App(...) }`, `:composeApp` is a plain `implementation`, the nine
-placeholders are real, and v1's UI is deleted. What is left of
-`com.stationly.mobile` is the widget, the Daydream, the FCM/auth services, and
-the theme + util those three still import — so if you are looking for "the
-Android app's screens", they are in `composeApp/src/commonMain` and they are the
-same files iOS runs. The unmigrated-database risk is unchanged and still the
-one that reaches users who have had the app longest.
+**As of S016, all of it is done except the rollout.** `MainActivity` is
+`setContent { App(...) }`, `:composeApp` is a plain `implementation`, every
+placeholder is real, v1's UI is deleted, the widget is per-instance, the
+screensaver is the shared one, and the data plane reads and writes the same list.
+What is left of `com.stationly.mobile` is **entry points and the widget**: the
+Activity, the Application, the FCM/auth services, `DepartureWidgetProvider` and
+the `ui/util` + `util` helpers that only it still reads. If you are looking for
+"the Android app's screens", they are in `composeApp/src/commonMain` and they are
+the same files iOS runs.
+
+24 of 27 stories are built. The three that are not need a phone or the owner:
+walk a release build (AV2-8.1), verify both upgrade paths on hardware (AV2-8.2),
+ship (AV2-8.3).
+
+**The unmigrated-database risk is unchanged** and still the one that reaches the
+users who have had the app longest — and it is now joined by a second thing only
+hardware can answer, because **eleven stories were built in S016 and none of them
+has been run on a phone.**
