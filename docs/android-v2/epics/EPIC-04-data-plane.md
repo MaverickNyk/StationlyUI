@@ -162,7 +162,7 @@ three identical sync-and-persist passes:
 13:34:52.235 D/FreshData: fresh data → Station(stationId=910GHACKNYW)
 ```
 
-#### DEFECT NOT FIXED — the prediction primary key collapses two real trains
+#### DEFECT — the prediction primary key collapsed two real trains · ✅ FIXED S016 (Q7)
 
 Found by the characterization suite, pinned by a test that asserts the WRONG
 behaviour on purpose so the fix has something to flip.
@@ -181,13 +181,27 @@ second survives, and its comment says the row is kept "without losing the row fr
 SQL". It is lost from SQL anyway, one layer down. The Kotlin fix is defeated by
 the schema.
 
-**Not fixed here, and this needs the owner.** The fix is `targetEpochMs` in the
-key instead of `eta`, which is a schema change in a `.sq` shared with a build
-going to TestFlight, in a story that does not own the schema, landing on top of
-**Q5** — the open question about the migration already pending. The migration
-itself is cheap and low-risk: `1.sqm` already clears `PredictionEntity`, because
-cached departures are replaced within seconds of the next push, so `2.sqm` can
-simply rebuild the table. Raised as **Q7**.
+**Fixed in S016**, three sessions after it was raised, and it cost what AV2-4.1
+predicted: `2.sqm` drops and recreates the table, because everything in it is a
+cache FCM refills within seconds of launch.
+
+The key is now
+`(stationId, lineId, direction, destination, platform, eta, targetEpochMs)` —
+both columns, not a swap. When the timestamp parsed, `targetEpochMs` discriminates
+and `eta` is derived from it; when it did not, `eta` is the only thing left, which
+is the same fallback the Kotlin dedupe uses (`targetEpochMs ?: eta`). The `.sq`
+carries the reasoning and the one nuance: SQLite treats NULLs as distinct in a
+unique index, so two unparseable rows do not collapse here — they never arrive,
+because `distinctBy` removes them first and `savePredictions` clears the board's
+rows before every insert.
+
+**Turning the pinned test green turned a neighbouring one red, and that was the
+real find.** `the same train twice in one payload is collapsed` had been passing
+**because of** this defect: its fixture called `pred(…, in3min)` twice, and
+`in3min` is a `get()` that reads the clock on each access — so the two rows were
+milliseconds apart and were never the same train. The old key rounded both to
+"4 min" and collapsed them. A fixture that re-derives a value per use cannot
+express "the same thing twice".
 
 #### Two `Station_*` topics are subscribed for boards that no longer exist
 

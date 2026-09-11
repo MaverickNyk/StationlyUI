@@ -217,8 +217,8 @@ class PredictionSyncCharacterizationTest {
      * ## DEFECT, pinned rather than asserted as correct
      *
      * Two trains 40 seconds apart both format as `"1 min"`, and **only one of
-     * them reaches the board**. The rider sees one Cockfosters train where two
-     * are coming, and the board is a row short.
+     * them reached the board**: the rider saw one Cockfosters train where two
+     * were coming, and the board was a row short.
      *
      * The Kotlin side already fixed this. `SyncPredictionsUseCase` dedupes on
      * `targetEpochMs` precisely so the second train survives, and its comment
@@ -234,19 +234,22 @@ class PredictionSyncCharacterizationTest {
      * and overwrites it. The schema collapses on exactly the value the Kotlin
      * dedupe was changed to stop using.
      *
-     * **The fix is a schema change**: `targetEpochMs` in the key instead of
-     * `eta`. That needs a migration, in a `.sq` shared with a build going to
-     * TestFlight, in a story that does not own the schema — and it lands on top
-     * of an open owner question (**Q5**) about the migration already pending.
-     * It is also cheap and low-risk when it happens: `1.sqm` already clears
-     * `PredictionEntity`, because cached departures are re-fetched within
-     * seconds of the next push, so the migration can simply rebuild the table.
+     * **FIXED in S016 (Q7), schema version 3.** The key is now
+     * `(stationId, lineId, direction, destination, platform, eta, targetEpochMs)`
+     * and `2.sqm` rebuilds the table — cheap, because everything in it is a
+     * cache that FCM repopulates within seconds. `eta` stayed in the key
+     * alongside the new column rather than being swapped out; the `.sq`
+     * explains why, and it comes down to what a null `targetEpochMs` leaves to
+     * tell two rows apart.
      *
-     * Raised as a finding on AV2-4.1. When it is fixed, this test flips to
-     * asserting 2 and the name loses its "collapses" — do not delete it.
+     * **This test was the fix's own tripwire.** It asserted the WRONG behaviour
+     * on purpose for three sessions — 1 row, with a message telling whoever
+     * fixed the key to come here and change it — so that the schema change
+     * could not land silently or half-land. It now asserts what a rider should
+     * see: two trains, because two trains are coming.
      */
     @Test
-    fun `two trains in the same minute bucket collapse - SQL primary key defect`() = withStorage { storage ->
+    fun `two trains in the same minute bucket both survive`() = withStorage { storage ->
         val now = Clock.System.now()
         val first = (now + 70.seconds).toString()
         val second = (now + 110.seconds).toString()
@@ -266,13 +269,15 @@ class PredictionSyncCharacterizationTest {
             )
         }
 
-        // The use case KEPT both — the dedupe on targetEpochMs works.
+        // The use case keeps both — the dedupe on targetEpochMs works.
         assertEquals(2, written.size, "the Kotlin dedupe regressed to the formatted eta string")
-        // SQL then threw one away.
+        // And SQL keeps both now. Before Q7 this read 1: the primary key ended
+        // in the formatted `eta`, both trains formatted "1 min", and
+        // INSERT OR REPLACE threw the first one away.
         assertEquals(
-            1,
+            2,
             storage.getPredictions(KINGS_CROSS, "piccadilly", "outbound").size,
-            "the primary key was fixed to include targetEpochMs — update this test to expect 2",
+            "the prediction primary key is collapsing two real trains again — see 2.sqm",
         )
     }
 
@@ -280,17 +285,35 @@ class PredictionSyncCharacterizationTest {
      * A genuine duplicate — the same train returned twice in one payload — is
      * collapsed. The pair with the test above is the point: same destination,
      * same platform, same *exact* arrival time.
+     *
+     * ## This test was passing because of the defect the test above pins
+     * It wrote `pred(…, in3min)` twice, and `in3min` is a `get()` — it reads the
+     * clock on every access, so the two rows were milliseconds apart and were
+     * never the same train at all. The old primary key ended in the FORMATTED
+     * `eta`, both rounded to the same minute, and `INSERT OR REPLACE` collapsed
+     * them. Green for exactly the reason Q7 exists.
+     *
+     * Fixing the key turned it red, which is the tripwire working: the fixture
+     * now captures ONE timestamp and uses it twice, so the test asserts what its
+     * name has always claimed.
+     *
+     * The general shape is worth keeping: **a fixture that re-derives a value
+     * per use cannot express "the same thing twice"**, and a test that needs two
+     * identical inputs has to be handed one value, not two calls.
      */
     @Test
     fun `the same train twice in one payload is collapsed`() = withStorage { storage ->
+        // Once. See the KDoc — two reads of `in3min` are two different trains.
+        val sameTrain = in3min
+
         runBlocking {
             SyncPredictionsUseCase(storage).execute(
                 payload(
                     KINGS_CROSS, "piccadilly",
                     mapOf(
                         "outbound" to listOf(
-                            pred("Cockfosters", "Platform 5", in3min),
-                            pred("Cockfosters", "Platform 5", in3min),
+                            pred("Cockfosters", "Platform 5", sameTrain),
+                            pred("Cockfosters", "Platform 5", sameTrain),
                         ),
                     ),
                 ),

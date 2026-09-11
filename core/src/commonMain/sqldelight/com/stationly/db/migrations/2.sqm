@@ -1,0 +1,67 @@
+-- Schema version 2 → 3: the prediction primary key stops collapsing real trains.
+--
+-- ## The defect
+-- `PredictionEntity`'s key ended in `eta`, which is the FORMATTED string, and
+-- `insertPrediction` is `INSERT OR REPLACE`. Two trains to the same destination
+-- on the same platform 40 seconds apart both format as "1 min", so the second
+-- had the same key as the first and overwrote it. The rider was shown one train
+-- where two were coming, and the board was a row short.
+--
+-- `SyncPredictionsUseCase` already dedupes on the absolute arrival time
+-- (`targetEpochMs`) precisely so the second one survives — its comment says the
+-- row is kept "without losing the row from SQL". It was lost from SQL anyway.
+-- The Kotlin fix was defeated by the schema.
+--
+-- Found by `PredictionSyncCharacterizationTest` on AV2-4.1, raised as **Q7**,
+-- and pinned for three sessions by a test that asserted the WRONG behaviour on
+-- purpose so the fix would have something to flip.
+--
+-- ## Why this file is four statements and not a rebuild
+-- Everything in this table is a CACHE. Departures older than about two minutes
+-- are filtered out on read, and FCM or the first REST refresh repopulates the
+-- board within seconds of launch — `1.sqm` drops these same rows for exactly
+-- that reason and says so. So there is nothing to copy across: drop, recreate
+-- with the new key, done.
+--
+-- A primary key cannot be ALTERed in SQLite, so a change to one is always a
+-- table rebuild. This is the cheapest possible version of that.
+--
+-- ## What a user notices
+-- One board reading "no departures yet" for the second or two between launch
+-- and the first payload, once, on the launch after the update. That is the
+-- whole cost, and it is the same cost `1.sqm` already imposes.
+--
+-- ## Keep identical to StationlyDatabase.sq
+-- `MigrationTest` asserts that `Schema.create` and `Schema.migrate` produce
+-- identical `PRAGMA table_info` for every table, and
+-- `verifyCommonMainStationlyDatabaseMigration` fails the BUILD when this file
+-- and the `.sq` disagree. Change one, change the other, in the same commit.
+
+-- The index is dropped EXPLICITLY, before the table, for the same reason
+-- `1.sqm` does it: SQLite would drop it along with the table, and naming it
+-- here is what makes the recreate below fail loudly rather than silently
+-- colliding if the drop order is ever changed.
+DROP INDEX IF EXISTS prediction_lookup;
+DROP TABLE IF EXISTS PredictionEntity;
+
+CREATE TABLE PredictionEntity (
+    stationId TEXT NOT NULL,
+    lineId TEXT NOT NULL,
+    direction TEXT NOT NULL DEFAULT '',
+    destination TEXT NOT NULL,
+    destId TEXT NOT NULL DEFAULT '',
+    viaKey TEXT,
+    matchesFilter INTEGER NOT NULL DEFAULT 1,
+    platform TEXT NOT NULL,
+    eta TEXT NOT NULL,
+    isDue INTEGER NOT NULL DEFAULT 0,
+    stopLetter TEXT,
+    timestamp INTEGER NOT NULL,
+    targetEpochMs INTEGER,
+    -- The change. See `StationlyDatabase.sq` for why `eta` stays in the key
+    -- rather than being swapped out, and for what a null `targetEpochMs` means
+    -- to a SQLite unique index.
+    PRIMARY KEY (stationId, lineId, direction, destination, platform, eta, targetEpochMs)
+);
+
+CREATE INDEX prediction_lookup ON PredictionEntity(stationId, lineId, direction);
