@@ -42,14 +42,20 @@ External integration points:
   `com.google.firebase.MESSAGING_EVENT` intent filter
 - `StationlyApplication.onCreate` calls
   `FcmTokenRegistrar.ensureRegistered(this)` so the token is pushed
-  on cold launch, and subscribes the install to the `stationly_all`
-  topic
-- `dream/StationlyDreamService` registers a broadcast receiver for
-  `ACTION_DREAM_REFRESH`, fired by `FcmMessagingService` after every
-  prediction-update payload is persisted
-- `widget/DepartureWidgetProvider` is called via
-  `updateWidgetContent` from `FcmMessagingService` after every
-  prediction-update
+  on cold launch, calls `BroadcastTopic.ensureSubscribed(this)` for
+  the `stationly_all` install topic, and schedules
+  `ActivityUploadWorker`
+- **Everything downstream of a prediction push goes through
+  `util/FreshDataNotifier`**, which is the one fan-out path: it emits
+  on `core`'s `FreshDataNotifier.events` (collected by the home screen
+  AND, since AV2-6.2, by the screensaver, in this same process) and
+  calls `DepartureWidgetProvider.updateForStation` for the widgets
+  bound to that stop only.
+
+  Two things this used to say are gone, and both were second delivery
+  mechanisms for one signal: the dream's `ACTION_DREAM_REFRESH`
+  broadcast (AV2-6.2) and `updateWidgetContent`, which fanned one
+  board out to every widget id (AV2-5.1).
 
 ## The notification pipeline
 
@@ -197,7 +203,17 @@ colour cue, add a new glyph.
 - **`stationly_all` topic subscribe-once tracking.** Subscribing to
   the same FCM topic is idempotent on the FCM side, but we track in
   SharedPrefs anyway to avoid the network call entirely on cold
-  launches.
+  launches. **A token rotation invalidates that flag** — topic
+  subscriptions belong to the token — which is why `onNewToken`
+  calls `BroadcastTopic.resubscribe`. Before AV2-4.2 it did not, and
+  a rotated token dropped the broadcast channel permanently on a
+  device that went on believing it had it.
+- **Board topics are a ledger, not a fire-and-forget.**
+  `AndroidNotificationManager` is the only thing that may reach
+  `FirebaseMessaging.subscribeToTopic` for a board, because FCM has
+  no "what am I subscribed to" call and the `fcm_topics` prefs set is
+  the only record. It is maintained on subscribe AND unsubscribe, and
+  `reconcileTopics` repairs the difference on every foreground.
 - **`onNewToken` can fire mid-session.** When FCM rotates the token,
   the dispatch path goes through `registerIfAuthenticated` again;
   the SharedPrefs cache update happens after a successful POST so
