@@ -59,9 +59,20 @@ navigation and lifecycle, Coil 3, kotlinx-serialization across new types.
 
 | | S014 (2026-09-06) | S016 | Δ |
 |---|---|---|---|
-| `app-staging-release-unsigned.apk` | 7,320,203 B (6.98 MB) | 7,304,145 B (6.96 MB) | **−16 KB** |
-| `app-staging-release.aab` | not built | 12,416,447 B (11.84 MB) | — |
-| Build time | 10m 31s | 6m 56s (`--no-build-cache`) | — |
+| `app-staging-release-unsigned.apk` | 7,320,203 B (6.98 MB) | 7,304,153 B (6.96 MB) | **−16 KB** |
+| `app-staging-release.aab` | not built | 12,417,068 B (11.84 MB) | — |
+| Build time | 10m 31s | ~7m (`--no-build-cache`) | — |
+
+Rebuilt at the end of the session so **the artifact on disk is HEAD** — including
+`versionCode 3` and the Q7 schema change. Whoever does task (b) installs what is
+committed, not what was committed three hours earlier. Those two changes cost 8
+bytes in the APK and 621 in the AAB, which is the honest answer to "what does a
+migration cost".
+
+⚠️ **The APK on disk is `versionCode 3`.** It will install OVER a live v1 and
+migrate its database 1 → 3 in one pass, which is the point of AV2-8.2 (a) and is
+NOT reversible. If you want a release build to poke at without committing to
+that, use a device that has never had Stationly on it.
 
 **Smaller, after a session that added a dependency.** Play In-App Updates went in
 (AV2-7.1) and ~10 dream files plus the whole of `com.stationly.mobile.ui.theme`

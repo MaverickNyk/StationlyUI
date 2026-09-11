@@ -144,13 +144,13 @@ Measured by reading every file in `composeApp/src/androidMain`. Sizes are lines.
 |---|---|---|---|
 | `PlatformLocationProvider.kt` | `platformLocationProvider()` | `SHARED` | **AV2-3.3**, verified on hardware. Fused provider, `PRIORITY_BALANCED_POWER_ACCURACY` as v1 uses. Asks for the permission itself (the shared `SelectionScreen` cannot, and iOS's provider already does), requesting FINE **and** COARSE together and accepting either — v1 asks for FINE alone, so a user who grants *Approximate* has location and v1 refuses to use it. |
 | `platform/DeviceIdentity.kt` | `deviceId()`, `deviceInfo()` | `SHARED` | AV2-3.2. Reads and writes `SharedPreferences("StationlyDevice")` → `device_id`, the **same file and key** `DeviceIdProvider` already uses, so a v1 user keeps their identity. `commit()`, not `apply()`. Guarded by `V1V2StorageContractTest`. |
-| `platform/DreamPlatform.android.kt` (22L) | `DreamPrefsBackend`, `KeepScreenAwake`, `fetchMetNoForecast`, `lastKnownLatLon` | `STUB` | In-memory prefs, no keep-awake, no weather. The shipped app has all four in `com.stationly.mobile.dream`. |
+| `platform/DreamPlatform.android.kt` | `DreamPrefsBackend`, `KeepScreenAwake`, `fetchMetNoForecast`, `lastKnownLatLon` | `SHARED` | **AV2-6.1.** All four real. Prefs are v1's own `StationlyDreamPrefs` file with v1's four key names, which is the whole upgrade path; `lastKnownLatLon` accepts COARSE as well as FINE (the same trap AV2-3.3 found in nearby search) and never requests a fresh fix. `KeepScreenAwake` is a no-op inside a real dream ON PURPOSE — the system holds the screen for a bound `DreamService` and there is no Activity window to flag. |
 | `platform/HomePromoPlatform.android.kt` | `notificationAuthState`, `requestNotificationAuthorization`, `openAppNotificationSettings` | `SHARED` | **AV2-3.3**, verified on hardware. Real POST_NOTIFICATIONS state, request, and a deep link to the app's notification settings page. The "we asked" flag is v1's — `StationlyPrefs` / `post_notifications_asked` — because `checkSelfPermission` cannot tell denied from never-asked and the shared UI branches on exactly that. |
 | `platform/AndroidConnectivityMonitor.kt` | `getConnectivityFlow()` | `SHARED` | AV2-3.2. A real `registerDefaultNetworkCallback` flow. Emits before registering (a callback only speaks on change) and `distinctUntilChanged` (it fires for signal strength and metering too). **Second implementation:** `android/`'s `NetworkState` — same `NET_CAPABILITY_INTERNET`-not-`VALIDATED` call, different shape, edit together until AV2-3.5. |
 | `platform/AndroidHapticFeedback.kt` | `performHaptic()` | `SHARED` | AV2-3.2. `View.performHapticFeedback` off the tracked Activity's decor view — **not** `Vibrator`: the view route respects the user's touch-feedback setting and needs no `VIBRATE` permission, so adopting the shared UI adds no permission to a live app. `CONFIRM`/`REJECT` are API 30; 26–29 falls back to two still-distinct effects. |
 | `platform/ModeIconStore.kt` | `sync`, `hasIcon`, `cachedIconBitmap` | `SHARED` | AV2-3.2. Writes `filesDir/mode_icons/` with the **same layout and filename sanitisation** as `ModeIconCache`, so one cache serves both — including the widget, which renders from it. Still writes `tints.json` though nothing shared reads tints: v1's widget does. Guarded by `V1V2StorageContractTest`. |
 | `ui/sdui/SduiAssetCache.android.kt` | `localPath`, `cachedPath` | `SHARED` | **AV2-3.3**. A real `cacheDir/sdui-assets` store, keyed `<name>-<version>.<ext>`, reaping older versions before the new one lands and renaming from a `.part` file so a half-finished download cannot be served forever. No Android caller yet — the widget guide is iOS-first (`docs/SDUI.md` §1), so **AV2-5.4** is its first use. Naming and versioning are unit-tested. |
-| `ui/support/SupportCheckout.android.kt` (25L) | `openCheckout`, `dismissCheckout` | `STUB` | Intentional under D4. Leave stubbed for v2. |
+| `ui/support/SupportCheckout.android.kt` | `openCheckout`, `dismissCheckout`, `checkoutSupported` | `STUB` | Intentional under D4, and **structurally enforced since AV2-7.3**: `checkoutSupported` is false, `SupportMoneyConfig.isOfferable` ANDs it with the config, and every surface gates on that. The old note — that no Android build has `enabled` — stopped being true at the cutover: `enabled` comes from the backend and these composables are the Android app. Q1 decides the route; flipping one boolean is the whole change. |
 
 `AndroidAppContext.kt` (AV2-3.2) is where the Android actuals get a `Context`
 — sourced from `Platform.appContext`, not held a second time — and the currently
@@ -194,12 +194,12 @@ genuinely Android design work rather than adoption.
 |---|---|---|
 | FCM push delivery of departures | `PLATFORM` | Android's advantage. `LiveStream.android.kt` is 12 lines of deliberate no-ops: *"Android keeps FCM + REST for predictions/line status — the live stream is iOS-only."* Do **not** port the WebSocket stream. |
 | `ProcessPredictionsUseCase` at v2 | `SHARED` | Already in `commonMain` and its KDoc names "Android FcmMessagingService routing" as a caller. |
-| `FcmMessagingService` at v2 | `DIVERGENT` | 400+ lines written against single-selection assumptions. Needs direction scoping, per-board fan-out, and `matchesFilter` precompute at ingest. |
-| Topic lifecycle | `SHARED` | `StationLifecycleUseCase` already emits `Station_{naptan}` and `LineStatus_{mode}_{line}` from the v2 model. v1's `FirebaseAuthManager` does its own subscribe/unsubscribe — delete that path. |
+| `FcmMessagingService` at v2 | `SHARED` | **AV2-4.1 + AV2-4.2.** The premise was stale: direction scoping, per-board fan-out and the `matchesFilter` precompute were already in `SyncPredictionsUseCase`, which both platforms call. What was actually missing was the fan-out to the APP, and a `rev` from the push payload so a `user_sync` reconcile skips its rev round trip. |
+| Topic lifecycle | `SHARED` | **AV2-4.2.** Emission is one place (`StationLifecycleUseCase.topicsFor` / `topicsToRelease`); `FirebaseAuthManager`'s parallel path is gone. The ledger is the finding: it only ever GREW, because unsubscribe never pruned it, so the diff this story asked for would have made a re-added board silently never receive another push. `TopicLedger` is the arithmetic and `reconcileTopics` repairs drift on every foreground. |
 | `stationly_all` broadcast topic | `SHARED` | Keep. Powers `audience: {type:"all"}` pushes with zero Firestore reads. |
 | Widget refresh budget | `PLATFORM` | `RefreshBudgetStore.android.kt` returns `null` on purpose: *"Android's widget is updated by FCM push and by its own provider, neither of which is rationed the way WidgetKit rations timeline builds."* Correct. Leave it. |
-| Device registration / sessions / `stateRev` | `SHARED` | `/device/register`, `/user/state/rev` exist. Blocked on a real `DeviceIdentity` (§3.2). |
-| Activity trail upload | `ABSENT` | `ActivityLog`/`ActivityUploader` are in `commonMain`; iOS drives them from `ActivityUploadScheduler.swift`. Android needs a WorkManager equivalent. `work-runtime-ktx` is already a dependency. |
+| Device registration / sessions / `stateRev` | `SHARED` | **AV2-4.4.** Running since the cutover from `SummaryViewModel.registerDeviceSession()` plus the login path. Note `/device/register` is iOS's APNs route and is **not** Android's: Android's session comes from `syncProfile(deviceId, deviceInfo)` and its push address from `/user/fcm/register`. |
+| Activity trail upload | `SHARED` | **AV2-4.4.** `ActivityUploadWorker` — 24h periodic with a 6h flex window, CONNECTED + battery-not-low, first run aimed at 03:00, `KEEP` on a unique name. Plus a foreground staleness net. Android had **no driver at all**, so every event ever recorded sat in the queue until it hit the cap. |
 
 ### 3.5 The widget
 
@@ -209,11 +209,11 @@ D3 keeps RemoteViews. The gap is configuration, not rendering.
 |---|---|---|
 | Dot-matrix board rendering | `SHARED` | `widget_departure_board.xml` + provider. Font rules in [`dot-matrix-board-font`]. |
 | FCM-driven redraw + ETA watchdog | `SHARED` | Keep. This is the thing iOS cannot do. |
-| **One widget per station** | `ABSENT` | v1 has a single logical widget over "the" selection. v2 needs an `appWidgetId`-keyed station binding. |
-| AppWidget configuration Activity | `ABSENT` | The standard Android placement-time flow. |
+| **One widget per station** | `SHARED` | **AV2-5.1.** `WidgetBindingStore` maps `appWidgetId` → `groupingId`; every render resolves its own. |
+| AppWidget configuration Activity | `SHARED` | **AV2-5.1/5.2/5.15.** `WidgetConfigureActivity`, three modes (manager, bind, pin). `android:configure` is declared and `configuration_optional` deliberately is not — pinned by `WidgetConfigurationContractTest`. |
 | **In-app widget manager** | `PLATFORM` | Explicitly requested: on Android the binding is editable *inside the app*, not only by long-pressing the widget. iOS cannot do this — `getCurrentConfigurations` returns `[]` inside a timeline and the app can never read the AppIntent config. See [`widgetkit-configurations-empty-in-timeline`] and [`ios-widget-placement-observation`]. Android has `AppWidgetManager.getAppWidgetIds()` and can both read and write. |
-| `Board.widget` placement probe | `ABSENT` | `WidgetPlacement` is `@Transient`, device-local, re-derived on foreground. Android can derive it honestly, unlike iOS. |
-| Widget guide screen | `SHARED` | `WidgetGuideScreen.kt` + SDUI `/sdui/app/widget-guide`. Needs `SduiAssetCache` (§3.2) for video; posters work without it. |
+| `Board.widget` placement probe | `SHARED` | **AV2-5.3.** `WidgetPlacementProbe`, on foreground, on `onDeleted` and on every bind. It was empty on every Android device before, and two surfaces read that as an answer: the delete confirmation never warned about the widget it was blanking, and `widget.count` reported zero. A FAILED probe reports nothing rather than empty — the map is replaced wholesale. |
+| Widget guide screen | `SHARED`, **deliberately unreachable on Android** | **AV2-5.4.** The screen and route work; every INSTRUCTION in the served payload is an iOS gesture (jiggle, Edit, top-left, stacks, Smart Rotate), so linking it would show an Android user four wrong steps. The exact config change is written out in EPIC-05, and the client already renders it with no release — `SduiConditions` evaluates `equals` against `platform`. |
 
 **The one rule that carries over unchanged:** never substitute another station's
 board. See [`ios-widget-no-guessing-rule`]. Android's ability to configure
@@ -224,9 +224,9 @@ in-app makes this *easier* to honour, not optional.
 | Capability | Status | Note |
 |---|---|---|
 | Dream UI | `SHARED` | 11 files under `composeApp/.../ui/dream`, ported from Android's own. |
-| `StationlyDreamService` | `DIVERGENT` | Exists and works; must host the shared `DreamHost` instead of `com.stationly.mobile.dream.*`. |
-| `DreamSettingsActivity` | `DIVERGENT` | Keep the Activity and its `taskAffinity=""` isolation (the reasoning in the manifest is load-bearing); swap its content for `DreamSettingsScreen`. |
-| Weather / keep-awake / location | `STUB` | §3.2 — the real implementations are sitting in `com.stationly.mobile.dream`, one package away. |
+| `StationlyDreamService` | `SHARED` | **AV2-6.2.** Hosts the shared `DreamHost`. The lifecycle/ViewModelStore/SavedStateRegistry plumbing a ComposeView needs inside a DreamService was already there from v1, which is why the swap is four lines. **Unverified on hardware.** |
+| `DreamSettingsActivity` | `SHARED` | **AV2-6.2.** ~700 lines of a second settings screen deleted; it hosts `DreamSettingsScreen`. The `taskAffinity=""` / `singleTask` / `excludeFromRecents` trio is untouched and still load-bearing. **Unverified on hardware.** |
+| Weather / keep-awake / location | `SHARED` | **AV2-6.1.** See §3.2. |
 
 ### 3.7 Release, config and money
 
