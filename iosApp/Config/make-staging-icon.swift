@@ -4,7 +4,7 @@
 //
 //   swift iosApp/Config/make-staging-icon.swift
 //
-// Run this whenever AppIcon1024.png changes, so the two icons stay the same
+// Run this whenever appicon-production-1024.png changes, so the two icons stay the same
 // artwork. Committing the OUTPUT (rather than generating at build time) keeps
 // the asset catalog a plain checked-in resource — an icon that only exists
 // after someone remembers to run a script is an icon that is missing in CI.
@@ -36,9 +36,9 @@ import UniformTypeIdentifiers
 let root = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()   // Config
     .deletingLastPathComponent()   // iosApp
-let src = root.appendingPathComponent("iosApp/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png")
+let src = root.appendingPathComponent("iosApp/Assets.xcassets/AppIcon.appiconset/appicon-production-1024.png")
 let dstDir = root.appendingPathComponent("iosApp/Assets.xcassets/AppIconStaging.appiconset")
-let dst = dstDir.appendingPathComponent("AppIconStaging1024.png")
+let dst = dstDir.appendingPathComponent("appicon-staging-1024.png")
 
 // Charcoal field, amber band, charcoal lettering on the amber.
 let field:     (UInt8, UInt8, UInt8) = (0x1C, 0x1C, 0x1E)

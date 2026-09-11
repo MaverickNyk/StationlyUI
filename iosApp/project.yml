@@ -221,9 +221,12 @@ targets:
         #   com.stationly.mobile.staging bundle. To support iPad multitasking,
         #   specify the … UISupportedInterfaceOrientations Info.plist key."
         #
-        # It fires because TARGETED_DEVICE_FAMILY is "1,2" (iPhone AND iPad) —
-        # Xcode's default, never a deliberate choice here — and an iPad app must
+        # It fired because TARGETED_DEVICE_FAMILY was "1,2" (iPhone AND iPad),
+        # Xcode's default and never a deliberate choice, and an iPad app must
         # declare its orientations so the system can size it for Split View.
+        # That default is now pinned to "1" below, so the iPad half of the
+        # reason is gone — but the key stays, because the second reason never
+        # depended on iPad at all:
         #
         # All four rather than portrait-only, because the app genuinely rotates:
         # Dream mode branches on it (`DreamHost.isLandscape`, a 30:70 landscape
@@ -331,6 +334,16 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: $(STATIONLY_APPICON_NAME)
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        # iPhone only. Left unset this defaults to "1,2", which is how the app
+        # came to claim iPad support nobody chose: App Store Connect then
+        # demanded 13-inch iPad screenshots, and — the part that actually
+        # matters — App Review would have run a phone-shaped Compose UI on an
+        # iPad, on a device this project has never once been tested on. Every
+        # test in the notes is the iPhone 11. Declaring a device you cannot
+        # vouch for invites a 2.4.1 rejection to say so for you.
+        #
+        # Making iPad real later means designing for it, not flipping this back.
+        TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_ENTITLEMENTS: iosApp/iosApp.entitlements
         FRAMEWORK_SEARCH_PATHS: $(inherited)
         CODE_SIGN_STYLE: Automatic
@@ -625,6 +638,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: $(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).StationlyWidget
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+        # Matches the host app. An extension that claims a device family its
+        # container does not is a validation failure at upload, not a warning.
+        TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_ENTITLEMENTS: StationlyWidget/StationlyWidget.entitlements
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 7T7D5LLYSL
