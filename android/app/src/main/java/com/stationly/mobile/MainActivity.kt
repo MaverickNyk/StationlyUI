@@ -23,6 +23,7 @@ import com.stationly.mobile.service.ActivityUploadWorker
 import com.stationly.mobile.service.UserSyncCoordinator
 import com.stationly.mobile.ui.common.StagingBanner
 import com.stationly.mobile.widget.WidgetConfigureActivity
+import com.stationly.mobile.widget.WidgetPlacementProbe
 import com.stationly.mobile.widget.WidgetPinner
 import kotlinx.coroutines.launch
 
@@ -201,6 +202,11 @@ class MainActivity : ComponentActivity() {
         // during the flex window. Reads one integer out of SQLite on a healthy
         // device and returns. See `ActivityUploadWorker`.
         ActivityUploadWorker.flushIfStaleOnForeground()
+        // What is on the home screen right now. Device-local, re-derived every
+        // time the app comes forward, never synced — a widget added or removed
+        // while the app was closed leaves no other trace. See the probe's KDoc
+        // for why Android can answer this exactly and iOS cannot.
+        WidgetPlacementProbe.observe(this)
     }
 
     /**

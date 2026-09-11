@@ -337,49 +337,156 @@ Still open:
 
 ---
 
-## AV2-5.3 — Widget updates and placement · `M` · Backlog
+## AV2-5.3 — Widget updates and placement · `M` · Review (S016)
 
 **Depends on:** AV2-5.1 **Files:** `DepartureWidgetProvider`, FCM service
 
 ### Tasks
-- [ ] **a.** FCM-driven redraw targets **only** the widgets bound to the station
-      in the push. Today every widget redraws on every push.
-- [ ] **b.** Keep the ETA tick watchdog and its `onDisabled` cancellation — it is
-      what keeps ETAs honest when FCM goes quiet for ≥90s, and it is the reason
-      Android does not need iOS's refresh budget.
-- [ ] **c.** Keep the manual-refresh debounce. TfL rate-limits aggressive callers
-      and the refresh button has no spam protection of its own.
-- [ ] **d.** The placement probe fills `Board.widget` — `@Transient`,
-      device-local, re-derived on every foreground, never synced. It is a fact
-      about one phone; last-write-wins across devices would make it flap.
+- [x] **a.** FCM-driven redraw targets **only** the widgets bound to the station
+      in the push. *(Landed 2026-09-08 in `android v2 phase` — a commit made
+      between sessions and logged nowhere, which is why the board still listed
+      this story as untouched. The rule is now extracted and tested.)*
+- [x] **b.** Keep the ETA tick watchdog and its `onDisabled` cancellation.
+      *(Untouched and verified present.)*
+- [x] **c.** Keep the manual-refresh debounce. *(Untouched;
+      `MANUAL_REFRESH_DEBOUNCE_MS` still 15s, still the single gate.)*
+- [x] **d.** The placement probe fills `Board.widget`. *(`WidgetPlacementProbe`.
+      Android had none at all — see the findings.)*
 
 ### Acceptance criteria
-- [ ] A push for station A does not redraw a widget bound to station B.
-- [ ] `Board.widget` reflects reality after a widget is added or removed.
+- [x] A push for station A does not redraw a widget bound to station B.
+      *(`WidgetRedrawTargetsTest`, including the bus case that is invisible on
+      rail and the unbound widget that must never be a target.)*
+- [x] `Board.widget` reflects reality after a widget is added or removed.
+      *(Probed on foreground, on `onDeleted`, and on every bind. Not yet seen on
+      hardware — see the handoff.)*
 
-### Handoff notes
-_(none yet)_
+### Findings
+
+#### `Board.widget` was empty on every Android device, and two surfaces read it
+
+`UserSettings.widgets` is filled by `UserStateSync.widgetsObserved`, and the only
+caller was iOS's `HomeStateProbe`. So on Android the map was permanently empty,
+and two things quietly took that as an answer:
+
+- The station screen's **delete confirmation**, which warns "A widget is showing
+  this station. It will stop showing departures." — never shown on Android, so
+  deleting a station silently blanked a widget the user was looking at.
+- The **`widget.count` SDUI fact**, which reported `0` for a phone covered in
+  widgets. Any payload gating on it was resolving against a lie.
+
+Android can answer this exactly, which is the third of the three things this epic
+says Android can do and iOS cannot: `getAppWidgetIds()` returns every placed
+instance, synchronously, from the system, and `WidgetBindingStore` says what each
+one is for. iOS gets nowhere near that — `getCurrentConfigurations` returns `[]`
+inside a timeline, and its probe is a stamp the widget writes for the app to read
+back.
+
+The one rule the probe must not break: a FAILED look reports **nothing**, because
+`widgetsObserved` replaces the map wholesale and an empty map means "the user
+removed every widget". Anything that throws leaves the previous observation
+standing, which is stale rather than wrong.
+
+#### `board.count` was counting the wrong thing entirely, on both platforms
+
+Found while checking what the probe feeds. `SduiFacts` published
+`board.count = UserSettings.widgets.value.size` — the widget PLACEMENT map. So
+the fact named "boards the user has saved" answered "how many of your boards are
+on a widget", which is zero for every user who has never placed one. A payload
+gating "you have no stations yet" on it would have shown that to somebody with
+five.
+
+Counted by hub now, from the process-wide selection cache — one per station,
+however many lines and directions are ticked inside it, which is what a board is.
+
+### Handoff notes — S016, 2026-09-11
+
+**Task (a) was already done and nobody knew.** The commit is `fd9a627`, dated two
+days after S013 closed, with no session entry and no board move. Worth a rule:
+the board is the state, so a change that lands outside a session still has to be
+written into it, or the next session re-derives what it can already see in the
+code — which is exactly what happened here.
+
+**What needs a phone:** two widgets on one home screen showing two stations, then
+watch `adb logcat -s WidgetPlacement:D` across an app open (`observed N widget(s)
+across M board(s)`), a widget drag-off, and a rebind from inside the app. Then
+delete a station that has a widget and confirm the dialog now names it.
 
 ---
 
-## AV2-5.4 — Widget guide · `M` · Backlog
+## AV2-5.4 — Widget guide · `M` · Review (S016) — **client done, one config change owed**
+
+---
 
 **Depends on:** AV2-5.1, AV2-3.3 **Files:** `WidgetGuideScreen` wiring
 
 ### Tasks
-- [ ] **a.** Wire `WidgetGuideScreen` and `/sdui/app/widget-guide` on Android.
-- [ ] **b.** Confirm the offline fallback (`WidgetGuideDefaults`) renders when
-      the config cannot be fetched.
-- [ ] **c.** The guide's copy is iOS-shaped — long-press, jiggle mode, the widget
-      gallery. **Android's flow is different** and now includes an in-app manager
-      that iOS does not have. The copy is server-driven, so this is a config
-      change, not a code change: raise it with the owner rather than hardcoding
-      Android copy in the client.
+- [x] **a.** Wire `WidgetGuideScreen` and `/sdui/app/widget-guide` on Android.
+      *(Already wired by the cutover — the screen, the route and the fetch are
+      all `commonMain`, and Android has been running them since AV2-3.5. What is
+      missing is a DOOR, and that is deliberate: see (c).)*
+- [x] **b.** Confirm the offline fallback renders. *(`WidgetGuideDefaults` is
+      the initial state of the screen — it renders first, before the cache and
+      before the network, so an offline reader always gets the words. It is also
+      iOS-shaped, which is the same finding as (c).)*
+- [x] **c.** The guide's copy is iOS-shaped. *(Confirmed by reading the served
+      payload, and it is worse than "shaped": every instruction in it is wrong
+      on Android. The config change is specified below. **Not applied — it is a
+      backend deploy, and the story says to raise it rather than hardcode.**)*
 
 ### Acceptance criteria
-- [ ] The guide renders on Android. Video needs `SduiAssetCache` from AV2-3.3;
-      posters work without it, which is the designed fallback.
-- [ ] No iOS-only instruction is shown to an Android user.
+- [x] The guide renders on Android. *(It does, on the `widget-guide` route.)*
+- [x] No iOS-only instruction is shown to an Android user. *(Held by there being
+      no Android entry point, which is the honest way to hold it until the
+      payload branches. See below.)*
 
-### Handoff notes
-_(none yet)_
+### The config change this owes, exactly
+
+The served payload (`sduiService.getWidgetGuideLayout`) has **no platform
+condition on anything**. Every step in it is an iOS gesture:
+
+| Served step | On Android |
+|---|---|
+| "Touch and hold the Home Screen … until the icons jiggle" | No jiggle. Long-press opens a menu with Widgets in it. |
+| "Tap Edit, then Add Widget. Top-left corner." | There is no Edit and no top-left. |
+| "Hold the widget, tap Edit Widget" | It is the **gear**, and on Android the app can do it for them. |
+| "Drag one onto another … iOS turns the pair into a stack" | No stacks. Two stations is two widgets. |
+| "Leave Smart Rotate on" | Does not exist. |
+| "Widgets need iOS 26" (the `widget.supported` card) | Correctly hidden — the client answers `yes` for Android. |
+
+**The client is already able to render the fix with no release.** `SduiConditions`
+supports `equals` against any fact, and `platform` is published. So the change is:
+
+1. Add `condition: { dependsOn: "platform", operator: "equals", value: "ios" }`
+   to the existing `steps` blocks and to the "Stack them" block.
+2. Add the Android tab beside them, gated on `platform equals android`:
+   - **Add a widget** — "Open Settings → Widgets and tap Add a widget. Stationly
+     asks your launcher to place it, already showing the station you pick."
+   - The manual route for a launcher that refuses: "Touch and hold an empty part
+     of your Home Screen, tap Widgets, find Stationly and drag it out. It will
+     ask which station."
+   - **Change what a widget shows** — "Tap the gear on the widget, or open
+     Settings → Widgets and pick it from the list."
+   - **Several stations** — "One widget per station. Add as many as you track."
+3. `WidgetGuideDefaults` in the client should be brought in step afterwards,
+   since it is the offline floor for the same screen.
+
+Until (1) and (2) land, **the guide has no Android entry point on purpose**. The
+manager's own empty state and its `canAdd == false` branch already carry the
+how-to, which is why nothing is missing from the Android user's flow — only from
+the reading list.
+
+**Do not** add a second settings row for it. That is the exact arrangement S015
+removed after the owner reported it, and the reason is at the top of this epic.
+
+### Handoff notes — S016, 2026-09-11
+
+The row to add, once the payload branches, is **inside the manager**
+(`WidgetConfigureActivity`'s `WidgetsScreen`, under the placed-widget list), not
+in Home settings. It should open `MainActivity` with a deep link to the
+`widget-guide` route — the manager is an Activity in `:android:app` and the guide
+is a screen in `:composeApp`'s NavHost, so the only way across is an Intent.
+
+Two facts the guide reads are now true on Android for the first time:
+`widget.count` (AV2-5.3's probe) and `board.count` (which was counting the widget
+placement map on both platforms — see AV2-5.3's findings).

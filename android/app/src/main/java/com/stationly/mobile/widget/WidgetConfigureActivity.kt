@@ -231,6 +231,12 @@ class WidgetConfigureActivity : ComponentActivity() {
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             runCatching { DepartureWidgetProvider.updateOne(this@WidgetConfigureActivity, targetId) }
         }
+        // A binding is a placement change: this is the moment a board acquires a
+        // widget, or hands one over to another board. The app's own view of the
+        // home screen is refreshed here rather than waiting for the next
+        // foreground, so a user who binds from inside the app sees the station
+        // screen agree with them immediately.
+        WidgetPlacementProbe.observe(this)
         setResult(Activity.RESULT_OK, resultIntent())
     }
 

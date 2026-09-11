@@ -171,5 +171,20 @@ class SelectionRepository(
     companion object {
         /** The one cache. See the note on [_selections]. */
         private val shared = MutableStateFlow<List<UserSelection>>(emptyList())
+
+        /**
+         * The board rows this process is holding, for a reader that cannot
+         * suspend and must not touch the disk.
+         *
+         * One caller: `SduiFacts`, which resolves a server-authored condition
+         * during composition and so can do neither. It is the same cache every
+         * instance already shares, so this adds no second record of anything —
+         * it only makes the existing one readable without constructing a
+         * repository to ask.
+         *
+         * Empty before `initialize()` has run, which is honest: a fact computed
+         * that early is describing a process that does not yet know.
+         */
+        val currentSelections: List<UserSelection> get() = shared.value
     }
 }
