@@ -67,6 +67,6 @@ class SchemaHarnessTest {
      */
     @Test
     fun `the schema version matches the migration count`() {
-        assertEquals(2L, StationlyDatabase.Schema.version)
+        assertEquals(3L, StationlyDatabase.Schema.version)
     }
 }

@@ -152,7 +152,28 @@ CREATE TABLE PredictionEntity (
     -- null and consumers fall back to the stored `eta` string rather than
     -- dropping the row entirely.
     targetEpochMs INTEGER,
-    PRIMARY KEY (stationId, lineId, direction, destination, platform, eta)
+    -- ## `targetEpochMs` is in the key, and `eta` stayed (Q7, schema v3)
+    --
+    -- `eta` alone was the bug. It is the FORMATTED string, `insertPrediction` is
+    -- `INSERT OR REPLACE`, and two trains to the same destination on the same
+    -- platform 40 seconds apart both format as "1 min" — so the second
+    -- overwrote the first and the rider was shown one train where two were
+    -- coming. `SyncPredictionsUseCase` dedupes on the absolute arrival time
+    -- precisely so both survive; the key undid it one layer down.
+    --
+    -- Both columns, not a swap. When the timestamp parsed, `targetEpochMs` is
+    -- the discriminator and `eta` is derived from it, so `eta` costs nothing.
+    -- When it did NOT parse, `targetEpochMs` is null and `eta` is the only
+    -- thing left to tell two rows apart — which is the case the Kotlin dedupe
+    -- also falls back to (`targetEpochMs ?: eta`). Keeping both means the key
+    -- and the dedupe agree at both ends instead of only one.
+    --
+    -- One nuance, and it is why the Kotlin layer matters: SQLite treats NULLs
+    -- as DISTINCT in a unique index, so two rows that both failed to parse do
+    -- not collapse here. They never reach this table — `distinctBy` removes
+    -- them first, and `savePredictions` clears the board's rows before every
+    -- insert, so nothing accumulates across frames either.
+    PRIMARY KEY (stationId, lineId, direction, destination, platform, eta, targetEpochMs)
 );
 
 CREATE INDEX prediction_lookup ON PredictionEntity(stationId, lineId, direction);

@@ -20,7 +20,7 @@ Template:
 
 ## S016 — 2026-09-11 — EPIC-04, EPIC-05, EPIC-06, EPIC-07 · **eleven stories**
 
-**Outcome:** DONE (11 stories to Review; AV2-8.1 In Progress)
+**Outcome:** DONE (11 stories to Review; AV2-8.1 In Progress; Q7 fixed, Q5 escalated)
 **Gate:** GREEN, including the XCFramework — `commonMain` changed in six places.
 **Commits:** `755273f` `91a51f7`(merge) `b6eacea` `d87e0df` `8116f93` `84b66d5` `bc6fa44`
 
@@ -72,9 +72,29 @@ stories later.** `ActivityUploader` was complete and had never been called.
 `Board.widget` was an empty map that two surfaces read as an answer.
 `board.count` counted the wrong map on both platforms. None of them error.
 
+**Late in the session — Q7 fixed, and Q5 turned out to be far bigger than its
+own question says.**
+
+Q7: the prediction primary key ended in the FORMATTED `eta`, so two trains 40s
+apart both keyed as "1 min" and `INSERT OR REPLACE` threw the first away. Fixed
+with `targetEpochMs` in the key beside `eta`, `2.sqm`, schema version 3. The
+test that had asserted the wrong behaviour on purpose for three sessions now
+asserts 2 — and making it pass made a NEIGHBOUR fail: `the same train twice in
+one payload is collapsed` had been green **because of** the defect, off a fixture
+that read the clock twice for what it called one train.
+
+Q5: checked `origin/master` while reasoning about adding a second migration, and
+it has **no `.sqm` files at all**. So the iOS build on the App Store stamps its
+databases version 1 while already holding the current schema — meaning the first
+iOS release cut from this branch runs `1.sqm` on **every App Store user**, hits
+its deliberate guard, and fails to open the database. The question still says
+"TestFlight testers". It has not been about testers since 2026-09-10. Three
+options are written into the question on the board; the good one is an iOS-side
+re-stamp of a version-1 database whose shape is already current.
+
 **Next agent needs to know:**
 
-1. **Nothing in this session has been on a phone.** Eleven stories. Each handoff
+1. **Nothing in this session has been on a phone.** Twelve stories. Each handoff
    carries its own device script; AV2-4.3's is four lines and would have caught
    the headline bug in two minutes.
 2. **AV2-8.1 is the live story** and its task (b) is the one that matters: a
@@ -83,8 +103,8 @@ stories later.** `ActivityUploader` was complete and had never been called.
 3. **Two config changes are owed to the backend**, both written out in full — the
    widget guide's Android copy (AV2-5.4) and the About screen's `market://` rate
    link, which is an iOS bug found by an Android audit (AV2-7.2).
-4. **Q7 is the last open question that changes code.** Every other one is a
-   decision or console work.
+4. **Q5 is the biggest risk left on the branch**, and it is a question about
+   iOS, found from Android. Read it before planning any merge to master.
 
 ---
 
