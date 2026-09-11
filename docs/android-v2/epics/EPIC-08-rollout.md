@@ -153,6 +153,10 @@ claim, and the difference is where R1 lives.
 - [ ] **a.** **In-place upgrade** from a genuine v1 install — a real
       `versionCode 2` build with real boards, real predictions, and a real
       history of use. Not a fresh install with rows inserted.
+      *(Unblocked S016: this build is `versionCode 3` now, so it will install
+      over the live one. It migrates 1 → 3 in one pass, through both `1.sqm` and
+      `2.sqm` — `MigrationTest` proves the pair lands on the same shape as
+      `Schema.create`, and this is the half that proves the phone.)*
 - [ ] **b.** **Backup-restore path.** `backup_rules.xml` and
       `data_extraction_rules.xml` both include `domain="database"`, so a v1
       database travels through cloud backup and device-to-device transfer. A user
@@ -175,13 +179,17 @@ _(none yet)_
 
 ---
 
-## AV2-8.3 — Ship · `M` · Backlog
+## AV2-8.3 — Ship · `M` · Backlog — **(a) done early, see below**
 
 **Depends on:** AV2-8.2 **Reads:** [`MIGRATION.md`](../analysis/MIGRATION.md) §5
 
 ### Tasks
-- [ ] **a.** `versionCode 3`, `versionName 2.0`. v1 is `versionCode 2`,
-      `versionName 1.0`.
+- [x] **a.** `versionCode 3`, `versionName 2.0`. *(Done S016, and done EARLY on
+      purpose: AV2-8.2 installs this build over the live one, and Android
+      refuses a package whose `versionCode` is not higher. The bump is a
+      prerequisite for the hardware verification rather than a step after it.
+      Staging reads `2.0-staging`, which `ReleaseGate` already handles —
+      `a staging suffix does not read as an older build` is a pinned test.)*
 - [ ] **b.** Internal testing track → closed testing → staged rollout, smallest
       slice first. Watch the crash-free rate on the migration path specifically.
 - [ ] **c.** Set `ReleasePolicy.android.minVersion` only **after** the staged

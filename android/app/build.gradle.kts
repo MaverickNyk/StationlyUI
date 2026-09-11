@@ -44,10 +44,26 @@ android {
         // edge-to-edge via enableEdgeToEdge() in MainActivity, which is the
         // main behaviour change enforced at this level.
         targetSdk = 35
-        // v2: patched reCAPTCHA (security fix) over the first uploaded bundle.
-        // versionName stays 1.0 (no user-facing feature change).
-        versionCode = 2
-        versionName = "1.0"
+        // ── v2 (AV2-8.3 task a) ──────────────────────────────────────────
+        //
+        // `versionCode 2` / `versionName "1.0"` is what is live in the Play
+        // Store: the first uploaded bundle plus a patched reCAPTCHA, with the
+        // name left alone because nothing user-facing had changed.
+        //
+        // 3 / "2.0" is the shared-UI release. The code had to move before
+        // AV2-8.2 can run at all — an in-place upgrade test installs this build
+        // OVER the live one, and Android refuses a package whose versionCode is
+        // not higher. So this is a prerequisite for the hardware verification,
+        // not a step after it.
+        //
+        // ⚠️ **There is no rollback.** A v1 APK installed over v2 opens a
+        // version-3 database with a version-1 schema and the framework throws;
+        // `AndroidSqliteDriver` has no downgrade path. Play does not serve
+        // downgrades, so this is sideload-only in practice — but the consequence
+        // stands: once this reaches a device, that device cannot go back. A bad
+        // v2 is fixed by shipping 2.0.1.
+        versionCode = 3
+        versionName = "2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
