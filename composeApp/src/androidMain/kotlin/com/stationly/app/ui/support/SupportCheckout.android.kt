@@ -1,20 +1,38 @@
 package com.stationly.app.ui.support
 
 /**
- * Not wired on Android.
+ * Not wired on Android — and after the cutover, that needs a stronger guard than
+ * a comment.
  *
- * `composeApp`'s Android target exists so the shared UI keeps compiling for it;
- * the shipping Android app is `:android:app`, which does not depend on this
- * module and has its own screens. Rather than half-implement a Custom Tabs
- * launch that nothing calls and nobody tests, this states the position: the
- * Android money path is a separate piece of work, and when it lands it belongs
- * here as `CustomTabsIntent` over the host activity.
+ * ## What this file used to say, and why it stopped being true
+ * It said `composeApp`'s Android target existed only so the shared UI kept
+ * compiling, that the shipping app was `:android:app` with its own screens, and
+ * that no support surface could reach this because "an Android build has neither
+ * `enabled` nor a checkout URL". AV2-3.5 ended all three: these composables ARE
+ * the Android app, and `enabled` comes from the backend, not the build. One
+ * config change — no release, both platforms at once — and Android users would
+ * have had the banner, the sheet and the tier ladder, every one of them ending
+ * at the empty function below.
  *
- * A no-op rather than a throw. This is reachable only from a support surface,
- * and every one of those is already gated on `enabled` plus a non-blank
- * checkout URL — neither of which an Android build has. Crashing on a code path
- * that cannot be reached would be a worse answer than doing nothing on one that
- * can.
+ * ## The position now
+ * D4 says the money surface ships **built and off** on Android, and Q1 has not
+ * decided the Play policy route (Play Billing, or a charity exemption for
+ * external checkout). Until it does, [checkoutSupported] is false and every
+ * surface gates on it, so "off" is a property of the platform rather than of a
+ * document somebody might edit.
+ *
+ * When Q1 is answered, the whole change is here: `CustomTabsIntent` over the
+ * host Activity for an external route, or Play Billing for the other — and one
+ * boolean.
+ */
+actual val checkoutSupported: Boolean = false
+
+/**
+ * A no-op rather than a throw.
+ *
+ * Unreachable while [checkoutSupported] is false, and this is the wrong place to
+ * discover that something got past the gate: it is a money path, and a crash
+ * there is worse than silence for a user who has just decided to give something.
  */
 actual fun openCheckout(url: String) {
     // Intentionally empty — see the KDoc.

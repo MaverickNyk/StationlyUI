@@ -6,6 +6,12 @@ package com.stationly.app.ui.support
  *
  * External web checkout (Stripe) is not used on iOS.
  */
+/**
+ * iOS can take a contribution: through StoreKit 2 ([startNativePurchase]),
+ * not a web checkout. See [checkoutSupported] in `commonMain`.
+ */
+actual val checkoutSupported: Boolean = true
+
 actual fun openCheckout(url: String) {
     // No-op on iOS: all purchases flow through native StoreKit 2 (startNativePurchase).
 }

@@ -68,6 +68,16 @@ kotlin {
                 // runs app → library, so the app's classpath is not this one's.
                 implementation("com.google.android.gms:play-services-location:21.0.1")
                 implementation("io.coil-kt.coil3:coil-network-okhttp:3.0.4")
+                // Play In-App Updates — AV2-7.1 task (b). Android's answer to
+                // the one thing iOS cannot do here: an update taken without
+                // leaving the app. iOS links out to the App Store because it has
+                // no other option, and copying that would be porting a
+                // constraint (see README rule 3).
+                //
+                // Here rather than in `:android:app` because the surfaces that
+                // use it are shared composables and the expect/actual seam has
+                // to resolve inside this module.
+                implementation("com.google.android.play:app-update-ktx:2.1.0")
             }
         }
 

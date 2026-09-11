@@ -254,7 +254,7 @@ private fun SupporterStateCard(
         // Still a way back in, and deliberately the quiet kind. Removing it
         // entirely would mean the one group of people who have already shown
         // they want to help have no way to do it twice.
-        if (config.isPayable) {
+        if (config.isOfferable) {
             Spacer(Modifier.height(16.dp))
             Surface(
                 color = Color.Transparent,

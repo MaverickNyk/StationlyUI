@@ -100,7 +100,7 @@ data class SupportUiState(
      * about whether the same person is a supporter.
      */
     val showProfileCard: Boolean
-        get() = nowMs().let { now -> config.isPayable || isSupporterAt(now) }
+        get() = nowMs().let { now -> config.isOfferable || isSupporterAt(now) }
 
     // ── The contextual banner's server knobs ─────────────────────────────
     //
@@ -359,7 +359,7 @@ class SupportViewModel(
         // NO — settled answers. Clear the moment so a later config emission
         // does not re-litigate a decision already made.
         pendingBoardCount = null
-        if (!state.config.isPayable) return
+        if (!state.config.isOfferable) return
         if (!state.bannerEnabled) return
         if (boardCount < state.minBoards) return
         if (state.local.activeDays < state.minDays) return
