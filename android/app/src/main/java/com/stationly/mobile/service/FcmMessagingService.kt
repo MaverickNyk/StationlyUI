@@ -390,23 +390,43 @@ class FcmMessagingService : FirebaseMessagingService() {
     // Status-change notifications below tint the chip via that helper
     // — no local palette lives here anymore.
 
+    /**
+     * A rotated token is subscribed to nothing, so everything this device needs
+     * has to be asked for again.
+     *
+     * ## Two things changed here, and the second was a silent hole
+     * The topic list now comes from the SELECTIONS rather than from the ledger.
+     * On a healthy device they are the same set; when they differ it is because
+     * a subscription outlived its board, and re-subscribing those would carry a
+     * leak across the one event that would otherwise have ended it. The
+     * selections are what the device actually wants.
+     *
+     * And `stationly_all` is re-sent. It is subscribed once per install by
+     * `StationlyApplication`, guarded by a `subscribed_all_topic` boolean that
+     * stays true forever — so before this, a token rotation dropped the global
+     * broadcast topic permanently, on a device that would go on believing it had
+     * it. Every `audience: {type:"all"}` push, gone, with nothing to see. The
+     * guard is still right (task (d)); it just needed the one event that
+     * invalidates it to say so.
+     */
     override fun onNewToken(token: String) {
         Log.d("FCM", "FCM token rotated — re-subscribing topics + re-registering with backend")
-        val prefs = getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-        val topics = prefs.getStringSet("fcm_topics", emptySet()) ?: emptySet()
-        val fcm = FirebaseMessaging.getInstance()
         CoroutineScope(Dispatchers.IO).launch {
-            // 1. Re-subscribe to the line/station topics this device is
-            //    subscribed to so prediction + status pushes keep flowing
-            //    against the new token.
-            topics.forEach { topic ->
-                try {
-                    fcm.subscribeToTopic(topic).await()
-                } catch (e: Exception) {
-                    Log.e("FCM", "Re-subscribe failed for $topic after token rotation", e)
-                }
+            // 1. Re-subscribe the board topics, through the one class that keeps
+            //    the ledger (`AndroidNotificationManager`) and the one place the
+            //    topic names are spelled.
+            val desired = com.stationly.core.usecase.StationLifecycleUseCase
+                .topicsFor(Platform.sqlStorage.getAllSelections())
+            if (desired.isNotEmpty()) {
+                runCatching { Platform.notificationManager.subscribeToTopics(desired) }
+                    .onFailure { Log.e("FCM", "Re-subscribe after token rotation failed", it) }
             }
-            // 2. Register the new token under the user's profile so
+
+            // 2. The global broadcast topic, whose install-time guard cannot know
+            //    the token moved underneath it.
+            BroadcastTopic.resubscribe(this@FcmMessagingService)
+
+            // 3. Register the new token under the user's profile so
             //    `uid`-targeted admin notifications can resolve to it.
             //    No-op if user isn't authed; FcmTokenRegistrar handles
             //    auth state + retries on auth-token transient failures.

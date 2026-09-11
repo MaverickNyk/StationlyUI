@@ -174,17 +174,21 @@ class FirebaseAuthManager(private val context: Context) {
             }
         }
 
-        // 2. Unsubscribe FCM topics for any active selections — must happen BEFORE we
-        //    wipe SQL since the topic names are derived from selections.
+        // 2. Unsubscribe every FCM topic this device holds — BEFORE step 4, which
+        //    wipes the prefs file the ledger lives in.
+        //
+        //    Off the LEDGER, not off the selections. This used to walk
+        //    `getAllSelections()` and unsubscribe two topics per row, which
+        //    reaches the same set on a healthy device and leaves behind exactly
+        //    the ones that matter on an unhealthy one: a subscription whose board
+        //    is already gone stays live on a phone somebody else is about to sign
+        //    into, and after step 4 there is nothing left that even knows its
+        //    name. AV2-4.1 found two of those on the test device.
+        //
+        //    It also spelled the topic names here, a fourth copy of a vocabulary
+        //    that now lives only in `StationLifecycleUseCase.topicsFor`.
         try {
-            val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
-            selections.forEach { selection ->
-                val topics = listOf(
-                    "Station_${selection.station}",
-                    "LineStatus_${selection.mode}_${selection.line}"
-                )
-                com.stationly.core.platform.Platform.notificationManager.unsubscribeFromTopics(topics)
-            }
+            com.stationly.core.platform.Platform.notificationManager.clearAllTopics()
         } catch (e: Exception) {
             Log.w(TAG, "Topic unsubscribe during logout failed (continuing)", e)
         }

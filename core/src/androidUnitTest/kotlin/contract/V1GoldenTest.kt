@@ -2,6 +2,7 @@ package contract
 
 import com.stationly.core.model.PredictionItem
 import com.stationly.core.model.UserSelection
+import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.model.deeplink.DeepLinkRoute
 import com.stationly.core.model.deeplink.parseDeepLink
 import com.stationly.core.model.user.Board
@@ -93,16 +94,16 @@ class V1GoldenTest {
 
     // ── (b) the topic set ───────────────────────────────────────────────────
 
+    // Both rules are now asserted against the SHIPPING code rather than against
+    // a copy of it kept here. They used to be re-implemented in this file, which
+    // meant these fixtures pinned my reading of the rule and would have gone on
+    // passing if the app's own version drifted away from it. AV2-4.2 moved the
+    // topic vocabulary into one place precisely so a test could point at it.
     private fun subscribeTopics(rows: List<UserSelection>): Set<String> =
-        rows.flatMap { listOf("Station_${it.station}", "LineStatus_${it.mode}_${it.line}") }.toSet()
+        StationLifecycleUseCase.topicsFor(rows).toSet()
 
-    /** The rule from `StationLifecycleUseCase.discardStation`, in one place. */
-    private fun unsubscribeTopics(removed: UserSelection, remaining: List<UserSelection>) = buildSet {
-        if (remaining.none { it.station == removed.station }) add("Station_${removed.station}")
-        if (remaining.none { it.mode == removed.mode && it.line == removed.line }) {
-            add("LineStatus_${removed.mode}_${removed.line}")
-        }
-    }
+    private fun unsubscribeTopics(removed: UserSelection, remaining: List<UserSelection>): Set<String> =
+        StationLifecycleUseCase.topicsToRelease(removed, remaining).toSet()
 
     private fun row(o: kotlinx.serialization.json.JsonObject) = UserSelection(
         mode = o.getValue("mode").jsonPrimitive.content,

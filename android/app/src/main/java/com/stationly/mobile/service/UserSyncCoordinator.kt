@@ -123,7 +123,8 @@ object UserSyncCoordinator {
 
                     val sdui = SduiApiServiceFactory.create()
                     val repo = UserSyncRepository(sdui, Platform.sqlStorage, Platform.storageManager)
-                    val profile = repo.reconcile(uid, buildLifecycle())
+                    val lifecycle = buildLifecycle()
+                    val profile = repo.reconcile(uid, lifecycle)
 
                     // Surface a display-name change made on another device.
                     try { FirebaseAuth.getInstance().currentUser?.reload()?.await() } catch (_: Exception) {}
@@ -136,6 +137,11 @@ object UserSyncCoordinator {
                     // `updateWidgetFromStorage` that followed it is inside
                     // notifyAll.)
                     FreshDataNotifier.notifyAll(context)
+
+                    // The board list may have just been rewritten from the
+                    // cloud, and a board that arrived or left here did so
+                    // without anybody subscribing or unsubscribing for it.
+                    runCatching { lifecycle.reconcileTopics() }
 
                     Log.d("UserSync", "Reconcile complete: ${profile.stations.size} station(s)")
                 } catch (e: com.stationly.core.service.UserNotFoundException) {
@@ -194,6 +200,34 @@ object UserSyncCoordinator {
     // MainActivity. The shared `LoginViewModel` consumes the flag itself now,
     // read-once-and-clear, on the screen the user is actually looking at when
     // it matters — see [forceLogout].
+
+    /**
+     * Make FCM's subscriptions match the boards on this device.
+     *
+     * Called on every foreground, and again at the tail of a profile reconcile.
+     * Free when there is nothing to do — a `SharedPreferences` read and two set
+     * differences, no FCM call — which is what lets it run on a hook this hot.
+     *
+     * ## Why it is not enough for add and remove to be correct
+     * They are correct. They are also the only record, and a device is not
+     * present for every change made to it: a board deleted on another phone
+     * while this one was off, a wipe that landed between an unsubscribe and its
+     * ledger write, a v1-era path that removed a selection and told nobody. Each
+     * leaves a live subscription with no board behind it — the device keeps
+     * taking pushes for a station the user stopped caring about weeks ago, which
+     * is what AV2-4.1 found on the Pixel, and there is no FCM call that can
+     * enumerate them. The ledger is the only place they are still named.
+     *
+     * Deliberately separate from [reconcile]: that one costs a Firestore read
+     * and is debounced to 15 minutes for it. This one costs nothing and is about
+     * local state, so it runs whenever the app comes forward.
+     */
+    fun reconcileTopics() {
+        scope.launch {
+            runCatching { buildLifecycle().reconcileTopics() }
+                .onFailure { Log.w("UserSync", "Topic reconcile failed (retries next foreground)", it) }
+        }
+    }
 
     private fun buildLifecycle(): StationLifecycleUseCase {
         val apiService = TflApiServiceFactory.create()
