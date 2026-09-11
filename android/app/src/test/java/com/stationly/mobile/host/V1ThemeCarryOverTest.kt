@@ -1,11 +1,9 @@
 package com.stationly.mobile.host
 
 import com.stationly.core.platform.AndroidStorageManager
-import com.stationly.mobile.ui.theme.AppSettings
+import com.stationly.app.ui.theme.AppTheme
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import com.stationly.app.ui.theme.AppTheme as SharedAppTheme
-import com.stationly.mobile.ui.theme.AppTheme as V1AppTheme
 
 /**
  * A user upgrading from `versionCode 2` keeps their theme, and the screensaver
@@ -25,74 +23,69 @@ import com.stationly.mobile.ui.theme.AppTheme as V1AppTheme
  * whole of Android's upgrade path. A migration on top of it would be a second
  * mechanism doing the same job, with its own first-launch ordering to get wrong.
  *
- * That leaves three ways for the carry-over to break silently, all of them a
- * rename rather than a bug, and all of them here:
+ * ## What AV2-6.2 changed here
+ * This test used to compare TWO implementations: v1's `AppSettings` enum, key
+ * and prefs files against the shared ones. v1's theme package is deleted — the
+ * screensaver was its last reader, and the screensaver is the shared
+ * `StationlyThemeHost` now, so the app and the dream cannot disagree about a
+ * theme because there is one reader.
  *
- *  1. The two `AppTheme` enums stop agreeing about what a stored string means.
- *     `"dark"` becoming `"DARK"` on one side resets every upgrading user to
- *     system, and `fromStored` swallows it — that is what its fallback is for.
- *  2. The key changes on one side.
- *  3. A prefs FILE changes. Renaming `StationlyPrefs` does not migrate the
- *     app's history; it abandons it.
+ * So this is one-sided now, against the names on disk rather than against a
+ * second implementation — the same shape `V1V2StorageContractTest` uses, and for
+ * the same reason. **The data did not go anywhere.** Every v1 install has a
+ * theme under these names, and the ways for the carry-over to break are all
+ * renames rather than bugs:
  *
- * The fourth risk is the one the dream carries: the shared UI writes the theme
- * to the DURABLE file, and `dream/` still reads through v1's `AppSettings`. If
- * that reader stopped preferring durable, the screensaver would quietly render
- * whatever theme the user last picked in v1 — on a surface nobody opens
- * deliberately, so nobody would report it.
+ *  1. The stored strings change meaning. `"dark"` becoming `"DARK"` resets every
+ *     upgrading user to system, and `fromStored` swallows it — that is what its
+ *     fallback is for.
+ *  2. The key changes.
+ *  3. A prefs FILE changes. Renaming `StationlyPrefs` does not migrate the app's
+ *     history; it abandons it.
  */
 class V1ThemeCarryOverTest {
 
     @Test
-    fun `both AppTheme enums store the same strings for the same choices`() {
-        assertEquals(
-            "an upgrading user's stored value is read by the SHARED enum; if the " +
-                "two disagree, fromStored falls back to SYSTEM and the choice is lost",
-            V1AppTheme.entries.associate { it.name to it.storedAs },
-            SharedAppTheme.entries.associate { it.name to it.storedAs },
-        )
-        // Spelled out as well as compared, so changing BOTH sides at once —
-        // which keeps them agreeing with each other while abandoning every
-        // value already on disk — still fails.
-        assertEquals("light", V1AppTheme.LIGHT.storedAs)
-        assertEquals("dark", V1AppTheme.DARK.storedAs)
-        assertEquals("system", V1AppTheme.SYSTEM.storedAs)
+    fun `the stored theme strings are the ones v1 wrote`() {
+        // Spelled out rather than compared, now that there is one enum. A
+        // rename here reads every upgrading user's value as nonsense, and
+        // `fromStored` turns that into SYSTEM without complaining.
+        assertEquals("light", AppTheme.LIGHT.storedAs)
+        assertEquals("dark", AppTheme.DARK.storedAs)
+        assertEquals("system", AppTheme.SYSTEM.storedAs)
     }
 
     @Test
-    fun `both enums fall back to SYSTEM on nothing, and on nonsense`() {
-        // The fallback is why a drift above is silent rather than a crash.
-        assertEquals(V1AppTheme.SYSTEM, V1AppTheme.fromStored(null))
-        assertEquals(SharedAppTheme.SYSTEM, SharedAppTheme.fromStored(null))
-        assertEquals(V1AppTheme.SYSTEM, V1AppTheme.fromStored("DARK"))
-        assertEquals(SharedAppTheme.SYSTEM, SharedAppTheme.fromStored("DARK"))
+    fun `an unreadable value falls back to SYSTEM rather than throwing`() {
+        // The fallback is why a drift above is silent rather than a crash, which
+        // is exactly why the assertions above have to be explicit.
+        assertEquals(AppTheme.SYSTEM, AppTheme.fromStored(null))
+        assertEquals(AppTheme.SYSTEM, AppTheme.fromStored("DARK"))
     }
 
     @Test
-    fun `both sides name the theme with the same key`() {
+    fun `the theme is named by the key v1 used`() {
         assertEquals(
-            "the theme key drifted; v1's value would never be read back",
+            "app_theme",
             constant(Class.forName("com.stationly.app.ui.theme.AppSettings"), "KEY_THEME"),
-            AppSettings.KEY_THEME,
         )
-        assertEquals("app_theme", AppSettings.KEY_THEME)
     }
 
     @Test
-    fun `the dream reads the two files the shared storage writes`() {
+    fun `the durable-then-legacy fallback reads the two files v1 and v2 write`() {
+        // `loadDurable` reads the first, `loadString` the second. The second is
+        // where every v1 install's theme still is, so the fallback IS the
+        // upgrade path — see the class KDoc.
         assertEquals(
-            "the durable prefs file drifted — the app and the screensaver would " +
-                "show different themes",
+            "the durable prefs file drifted — settings that must survive a logout would not",
+            "stationly_durable_prefs",
             constant(AndroidStorageManager::class.java, "DURABLE_PREFS"),
-            AppSettings.DURABLE_FILE,
         )
         assertEquals(
             "the legacy prefs file drifted — every v1 user's theme is abandoned",
+            "StationlyPrefs",
             constant(AndroidStorageManager::class.java, "PREFS"),
-            AppSettings.LEGACY_FILE,
         )
-        assertEquals("stationly_durable_prefs", AppSettings.DURABLE_FILE)
-        assertEquals("StationlyPrefs", AppSettings.LEGACY_FILE)
     }
 
     /**

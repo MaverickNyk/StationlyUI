@@ -121,6 +121,27 @@ object DreamSettings {
     private fun key(base: String): String = accountScope?.let { "$base:$it" } ?: base
 
     /**
+     * An account that has never set this inherits whatever the DEVICE was set to.
+     *
+     * The scoped key is the answer whenever there is one. When there is not —
+     * because this account has never opened the screensaver settings — the
+     * unscoped value is read instead, and that is where two different histories
+     * live: anything written before P3 scoped these keys, and on Android
+     * everything v1 ever wrote, because v1 had no notion of an account here at
+     * all.
+     *
+     * Without this, an Android user who upgrades and is signed in finds their
+     * screensaver reset to defaults — a small loss on a surface nobody opens
+     * deliberately, so nobody would report it and nobody could explain it.
+     *
+     * Read-only. A later write goes to the scoped key and takes over from then
+     * on, so the device-wide value is a starting point rather than something
+     * two accounts share.
+     */
+    private fun read(base: String): String? =
+        DreamPrefsBackend.get(key(base)) ?: accountScope?.let { DreamPrefsBackend.get(base) }
+
+    /**
      * Notification that a setting changed. **Nothing subscribes to it today.**
      *
      * ## What this comment used to claim, and why it was wrong
@@ -185,20 +206,20 @@ object DreamSettings {
         try { block() } finally { applyingRemote = false }
     }
 
-    fun getLayout(): DreamLayout = DreamLayout.fromStored(DreamPrefsBackend.get(key(KEY_LAYOUT)))
+    fun getLayout(): DreamLayout = DreamLayout.fromStored(read(KEY_LAYOUT))
     fun setLayout(layout: DreamLayout) = write(key(KEY_LAYOUT), layout.storedAs)
 
-    fun getTheme(): DreamTheme = DreamTheme.fromStored(DreamPrefsBackend.get(key(KEY_THEME)))
+    fun getTheme(): DreamTheme = DreamTheme.fromStored(read(KEY_THEME))
     fun setTheme(theme: DreamTheme) = write(key(KEY_THEME), theme.storedAs)
 
-    fun getClockStyle(): ClockStyle = ClockStyle.fromStored(DreamPrefsBackend.get(key(KEY_CLOCK_STYLE)))
+    fun getClockStyle(): ClockStyle = ClockStyle.fromStored(read(KEY_CLOCK_STYLE))
     fun setClockStyle(style: ClockStyle) = write(key(KEY_CLOCK_STYLE), style.storedAs)
 
     /**
      * Optional override telling the dream WHICH of the user's saved stations
      * to display. Null → use the first selection on the home screen.
      */
-    fun getStationId(): String? = DreamPrefsBackend.get(key(KEY_STATION_ID))?.ifBlank { null }
+    fun getStationId(): String? = read(KEY_STATION_ID)?.ifBlank { null }
     fun setStationId(stationId: String?) = write(key(KEY_STATION_ID), stationId)
 
     // `hasEverStarted()` / `markStarted()` and their `ever_started` key were

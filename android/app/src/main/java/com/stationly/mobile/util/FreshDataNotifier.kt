@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.stationly.core.util.FreshData
-import com.stationly.mobile.dream.StationlyDreamService
 import com.stationly.mobile.widget.DepartureWidgetProvider
 import com.stationly.core.util.FreshDataNotifier as SharedNotifier
 
@@ -21,8 +20,11 @@ import com.stationly.core.util.FreshDataNotifier as SharedNotifier
  *
  *   1. **The app**, via the shared [SharedNotifier] flow, which
  *      `SummaryViewModel` collects. It reloads only the boards the event names.
- *   2. **The screensaver**, via the `ACTION_DREAM_REFRESH` broadcast → `DreamHost`
- *      bumps its `refreshTick` `StateFlow` and re-reads the snapshot from SQL.
+ *   2. **The screensaver**, via the SAME flow as (1) since AV2-6.2 — the shared
+ *      `DreamHost` collects it directly, in this process. It used to need its
+ *      own `ACTION_DREAM_REFRESH` broadcast, because v1's dream had no way to
+ *      hear the shared flow; that was a second delivery mechanism for one
+ *      signal, and it is gone.
  *   3. **The home-screen widget**, via `DepartureWidgetProvider.updateFromStorage`.
  *
  * ## What AV2-4.1 changed here, and why it was invisible
@@ -64,7 +66,6 @@ object FreshDataNotifier {
      */
     fun notifyPredictions(context: Context, stationId: String) {
         announce(FreshData.Station(stationId))
-        broadcastDream(context)
         // Only the widgets showing this stop. A `Station_{naptan}` push lands
         // every ~30s per tracked station, and redrawing all of them meant a
         // phone with four widgets doing four full RemoteViews rebuilds to
@@ -82,7 +83,6 @@ object FreshDataNotifier {
      */
     fun notifyLineStatus(context: Context, lineId: String) {
         announce(FreshData.Line(lineId))
-        broadcastDream(context)
         redrawWidget(context)
     }
 
@@ -96,7 +96,6 @@ object FreshDataNotifier {
      */
     fun notifyAll(context: Context) {
         announce(FreshData.All)
-        broadcastDream(context)
         redrawWidget(context)
     }
 
@@ -114,15 +113,6 @@ object FreshDataNotifier {
     private fun announce(what: FreshData) {
         Log.d(TAG, "fresh data → $what")
         SharedNotifier.notifyFreshData(what)
-    }
-
-    private fun broadcastDream(context: Context) {
-        // `setPackage` so the broadcast only reaches our own
-        // dynamically-registered receiver, not other apps.
-        context.sendBroadcast(
-            Intent(StationlyDreamService.ACTION_DREAM_REFRESH)
-                .setPackage(context.packageName)
-        )
     }
 
     private fun redrawWidget(context: Context) {
