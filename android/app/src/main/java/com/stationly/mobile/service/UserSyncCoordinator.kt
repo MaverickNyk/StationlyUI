@@ -269,6 +269,23 @@ object UserSyncCoordinator {
         }
     }
 
+    /**
+     * Push any board change still sitting in the debounce window.
+     *
+     * The counterpart to [reconcile]: that one pulls, this one pushes what this
+     * device has not managed to say yet. Called from the host's `onStop`, which
+     * is the last moment Android reliably gives an app before it may be killed.
+     *
+     * On the app-level scope rather than the Activity's, deliberately — the
+     * whole point is to outlive the thing that triggered it.
+     */
+    fun flushPendingBoardWrite() {
+        scope.launch {
+            runCatching { com.stationly.app.sync.UserStateSync.flushNow() }
+                .onFailure { Log.w("UserSync", "Board flush on background failed (retries on next change)", it) }
+        }
+    }
+
     private fun buildLifecycle(): StationLifecycleUseCase {
         val apiService = TflApiServiceFactory.create()
         val syncPredictions = SyncPredictionsUseCase(Platform.sqlStorage)

@@ -136,7 +136,15 @@ class FirebaseAuthManager(private val context: Context) {
         //    never ran. We still cap it with a timeout so a slow/broken backend
         //    can't strand the user "half logged in".
         if (uid != null) {
-            val deviceId = DeviceIdProvider.get(context)
+            // `DeviceIdentity`, not this module's own `DeviceIdProvider` — that
+            // object is gone. Both read `StationlyDevice/device_id`, and both
+            // could MINT one: two generators for an id whose whole job is to be
+            // the same forever, racing on the one path (logout) that runs while
+            // the app is being torn down. A duplicate here is not a cosmetic
+            // bug; the backend keys its `sessions` map by this id and releases a
+            // station's subscription only when the last device signs out, so an
+            // id that changes leaves a session no logout can ever clear.
+            val deviceId = com.stationly.app.platform.DeviceIdentity.deviceId()
             // Run BOTH auth-gated backend calls CONCURRENTLY before signOut (each
             // needs the still-valid token, which signOut() nulls). They're
             // independent, so racing them keeps worst-case sign-out latency at

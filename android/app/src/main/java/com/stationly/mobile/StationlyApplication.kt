@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import com.stationly.core.platform.AppEnvironment
 import com.stationly.core.platform.Platform
+import com.stationly.mobile.service.ActivityUploadWorker
 import com.stationly.mobile.service.AuthLog
 import com.stationly.mobile.service.BroadcastTopic
 import com.stationly.mobile.service.FcmTokenRegistrar
@@ -43,6 +44,13 @@ class StationlyApplication : Application() {
         // `BroadcastTopic` now — they were spelled out here and, after AV2-4.2
         // added the token-rotation re-subscribe, in `FcmMessagingService` too.
         BroadcastTopic.ensureSubscribed(this)
+
+        // The nightly activity drain. Enqueued on every cold start and `KEEP`
+        // on the server side of WorkManager, so this is "make sure it is
+        // scheduled" rather than "schedule it again" — the work survives
+        // process death, reboots and app updates, and ten launches a day still
+        // produce one run a day.
+        ActivityUploadWorker.schedule(this)
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_USER_PRESENT)
