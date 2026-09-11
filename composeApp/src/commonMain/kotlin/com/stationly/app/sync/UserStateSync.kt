@@ -9,6 +9,7 @@ import com.stationly.core.activity.ActivityLog
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.sdui.UserProfileResponse
 import com.stationly.core.model.user.Board
+import com.stationly.core.model.user.effectiveBoards
 import com.stationly.core.model.user.WidgetPlacement
 import com.stationly.app.platform.DeviceIdentity
 import com.stationly.core.platform.Platform
@@ -30,12 +31,21 @@ import kotlinx.datetime.Clock
  * to any device but this one. They are kept per account on the device and
  * restored when the same person signs back in.
  *
- * ## iOS only, deliberately
- * Everything here writes the board list, which Android does not read yet. Wiring
- * Android to this would put both platforms on one list and reintroduce the
- * cross-platform wipe the split exists to fix — Android's own save path calls
- * `cleanupAll()` first, so the "full list" it posts is always a single board.
- * Android moves over by adopting this, not by both writing at once.
+ * ## Both platforms, since AV2-4.3
+ * This used to say "iOS only, deliberately", and it was already untrue when it
+ * was read: the cutover made the shared `SelectionViewModel` the Android save
+ * path, so Android has been calling [boardsChanged] since AV2-3.5. What Android
+ * had NOT done was read the same list back — its reconcile still diffed against
+ * the legacy `stations` array, which nothing had written since v1. So a board
+ * saved here left no trace in the array the next foreground compared against,
+ * and that foreground deleted it.
+ *
+ * The warning the old note carried is still real and now points the other way:
+ * the two lists must stay two lists. `boards` is the authority on both
+ * platforms; `stations` is a lossy projection written beside it (see
+ * `UserStateRepository.pushBoards`) so a v1 Android device on the same account
+ * reads something degraded but correct instead of something stale. The
+ * subscription registry reads the UNION, which is what makes that safe.
  */
 object UserStateSync {
 
@@ -181,37 +191,12 @@ object UserStateSync {
      * diffs because the user may be looking at a board while it runs.
      */
     suspend fun restoreBoards(profile: UserProfileResponse, lifecycle: StationLifecycleUseCase) {
-        // `isUsable` drops boards that say nothing — a truncated payload, or a
-        // response from a backend that predates this shape. Without it they
-        // would suppress the legacy fallback below and restore nothing at all.
-        val usable = profile.boards.filter { it.isUsable }
-        val boards = usable.ifEmpty {
-            // Fall back to the LEGACY list when the response carries no boards
-            // but does carry stations.
-            //
-            // A current backend always derives `boards` from `stations`, so the
-            // two can only disagree this way when the backend PREDATES the
-            // field — the ordinary state of affairs for any client that ships
-            // ahead of a deploy, including this one on the day it lands. Without
-            // this the login restore silently does nothing: the selections reach
-            // SQLite (core writes them from `stations`) but no board is ever set
-            // up, so none subscribes, fetches, or reaches the widget. The user
-            // sees a home screen of boards that never populate.
-            Board.fromSelections(
-                profile.stations.map { station ->
-                    UserSelection(
-                        mode = station.mode,
-                        line = station.line,
-                        station = station.id,
-                        parentStationId = station.parentStationId.orEmpty(),
-                        stationName = station.name,
-                        direction = station.direction,
-                        destinations = emptyList(),
-                        destinationIds = emptyList(),
-                    )
-                },
-            )
-        }
+        // `boards` if it says anything, else the legacy `stations` list — the
+        // rule and the reasons are on [effectiveBoards], which is where the
+        // restore in `UserSyncRepository` reads it from too. This half used to
+        // hand-build `UserSelection` from `SubscribedStation` inline, which was
+        // a fifth copy of a conversion that has one definition.
+        val boards = profile.effectiveBoards()
         if (boards.isEmpty()) return
 
         // The arrangement is already loaded — `resetForNewSession` re-read it for
@@ -251,7 +236,7 @@ object UserStateSync {
         // user's next device restores what they are looking at now rather than
         // going round the same fallback. One push: the write makes the list
         // usable, so this cannot repeat.
-        if (usable.isEmpty()) repository.boardsChanged()
+        if (profile.boards.none { it.isUsable }) repository.boardsChanged()
     }
 
     // ── Widget placement ────────────────────────────────────────────────────

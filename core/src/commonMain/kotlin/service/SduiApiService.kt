@@ -88,32 +88,44 @@ interface SduiApiService {
     // User Sync & Firestore
     suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse
     /**
-     * LEGACY board list — Android's write path. iOS uses [syncBoards].
+     * LEGACY station list — the **projection**, not the authority.
      *
-     * A full replace of `users/{uid}.stations`. Calling it from iOS would put
-     * both platforms back on one array and reintroduce the cross-platform wipe
-     * that splitting the lists exists to fix.
-     */
-    /**
-     * LEGACY station list. **[deviceId] has no producer today, deliberately.**
+     * A full replace of `users/{uid}.stations`, with no staleness check and no
+     * empty guard: the server stores exactly what it is given. That is what it
+     * always did, and it is why this must only ever be called immediately after
+     * [syncBoards] has ACCEPTED the same content — the boards write carries both
+     * guards, so calling in that order borrows them. Calling this on its own is
+     * a way to wipe an account's board list with an empty array nobody checked.
      *
-     * The server accepts it and uses it as `excludeDeviceId`, and the parameter
-     * is here so Android-next gets echo suppression without a wire change. But
-     * the only callers of this endpoint are in the FROZEN APK, which cannot be
-     * rebuilt to send one — and iOS never calls it at all, because it writes
-     * through `syncBoards`. So nothing sends it and nothing can until a new
-     * Android ships.
+     * ## Why a v2 client writes a v1 array at all
+     * Because during the rollout an account can hold a v1 Android device and a
+     * v2 device at once, and this array is the only list a v1 device can read.
+     * A v2 client that wrote only `boards` would leave that phone describing the
+     * world as it was before the upgrade — and the next thing the user does on
+     * it replaces `stations` wholesale from that stale view. Writing both keeps
+     * the old device **degraded but correct**: no filters, which it cannot
+     * render anyway. See [com.stationly.core.model.user.toSubscribedStations].
      *
-     * Said out loud because the alternative is reading the parameter as evidence
-     * that echo suppression works on this path. It does not; it is reserved. No
-     * harm follows from that today: the frozen APK has no revision gate to
-     * suppress, guards on uid, and its reconcile is idempotent.
+     * Retired when Q2 says so — a remaining-v1-install count, not a date.
+     *
+     * ## [deviceId] now has a producer
+     * The server uses it as `excludeDeviceId` so its `user.sync` fan-out skips
+     * the writer. Until AV2-4.3 nothing sent one: the only callers were in the
+     * frozen APK, which cannot be rebuilt to send it, and iOS writes through
+     * [syncBoards]. That comment has been removed rather than corrected because
+     * it said the parameter was reserved, and it is not any more.
+     *
+     * @return the same envelope [syncBoards] returns. The rev matters: this is
+     *   the LAST write of the pair, so its revision is the one that accounts for
+     *   both, and stamping it is what stops the writing device fetching back its
+     *   own echo. The response used to be reduced to a `Boolean` here and the
+     *   rev thrown away — which was harmless while nothing called it.
      */
     suspend fun syncStations(
         uid: String,
         stations: List<SubscribedStation>,
         deviceId: String? = null,
-    ): Boolean
+    ): SyncStateResponse
     /**
      * v2 board list. Full replace, guarded by [SyncBoardsRequest.updatedAt].
      *
@@ -291,12 +303,16 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
         uid: String,
         stations: List<SubscribedStation>,
         deviceId: String?,
-    ): Boolean {
+    ): SyncStateResponse {
         val response = client.post("$baseUrl/user/sync/stations") {
             contentType(ContentType.Application.Json)
             setBody(SyncStationsRequest(uid, stations, deviceId))
         }
-        return response.status == HttpStatusCode.OK
+        // `applied` is absent from this endpoint's body and defaults to true,
+        // which is the right reading: the legacy path has no branch that
+        // succeeds without writing.
+        return if (response.status == HttpStatusCode.OK) response.body()
+        else SyncStateResponse(success = false, applied = false, reason = "http_${response.status.value}")
     }
 
     override suspend fun syncBoards(
