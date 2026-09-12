@@ -13,6 +13,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import com.stationly.core.model.user.PlatformNav
 
 /**
  * The board is one per STATION and the fetch naptan hangs off the SELECTION.
@@ -318,5 +319,46 @@ class BoardTest {
     fun `a selection key matches the key the app runs on`() {
         val selection = sel("490008805N", "490012211N", "39", "inbound")
         assertEquals(selection.boardKey, BoardSelection.from(selection).key)
+    }
+
+    // ── how platforms are navigated ─────────────────────────────────────────
+
+    /**
+     * Scrolling is the default, because it is what every surface did before
+     * this setting existed. A stored config written by an older build has no
+     * `platformNav` key at all, and that has to keep meaning "the way it
+     * already behaves" rather than silently switching somebody's widget to a
+     * mode they never chose.
+     */
+    @Test
+    fun `platform navigation defaults to scrolling`() {
+        assertEquals(PlatformNav.SCROLL, BoardConfig().platformNav)
+    }
+
+    @Test
+    fun `a stored navigation mode survives a round trip`() {
+        val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
+        val encoded = json.encodeToString(
+            BoardConfig.serializer(),
+            BoardConfig(platformNav = PlatformNav.STEP),
+        )
+        assertEquals(PlatformNav.STEP, json.decodeFromString(BoardConfig.serializer(), encoded).platformNav)
+    }
+
+    /**
+     * A value this build has never heard of decodes to the DEFAULT rather than
+     * throwing — `coerceInputValues` is what makes that true, and it is the
+     * same protection `BoardView` relies on for the `NEXT_ONLY` case it
+     * dropped. A config written by a future build with a third mode must not
+     * make an older build unable to read the whole map.
+     */
+    @Test
+    fun `an unknown navigation mode falls back to scrolling`() {
+        val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
+        val stored = """{"platformNav":"CAROUSEL_OF_WONDERS"}"""
+        assertEquals(
+            PlatformNav.SCROLL,
+            json.decodeFromString(BoardConfig.serializer(), stored).platformNav,
+        )
     }
 }

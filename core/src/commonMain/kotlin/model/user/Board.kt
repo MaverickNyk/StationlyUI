@@ -346,6 +346,16 @@ data class BoardConfig(
     /** One block promoted to the top — see [BoardPin]. */
     val pin: BoardPin? = null,
     /**
+     * How the WIDGET lets the user reach platforms that do not fit.
+     *
+     * On the board itself this means nothing — the home screen scrolls, and a
+     * card inside a scrolling page cannot sensibly page. It is stored here
+     * rather than beside the binding because it is a fact about how this
+     * STATION is best read, the same family as [rowsPerPlatform] and [pin], and
+     * because the widget configuration screen already edits this object.
+     */
+    val platformNav: PlatformNav = PlatformNav.SCROLL,
+    /**
      * Where this board sits on the home screen, as set by dragging.
      *
      * An integer rank on the board rather than a separate list of ids beside it.
@@ -434,6 +444,40 @@ enum class BoardView(val label: String) {
     BOARD_ONLY("Board only");
 
     val showsHero: Boolean get() = this != BOARD_ONLY
+}
+
+/**
+ * How a surface lets the user reach the platforms it cannot fit on screen.
+ *
+ * ## Why this is a setting rather than a decision
+ * The home screen scrolls, because it is a page and scrolling a page is
+ * already what the user is doing. The widget and the screensaver are not
+ * pages: one is a fixed box on somebody's wallpaper, the other is a panel
+ * being read from across a room. On both, "scroll for the rest" is a gesture
+ * nobody makes — a widget's scroll fights the launcher's own, and nobody walks
+ * over to flick a screensaver.
+ *
+ * Which of the two is right depends on the station and on the person. A stop
+ * with one platform never needs stepping; an interchange with four is
+ * unreadable any other way. So it is asked rather than assumed.
+ *
+ * [SCROLL] is the default because it is what every surface did before this
+ * existed, and a config written by an older build carries no value at all —
+ * that absence has to keep meaning "behave as it already does".
+ */
+@Serializable
+enum class PlatformNav(val label: String) {
+    /** Every platform in one list, reachable by scrolling. */
+    SCROLL("Scroll"),
+
+    /**
+     * One platform at a time, with a chevron either side.
+     *
+     * Named for the ACTION rather than the widget ("Paged", "Carousel"): the
+     * user is stepping from one platform to the next, and the label sits under
+     * a drawing of two arrows that already shows the mechanism.
+     */
+    STEP("Buttons"),
 }
 
 /**
