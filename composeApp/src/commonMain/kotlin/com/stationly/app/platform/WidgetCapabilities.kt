@@ -25,3 +25,26 @@ package com.stationly.app.platform
  * do not guess from a callback being non-null or from a string.
  */
 expect val widgetsAreEditableInApp: Boolean
+
+/**
+ * Whether the SYSTEM decides when the screensaver appears.
+ *
+ * ## Why the Start button had to go on Android
+ * On iOS the app owns its screensaver: there is no system screensaver surface at
+ * all, so "Screensaver" is an in-app route and a Start button is the only way to
+ * ever see it. On Android a dream is a system service. The OS starts it — while
+ * charging, docked, or idle on the lock screen, per the user's own choice in
+ * Settings → Display → Screen saver — and the app cannot.
+ *
+ * So on Android the screen is a SETTINGS page and nothing else, and a Start
+ * button on it is either a lie or a round trip: the Android build reaches this
+ * screen FROM system Settings (the gear beside "Stationly"), so a button
+ * sending them back to system Settings sends them where they just were.
+ *
+ * What replaces it is a sentence saying when the screensaver actually appears,
+ * which is the thing somebody on this screen is really asking.
+ *
+ * Same shape as [widgetsAreEditableInApp] and decision D8: ask the platform
+ * what it can do rather than inferring it from a callback being non-null.
+ */
+expect val screensaverIsStartedBySystem: Boolean

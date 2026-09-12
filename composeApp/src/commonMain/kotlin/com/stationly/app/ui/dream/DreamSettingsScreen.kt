@@ -57,8 +57,11 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.Image
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.stationly.app.platform.ModeIconStore
+import com.stationly.app.platform.screensaverIsStartedBySystem
 import com.stationly.app.ui.common.MINI_DEPARTURES
 import com.stationly.app.ui.common.MiniBoard
 import com.stationly.app.ui.common.MiniBoardClock
@@ -67,6 +70,7 @@ import com.stationly.app.ui.summary.components.lineColorForTheme
 import com.stationly.app.ui.theme.TflAmber
 import com.stationly.app.ui.util.HomeConfigCache
 import com.stationly.core.model.UserSelection
+import com.stationly.core.util.LineShortNames
 import com.stationly.core.platform.Platform
 import com.stationly.core.service.NetworkModule
 import kotlinx.coroutines.Dispatchers
@@ -166,23 +170,42 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
                         ?: "Stationly",
                 )
 
-                // ── Start button — iOS-only entry (Android launches dreams
-                //    from the system dock trigger; in-app needs its own). ──
-                Button(
-                    onClick = onStartDream,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = accent,
-                        contentColor   = MaterialTheme.colorScheme.onPrimary,
-                    ),
-                    shape = RoundedCornerShape(50),
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                ) {
-                    Icon(Icons.Rounded.PlayArrow, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
+                // ── Start button, or the sentence that replaces it ──────
+                //
+                // iOS has no system screensaver, so the app is the only thing
+                // that can present one and this button is the whole entry
+                // point. Android's is a system service the OS starts, and the
+                // Android build arrives on this screen FROM system Settings —
+                // so a button there is either a lie or a round trip back to
+                // where they just were. See screensaverIsStartedBySystem.
+                if (screensaverIsStartedBySystem) {
                     Text(
-                        strings["dream.settings.start"] ?: "Start screensaver",
-                        fontWeight = FontWeight.Bold, fontSize = 15.sp
+                        text = strings["dream.settings.whenitshows"]
+                            ?: "Your screensaver appears on its own — while the phone " +
+                            "is charging or docked, or idle on the lock screen. " +
+                            "Which of those is up to you, in Settings → Display → " +
+                            "Screen saver.",
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp,
                     )
+                } else {
+                    Button(
+                        onClick = onStartDream,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = accent,
+                            contentColor   = MaterialTheme.colorScheme.onPrimary,
+                        ),
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                    ) {
+                        Icon(Icons.Rounded.PlayArrow, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            strings["dream.settings.start"] ?: "Start screensaver",
+                            fontWeight = FontWeight.Bold, fontSize = 15.sp
+                        )
+                    }
                 }
 
                 // ── Layout chips ────────────────────────────────────────
@@ -244,8 +267,14 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
                     }
                 }
 
-                // ── Station picker (only when more than one is set) ─────
-                if (stations.size > 1) {
+                // ── Station picker (only when there is a choice to make) ─
+                //
+                // `dreamStationOptions`, not the raw board list. The setting is
+                // one naptan, so one row per naptan: listing boards drew a row
+                // per line per direction, all named the same, all writing the
+                // same value, all lighting up together.
+                val stationOptions = remember(stations) { dreamStationOptions(stations) }
+                if (stationOptions.size > 1) {
                     Section(label = strings["dream.settings.section.station"] ?: "Station to display") {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             StationPickCard(
@@ -259,20 +288,32 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
                                     DreamSettings.setStationId(null)
                                 },
                             )
-                            stations.forEach { sel ->
+                            stationOptions.forEach { option ->
                                 StationPickCard(
-                                    title = sel.stationName,
-                                    subtitle = "${sel.line.replaceFirstChar { it.uppercase() }} · " +
-                                        sel.direction.replaceFirstChar { it.uppercase() },
+                                    mode = option.mode,
+                                    title = option.name,
+                                    // The row describes the STATION, so it
+                                    // names every line there. The old subtitle
+                                    // named one board's line and direction,
+                                    // which was wrong for every row after the
+                                    // first — and through LineShortNames, not a
+                                    // raw title-case, which is what put "Dlr"
+                                    // on every DLR header.
+                                    subtitle = option.lines
+                                        .joinToString(" · ") {
+                                            if (option.lines.size == 1) LineShortNames.displayName(it)
+                                            else LineShortNames.shortName(it)
+                                        }
+                                        .ifBlank { option.mode.replaceFirstChar { c -> c.uppercase() } },
                                     lineColor = lineColorForTheme(
-                                        sel.line,
+                                        option.lines.firstOrNull(),
                                         MaterialTheme.colorScheme.background.luminance() < 0.5f,
                                     ).let { c -> if (c == TflAmber) accent else c },
-                                    selected = stationId == sel.station,
+                                    selected = stationId == option.stationId,
                                     accent = accent,
                                     onClick = {
-                                        stationId = sel.station
-                                        DreamSettings.setStationId(sel.station)
+                                        stationId = option.stationId
+                                        DreamSettings.setStationId(option.stationId)
                                     },
                                 )
                             }
@@ -794,6 +835,13 @@ private fun StationPickCard(
     selected: Boolean,
     accent: Color,
     onClick: () -> Unit,
+    /**
+     * The transport mode, when this row is a real station.
+     *
+     * Null on the "Auto" row, which is not a station and has no roundel to
+     * draw — it falls back to the line dot, which is the accent there.
+     */
+    mode: String? = null,
 ) {
     val borderColor by animateColorAsState(
         if (selected) accent.copy(alpha = 0.45f)
@@ -812,13 +860,23 @@ private fun StationPickCard(
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(lineColor)
-                    .border(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.18f), CircleShape)
-            )
+            // The backend's own roundel for this mode — the same cached bitmap
+            // the home card, the station list, the widget config and the widget
+            // itself draw, so a station looks like itself on every surface a
+            // user can configure it from. The line dot stays as the fallback
+            // (and as the whole of the "Auto" row, which is not a station).
+            val icon = mode?.let { m -> remember(m) { ModeIconStore.cachedIconBitmap(m) } }
+            if (icon != null) {
+                Image(bitmap = icon, contentDescription = null, modifier = Modifier.size(22.dp))
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .clip(CircleShape)
+                        .background(lineColor)
+                        .border(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.18f), CircleShape)
+                )
+            }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
