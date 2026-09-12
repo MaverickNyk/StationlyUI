@@ -83,6 +83,22 @@ object PlatformPages {
         return pages[clamp(index, pages.size)]
     }
 
+    /**
+     * A page's rows WITHOUT the header the pager bar is already showing.
+     *
+     * Whichever surface draws the chevrons owns the platform name — it sits
+     * between them, which is the whole point of the control. Leaving the header
+     * on the page as well drew it twice, once in the bar and once as the first
+     * row beneath, which is what the widget did the first time it stepped.
+     *
+     * A page with no header keeps every row: that is the fallback-copy page,
+     * and its rows ARE the message.
+     */
+    fun body(
+        page: List<MultiLineBoardProcessor.Row>,
+    ): List<MultiLineBoardProcessor.Row> =
+        if (page.firstOrNull() is MultiLineBoardProcessor.Row.PlatformHeader) page.drop(1) else page
+
     /** How many platforms this board has to step through. */
     fun count(rows: List<MultiLineBoardProcessor.Row>): Int = split(rows).size
 

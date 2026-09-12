@@ -898,8 +898,10 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             val pageCount = boardRows?.let { PlatformPages.count(it) } ?: 0
             val stepping = platformNav == PlatformNav.STEP && pageCount > 1
             val safePage = PlatformPages.clamp(platformPage, pageCount)
-            val drawnRows =
-                if (stepping) PlatformPages.page(boardRows.orEmpty(), safePage) else boardRows
+            val pagedRows = PlatformPages.page(boardRows.orEmpty(), safePage)
+            // `body`, not the whole page: the bar between the chevrons already
+            // names the platform, and leaving the header on drew it twice.
+            val drawnRows = if (stepping) PlatformPages.body(pagedRows) else boardRows
 
             // Says what it DREW, not just how many rows it had.
             //
@@ -1122,10 +1124,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // platform, so the bar is the only thing naming which.
             if (stepping) {
                 views.setViewVisibility(R.id.platform_pager, android.view.View.VISIBLE)
-                views.setTextViewText(
-                    R.id.platform_pager_title,
-                    PlatformPages.title(drawnRows.orEmpty()),
-                )
+                views.setTextViewText(R.id.platform_pager_title, PlatformPages.title(pagedRows))
                 // "2/3" rather than dots: a RemoteViews cannot draw a pager
                 // indicator without a view per dot, and the number says the
                 // same thing in less space on a control this size.
