@@ -1,4 +1,5 @@
 package com.stationly.app.ui.summary
+import com.stationly.core.session.AuthIdentity
 import com.stationly.core.session.SessionStore
 
 import androidx.lifecycle.ViewModel
@@ -526,27 +527,36 @@ class SummaryViewModel(
     }
 
     private suspend fun loadUserInitial() {
-        // Swift AuthBridge re-persists the identity keys at launch via the
-        // auth-state listener — a cold start can race it and read nothing
-        // (the intermittent "?" avatar). One delayed re-read covers the gap
-        // instead of pinning "?" until the next foreground.
-        var name = Platform.storageManager.loadString("firebase_user_display_name")
-            ?: Platform.storageManager.loadString("firebase_user_email")
-        // Poll briefly so the avatar resolves the instant the keys land, instead
-        // of a single fixed 1.5 s re-read (mirrors ProfileViewModel's poll).
+        // Both platforms publish the identity from an auth-state listener at
+        // launch, and a cold start can out-run either one and read nothing
+        // (the intermittent "?" avatar). Polling briefly resolves the avatar
+        // the instant the keys land, rather than pinning "?" until the next
+        // foreground. Mirrors ProfileViewModel's poll.
+        //
+        // Read through SessionStore, not raw string literals. The literals are
+        // how this got its longest-lived bug: iOS's AuthBridge was the only
+        // writer these keys had ever had, Android held the same values on
+        // FirebaseAuth.currentUser and published none of them, and so every
+        // Android device showed "?" forever. Naming the keys in one place is
+        // what makes a missing writer visible; see AuthIdentity.
+        suspend fun storedName(): String? =
+            SessionStore.get(SessionStore.Key.DISPLAY_NAME)
+                ?: SessionStore.get(SessionStore.Key.EMAIL)
+
+        var name = storedName()
         var waited = 0L
         while (name == null && waited < 3000L) {
             delay(120L)
             waited += 120L
-            name = Platform.storageManager.loadString("firebase_user_display_name")
-                ?: Platform.storageManager.loadString("firebase_user_email")
+            name = storedName()
         }
-        val initial = name?.firstOrNull { it.isLetter() }?.uppercaseChar()?.toString() ?: "?"
-        // Firebase profile photo (Google sign-in) — written by AuthBridge.swift
-        // to NSUserDefaults under "firebase_user_photo_url". Rendered as the
-        // top-bar avatar; falls back to the monogram when absent.
-        val photoUrl = Platform.storageManager.loadString("firebase_user_photo_url")
-        _uiState.value = _uiState.value.copy(userInitial = initial, photoUrl = photoUrl)
+        // Firebase profile photo (Google sign-in). Rendered as the top-bar
+        // avatar; falls back to the monogram when absent.
+        val photoUrl = SessionStore.get(SessionStore.Key.PHOTO_URL)
+        _uiState.value = _uiState.value.copy(
+            userInitial = AuthIdentity.monogram(name),
+            photoUrl = photoUrl,
+        )
     }
 
     /**
@@ -571,11 +581,9 @@ class SummaryViewModel(
                     email          = SessionStore.get(SessionStore.Key.EMAIL) ?: "",
                     displayName    = SessionStore.get(SessionStore.Key.DISPLAY_NAME),
                     photoURL       = SessionStore.get(SessionStore.Key.PHOTO_URL),
-                    signInProvider = when (SessionStore.get(SessionStore.Key.SIGNIN_PROVIDER)) {
-                        "Google" -> "google.com"
-                        "Apple"  -> "apple.com"
-                        else     -> "email"
-                    },
+                    signInProvider = AuthIdentity.providerIdFor(
+                        SessionStore.get(SessionStore.Key.SIGNIN_PROVIDER)
+                    ),
                     deviceId       = com.stationly.app.platform.DeviceIdentity.deviceId(),
                     deviceInfo     = com.stationly.app.platform.DeviceIdentity.deviceInfo()
                 )

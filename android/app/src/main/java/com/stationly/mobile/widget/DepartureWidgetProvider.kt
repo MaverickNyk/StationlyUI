@@ -497,14 +497,17 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 )
             }
 
-            // Depth from the widget's OWN size — the thing iOS cannot do.
-            // WidgetKit gives a family and a fixed layout per family; here two
-            // widgets for the same station at different sizes are two different
-            // boards, and the resize gesture is the user saying which they meant.
-            val rowCap = rowCapForHeight(
-                appWidgetManager.getAppWidgetOptions(appWidgetId)
-                    ?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0) ?: 0,
-            )
+            // THREE rows per platform. Not two, not "it depends".
+            //
+            // This briefly varied with the widget's height — 2 on a short one, 4
+            // on a tall one — which was a nice idea and the wrong one: the rule
+            // is a product rule, it is the same three the home screen and the
+            // screensaver draw (`GlobalBoardProcessor`, `perPlatformCap = 3`),
+            // and a widget that shows fewer than the app for the same station is
+            // just a widget that is missing departures. Height decides how many
+            // BLOCKS you can see at once, which the scroll already handles; it
+            // does not get to decide how deep a platform is.
+            val rowCap = ROWS_PER_PLATFORM
             val boardRows = com.stationly.core.util.MultiLineBoardProcessor.rowsFrom(
                 com.stationly.core.util.MultiLineBoardProcessor.buildGroups(
                     feeds = feeds,
@@ -598,41 +601,14 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         }
 
         /**
-         * Departures per platform, decided by how tall the user made the widget.
+         * Departures drawn per platform block.
          *
-         * ## Why this exists at all, and why it is Android's alone
-         * WidgetKit gives iOS a FAMILY — `systemSmall`, `systemMedium` — and a
-         * layout per family; the sizes are Apple's and the app picks a design for
-         * each. Android's home screen is a free grid: the user drags a corner and
-         * the widget is whatever size they wanted. So the same station at two
-         * sizes is two genuinely different boards, and the resize gesture is the
-         * user saying which one they meant.
-         *
-         * ## The numbers
-         * [minHeightDp] is `OPTION_APPWIDGET_MIN_HEIGHT` — the height the host has
-         * actually given this instance in its current orientation. A launcher
-         * cell is ~70dp with 30dp of margin between, so ~110dp is one cell.
-         *
-         * Three is the number this widget has always drawn and stays the default,
-         * so an untouched widget looks exactly as it did. A one-cell strip drops
-         * to two: with several platforms now on the board, three each would push
-         * every block but the first off a short widget. A tall one goes to four,
-         * which is where the extra height earns something.
-         *
-         * Zero-or-unknown answers three rather than guessing. On API 31+ the rows
-         * live in a scrollable collection so being wrong costs a scroll, and
-         * below that it costs a clipped row; neither is worth a worse default.
-         *
-         * Takes the Int rather than the `Bundle` it came from, because a `Bundle`
-         * throws in a plain JVM unit test and this is arithmetic, not Android —
-         * the same split `TopicLedger` and `WidgetRedrawTargets` use.
+         * The same three the home screen and the screensaver use, so one station
+         * looks like itself on every surface. A widget showing fewer departures
+         * than the app for the same platform is not a smaller widget, it is a
+         * widget missing trains.
          */
-        internal fun rowCapForHeight(minHeightDp: Int): Int = when {
-            minHeightDp <= 0  -> 3
-            minHeightDp < 110 -> 2
-            minHeightDp < 250 -> 3
-            else              -> 4
-        }
+        const val ROWS_PER_PLATFORM = 3
 
         /**
          * Update a single widget instance
@@ -851,17 +827,42 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 addCategory(Intent.CATEGORY_LAUNCHER)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
-            views.setOnClickPendingIntent(
-                R.id.departure_board,
-                if (isBound) {
-                    android.app.PendingIntent.getActivity(
-                        context, 0, openApp,
-                        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
-                    )
-                } else {
-                    configureIntent
-                },
-            )
+            val boardIntent = if (isBound) {
+                android.app.PendingIntent.getActivity(
+                    context, 0, openApp,
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+                )
+            } else {
+                configureIntent
+            }
+            views.setOnClickPendingIntent(R.id.departure_board, boardIntent)
+
+            // ── The ROWS have to be given the tap separately ──
+            //
+            // On API 31+ the rows live in a `RemoteCollectionItems` adapter, and
+            // a collection swallows its parent's click: tapping a departure did
+            // nothing at all, so the only live targets were the thin margins
+            // around the list. With the gear now opening this widget's own
+            // configuration, "tap the board to open the app" is the only way in
+            // — it had to actually work everywhere on the board.
+            //
+            // A collection item cannot carry its own `PendingIntent`; the
+            // platform wants one TEMPLATE on the collection plus a fill-in per
+            // item, and the template must be MUTABLE for the fill-in to merge.
+            // The fill-in is empty because every row does the same thing.
+            val rowsTemplate = if (isBound) {
+                android.app.PendingIntent.getActivity(
+                    context, appWidgetId, openApp,
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE,
+                )
+            } else {
+                android.app.PendingIntent.getActivity(
+                    context, appWidgetId,
+                    WidgetConfigureActivity.reconfigureIntent(context, appWidgetId),
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE,
+                )
+            }
+            views.setPendingIntentTemplate(R.id.rows_list, rowsTemplate)
 
             // Set up manual refresh intent
             val refreshIntent = Intent(context, DepartureWidgetProvider::class.java).apply {
@@ -982,6 +983,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                             is com.stationly.core.util.MultiLineBoardProcessor.Row.PlatformHeader -> {
                                 val header = RemoteViews(context.packageName, R.layout.widget_platform_header)
                                 header.setTextViewText(R.id.platform_name, row.title)
+                                header.setOnClickFillInIntent(R.id.platform_name, Intent())
                                 rowViews.add(header)
                             }
                             is com.stationly.core.util.MultiLineBoardProcessor.Row.Departure -> {
@@ -994,6 +996,9 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                                     R.id.destination_text, "setGravity",
                                     android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL,
                                 )
+                                // Tapping a departure opens the app — see the
+                                // template on `rows_list`.
+                                dep.setOnClickFillInIntent(R.id.departure_row_root, Intent())
                                 rowViews.add(dep)
                             }
                         }
@@ -1016,6 +1021,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     when (row) {
                         is com.stationly.core.util.LegacyRow.Header -> {
                             val header = RemoteViews(context.packageName, R.layout.widget_platform_header)
+                            header.setOnClickFillInIntent(R.id.platform_name, Intent())
                             // Prefix every platform header with the line
                             // context — same line, but each platform row
                             // carries its own identity.
@@ -1025,6 +1031,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         }
                         is com.stationly.core.util.LegacyRow.Departure -> {
                             val dep = RemoteViews(context.packageName, R.layout.widget_departure_row)
+                            dep.setOnClickFillInIntent(R.id.departure_row_root, Intent())
                             dep.setTextViewText(R.id.destination_text, row.destination)
                             dep.setTextViewText(R.id.eta_text, row.eta)
                             dep.setInt(
@@ -1035,6 +1042,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         }
                         is com.stationly.core.util.LegacyRow.Message -> {
                             val msg = RemoteViews(context.packageName, R.layout.widget_platform_header)
+                            msg.setOnClickFillInIntent(R.id.platform_name, Intent())
                             msg.setTextViewText(R.id.platform_name, row.text)
                             rowViews.add(msg)
                         }

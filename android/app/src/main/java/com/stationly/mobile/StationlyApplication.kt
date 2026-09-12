@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import com.stationly.core.platform.AppEnvironment
 import com.stationly.core.platform.Platform
 import com.stationly.mobile.service.ActivityUploadWorker
+import com.stationly.mobile.service.AuthIdentityPublisher
 import com.stationly.mobile.service.AuthLog
 import com.stationly.mobile.service.BroadcastTopic
 import com.stationly.mobile.service.FcmTokenRegistrar
@@ -24,6 +25,11 @@ class StationlyApplication : Application() {
         val env = if (BuildConfig.FLAVOR == "staging") AppEnvironment.STAGING else AppEnvironment.PRODUCTION
         Platform.initialize(this, BuildConfig.STATIONLY_API_KEY, env)
         AuthLog.init(this)
+        // Mirror FirebaseAuth's user into the shared session store. Until this
+        // existed, `AuthBridge.swift` was the ONLY writer of the identity keys
+        // the shared UI reads, so every Android device drew "?" for its avatar
+        // and registered an anonymous device session. See AuthIdentityPublisher.
+        AuthIdentityPublisher.start()
         com.stationly.mobile.ui.util.NetworkState.init(this)
         // Register every Stationly notification channel up front so the
         // first FCM-driven status change has a channel to land in
