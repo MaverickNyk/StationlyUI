@@ -30,9 +30,15 @@ widget/
 │                                `widget_prefs`. The whole of "which
 │                                station is this widget for".
 ├── WidgetConfigureActivity.kt   Compose. Three modes: MANAGER (no id —
-│                                which widget?), BIND (an appWidgetId —
-│                                which station?) and PIN (a station,
+│                                which widget?), CONFIGURE (an
+│                                appWidgetId — the widget's settings
+│                                PAGE: choose station, then the same
+│                                BoardArrangementSection the station's
+│                                own screen shows) and PIN (a station,
 │                                then ask the launcher to place one).
+│                                CONFIGURE stays open: the launcher acts
+│                                on the result when this Activity
+│                                FINISHES, not when it is set.
 ├── WidgetPinner.kt              `requestPinAppWidget`, so "Add to Home
 │                                Screen" can live on the station itself.
 ├── WidgetRedrawTargets.kt       Which widgets a push is about. Pure,
@@ -191,7 +197,13 @@ departures" was true either way.
 `renderWidget` resolves this id's binding against the live selections.
 No binding, or a binding whose station is no longer one of the user's
 boards, renders the honest empty state (`isBound = false`) and points
-the tap at the picker. It does **not** fall back to the first station.
+EVERY tap on it at the configuration screen — see `tapTargetFor`, which
+is one answer shared by the board container's click and the rows
+collection's pending-intent template, because those are two separate
+wirings that have to agree. The empty state says "tap to choose a
+station", so the tap has to land somewhere that can choose one; opening
+the app would be an instruction the app cannot carry out.
+It does **not** fall back to the first station.
 Showing somebody a train that is not theirs, at a stop they are not
 standing at, with nothing on screen to say so, is the worst thing a
 departure board can do — and it is what this package used to do by
@@ -259,13 +271,30 @@ through these abstractions:
 - `SqlStorage.getPredictionsTimestamp` — the "X ago" source. All
   three call this same function.
 
-**Depth is the widget's own size.** `rowCapForHeight` turns
-`OPTION_APPWIDGET_MIN_HEIGHT` into departures-per-platform: 2 on a
-one-cell strip, 3 (the shipped default) normally, 4 when the user has
-dragged it tall. This is the thing iOS cannot do — WidgetKit gives a
-family and a layout per family, where Android's home screen is a free
-grid and the resize gesture is the user saying how much board they
-want.
+**Depth is the STATION's, and its default is three.** `rowCapFor` reads
+`BoardConfig.rowCap` — the "Show up to N per platform" setting (2-5,
+default 3) that the home screen and the screensaver already obey.
+
+It briefly followed the widget's own HEIGHT instead (`rowCapForHeight`,
+2 on a strip and 4 when dragged tall). That was rejected by the owner on
+2026-09-12 and **must not come back.** Two reasons, and the second is
+the one that matters:
+
+- The rule is a product rule. Three rows per platform is the structure,
+  whatever the widget's size. Height decides how many BLOCKS you can see
+  at once, which the scroll already handles; it does not get to decide
+  how deep a platform is, because a widget showing fewer departures than
+  the app for the same platform is not a smaller widget, it is a widget
+  missing trains.
+- The setting already existed and the widget was silently overriding it.
+  Set a station to 5 and the app showed five while the home screen showed
+  three, with nothing to explain the difference. Three is what that
+  setting says when nobody has touched it, so reading the board keeps the
+  product rule for everyone AND the promise the settings screen makes to
+  whoever changed it.
+
+Verified on hardware both ways: Bank DLR at 2 drew two rows per platform
+while Hackney Wick, untouched, drew three.
 
 If you find yourself writing tick-related logic ONLY in this file,
 you've probably broken consistency. Either add it to the shared
