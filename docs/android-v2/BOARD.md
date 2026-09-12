@@ -37,8 +37,9 @@ WORKING TREE:      clean
 MASTER:            merged in at 91a51f7 — the eight iOS commits that shipped
                    v1.0 (production Firebase, the iOS 26 icon, iPhone-only,
                    the TestFlight scripts). No conflicts; none of it is Android.
-DEVICE:            ✅ RUN ON THE PIXEL 7 PRO, 2026-09-12 — including the
-                   MINIFIED RELEASE build, installed over the live versionCode 2.
+DEVICE:            ✅ RUN ON THE PIXEL 7 PRO, 2026-09-12 — including a full
+                   screen-by-screen walk of the MINIFIED RELEASE build (S017),
+                   installed over the live versionCode 2.
                    It launched clean, migrated the database 2 → 3 in place,
                    rendered two widgets bound to two different stations, shed
                    six stale FCM topics, and converged its boards onto the
@@ -71,7 +72,13 @@ DEVICE:            ✅ RUN ON THE PIXEL 7 PRO, 2026-09-12 — including the
                    every target reports "nothing happened" and looks exactly
                    like broken click wiring. Always include the gear as a
                    control in the same run.
-                   STILL OWED: the release build walked by a human (AV2-8.1 b).
+                   ✅ AND THE RELEASE BUILD WAS WALKED (AV2-8.1 b), signed
+                   with the debug keystore and installed over the debug build,
+                   then swapped back. Zero FATAL EXCEPTION. `run-as` stops
+                   working while it is on, so capture prefs and the database
+                   BEFORE the swap.
+                   STILL OWED: nothing a session can reach. Hours of runtime
+                   under R8 with real pushes needs the phone left alone.
 BLOCKED ON OWNER:  🔴 Q5 is now the biggest risk on the branch and it is NOT
                    what it says on the tin: master has no migrations, so every
                    App Store iOS user's database is stamped version 1 while
@@ -80,16 +87,17 @@ BLOCKED ON OWNER:  🔴 Q5 is now the biggest risk on the branch and it is NOT
                    options written out in the question.
                    Q7 FIXED this session. Q3 answered (EPIC-06 header).
                    Q1/Q2/Q4/Q6 are decisions or console work, not blockers.
-NEXT UP:           **One thing needing a human at the phone**, plus the
-                   owner decision.
-                   (1) Walk the RELEASE build — it is installed and running, and
-                   an R8 failure lands on the screen nobody opened. This is the
-                   only criterion S017 could not reach: everything walked on
-                   2026-09-12 was the staging DEBUG build.
-                   (2) Q5, which is the owner's call and still the biggest risk
-                   on the branch.
-                   Then AV2-8.3's rollout.
-                   Everything else on this board is in Review.
+NEXT UP:           **Q5, and then the rollout.** Nothing on this board still
+                   needs a session to do it.
+                   (1) Q5 is the owner's call and the biggest risk on the
+                   branch: master has no migrations, so every App Store iOS
+                   database is stamped version 1 holding the CURRENT schema.
+                   (2) AV2-8.3's rollout, which is Play Console work.
+                   Everything else is in Review, including the release build
+                   (walked 2026-09-12) and the screensaver (rendered the same
+                   day, for the first time in the programme).
+                   The one thing no walk can prove is hours of runtime under R8
+                   with real pushes landing. That needs the phone left alone.
 ```
 
 ### 🅑 Backlog — dependencies not yet met
@@ -102,13 +110,13 @@ NEXT UP:           **One thing needing a human at the phone**, plus the
 
 | Story | Epic | Title | Size |
 |---|---|---|---|
-| _(none — AV2-8.1 is the live one)_ | | | |
+| _(none — the board is clear)_ | | | |
 
 ### 🅘 In Progress — WIP limit 2
 
 | Story | Claimed by | Since | Note |
 |---|---|---|---|
-| AV2-8.1 | S016 | 2026-09-11 | Task (a) done twice now — the release APK and AAB build with the post-cutover graph plus Play Core. **(b) is the one that matters and needs a phone**: a release build that compiles is not a release build that runs. |
+| _(none)_ | | | AV2-8.1 moved to Review — task (b) done on the phone, S017. |
 
 ### 🅥 Review — done, awaiting owner sign-off
 
@@ -116,6 +124,7 @@ Twenty stories. In the order somebody signing off should read them:
 
 | Story | Session | What to look at |
 |---|---|---|
+| **AV2-8.1** | S016 · device 2026-09-12 | **The release build has been walked, and the assumption that blocked this was wrong.** "An R8 failure lands on the screen nobody opened" is right; opening those screens is something a session can do over `adb`. Signed the release APK with the debug keystore, installed it over the debug build, walked home / home settings / widget manager / widget configure / rebinding / the screensaver / every widget tap target / profile, then put the debug build back. **Zero `FATAL EXCEPTION` across the whole walk**, and nothing R8-shaped: no ClassNotFound, no NoSuchMethod, no missing serializer, no VerifyError. Full recipe and the two traps (`--no-build-cache` for `shrinkResources`; capture `run-as` state BEFORE the swap because it stops working) are in the epic. Still unproven: hours of runtime under R8 with real pushes, which needs the phone left alone rather than another walk. |
 | **AV2-8.2** | device 2026-09-12 | **R1 has a hardware pass.** A genuine v1 database migrated 1 → 3 in one launch: no crash, every board kept with its id, the bus hub's two poles still separate, `ActivityEventEntity` created, Q7's key live on a MIGRATED database rather than a created one. Tasks (a) and (b) at once, because a v1 database inside a v2 install is what Auto Backup delivers. The one criterion left open is "does not sign the user out", which the fixture could not answer. |
 | **AV2-4.3** | S016 · device 2026-09-12 | **The worst bug on the branch, and it had been live since the cutover.** Android wrote `boards` (the shared SelectionViewModel) and reconciled against `stations` (the legacy path), and the backend derives neither from the other on a write. So a board saved on Android left no trace in the array its own next foreground compared against — and that reconcile DELETES any local selection the cloud list does not have. On an account whose `stations` is empty, which is every account created on v2, that is every board the user has, gone within fifteen minutes, silently. Four device passes missed it because the test account's legacy array already described its one board. |
 | **AV2-6.2** | S016 · device 2026-09-12 | **It has now been rendered, and it was wrong in two ways nothing else could have caught.** Previewed via Settings → Display → Screen saver → the eye on the tile (`Somnambulator` does not work on this Pixel; `dumpsys dreams` is the honest check). It bound, has never crashed — and (1) centred its rows vertically, leaving three departures floating between two voids, and (2) named a whole interchange while drawing ONE board, the same defect the widget had. Both fixed. Also this story's own feedback: Android has no Start button (the OS starts a dream, and this screen is reached FROM system Settings), and the station picker listed BOARDS, so King's Cross drew eight identical rows that all wrote the same value and all lit up together. |
