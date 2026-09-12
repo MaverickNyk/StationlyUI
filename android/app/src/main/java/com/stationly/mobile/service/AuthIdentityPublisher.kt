@@ -47,7 +47,30 @@ import kotlinx.coroutines.launch
  */
 object AuthIdentityPublisher {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /**
+     * `Unconfined`, deliberately, and it is about ORDERING rather than speed.
+     *
+     * Android's `saveString` is a `SharedPreferences.edit().apply()` wearing a
+     * `suspend` modifier: no dispatcher switch, no disk wait on the calling
+     * thread, nothing that can actually suspend. Unconfined therefore runs the
+     * whole publish INLINE on the auth-state callback, so the identity is
+     * readable the moment Firebase says the user changed.
+     *
+     * That matters because `UserStateSync.resetForNewSession()` re-reads the
+     * uid to re-point the per-account stores, and it runs on both session
+     * edges. Dispatching to `IO` left a window — small, and comfortably won in
+     * practice, since several network calls sit between sign-in and that reset
+     * — in which a sign-out followed by a different sign-in could re-point
+     * those stores at the PREVIOUS account. That is the one hazard the uid
+     * namespacing exists to prevent, and "comfortably won in practice" is how
+     * this codebase has acquired most of its bugs.
+     *
+     * Not `runBlocking` on the callback thread, which would do the same job
+     * today and become an ANR the day one of these writes genuinely suspends
+     * (a DataStore migration, say). Unconfined degrades to asynchronous in that
+     * case instead of freezing the main thread.
+     */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
 
     @Volatile
     private var listener: FirebaseAuth.AuthStateListener? = null
@@ -85,12 +108,8 @@ object AuthIdentityPublisher {
                         email = user.email,
                         displayName = user.displayName,
                         photoUrl = user.photoUrl?.toString(),
-                        // providerData carries the anonymous "firebase" entry as
-                        // well as the real one, so take the first that is not it.
-                        provider = AuthIdentity.providerLabel(
-                            user.providerData
-                                .map { it.providerId }
-                                .firstOrNull { it != "firebase" }
+                        provider = AuthIdentity.providerLabelFor(
+                            user.providerData.map { it.providerId }
                         ),
                     )
                 }

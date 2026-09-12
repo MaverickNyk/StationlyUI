@@ -113,6 +113,18 @@ object AuthIdentity {
      * the shape that drifts — so they are adjacent here and
      * `AuthIdentityTest` walks the round trip.
      */
+    /**
+     * The same label, from Firebase's provider LIST.
+     *
+     * `providerData` always carries a synthetic "firebase" entry alongside the
+     * real one, so the caller has to skip it. That skip was an inline
+     * expression in two places — the auth-state publisher and the rename path —
+     * and forgetting it labels every account "Email", which is the fallback and
+     * so looks like a working answer.
+     */
+    fun providerLabelFor(providerIds: List<String>): String =
+        providerLabel(providerIds.firstOrNull { it != "firebase" })
+
     fun providerIdFor(label: String?): String = when (label) {
         "Google" -> "google.com"
         "Apple" -> "apple.com"

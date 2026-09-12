@@ -164,4 +164,24 @@ class AuthIdentityTest {
             )
         }
     }
+
+    /**
+     * Firebase hands back a LIST of provider ids, and one of them is always the
+     * synthetic "firebase" entry. Picking the real one was an inline
+     * `.map { it.providerId }.firstOrNull { it != "firebase" }` in two places
+     * — the auth-state publisher and the rename path — which is two chances to
+     * forget the filter and label every account "Email".
+     */
+    @Test
+    fun `the real provider is picked out of firebase's list`() {
+        assertEquals("Google", AuthIdentity.providerLabelFor(listOf("firebase", "google.com")))
+        assertEquals("Google", AuthIdentity.providerLabelFor(listOf("google.com", "firebase")))
+        assertEquals("Email", AuthIdentity.providerLabelFor(listOf("firebase", "password")))
+    }
+
+    @Test
+    fun `a list with nothing but firebase in it falls back to Email`() {
+        assertEquals("Email", AuthIdentity.providerLabelFor(listOf("firebase")))
+        assertEquals("Email", AuthIdentity.providerLabelFor(emptyList()))
+    }
 }
