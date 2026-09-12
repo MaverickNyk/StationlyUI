@@ -167,7 +167,7 @@ class MainActivity : ComponentActivity() {
                     // ONE: the first is the one the manager lists first, and the
                     // page it opens lists the rest a tap away.
                     onOpenWidgetSettingsForStation = { groupingId ->
-                        val id = WidgetBindingStore.all(this@MainActivity)
+                        val id = WidgetBindingStore.all(this@MainActivity, WidgetBindingStore.currentUid())
                             .entries.firstOrNull { it.value == groupingId }?.key
                         startActivity(
                             if (id != null) {

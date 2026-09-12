@@ -52,26 +52,107 @@ object WidgetBindingStore {
     /** `binding_<appWidgetId>` → grouping id. */
     internal const val KEY_PREFIX = "binding_"
 
+    /**
+     * `owner_<appWidgetId>` -> the uid that placed this widget.
+     *
+     * ## Why a stamp and not a namespace
+     * `widget_prefs` is not keyed by uid the way `UserSettings` is, and no
+     * sign-out path clears it: `cleanupAll` and `FirebaseAuthManager.logout`
+     * wipe SQL, topics, widget CONTENT and `StationlyPrefs`, and none of them
+     * touches this file. So a binding survives a logout, and if the NEXT
+     * account happens to track the same hub the widget silently re-attaches and
+     * comes back live in the previous person's configuration.
+     *
+     * Clearing the file on sign-out would fix that and break the common case:
+     * somebody signing back in as themselves would find every widget blank for
+     * no reason they can see. So the binding is stamped instead. Signing back
+     * in matches and restores; another account does not match and gets the
+     * honest empty state, which is the same state this package already shows
+     * for a station that is no longer a board.
+     */
+    internal const val OWNER_PREFIX = "owner_"
+
+    internal fun ownerKeyFor(appWidgetId: Int) = "$OWNER_PREFIX$appWidgetId"
+
+    /**
+     * The account signed in right now, read the way everything else reads it.
+     *
+     * Blocking, and that is safe for the same reason the widget's other prefs
+     * reads are: on Android `loadString` is a `SharedPreferences` get wearing a
+     * `suspend` modifier, with no dispatcher switch and nothing that can
+     * actually suspend. It is here rather than at each call site so that
+     * "who is asking" has one answer in this package.
+     */
+    fun currentUid(): String? = runCatching {
+        kotlinx.coroutines.runBlocking { com.stationly.core.session.SessionStore.uid() }
+    }.getOrNull()
+
+    /**
+     * Whether the account signed in now may see this widget.
+     *
+     * **Only a mismatch when BOTH are known and they differ.** An absent OWNER
+     * is a widget placed before the stamp existed, and blanking every one of
+     * those on upgrade would be a worse bug than the one being fixed. An absent
+     * CURRENT is either signed out or the window between a launch and the
+     * identity landing, and rejecting there would make widgets blink empty on
+     * every cold start.
+     */
+    fun isOwnedBy(owner: String?, current: String?): Boolean =
+        owner.isNullOrBlank() || current.isNullOrBlank() || owner == current
+
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     /** Point [appWidgetId] at the board grouped under [groupingId]. */
-    fun bind(context: Context, appWidgetId: Int, groupingId: String) {
+    fun bind(context: Context, appWidgetId: Int, groupingId: String, uid: String?) {
         if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) return
-        prefs(context).edit().putString(KEY_PREFIX + appWidgetId, groupingId).apply()
+        prefs(context).edit()
+            .putString(KEY_PREFIX + appWidgetId, groupingId)
+            .putString(ownerKeyFor(appWidgetId), uid.orEmpty())
+            .apply()
     }
 
-    /** The grouping id this widget is for, or null if it was never bound. */
-    fun boundStation(context: Context, appWidgetId: Int): String? =
-        prefs(context).getString(KEY_PREFIX + appWidgetId, null)?.takeIf { it.isNotBlank() }
+    /**
+     * The grouping id this widget is for, or null if it was never bound OR
+     * belongs to another account.
+     *
+     * [currentUid] is the account asking, and it has NO DEFAULT on purpose: a
+     * default would let a new call site skip the check silently and the
+     * ownership stamp would be decorative. Pass [currentUid] where it genuinely
+     * is not known; see [isOwnedBy] for why that is not a mismatch.
+     *
+     * An unstamped widget is ADOPTED here rather than merely tolerated: it is
+     * stamped on this read, so the next account change is caught properly
+     * instead of the widget staying permanently unowned and permanently
+     * inheritable.
+     */
+    fun boundStation(context: Context, appWidgetId: Int, currentUid: String?): String? {
+        val p = prefs(context)
+        val owner = p.getString(ownerKeyFor(appWidgetId), null)
+        if (!isOwnedBy(owner, currentUid)) return null
+        val station = p.getString(KEY_PREFIX + appWidgetId, null)?.takeIf { it.isNotBlank() }
+            ?: return null
+        if (owner.isNullOrBlank() && !currentUid.isNullOrBlank()) {
+            p.edit().putString(ownerKeyFor(appWidgetId), currentUid).apply()
+        }
+        return station
+    }
 
     /** Every binding this device holds, keyed by `appWidgetId`. */
-    fun all(context: Context): Map<Int, String> =
-        prefs(context).all.mapNotNull { (key, value) ->
-            val id = key.removePrefix(KEY_PREFIX).takeIf { key.startsWith(KEY_PREFIX) }?.toIntOrNull()
-            val station = value as? String
-            if (id != null && !station.isNullOrBlank()) id to station else null
+    fun all(context: Context, currentUid: String?): Map<Int, String> {
+        val p = prefs(context)
+        return p.all.mapNotNull { (key, value) ->
+            // `owner_` also starts with no shared prefix, but `page_`, `wpin_`
+            // and `wnav_` live in this file too — so the id is taken only from
+            // keys that really are bindings.
+            if (!key.startsWith(KEY_PREFIX)) return@mapNotNull null
+            val id = key.removePrefix(KEY_PREFIX).toIntOrNull() ?: return@mapNotNull null
+            val station = (value as? String)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val owner = p.getString(ownerKeyFor(id), null)
+            if (!isOwnedBy(owner, currentUid)) return@mapNotNull null
+            id to station
         }.toMap()
+    }
 
     /**
      * Forget these widgets. Called from `onDeleted`, which Android delivers when
@@ -80,7 +161,7 @@ object WidgetBindingStore {
     fun unbind(context: Context, appWidgetIds: IntArray) {
         if (appWidgetIds.isEmpty()) return
         prefs(context).edit().apply {
-            appWidgetIds.forEach { remove(KEY_PREFIX + it) }
+            appWidgetIds.forEach { remove(KEY_PREFIX + it); remove(ownerKeyFor(it)) }
         }.apply()
     }
 
@@ -100,11 +181,29 @@ object WidgetBindingStore {
      * `getAppWidgetIds()` is more trustworthy than that, so on Android the
      * system's list is the authority and this simply agrees with it.
      */
+    /**
+     * Every binding in the file, ownership ignored.
+     *
+     * Only for housekeeping. Anything that DISPLAYS a widget must go through
+     * [all] or [boundStation] with the account asking.
+     */
+    private fun allRegardlessOfOwner(context: Context): Map<Int, String> =
+        prefs(context).all.mapNotNull { (key, value) ->
+            if (!key.startsWith(KEY_PREFIX)) return@mapNotNull null
+            val id = key.removePrefix(KEY_PREFIX).toIntOrNull() ?: return@mapNotNull null
+            val station = (value as? String)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            id to station
+        }.toMap()
+
     fun prune(context: Context) {
         val live = AppWidgetManager.getInstance(context)
             .getAppWidgetIds(ComponentName(context, DepartureWidgetProvider::class.java))
             .toSet()
-        val dead = all(context).keys.filterNot { it in live }
+        // EVERY binding, whoever owns it. Pruning is about which widgets still
+        // exist on the home screen, not about who may see them: filtering by
+        // the current account here would leave another account's dead bindings
+        // in the file forever, which is the accumulation this exists to stop.
+        val dead = allRegardlessOfOwner(context).keys.filterNot { it in live }
         if (dead.isEmpty()) return
         unbind(context, dead.toIntArray())
     }
