@@ -45,9 +45,10 @@ navigation and lifecycle, Coil 3, kotlinx-serialization across new types.
 ### Tasks
 - [x] **a.** Build a release APK **and the AAB**. *(Both, S016, on the full
       post-cutover graph including Play Core. Numbers below.)*
-- [ ] **b.** Walk every screen. **Still the one that matters, and it needs a
-      phone.** Serialization and reflection failures under R8 surface as runtime
-      crashes on screens nobody opened during testing.
+- [~] **b.** Walk every screen. **PARTLY DONE on a Pixel 7 Pro, 2026-09-12** —
+      the minified build was signed, installed over the live `versionCode 2` and
+      **launched clean**. What that retires and what it does not is below; the
+      screen-by-screen walk still needs a person, because the phone locked.
 - [x] **c.** Add keep rules for anything the new graph needs. *(None needed, and
       that is now **verified against the shipped `mapping.txt`** rather than
       reasoned from the rule files. See the findings.)*
@@ -84,6 +85,34 @@ baseline to be a jump FROM.
 The AAB is larger than the APK by design: `BUNDLE-METADATA/` carries a 76 MB
 uncompressed `proguard.map` for Play's de-obfuscation, and none of it is
 delivered to a device.
+
+### The release build RAN, 2026-09-12
+
+Signed with the debug key, `adb install -r` over the live `versionCode 2`, on the
+Pixel 7 Pro. It replaced a debug build with a **minified release** one and:
+
+```
+versionCode=3  versionName=2.0-staging          ← the in-place upgrade
+PRAGMA user_version = 3                          ← 1.sqm + 2.sqm both ran
+(logcat -b crash: empty)                         ← no R8 casualty at startup
+ResumedActivity: com.stationly.mobile/.MainActivity
+D/WidgetPlacement: observed 2 widget(s) across 1 board(s)
+D/NotificationManager: reconcile: +0 -6 (ledger 10 → 4)
+D/Widget: Updating widget 6 for Hackney Wick Rail Station with 6 departures
+D/FreshData: fresh data → Station(stationId=940GZZDLBNK)
+```
+
+**What that retires.** The largest unknown in this story was whether the whole
+Compose Multiplatform UI, Coil, the SDUI decoder and kotlinx-serialization
+survive R8 at RUNTIME rather than merely at build time. They do: the app starts,
+composes, reads its database, renders two widgets, reconciles against the
+backend and takes a push. Those paths cover most of what the keep rules protect.
+
+**What it does not.** Every screen. The phone locked mid-session and it is the
+owner's daily device, so no unlocking and no tapping — an R8 failure on a screen
+nobody opened is exactly the shape this task exists to catch, and the walk is
+still owed. Untouched: sign-in, the selection flow, station settings, the filter
+sheet, profile, support, the update surfaces, and the screensaver.
 
 ### Findings
 
@@ -194,13 +223,16 @@ The migration test proves the SQL. This proves the phone. They are not the same
 claim, and the difference is where R1 lives.
 
 ### Tasks
-- [ ] **a.** **In-place upgrade** from a genuine v1 install — a real
-      `versionCode 2` build with real boards, real predictions, and a real
-      history of use. Not a fresh install with rows inserted.
-      *(Unblocked S016: this build is `versionCode 3` now, so it will install
-      over the live one. It migrates 1 → 3 in one pass, through both `1.sqm` and
-      `2.sqm` — `MigrationTest` proves the pair lands on the same shape as
-      `Schema.create`, and this is the half that proves the phone.)*
+- [~] **a.** **In-place upgrade** from a genuine v1 install.
+      **HALF DONE on hardware, 2026-09-12.** `versionCode 3` was installed over a
+      real `versionCode 2` install with real boards and real cached predictions,
+      and the database migrated **2 → 3** in place: `PRAGMA user_version` read 2
+      before and 3 after, the boards survived, and the predictions repopulated
+      from FCM within seconds exactly as `2.sqm` says they will.
+      **What is still owed is the 1 → 3 path**, which is the one that matters:
+      that device was already at schema 2 (it had been running builds from this
+      branch), so `1.sqm` did not run. A genuine Play-store v1 install is needed
+      for that, and it is the migration with the users behind it.
 - [ ] **b.** **Backup-restore path.** `backup_rules.xml` and
       `data_extraction_rules.xml` both include `domain="database"`, so a v1
       database travels through cloud backup and device-to-device transfer. A user

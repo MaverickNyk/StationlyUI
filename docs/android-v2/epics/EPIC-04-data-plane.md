@@ -371,6 +371,53 @@ Robolectric to the gate for it is a bigger change than the risk justifies, but
 it is the reason the ledger discipline is written down in the class KDoc rather
 than left to be inferred.
 
+### Verified on hardware, 2026-09-12 — and it found a race
+
+One app open on the Pixel 7 Pro, release build:
+
+```
+D/NotificationManager: reconcile: +0 -6 (ledger 10 → 4)
+  unsubscribed LineStatus_tube_circle
+  unsubscribed LineStatus_tube_metropolitan
+  unsubscribed LineStatus_tube_piccadilly
+  unsubscribed Station_940GZZDLBNK
+  unsubscribed Station_940GZZDLWLA
+  unsubscribed Station_940GZZLUKSX
+```
+
+**Six stale topics, on a real device, including the exact two AV2-4.1 named** —
+`Station_940GZZDLBNK` and `Station_940GZZLUKSX`, reported then as "pushes arrive,
+match nothing, and are dropped". The leak is real, it was measurable, and the
+reconcile closed it on first run.
+
+#### ⚠️ And the reconcile unsubscribed a LIVE board, because it raced the other one
+
+The same log, read in order:
+
+```
+43.076  reconcile: +0 -6                     ← plan computed from a snapshot
+44.398  subscribed   Station_940GZZDLRVC     ← the BOARD reconcile, restoring
+44.882  subscribed   LineStatus_dlr_dlr         a board from the cloud
+45.965  unsubscribed Station_940GZZDLRVC     ← this, executing a 3-second-old plan
+46.924  unsubscribed LineStatus_dlr_dlr
+```
+
+Each FCM call takes a few hundred milliseconds, so a six-topic plan takes four
+seconds to execute — and the board reconcile subscribed two of those topics in
+the middle of it. The DLR board ended with no subscription and would have stopped
+receiving departures, silently, until something re-subscribed it.
+
+This is the hazard task (b) names in its own words — *"two systems subscribing to
+the same topics is how a topic gets unsubscribed out from under a board that
+still needs it"* — reintroduced in a new shape by the reconcile added to fix it.
+`UserSyncCoordinator` has had a mutex for exactly this since before the branch,
+and its comment says so; the new call site simply was not under it. Fixed by
+taking the lock, which makes the plan and its execution both see settled state.
+
+**Nothing but a device would have found this.** The plan is correct, the
+execution is correct, and the interleaving only exists because FCM is slow enough
+for a four-second window to open.
+
 ### Handoff notes — S016, 2026-09-11
 
 **The reconcile runs on every foreground** (`MainActivity.onResume` →
@@ -544,12 +591,26 @@ fan-outs, so each of them reads the profile twice instead of once. Board changes
 are rare (a few per session, debounced, and gated by `BoardPushGate`), and this
 ends when the dual-write does — Q2.
 
+### Verified on hardware, 2026-09-12
+
+The device's local boards were Royal Victoria DLR (both directions) and Hackney
+Wick; the account's cloud `boards` list was Bank and Hackney Wick. On the first
+foreground after this change the reconcile **converged the device onto the cloud
+list** — Royal Victoria discarded, Bank set up, ids renumbered 128-130 → 131-132
+— and the widget bound to Bank rendered its departures within seconds.
+
+That is the story working end to end: `boards` is the authority, the device
+adopts it, and the topics follow. It is also the first time this branch has seen
+Android read back the list it writes.
+
+**Still owed:** the destructive half, on an account where it matters. Add a board,
+cold-start, and confirm it is still there — the failure this story fixes is a
+board that silently disappears, and the device used here had no board that only
+existed locally and deserved to survive.
+
 ### Handoff notes — S016, 2026-09-11
 
-**Not verified on hardware.** Everything here is reasoned from the two sources
-plus unit tests, and the failure it fixes is a timing one: add a board, wait for
-a foreground reconcile, see whether it survives. That is the four-minute device
-check this needs and did not get:
+**Reasoned, unit-tested, and now partly seen.** The four-minute device check:
 
 ```
 1. Add a board on the Pixel. Confirm it appears.
