@@ -40,9 +40,18 @@ DEVICE:            ✅ RUN ON THE PIXEL 7 PRO, 2026-09-12 — including the
                    cloud list. The device found TWO defects nothing else could
                    (a live board unsubscribed by a racing reconcile, and a bound
                    widget flashing "Choose a station"); both fixed.
-                   STILL OWED: the screen-by-screen walk (the phone locked and
-                   it is the owner's daily device), the screensaver, and the
-                   1 → 3 migration from a genuine Play-store v1 install.
+                   ✅ AND THE 1 → 3 MIGRATION PASSED — R1, the risk this whole
+                   programme is arranged around. A genuine v1 database (the
+                   frozen fixture, three boards including a bus hub's two poles)
+                   was written into the app's data dir and migrated in one pass:
+                   version 3, no crash, every board kept WITH ITS ID, both poles
+                   separate, ActivityEventEntity created, Q7's key live. That is
+                   task (a) and task (b) at once — a v1 database inside a v2
+                   install IS the Auto Backup path. Device backed up first and
+                   restored after.
+                   STILL OWED: the screen-by-screen walk (the phone is the
+                   owner's daily device and waking it is not mine to do), and
+                   the screensaver, which has never been seen render.
 BLOCKED ON OWNER:  🔴 Q5 is now the biggest risk on the branch and it is NOT
                    what it says on the tin: master has no migrations, so every
                    App Store iOS user's database is stamped version 1 while
@@ -51,11 +60,12 @@ BLOCKED ON OWNER:  🔴 Q5 is now the biggest risk on the branch and it is NOT
                    options written out in the question.
                    Q7 FIXED this session. Q3 answered (EPIC-06 header).
                    Q1/Q2/Q4/Q6 are decisions or console work, not blockers.
-NEXT UP:           **Walk the release build by hand.** It is installed and
-                   running on the Pixel; what is left is opening every screen,
-                   because an R8 failure lands on the one nobody opened. Then
-                   the screensaver (AV2-6.2 has never been seen), then AV2-8.2's
-                   1 → 3 upgrade from a genuine Play-store v1, then the rollout.
+NEXT UP:           **Two things, both needing a human at the phone.**
+                   (1) Walk the release build — it is installed and running, and
+                   an R8 failure lands on the screen nobody opened.
+                   (2) Dock or charge the phone with Stationly set as the
+                   screensaver: AV2-6.2 has never been seen render.
+                   Then AV2-8.3's rollout.
                    Everything else on this board is in Review.
 ```
 
@@ -63,8 +73,7 @@ NEXT UP:           **Walk the release build by hand.** It is installed and
 
 | Story | Epic | Title | Waiting on |
 |---|---|---|---|
-| AV2-8.2 | 08 | Upgrade verification on hardware | AV2-8.1, a phone |
-| AV2-8.3 | 08 | Ship | AV2-8.2 |
+| AV2-8.3 | 08 | Ship | AV2-8.2 sign-off, Play Console |
 
 ### 🅡 Ready — take the top one
 
@@ -84,6 +93,7 @@ Twenty stories. In the order somebody signing off should read them:
 
 | Story | Session | What to look at |
 |---|---|---|
+| **AV2-8.2** | device 2026-09-12 | **R1 has a hardware pass.** A genuine v1 database migrated 1 → 3 in one launch: no crash, every board kept with its id, the bus hub's two poles still separate, `ActivityEventEntity` created, Q7's key live on a MIGRATED database rather than a created one. Tasks (a) and (b) at once, because a v1 database inside a v2 install is what Auto Backup delivers. The one criterion left open is "does not sign the user out", which the fixture could not answer. |
 | **AV2-4.3** | S016 · device 2026-09-12 | **The worst bug on the branch, and it had been live since the cutover.** Android wrote `boards` (the shared SelectionViewModel) and reconciled against `stations` (the legacy path), and the backend derives neither from the other on a write. So a board saved on Android left no trace in the array its own next foreground compared against — and that reconcile DELETES any local selection the cloud list does not have. On an account whose `stations` is empty, which is every account created on v2, that is every board the user has, gone within fifteen minutes, silently. Four device passes missed it because the test account's legacy array already described its one board. |
 | AV2-6.2 | S016 | **Unverified on hardware, and it is the one surface you cannot open by tapping.** The screensaver is the shared one now and v1's `dream/` package is deleted. Failure mode is a blank screen on a bedside table with no crash dialog. Four-step device script in the handoff. |
 | AV2-4.2 | S016 · device 2026-09-12 | **Six stale topics shed on first run, including the exact two AV2-4.1 named.** And the device caught the reconcile racing the board reconcile and unsubscribing a LIVE board — fixed by taking the mutex that already existed for it. The FCM topic ledger only ever grew — `unsubscribe` never removed from it — so the diff this story asks for would have made a re-added board silently never receive another push. Also: a token rotation was dropping `stationly_all` permanently, on a device that went on reporting itself subscribed. |

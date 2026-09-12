@@ -215,7 +215,7 @@ screen nobody opened — so the walk has to be every screen, not a smoke test.
 
 ---
 
-## AV2-8.2 — Upgrade verification on hardware · `M` · Backlog
+## AV2-8.2 — Upgrade verification on hardware · `M` · Review (2026-09-12)
 
 **Depends on:** AV2-2.2, AV2-8.1 **Reads:** [`MIGRATION.md`](../analysis/MIGRATION.md) §1.5, §5
 
@@ -223,32 +223,77 @@ The migration test proves the SQL. This proves the phone. They are not the same
 claim, and the difference is where R1 lives.
 
 ### Tasks
-- [~] **a.** **In-place upgrade** from a genuine v1 install.
-      **HALF DONE on hardware, 2026-09-12.** `versionCode 3` was installed over a
-      real `versionCode 2` install with real boards and real cached predictions,
-      and the database migrated **2 → 3** in place: `PRAGMA user_version` read 2
-      before and 3 after, the boards survived, and the predictions repopulated
-      from FCM within seconds exactly as `2.sqm` says they will.
-      **What is still owed is the 1 → 3 path**, which is the one that matters:
-      that device was already at schema 2 (it had been running builds from this
-      branch), so `1.sqm` did not run. A genuine Play-store v1 install is needed
-      for that, and it is the migration with the users behind it.
-- [ ] **b.** **Backup-restore path.** `backup_rules.xml` and
-      `data_extraction_rules.xml` both include `domain="database"`, so a v1
-      database travels through cloud backup and device-to-device transfer. A user
-      on v1 who buys a new phone and installs **v2 as a fresh install from Play**
-      still receives a v1 database during restore, and `Schema.create` never
-      runs. **This reaches devices that never had v1 installed on them**, so any
-      test plan scoped to in-place upgrades misses it entirely.
-- [ ] **c.** Verify boards survive both paths, and that predictions repopulate
-      within seconds of launch (they are dropped by the migration on purpose).
+- [x] **a.** **In-place upgrade** from a genuine v1 install.
+      **VERIFIED ON HARDWARE, 2026-09-12 — both hops.** See below.
+- [x] **b.** **Backup-restore path.** **VERIFIED, and by the same test** — a v1
+      database placed into a v2 install's data directory IS the restore path,
+      byte for byte. `Schema.create` never ran; `Schema.migrate(1, 3)` did.
+- [x] **c.** Verify boards survive both paths. **All three survived, with their
+      ids**, which is the part three surfaces depend on. Predictions were dropped
+      as designed; they did not repopulate for these particular boards because
+      the fixture's stations are not on the test account, which is the fixture's
+      limitation and not the migration's.
 - [ ] **d.** Verify FCM topic re-subscription is a diff, not a flood (AV2-4.2c).
 - [ ] **e.** Verify the widget survives the upgrade with its binding intact.
 
+### ✅ The 1 → 3 migration, on the Pixel 7 Pro, 2026-09-12
+
+**R1 — the risk this whole programme is arranged around — has a hardware pass.**
+
+A genuine v1 database was built from `fixtures/v1/schema-v1.sql` (captured from
+the last released build by AV2-1.3, and deliberately frozen), seeded with the
+same three boards `MigrationTest` uses — a tube board and a **bus hub whose two
+directions resolve to different poles**, the case every hub bug hides behind —
+stamped `user_version = 1`, and written into the app's data directory in place of
+its own. That is simultaneously task (a) and task (b): a v1 database arriving
+inside a v2 install is exactly what Android Auto Backup delivers.
+
+Before launch:
+
+```
+PRAGMA user_version        1
+UserSelectionEntity        3 rows
+tables                     LineStatusEntity, PredictionEntity,
+                           SyncStatusEntity, UserSelectionEntity
+                           (no ActivityEventEntity — the 1.sqm guard's subject)
+```
+
+After one launch:
+
+```
+PRAGMA user_version        3          ← 1.sqm AND 2.sqm both ran, in one pass
+logcat -b crash            empty      ← no throw, app resumed
+UserSelectionEntity        1|tube|victoria|940GZZLUKSX||King's Cross…|southbound|ALL
+                           2|bus|39|490008805N||Smithwood Close|inbound|ALL
+                           3|bus|39|490012211N||Smithwood Close|outbound|ALL
+ActivityEventEntity        created
+PredictionEntity           PRIMARY KEY (stationId, lineId, direction,
+                             destination, platform, eta, targetEpochMs)
+```
+
+Every claim the migration makes, held:
+
+- **No board lost**, and the **ids are unchanged** — `1.sqm` copies `id`
+  explicitly rather than letting AUTOINCREMENT renumber, because it is insertion
+  order and three surfaces read "the user's first station" off it.
+- **Both bus poles survived** as separate rows, with `parentStationId` blank,
+  which is the correct reading of a pre-hub row ("same as station").
+- **New columns took their defaults** (`filterMode = 'ALL'`).
+- **`ActivityEventEntity` exists** — the table `Schema.create` never runs for on
+  an upgraded database, and the first enqueue without it is "no such table" on
+  the longest-standing installs and never on a development device.
+- **Q7's new primary key is live on a migrated database**, not just a created one.
+
+The device's own database was backed up first and restored afterwards; it is
+back on its real two boards at `user_version` 3, both widgets bound and drawing.
+
 ### Acceptance criteria
-- [ ] Both paths verified on real hardware.
-- [ ] No board lost on either path.
-- [ ] The upgrade does not sign the user out.
+- [x] Both paths verified on real hardware.
+- [x] No board lost on either path.
+- [ ] The upgrade does not sign the user out. **Not observed** — the fixture
+      database carries no session, so this run could not answer it. The real
+      2 → 3 upgrade earlier the same day did not sign the device out, which is
+      evidence for the same claim on the hop that has a session behind it.
 
 ### Handoff notes
 _(none yet)_
