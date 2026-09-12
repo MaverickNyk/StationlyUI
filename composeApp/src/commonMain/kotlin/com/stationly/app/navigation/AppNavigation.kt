@@ -300,6 +300,26 @@ fun AppNavigation(
                     if (!openSystemScreensaverSettings()) navController.navigate("dream/settings")
                 },
                 onOpenWidgetGuide = { navController.navigate("widget-guide") },
+                // ── The row goes to the MANAGER where there is one ──
+                //
+                // This parameter was declared on this function and then never
+                // passed on, so it was null at the only place that reads it and
+                // the Widgets row fell through to `onOpenWidgetGuide` on BOTH
+                // platforms. A producer with no consumer is silent: `MainActivity`
+                // supplied a manager callback, `App()` forwarded it, this
+                // function accepted it, and nothing used it.
+                //
+                // What that shipped on Android was the iOS guide — "until the
+                // icons jiggle", "Tap Edit, then Add Widget, top-left corner",
+                // "Hold the widget, tap Edit Widget" — four gestures that do not
+                // exist there, on the one screen a user opens BECAUSE they could
+                // not work out how widgets work. Meanwhile the in-app manager,
+                // which is the thing Android has and iOS cannot, was unreachable.
+                // Found by opening the screen on a Pixel; the subtitle gave it
+                // away before the tap did, because it read "Boards on your Home
+                // Screen" (the iOS string) instead of "Choose what each widget
+                // shows".
+                onManageWidgets = onManageWidgets,
                 // Pushed ON TOP of home settings rather than replacing it: the
                 // station list is where the user was, and back should return
                 // them to it — same rule as the settings → line picker → back

@@ -138,6 +138,52 @@ has already been exercised once (2026-08-23, the "no such column" crash), and
 boards come back from the cloud on sign-in. Raised as **Q5** because it affects
 people who are testing right now.
 
+#### 🔴 Corrected 2026-09-11: it is not TestFlight testers any more
+
+`origin/master` contains **no `.sqm` files at all**. SQLDelight derives the
+database version from the migration count, so the build that shipped to the App
+Store stamps its databases `user_version = 1` — while its `.sq` already holds the
+full current schema. Every paragraph above describing "the iOS shape" is now
+describing **every App Store user**, and "delete and reinstall once" is not
+something they can be asked to do.
+
+Nothing on this branch causes it; it became true the moment iOS shipped publicly
+with migrations still absent from `master`. But the first iOS release cut from
+this branch runs `1.sqm` on all of them, hits the `CREATE TABLE
+ActivityEventEntity` guard, and rolls back — safe for the data, fatal for opening
+the database.
+
+#### The fix, ready to apply (option (a) on the board's Q5)
+
+The two shapes ARE distinguishable: an iOS-shaped v1 database has
+`ActivityEventEntity`, an Android v1 database does not. So a database at version 1
+that already has that table only needs its stamp corrected to 2, after which
+`2.sqm` runs normally and it converges with everyone else.
+
+`core/src/iosMain/kotlin/platform/Database.ios.kt` is four lines today
+(`NativeSqliteDriver(StationlyDatabase.Schema, "stationly.db")`). The change is to
+inspect before opening:
+
+```
+1. Open the database file directly (or use NativeSqliteDriver's
+   DatabaseConfiguration.upgrade hook, which receives oldVersion).
+2. If oldVersion == 1 AND a row exists in sqlite_master for
+   'ActivityEventEntity' → treat the old version as 2.
+3. Run Schema.migrate(driver, effectiveOldVersion, Schema.version).
+```
+
+**Guard it as tightly as that reads.** The condition must be BOTH the version and
+the table: a version-1 database WITHOUT the table is a genuine Android v1
+database, and re-stamping that one to 2 would skip `1.sqm` and leave an
+eight-column `UserSelectionEntity` under a schema that expects nineteen — which
+is the one outcome worse than the current failure.
+
+**Not applied here.** It is iOS runtime behaviour on a shipping app, it cannot be
+exercised from this branch's tooling (the XCFramework builds it but never runs
+it), and Q5 offers two other routes the owner may prefer — shipping the schema in
+an iOS release that carries nothing else, or accepting the reinstall and telling
+people. The decision is the owner's; the code is one function either way.
+
 ### 1.5 Android Auto Backup widens the blast radius
 
 `res/xml/backup_rules.xml` and `res/xml/data_extraction_rules.xml` both carry:
