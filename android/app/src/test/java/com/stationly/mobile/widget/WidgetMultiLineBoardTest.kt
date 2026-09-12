@@ -96,37 +96,35 @@ class WidgetMultiLineBoardTest {
         assertTrue(rows.filterIsInstance<MultiLineBoardProcessor.Row.Departure>().isNotEmpty())
     }
 
-    // ── depth from the widget's own size ────────────────────────────────────
-
     /**
-     * The thing iOS cannot do. WidgetKit gives a FAMILY and a layout per family;
-     * Android's home screen is a free grid, so the same station at two sizes is
-     * two different boards and the resize gesture is the user saying which one
-     * they meant.
+     * Three per platform, and it does not vary.
      *
-     * Three is what this widget has always drawn and stays the default, so an
-     * untouched widget looks exactly as it did.
+     * This briefly followed the widget's height — 2 rows on a short widget, 4 on
+     * a tall one — which was a nice idea and the wrong one. The rule is a product
+     * rule and it is the same three the home screen and the screensaver draw, so
+     * a widget showing fewer departures than the app for the same platform is
+     * not a smaller widget, it is a widget missing trains. Height decides how
+     * many BLOCKS fit on screen, which the scroll already handles.
      */
     @Test
-    fun `depth follows the height the user dragged to`() {
-        assertEquals("a one-cell strip cannot hold three per platform", 2, cap(100))
-        assertEquals("two cells is the shipped default", 3, cap(150))
-        assertEquals("a tall widget earns a fourth row", 4, cap(300))
-    }
+    fun `three departures per platform, whatever the widget's size`() {
+        assertEquals(3, DepartureWidgetProvider.ROWS_PER_PLATFORM)
 
-    @Test
-    fun `an unknown height answers the default rather than guessing`() {
-        // A host that never reported a size. Being wrong costs a scroll on API
-        // 31+ and a clipped row below it; neither is worth a worse default.
-        assertEquals(3, cap(0))
-        assertEquals(3, cap(-1))
-    }
+        val rows = MultiLineBoardProcessor.rowsFrom(
+            MultiLineBoardProcessor.buildGroups(
+                feeds = listOf(
+                    feed("inbound", "Platform 1", "Stratford", "Stratford", "Stratford", "Stratford"),
+                ),
+                isBus = false,
+                rowCap = DepartureWidgetProvider.ROWS_PER_PLATFORM,
+            ),
+            rowCap = DepartureWidgetProvider.ROWS_PER_PLATFORM,
+        )
 
-    /**
-     * The rule takes the Int, not the `Bundle` it came from — a `Bundle` throws
-     * in a plain JVM unit test, and this decision is arithmetic rather than
-     * Android. The platform lookup stays at the call site, the same split
-     * `TopicLedger` and `WidgetRedrawTargets` use.
-     */
-    private fun cap(minHeightDp: Int): Int = DepartureWidgetProvider.rowCapForHeight(minHeightDp)
+        assertEquals(
+            "a platform with four trains draws three of them",
+            3,
+            rows.filterIsInstance<MultiLineBoardProcessor.Row.Departure>().size,
+        )
+    }
 }
