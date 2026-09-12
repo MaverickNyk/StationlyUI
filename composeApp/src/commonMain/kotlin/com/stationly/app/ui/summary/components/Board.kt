@@ -125,6 +125,7 @@ import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import com.stationly.app.ui.common.hapticClick
 
 // Fixed TfL dot-matrix amber — the signage board is locked to this regardless
 // of app theme (matches android `@color/tfl_amber` = #FFC819).
@@ -1379,7 +1380,7 @@ private fun StationHeader(
                 }
                 Spacer(Modifier.width(2.dp))
             }
-            IconButton(onClick = onOpenSettings, modifier = Modifier.size(34.dp)) {
+            IconButton(onClick = hapticClick(onClick = onOpenSettings), modifier = Modifier.size(34.dp)) {
                 Icon(
                     Icons.Rounded.Tune,
                     "$stationName settings",

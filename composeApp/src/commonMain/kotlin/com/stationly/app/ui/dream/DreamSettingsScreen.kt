@@ -78,6 +78,9 @@ import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
+import com.stationly.app.platform.HapticType
+import com.stationly.app.platform.performHaptic
+import com.stationly.app.ui.common.pressScale
 
 /**
  * Screensaver configuration screen — port of Android's
@@ -214,6 +217,7 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
                     accent = accent,
                     strings = strings,
                     onPick = {
+                        performHaptic(HapticType.SELECTION)
                         layout = it
                         DreamSettings.setLayout(it)
                     },
@@ -234,6 +238,7 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
                                     strings = strings,
                                     modifier = Modifier.weight(1f),
                                     onClick = {
+                                        performHaptic(HapticType.SELECTION)
                                         theme = t
                                         DreamSettings.setTheme(t)
                                     },
@@ -258,6 +263,7 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
                                     strings = strings,
                                     modifier = Modifier.weight(1f),
                                     onClick = {
+                                        performHaptic(HapticType.SELECTION)
                                         clockStyle = style
                                         DreamSettings.setClockStyle(style)
                                     },
@@ -284,6 +290,7 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
                                 selected = stationId == null,
                                 accent = accent,
                                 onClick = {
+                                    performHaptic(HapticType.SELECTION)
                                     stationId = null
                                     DreamSettings.setStationId(null)
                                 },
@@ -308,6 +315,7 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
                                     selected = stationId == option.stationId,
                                     accent = accent,
                                     onClick = {
+                                        performHaptic(HapticType.SELECTION)
                                         stationId = option.stationId
                                         DreamSettings.setStationId(option.stationId)
                                     },
@@ -852,7 +860,11 @@ private fun StationPickCard(
     ) {
         Row(
             modifier = Modifier
-                .clickable(onClick = onClick)
+                // `pressScale`, not a bare `clickable`: Material's ripple is
+                // the loudest tell that a Compose app is not a native one, and
+                // every other card in the app shrinks instead. The haptic is
+                // fired by the caller here, which knows this is a SELECTION.
+                .pressScale(onClick = onClick, haptic = null)
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

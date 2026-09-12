@@ -71,6 +71,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.stationly.app.platform.HapticType
+import com.stationly.app.ui.common.pressScale
+import com.stationly.app.platform.performHaptic
 
 /**
  * Everything about widgets, in one place, shaped for Android rather than ported
@@ -480,7 +483,7 @@ private fun WidgetsScreen(
     }
 
     if (canAdd) {
-        Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
+        Button(onClick = { performHaptic(HapticType.TAP); onAdd() }, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text("Add a widget")
@@ -524,6 +527,8 @@ private fun WidgetsScreen(
                     hub = hub,
                     isChosen = false,
                     trailing = "Change",
+                    // This row goes somewhere rather than choosing something.
+                    haptic = HapticType.TAP,
                     onClick = { onPick(widget.appWidgetId) },
                 )
             } else {
@@ -641,7 +646,7 @@ private fun ConfigureScreen(
     SettingsCaption("These settings apply to ${hub.name} everywhere — the widget and the app.")
 
     Spacer(Modifier.height(28.dp))
-    Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Done") }
+    Button(onClick = { performHaptic(HapticType.TAP); onDone() }, modifier = Modifier.fillMaxWidth()) { Text("Done") }
 }
 
 // ── Pieces ──────────────────────────────────────────────────────────────────
@@ -671,7 +676,7 @@ private fun NoBoardsYet(onOpenApp: () -> Unit) {
         "Add one in Stationly first — then it'll be here, ready to put on your Home Screen.",
     )
     Spacer(Modifier.height(16.dp))
-    Button(onClick = onOpenApp) { Text("Open Stationly") }
+    Button(onClick = { performHaptic(HapticType.TAP); onOpenApp() }) { Text("Open Stationly") }
 }
 
 /** The user's stations, as rows they can recognise at a glance. */
@@ -715,11 +720,20 @@ private fun StationChoiceRow(
     isChosen: Boolean,
     onClick: () -> Unit,
     trailing: String? = null,
+    haptic: HapticType? = HapticType.SELECTION,
 ) {
     val border = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.10f)
     androidx.compose.material3.Surface(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        // `pressScale`, not `Surface(onClick =)`. The Material overload draws a
+        // ripple, which is the loudest tell that a Compose screen is not a
+        // native one, and every other card in this app shrinks instead. It also
+        // carries the haptic — see Press.kt.
+        //
+        // SELECTION rather than TAP when this row IS the choice: picking a
+        // station out of three says "you are on that one now". A row that
+        // merely navigates (the manager's "Change") says "that registered", so
+        // the caller passes TAP.
+        modifier = Modifier.fillMaxWidth().pressScale(onClick = onClick, haptic = haptic),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         color = if (isChosen) MaterialTheme.colorScheme.primaryContainer
         else MaterialTheme.colorScheme.surface,
@@ -811,8 +825,7 @@ private fun StationChoiceRow(
 @Composable
 private fun UnboundWidgetRow(onClick: () -> Unit) {
     androidx.compose.material3.Surface(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().pressScale(onClick = onClick),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surface,
         border = androidx.compose.foundation.BorderStroke(
@@ -846,7 +859,7 @@ private fun UnboundWidgetRow(onClick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            TextButton(onClick = onClick) { Text("Set up") }
+            TextButton(onClick = { performHaptic(HapticType.TAP); onClick() }) { Text("Set up") }
         }
     }
 }

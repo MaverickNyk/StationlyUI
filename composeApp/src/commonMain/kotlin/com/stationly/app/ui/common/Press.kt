@@ -14,6 +14,8 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import com.stationly.app.platform.HapticType
+import com.stationly.app.platform.performHaptic
 
 /**
  * Touch feedback that belongs on iOS.
@@ -32,12 +34,31 @@ import androidx.compose.ui.graphics.graphicsLayer
  * Both animate the *press*, not the release: the fill or the shrink arrives
  * immediately and springs back on lift, which is what makes a tap feel answered
  * rather than merely registered.
+ *
+ * ## They fire the haptic too, and that is the point of putting it here
+ * A press has two halves — something to see and something to feel — and they
+ * are the same event. Leaving the second half to each call site meant it was
+ * present on the screens somebody remembered and absent everywhere else: the
+ * whole of the dream settings screen and the whole of the widget configuration
+ * screen shipped silent, not by decision but by omission.
+ *
+ * So the haptic travels with the primitive. A screen built next year gets it by
+ * using the same modifier every other screen uses, rather than by its author
+ * knowing to add it.
+ *
+ * [HapticType.TAP] is the default because most presses are "that registered".
+ * Pass [HapticType.SELECTION] for one exclusive choice among a few — a
+ * segmented control, a chip row, a station picker — where the message is "you
+ * are on that one now" rather than "that registered". Pass `null` only when the
+ * caller fires its own, which is rare and always because the decision is
+ * conditional on something the modifier cannot see.
  */
 @Composable
 fun Modifier.pressScale(
     onClick: () -> Unit,
     enabled: Boolean = true,
     scale: Float = 0.97f,
+    haptic: HapticType? = HapticType.TAP,
 ): Modifier = composed {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -59,7 +80,13 @@ fun Modifier.pressScale(
             // press two different personalities at once.
             indication = null,
             enabled = enabled,
-            onClick = onClick,
+            onClick = {
+                // Before the action, not after: the action can navigate, and a
+                // haptic that arrives once the next screen is up reads as
+                // belonging to the new screen rather than to the tap.
+                haptic?.let(::performHaptic)
+                onClick()
+            },
         )
 }
 
@@ -68,6 +95,7 @@ fun Modifier.pressHighlight(
     onClick: () -> Unit,
     enabled: Boolean = true,
     color: Color = Color.Unspecified,
+    haptic: HapticType? = HapticType.TAP,
 ): Modifier = composed {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -88,6 +116,34 @@ fun Modifier.pressHighlight(
             interactionSource = interaction,
             indication = null,
             enabled = enabled,
-            onClick = onClick,
+            onClick = {
+                haptic?.let(::performHaptic)
+                onClick()
+            },
         )
+}
+
+/**
+ * Wrap an `onClick` so it buzzes, without changing how it looks.
+ *
+ * [pressScale] and [pressHighlight] carry the haptic for everything that uses
+ * the app's own press feel. This is for the controls that deliberately keep
+ * Material's — `Button`, `IconButton`, `TextButton` — where swapping the
+ * indication would be a visual redesign rather than a feedback fix.
+ *
+ * ```
+ * IconButton(onClick = hapticClick(onOpenSettings)) { … }
+ * ```
+ *
+ * The haptic fires BEFORE the action, for the same reason it does in the
+ * modifiers: the action can navigate, and feedback that lands after the next
+ * screen is up reads as belonging to that screen rather than to the tap.
+ */
+@Composable
+fun hapticClick(
+    haptic: HapticType = HapticType.TAP,
+    onClick: () -> Unit,
+): () -> Unit = {
+    performHaptic(haptic)
+    onClick()
 }

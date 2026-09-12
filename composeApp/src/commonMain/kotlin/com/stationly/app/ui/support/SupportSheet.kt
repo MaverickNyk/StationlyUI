@@ -257,7 +257,9 @@ fun SupportSheet(
                     border = BorderStroke(1.dp, if (custom) t.primary else t.borderSubtle),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .pressScale(onClick = {
+                        // See the tier card: conditional on it being a real
+                        // change, which the modifier cannot see.
+                        .pressScale(haptic = null, onClick = {
                         if (!custom) performHaptic(HapticType.SELECTION)
                         custom = true; failed = false
                     }),
@@ -347,7 +349,10 @@ private fun TierChip(
         color = if (selected) t.primary.copy(alpha = 0.14f) else t.card,
         shape = RoundedCornerShape(14.dp),
         border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) t.primary else t.borderSubtle),
-        modifier = modifier.pressScale(onClick = onClick),
+        // `haptic = null`: the caller fires SELECTION, but only when the
+        // selection actually CHANGES. That condition is invisible from here, and
+        // a chip re-tapped at its current value should not buzz.
+        modifier = modifier.pressScale(onClick = onClick, haptic = null),
     ) {
         Column(
             Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 4.dp),
