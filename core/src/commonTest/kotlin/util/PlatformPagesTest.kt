@@ -160,4 +160,65 @@ class PlatformPagesTest {
     fun `an empty page has an empty body`() {
         assertTrue(PlatformPages.body(emptyList()).isEmpty())
     }
+
+    // ── every page is the same height ───────────────────────────────────────
+
+    /**
+     * **The owner's rule, and the reason for it.** A paged widget must not
+     * change size as you step through it.
+     *
+     * `MIN_BOARD_ROWS` is a floor for the WHOLE board, which is right for a
+     * scrolling surface: three platforms with two trains each already clears it
+     * and needs no padding. Page that same board and each page is two rows, so
+     * stepping from a platform with three trains to one with two shrinks the
+     * widget on somebody's home screen. Android resizes the host cell and the
+     * whole layout jumps.
+     *
+     * So a PAGE has its own floor, and it is the same three: pad with blank
+     * departures until the page is exactly that tall. This is the iOS widget
+     * principle — a widget occupies the space it claimed, whatever the data
+     * does — and it is why the widget has no depth SETTING at all. A control
+     * that changes the height of a home-screen widget is a control for
+     * breaking somebody's layout.
+     */
+    @Test
+    fun `a short page is padded to the fixed height`() {
+        val page = listOf(header("Platform 10"), dep("Lewisham", "Due"))
+        val body = PlatformPages.bodyPadded(page, rows = 3)
+        assertEquals(3, body.size)
+        assertEquals("Lewisham", (body[0] as Row.Departure).destination)
+        assertTrue(body.drop(1).all { (it as Row.Departure).destination.isBlank() })
+    }
+
+    @Test
+    fun `a page already at the height is untouched`() {
+        val page = listOf(header("P1"), dep("A", "1"), dep("B", "2"), dep("C", "3"))
+        val body = PlatformPages.bodyPadded(page, rows = 3)
+        assertEquals(3, body.size)
+        assertTrue(body.none { (it as Row.Departure).destination.isBlank() })
+    }
+
+    /**
+     * A page longer than the height is TRIMMED, so one busy platform cannot
+     * make the widget taller than the others either. The cap and the floor are
+     * the same number here on purpose: every page is that tall, always.
+     */
+    @Test
+    fun `a long page is trimmed to the fixed height`() {
+        val page = listOf(header("P1"), dep("A", "1"), dep("B", "2"), dep("C", "3"), dep("D", "4"))
+        assertEquals(3, PlatformPages.bodyPadded(page, rows = 3).size)
+    }
+
+    /**
+     * The fallback-copy page has no header and its rows are the message. It is
+     * padded like any other page, because it is on the same widget and the
+     * widget is still the same size.
+     */
+    @Test
+    fun `a headerless page is padded too, and keeps its message`() {
+        val page = listOf(dep("No upcoming departures", ""))
+        val body = PlatformPages.bodyPadded(page, rows = 3)
+        assertEquals(3, body.size)
+        assertEquals("No upcoming departures", (body[0] as Row.Departure).destination)
+    }
 }

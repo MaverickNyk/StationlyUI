@@ -80,6 +80,7 @@ import androidx.compose.material.icons.rounded.SwapHoriz
 import com.stationly.app.ui.common.SegmentedRow
 import com.stationly.app.ui.common.pressHighlight
 import com.stationly.core.model.user.PlatformNav
+import com.stationly.app.ui.station.PinPicker
 
 /**
  * Everything about widgets, in one place, shaped for Android rather than ported
@@ -383,7 +384,13 @@ class WidgetConfigureActivity : ComponentActivity() {
         // A widget pointed at a different station starts at that station's
         // FIRST platform. Keeping the index would open a Bank widget on "the
         // third one", which is a sentence about the station it used to show.
-        if (wasBoundTo != groupingId) WidgetPageStore.reset(this, targetId)
+        if (wasBoundTo != groupingId) {
+            WidgetPageStore.reset(this, targetId)
+            // The pin goes with it: "Platform 9" is a sentence about the station
+            // this widget used to show. The nav mode is about the WIDGET rather
+            // than the station, so it stays.
+            WidgetSettings.resetForRebind(this, targetId)
+        }
         redraw(targetId)
         // A binding is a placement change: this is the moment a board acquires a
         // widget, or hands one over to another board. The app's own view of the
@@ -635,13 +642,19 @@ private fun ConfigureScreen(
     var choosing by remember { mutableStateOf(bound == null) }
     val hub = hubs.firstOrNull { it.groupingId == bound }
 
-    // The store is the app's, so the settings this page writes are the same ones
-    // the station's own screen writes — same keys, same defaults, same pruning.
-    // Reading the flow rather than a snapshot is what makes the depth heading
-    // above the slider move while the slider moves.
-    val configs by UserSettings.configs.collectAsState()
-    LaunchedEffect(Unit) { UserSettings.ensureLoaded() }
-    val prefs = bound?.let { configs[it] } ?: BoardConfig()
+    // ── The widget's OWN settings ───────────────────────────────────────────
+    //
+    // Not `UserSettings`. This screen used to write the station's BoardConfig,
+    // so changing a widget silently changed the card inside the app and the two
+    // could never be set differently — even though a card sits in a scrolling
+    // page and a widget sits in a fixed cell on somebody's home screen. Owner's
+    // rule, 2026-09-12. See WidgetSettings.
+    var widgetPin by remember(appWidgetId) {
+        mutableStateOf(WidgetSettings.pinOf(context, appWidgetId))
+    }
+    var widgetNav by remember(appWidgetId) {
+        mutableStateOf(WidgetSettings.navOf(context, appWidgetId))
+    }
 
     var options by remember { mutableStateOf(PinOptions()) }
     LaunchedEffect(hub?.groupingId) {
@@ -687,29 +700,50 @@ private fun ConfigureScreen(
 
     Spacer(Modifier.height(28.dp))
 
-    // The SAME section the station's settings screen shows, reading and writing
-    // the same BoardConfig. Not a widget-specific copy: a widget is a view of a
-    // board, so a change here shows on the home-screen card too, and the two
-    // can never drift into describing one station differently.
-    BoardArrangementSection(
-        prefs = prefs,
-        platforms = options.platforms,
-        stops = options.stops,
-        lines = options.lines,
-        isBus = options.isBus,
-        onRowsPerPlatform = { rows ->
-            scope.launch {
-                UserSettings.update(hub.groupingId) { it.copy(rowsPerPlatform = rows) }
+    // ── Pin, on the widget ──────────────────────────────────────────────────
+    //
+    // The same picker the station's settings screen uses, over the same
+    // vocabulary, writing somewhere else. A second copy would drift the moment
+    // one of them learned a new pin kind.
+    if (options.platforms.isNotEmpty() || options.stops.isNotEmpty() ||
+        options.lines.size > 1 || widgetPin != null
+    ) {
+        SettingsSectionLabel("Pin to top")
+        Spacer(Modifier.height(10.dp))
+        PinPicker(
+            pin = widgetPin,
+            platforms = options.platforms,
+            stops = options.stops,
+            lines = options.lines,
+            onPin = { next ->
+                widgetPin = next
+                WidgetSettings.setPin(context, appWidgetId, next)
                 redraw()
-            }
-        },
-        onPin = { pin: BoardPin? ->
-            scope.launch {
-                UserSettings.update(hub.groupingId) { it.copy(pin = pin) }
-                redraw()
-            }
-        },
-    )
+            },
+        )
+        Spacer(Modifier.height(10.dp))
+        SettingsCaption(
+            if (widgetPin == null) {
+                "Nothing pinned. The platform with the soonest departure comes first."
+            } else {
+                "Pinned on this widget only. The board inside the app keeps its own order."
+            },
+        )
+        Spacer(Modifier.height(28.dp))
+    }
+
+    // ── No depth control here, deliberately ─────────────────────────────────
+    //
+    // The station's own settings screen has one, because a card inside a
+    // scrolling page can be any height. A widget cannot: it occupies a cell on
+    // somebody's home screen, and a control that changes its height is a
+    // control for moving everything around it. Stepping between platforms made
+    // that visible — a platform with two trains drew a shorter page than one
+    // with three, and the widget resized as you pressed the arrow.
+    //
+    // So the widget is always three per platform, padded with blanks when the
+    // data is thinner, which is the iOS widget principle and the owner's call
+    // on 2026-09-12. `PlatformPages.bodyPadded` is where that is enforced.
 
     // ── How you reach the platforms that do not fit ─────────────────────────
     //
@@ -722,19 +756,18 @@ private fun ConfigureScreen(
     Spacer(Modifier.height(10.dp))
     SegmentedRow(
         options = PlatformNav.entries,
-        selected = prefs.platformNav,
+        selected = widgetNav,
         onSelect = { nav ->
-            scope.launch {
-                UserSettings.update(hub.groupingId) { it.copy(platformNav = nav) }
-                redraw()
-            }
+            widgetNav = nav
+            WidgetSettings.setNav(context, appWidgetId, nav)
+            redraw()
         },
         label = { it.label },
         modifier = Modifier.fillMaxWidth(),
     )
     Spacer(Modifier.height(10.dp))
     SettingsCaption(
-        when (prefs.platformNav) {
+        when (widgetNav) {
             PlatformNav.SCROLL ->
                 "Every platform in one list. Scroll inside the widget to reach " +
                     "the rest — which can be fiddly on a small one."
@@ -745,7 +778,6 @@ private fun ConfigureScreen(
     )
 
     Spacer(Modifier.height(10.dp))
-    SettingsCaption("Departures and pinning apply to ${hub.name} everywhere — the widget and the app.")
 
     Spacer(Modifier.height(28.dp))
 }

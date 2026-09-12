@@ -95,6 +95,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         // widget showing", and leaving one behind means a widget id reissued by
         // the launcher inherits a stranger's platform.
         WidgetPageStore.forget(context, appWidgetIds)
+        WidgetSettings.forget(context, appWidgetIds)
         // Tell the app, in case it is open behind the home screen — the station
         // screen's delete warning and the SDUI `widget.count` fact both read
         // this, and both would otherwise describe a widget the user has just
@@ -574,15 +575,29 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // screen passes the same thing). `selection.groupingId` rather than
             // `boundTo` only because the latter is nullable here and they are
             // the same string by construction.
-            val config = kotlinx.coroutines.runBlocking {
-                com.stationly.core.repository.UserSettings.ensureLoaded()
-                com.stationly.core.repository.UserSettings.configOf(selection.groupingId)
-            }
-            val rowCap = rowCapFor(config)
+            // The widget's own settings, NOT the board's. Changing a widget must
+            // not change the card inside the app — see WidgetSettings.
+            val widgetPin = WidgetSettings.pinOf(context, appWidgetId)
+            val widgetNav = WidgetSettings.navOf(context, appWidgetId)
+            // FIXED, and not the board's `rowsPerPlatform`.
+            //
+            // A widget that changes height is a widget that moves everything
+            // else on somebody's home screen. Stepping between a platform with
+            // three trains and one with two did exactly that, because the row
+            // floor is a floor for the whole BOARD and a page is not a board.
+            // So the widget claims a size and keeps it: three per platform,
+            // padded with blanks when the data is thinner. See
+            // PlatformPages.bodyPadded, and the owner's call on 2026-09-12.
+            val rowCap = ROWS_PER_PLATFORM
             val boardRows = com.stationly.core.util.MultiLineBoardProcessor.rowsFrom(
                 com.stationly.core.util.MultiLineBoardProcessor.buildGroups(
                     feeds = feeds,
                     isBus = com.stationly.core.util.MultiLineBoardProcessor.isBus(selection.mode),
+                    // A BoardConfig carrying ONLY the widget's pin. The
+                    // processor takes its pin off a config, and the widget's
+                    // config is not the board's — building one here says that
+                    // plainly rather than reaching for the user's.
+                    prefs = BoardConfig(pin = widgetPin),
                     rowCap = rowCap,
                 ),
                 rowCap = rowCap,
@@ -668,7 +683,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 mode = selection.mode,
                 boundSelection = selection,
                 boardRows = boardRows,
-                platformNav = config.platformNav,
+                platformNav = widgetNav,
                 platformPage = WidgetPageStore.pageOf(context, appWidgetId),
             )
         }
@@ -742,6 +757,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             selection: com.stationly.core.model.UserSelection,
             boundTo: String,
             rowCap: Int,
+            pin: com.stationly.core.model.user.BoardPin? = null,
         ): List<com.stationly.core.util.MultiLineBoardProcessor.Row> {
             val nowMs = System.currentTimeMillis()
             val feeds = selections.filter { it.groupingId == boundTo }.map { sel ->
@@ -762,6 +778,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 com.stationly.core.util.MultiLineBoardProcessor.buildGroups(
                     feeds = feeds,
                     isBus = com.stationly.core.util.MultiLineBoardProcessor.isBus(selection.mode),
+                    prefs = BoardConfig(pin = pin),
                     rowCap = rowCap,
                 ),
                 rowCap = rowCap,
@@ -784,12 +801,12 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             val boundTo = WidgetBindingStore.boundStation(context, appWidgetId) ?: return
             val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
             val selection = selections.firstOrNull { it.groupingId == boundTo } ?: return
-            val config = kotlinx.coroutines.runBlocking {
-                com.stationly.core.repository.UserSettings.ensureLoaded()
-                com.stationly.core.repository.UserSettings.configOf(selection.groupingId)
-            }
             val pageCount = PlatformPages.count(
-                boardRowsFor(selections, selection, boundTo, rowCapFor(config))
+                boardRowsFor(
+                    selections, selection, boundTo,
+                    ROWS_PER_PLATFORM,
+                    WidgetSettings.pinOf(context, appWidgetId),
+                )
             )
             if (pageCount <= 1) return
             val next = PlatformPages.step(
@@ -899,9 +916,12 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             val stepping = platformNav == PlatformNav.STEP && pageCount > 1
             val safePage = PlatformPages.clamp(platformPage, pageCount)
             val pagedRows = PlatformPages.page(boardRows.orEmpty(), safePage)
-            // `body`, not the whole page: the bar between the chevrons already
-            // names the platform, and leaving the header on drew it twice.
-            val drawnRows = if (stepping) PlatformPages.body(pagedRows) else boardRows
+            // `bodyPadded`, not `body`: the bar between the chevrons already
+            // names the platform (so the header comes off), and every page is
+            // the same height (so the widget does not resize as you step).
+            val drawnRows =
+                if (stepping) PlatformPages.bodyPadded(pagedRows, ROWS_PER_PLATFORM)
+                else boardRows
 
             // Says what it DREW, not just how many rows it had.
             //
