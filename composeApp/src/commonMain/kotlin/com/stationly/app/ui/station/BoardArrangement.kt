@@ -165,10 +165,9 @@ fun BoardArrangementSection(
             platforms = platforms,
             stops = stops,
             lines = lines,
-            onPin = { next ->
-                performHaptic(HapticType.TAP)
-                onPin(next)
-            },
+            // No haptic here any more: `PinChip` presses through `pressScale`,
+            // which fires it. Doing both gave one tap two buzzes.
+            onPin = onPin,
         )
         // Two reserved lines rather than the measured overload: these sentences
         // are built from live data — a line's display name, a pole's
@@ -543,7 +542,10 @@ private fun PinChip(
             .clip(RoundedCornerShape(11.dp))
             .background(accent.copy(alpha = fill))
             .border(BorderStroke(1.dp, border), RoundedCornerShape(11.dp))
-            .pressScale(onClick = onClick, scale = 0.94f)
+            // SELECTION, not TAP: these chips are one exclusive choice and the
+            // message is "you are on that one now", which is lighter and drier
+            // than "that registered". Same call the amount ladder makes.
+            .pressScale(onClick = onClick, scale = 0.94f, haptic = HapticType.SELECTION)
             // Selection is carried by colour and weight alone, which VoiceOver
             // cannot see. These chips are one exclusive choice, so they are
             // announced as what they are.

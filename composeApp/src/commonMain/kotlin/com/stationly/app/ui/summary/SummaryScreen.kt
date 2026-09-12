@@ -123,6 +123,7 @@ import com.stationly.app.platform.performHaptic
 import com.stationly.core.model.UserSelection
 import com.stationly.core.platform.Platform
 import kotlin.math.floor
+import com.stationly.app.ui.common.hapticClick
 
 @Composable
 fun SummaryScreen(
@@ -931,7 +932,7 @@ private fun SummaryTopBar(
             val showBadge = supportState?.isSupporter == true &&
                 supportState.config.badge.showOnHome
 
-            IconButton(onClick = onNavigateToProfile, modifier = Modifier.padding(start = 8.dp)) {
+            IconButton(onClick = hapticClick(onClick = onNavigateToProfile), modifier = Modifier.padding(start = 8.dp)) {
                 Box(contentAlignment = Alignment.Center) {
                     if (photoUrl != null) {
                         coil3.compose.AsyncImage(
@@ -989,7 +990,7 @@ private fun SummaryTopBar(
             // the same icon on both would say they lead to the same place. A
             // gear is the heavier, app-wide one.
             Surface(
-                onClick = onAddStation,
+                onClick = hapticClick(onClick = onAddStation),
                 shape = CircleShape,
                 color = primary.copy(alpha = 0.10f),
                 modifier = Modifier.size(38.dp),
@@ -1003,7 +1004,7 @@ private fun SummaryTopBar(
                     )
                 }
             }
-            IconButton(onClick = onOpenHomeSettings, modifier = Modifier.padding(end = 6.dp)) {
+            IconButton(onClick = hapticClick(onClick = onOpenHomeSettings), modifier = Modifier.padding(end = 6.dp)) {
                 Icon(
                     Icons.Rounded.Settings,
                     contentDescription = "Home settings",
@@ -1090,7 +1091,7 @@ private fun PromoBanner(
                 }
             }
 
-            IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+            IconButton(onClick = hapticClick(onClick = onDismiss), modifier = Modifier.size(32.dp)) {
                 Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = "Dismiss",
