@@ -7,3 +7,9 @@ package com.stationly.app.platform
  * "Edit Widget" is the whole of it.
  */
 actual val widgetsAreEditableInApp: Boolean = false
+
+/**
+ * iOS has no system screensaver, so the app is the only thing that can present
+ * one and the Start button is the whole entry point.
+ */
+actual val screensaverIsStartedBySystem: Boolean = false
