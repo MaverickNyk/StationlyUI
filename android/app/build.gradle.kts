@@ -258,3 +258,27 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     implementation("io.coil-kt:coil-compose:2.5.0")
 }
+
+// ── The copy guard's inputs ─────────────────────────────────────────────────
+//
+// `UserFacingCopyTest` reads source trees off disk at run time, which Gradle
+// cannot see. Without this the task is UP-TO-DATE whenever its CLASSPATH is
+// unchanged, and a caption edit does not always change the classpath: editing
+// the text of an existing `<string>` in `strings.xml` leaves `R` identical, so
+// the guard would be skipped by exactly the change it exists to catch.
+//
+// Declaring the trees it walks makes the dependency real. Keep this list and
+// `SOURCE_ROOTS` in that test in step.
+tasks.withType<Test>().configureEach {
+    inputs.files(
+        rootProject.fileTree("android/app/src/main/java/com/stationly/mobile") {
+            include("**/*.kt")
+        },
+        rootProject.fileTree("composeApp/src/commonMain/kotlin/com/stationly/app/ui") {
+            include("**/*.kt")
+        },
+        rootProject.file("android/app/src/main/res/values/strings.xml"),
+    )
+        .withPropertyName("userFacingCopySources")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}

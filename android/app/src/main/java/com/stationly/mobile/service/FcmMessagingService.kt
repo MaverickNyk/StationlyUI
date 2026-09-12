@@ -279,7 +279,7 @@ class FcmMessagingService : FirebaseMessagingService() {
             "Service has recovered. Previously $prevSev."
         } else {
             (newStatus.reason?.takeIf { it.isNotBlank() })
-                ?: "Was $prevSev — tap to see your board."
+                ?: "Was $prevSev. Tap to see your board."
         }
         // Hex for the line — defaults to brand amber if the line isn't
         // in our known palette (a bus line, an unfamiliar overground line).
