@@ -125,4 +125,39 @@ class PlatformPagesTest {
         assertEquals(3, PlatformPages.page(twoPlatforms, 0).size)
         assertTrue(PlatformPages.page(emptyList(), 0).isEmpty())
     }
+
+    // ── the body of a page ──────────────────────────────────────────────────
+
+    /**
+     * **Seen on the phone.** A stepping widget drew "Mildmay Platform 2" in the
+     * pager bar and then again as the first row of the list underneath, because
+     * the page still carried the header the bar was already showing.
+     *
+     * The bar names the platform; the list shows its departures. Whichever
+     * surface draws the chevrons owns the name, so the page hands back its body
+     * without it.
+     */
+    @Test
+    fun `a page's body drops the header the pager bar is already showing`() {
+        val page = PlatformPages.page(twoPlatforms, 0)
+        assertEquals(3, page.size)
+        val body = PlatformPages.body(page)
+        assertEquals(2, body.size)
+        assertTrue(body.none { it is Row.PlatformHeader })
+    }
+
+    /**
+     * The fallback-copy page has no header to drop, and its rows are the
+     * message — returning nothing would blank the one thing worth reading.
+     */
+    @Test
+    fun `a page with no header keeps every row`() {
+        val rows = listOf(dep("No upcoming departures", ""), dep("Check back shortly", ""))
+        assertEquals(2, PlatformPages.body(PlatformPages.page(rows, 0)).size)
+    }
+
+    @Test
+    fun `an empty page has an empty body`() {
+        assertTrue(PlatformPages.body(emptyList()).isEmpty())
+    }
 }

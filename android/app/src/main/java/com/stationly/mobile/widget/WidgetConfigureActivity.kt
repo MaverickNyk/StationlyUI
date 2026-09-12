@@ -74,6 +74,12 @@ import kotlinx.coroutines.withContext
 import com.stationly.app.platform.HapticType
 import com.stationly.app.ui.common.pressScale
 import com.stationly.app.platform.performHaptic
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.SwapHoriz
+import com.stationly.app.ui.common.SegmentedRow
+import com.stationly.app.ui.common.pressHighlight
+import com.stationly.core.model.user.PlatformNav
 
 /**
  * Everything about widgets, in one place, shaped for Android rather than ported
@@ -193,16 +199,51 @@ class WidgetConfigureActivity : ComponentActivity() {
                     )
                 }
 
-                Scaffold { padding ->
+                val isFirstPlacement = remember {
+                    appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID &&
+                        WidgetBindingStore.boundStation(
+                            this@WidgetConfigureActivity, appWidgetId,
+                        ) == null
+                }
+
+                Scaffold(
+                    // ── The commit, pinned ──────────────────────────────────
+                    //
+                    // A bottom bar rather than a button at the end of the
+                    // content, because on a FIRST placement backing out is
+                    // RESULT_CANCELED and the launcher removes the widget:
+                    // somebody who sets one up and presses back loses it. A bar
+                    // that never scrolls away is the difference.
+                    //
+                    // Only in CONFIGURE. The manager has nothing to commit and
+                    // the pin flow finishes on the tap that chooses.
+                    bottomBar = {
+                        if (mode is Mode.Configure) {
+                            ActionBar(
+                                label = if (isFirstPlacement) "Add widget" else "Done",
+                                onClick = ::finish,
+                            )
+                        }
+                    },
+                ) { padding ->
                     Column(
                         Modifier
                             .fillMaxSize()
                             .padding(padding)
                             .statusBarsPadding()
-                            .navigationBarsPadding()
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 20.dp),
+                            .verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
+                      // Constrained and centred, so a tablet or an unfolded
+                      // foldable gets a readable column rather than settings
+                      // stretched across 10 inches. Same rule the screensaver
+                      // settings screen uses.
+                      Column(
+                        Modifier
+                            .widthIn(max = 560.dp)
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp),
+                      ) {
                         Spacer(Modifier.height(16.dp))
                         when (val m = mode) {
                             is Mode.Manager -> WidgetsScreen(
@@ -218,6 +259,7 @@ class WidgetConfigureActivity : ComponentActivity() {
                             is Mode.Configure -> ConfigureScreen(
                                 hubs = hubs,
                                 appWidgetId = m.appWidgetId,
+                                isFirstPlacement = isFirstPlacement,
                                 onBind = { commit(m.appWidgetId, it) },
                                 onDone = ::finish,
                                 onNoBoards = ::openAppAndFinish,
@@ -246,6 +288,7 @@ class WidgetConfigureActivity : ComponentActivity() {
                             }
                         }
                         Spacer(Modifier.height(32.dp))
+                      }
                     }
                 }
             }
@@ -548,17 +591,34 @@ private fun WidgetsScreen(
 }
 
 /**
- * CONFIGURE mode: the widget's settings page.
+ * CONFIGURE mode: one widget's settings page.
  *
- * Two sections, in the order the questions get asked. Which station is the one
- * that must be answered — a widget without it has nothing to show — so it is
- * first and it is the only one visible until it is answered. The arrangement
- * settings appear underneath once there is a board for them to be about.
+ * ## It is about a STATION, and says so before anything else
+ * The first version opened on a list of every station with the current one
+ * ticked, which made the page read as "pick a station" every time it was
+ * opened — including the nine times out of ten it was opened from a widget's
+ * own gear, where the station is not in question and the user came to change
+ * something else.
+ *
+ * So the station is a HEADER now: its roundel, its name, its lines. The page
+ * is unmistakably the settings for that widget, and changing which station it
+ * shows is a deliberate action behind a row that says so, rather than a list
+ * sitting open waiting to be mis-tapped.
+ *
+ * ## The commit is pinned to the bottom, and it is not decoration
+ * Every setting here writes through immediately, so the button is "I am done"
+ * rather than "save my changes" — but it still has to be obvious, because on a
+ * FIRST placement backing out is `RESULT_CANCELED` and the launcher removes the
+ * widget. Someone who sets a widget up and presses back loses it. A sticky bar
+ * that never scrolls away is the difference between that and a widget.
+ *
+ * Its label changes with the stake: "Add widget" the first time, "Done" after.
  */
 @Composable
 private fun ConfigureScreen(
     hubs: List<Hub>,
     appWidgetId: Int,
+    isFirstPlacement: Boolean,
     onBind: (String) -> Unit,
     onDone: () -> Unit,
     onNoBoards: () -> Unit,
@@ -571,6 +631,8 @@ private fun ConfigureScreen(
     var bound by remember {
         mutableStateOf(WidgetBindingStore.boundStation(context, appWidgetId))
     }
+    // Open on the picker only when there is genuinely nothing to be about.
+    var choosing by remember { mutableStateOf(bound == null) }
     val hub = hubs.firstOrNull { it.groupingId == bound }
 
     // The store is the app's, so the settings this page writes are the same ones
@@ -586,42 +648,44 @@ private fun ConfigureScreen(
         options = hub?.let { loadPinOptions(it) } ?: PinOptions()
     }
 
-    ScreenHeading(
-        "Widget",
-        if (hub == null) {
-            "Pick the station this widget should show. It'll update itself as " +
-                "departures change — no need to open the app."
-        } else {
-            "This widget shows live departures for ${hub.name}. " +
-                "Tapping it anywhere opens Stationly."
-        },
-    )
-    Spacer(Modifier.height(20.dp))
-
     if (hubs.isEmpty()) {
+        ScreenHeading("Widget", "")
+        Spacer(Modifier.height(20.dp))
         NoBoardsYet(onNoBoards)
         return
     }
 
-    SettingsSectionLabel("Choose station")
-    Spacer(Modifier.height(10.dp))
-    StationChoiceList(
-        hubs = hubs,
-        chosen = bound,
-        onPick = { groupingId ->
-            bound = groupingId
-            onBind(groupingId)
-        },
-    )
-    Spacer(Modifier.height(10.dp))
-    SettingsCaption(
-        "One station per widget. Add a second widget for another station — " +
-            "they update independently.",
-    )
+    // ── Picking a station is its own screen, not a section ──────────────────
+    if (choosing || hub == null) {
+        ScreenHeading(
+            "Choose station",
+            "This widget will show live departures for the station you pick. " +
+                "Add another widget for another station.",
+        )
+        Spacer(Modifier.height(20.dp))
+        StationChoiceList(
+            hubs = hubs,
+            chosen = bound,
+            onPick = { groupingId ->
+                bound = groupingId
+                onBind(groupingId)
+                choosing = false
+            },
+        )
+        if (hub != null) {
+            Spacer(Modifier.height(20.dp))
+            androidx.compose.material3.OutlinedButton(
+                onClick = { performHaptic(HapticType.TAP); choosing = false },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Cancel") }
+        }
+        return
+    }
 
-    if (hub == null) return
+    // ── The station this widget is for ──────────────────────────────────────
+    StationHeaderCard(hub = hub, onChange = { choosing = true })
 
-    Spacer(Modifier.height(32.dp))
+    Spacer(Modifier.height(28.dp))
 
     // The SAME section the station's settings screen shows, reading and writing
     // the same BoardConfig. Not a widget-specific copy: a widget is a view of a
@@ -647,14 +711,189 @@ private fun ConfigureScreen(
         },
     )
 
+    // ── How you reach the platforms that do not fit ─────────────────────────
+    //
+    // Widget-only, and deliberately not on the station's settings screen: the
+    // home screen scrolls because it is a page, and a card inside a scrolling
+    // page cannot sensibly page. A control that did nothing on the screen it
+    // was shown on would be worse than no control.
+    Spacer(Modifier.height(28.dp))
+    SettingsSectionLabel("Platforms")
     Spacer(Modifier.height(10.dp))
-    SettingsCaption("These settings apply to ${hub.name} everywhere — the widget and the app.")
+    SegmentedRow(
+        options = PlatformNav.entries,
+        selected = prefs.platformNav,
+        onSelect = { nav ->
+            scope.launch {
+                UserSettings.update(hub.groupingId) { it.copy(platformNav = nav) }
+                redraw()
+            }
+        },
+        label = { it.label },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(10.dp))
+    SettingsCaption(
+        when (prefs.platformNav) {
+            PlatformNav.SCROLL ->
+                "Every platform in one list. Scroll inside the widget to reach " +
+                    "the rest — which can be fiddly on a small one."
+            PlatformNav.STEP ->
+                "One platform at a time, with an arrow either side of its name. " +
+                    "A station with a single platform just shows it."
+        },
+    )
+
+    Spacer(Modifier.height(10.dp))
+    SettingsCaption("Departures and pinning apply to ${hub.name} everywhere — the widget and the app.")
 
     Spacer(Modifier.height(28.dp))
-    Button(onClick = { performHaptic(HapticType.TAP); onDone() }, modifier = Modifier.fillMaxWidth()) { Text("Done") }
+}
+
+/**
+ * The station this widget is for, and the one way to change it.
+ *
+ * A card rather than a plain heading: it is the SUBJECT of the page, and it has
+ * to look like the thing every setting below is about. The "Change station" row
+ * is attached to it for the same reason — changing the station is a fact about
+ * the header, not another setting.
+ */
+@Composable
+private fun StationHeaderCard(hub: Hub, onChange: () -> Unit) {
+    val border = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.10f)
+    androidx.compose.material3.Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, border),
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val icon = remember(hub.mode) { ModeIconStore.cachedIconBitmap(hub.mode) }
+                if (icon != null) {
+                    Image(bitmap = icon, contentDescription = null, modifier = Modifier.size(40.dp))
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                CircleShape,
+                            ),
+                    )
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "THIS WIDGET SHOWS",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        hub.name,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(5.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val dark = isDarkTheme()
+                        hub.lines.take(4).forEach { line ->
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .background(lineColorForTheme(line, dark), CircleShape),
+                            )
+                            Spacer(Modifier.width(5.dp))
+                        }
+                        if (hub.lines.isNotEmpty()) Spacer(Modifier.width(2.dp))
+                        Text(
+                            LineShortNames.listLines(hub.lines)
+                                .ifBlank { hub.mode.replaceFirstChar { c -> c.uppercase() } },
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp)
+                    .height(1.dp)
+                    .background(border),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pressHighlight(onClick = onChange)
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Rounded.SwapHoriz,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    "Change station",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    Icons.Rounded.ChevronRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
 }
 
 // ── Pieces ──────────────────────────────────────────────────────────────────
+
+/**
+ * The one action that commits this screen, pinned above the navigation bar.
+ *
+ * Full width and filled, because it is the primary action and the only one —
+ * an outlined or text button here would read as optional, and on a first
+ * placement it is the opposite of optional.
+ */
+@Composable
+private fun ActionBar(label: String, onClick: () -> Unit) {
+    androidx.compose.material3.Surface(
+        color = MaterialTheme.colorScheme.background,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Button(
+                onClick = { performHaptic(HapticType.TAP); onClick() },
+                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().height(52.dp),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(26.dp),
+            ) {
+                Text(label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
 
 /** Title and the sentence under it. One shape, so every mode reads the same. */
 @Composable
