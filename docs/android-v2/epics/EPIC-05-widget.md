@@ -426,13 +426,29 @@ before   Updating widget 6 for Hackney Wick Rail Station with 6 departures
 after    … with 6 departures across 3 platform(s)
 ```
 
-**Depth is the widget's own size**, which is the third thing this epic says
-Android can do and iOS cannot. `rowCapForHeight` turns
-`OPTION_APPWIDGET_MIN_HEIGHT` into departures-per-platform: 2 on a one-cell
-strip, 3 (unchanged, the shipped default) normally, 4 when dragged tall.
-WidgetKit gives iOS a family and a layout per family; Android's home screen is a
-free grid, so **the same station at two sizes is two different boards and the
-resize gesture is the user saying which they meant**.
+**Depth WAS the widget's own size, and that was wrong — S017, 2026-09-12.**
+
+This epic shipped `rowCapForHeight`, turning `OPTION_APPWIDGET_MIN_HEIGHT` into
+departures-per-platform (2 on a one-cell strip, 3 normally, 4 when dragged
+tall), and called it the third thing Android can do that iOS cannot. The owner
+rejected it on sight, and was right twice over:
+
+- **The rule is a product rule.** Three rows per platform is the structure,
+  whatever the widget's size. Height decides how many BLOCKS fit on screen,
+  which the scroll already handles; it does not get to decide how deep a
+  platform is. A widget showing fewer departures than the app for the same
+  platform is not a smaller widget, it is a widget missing trains.
+- **The setting already existed and this silently overrode it.** Every station
+  carries "Show up to N per platform" (2-5, default 3), obeyed by the home
+  screen and the screensaver. Set a station to 5 and the app showed five while
+  the home screen showed three, with nothing to explain the difference.
+
+`rowCapFor(BoardConfig)` reads the board. Three is that setting's default, so
+this keeps the product rule for everyone AND the promise the settings screen
+makes to whoever changed it. Verified on hardware both ways: Bank DLR at 2 drew
+two rows per platform while Hackney Wick, untouched, drew three.
+
+**Do not reintroduce a size-varying cap.**
 
 #### A bound widget flashed "Choose a station", mid-reconcile
 
