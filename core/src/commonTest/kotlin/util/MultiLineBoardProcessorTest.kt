@@ -280,9 +280,9 @@ class MultiLineBoardProcessorTest {
         // nothing a passenger cannot read back — "H&C" is what the roundel and
         // the station signage already say — so it must come BEFORE the one rung
         // that actually loses a fact.
-        val variants = MultiLineBoardProcessor.headerVariants("Hammersmith City Platform 1 Eastbound")
-        assertEquals("Hammersmith City Platform 1 Eastbound", variants[0])
-        assertEquals("Hammersmith City Plat. 1 Eastbound", variants[1])
+        val variants = MultiLineBoardProcessor.headerVariants("Hammersmith & City Platform 1 Eastbound")
+        assertEquals("Hammersmith & City Platform 1 Eastbound", variants[0])
+        assertEquals("Hammersmith & City Plat. 1 Eastbound", variants[1])
         assertEquals("H&C Plat. 1 Eastbound", variants[2])
         assertEquals("H&C Plat. 1", variants[3])
     }

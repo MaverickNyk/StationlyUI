@@ -1,6 +1,7 @@
 package com.stationly.mobile.widget
 
 import com.stationly.core.model.PredictionDisplay
+import com.stationly.core.model.user.BoardConfig
 import com.stationly.core.util.MultiLineBoardProcessor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -126,5 +127,72 @@ class WidgetMultiLineBoardTest {
             3,
             rows.filterIsInstance<MultiLineBoardProcessor.Row.Departure>().size,
         )
+    }
+
+    // ── the depth is the BOARD's, and its default is three ───────────────────
+
+    /**
+     * Three is the DEFAULT, not a constant the widget owns.
+     *
+     * Every station carries `BoardConfig.rowsPerPlatform` — "Show up to N per
+     * platform", 2 to 5, default 3 — edited on its own settings screen and
+     * already obeyed by the home screen and the screensaver. The widget
+     * hardcoded 3 and so quietly overrode it: a user who set their commuting
+     * station to 5 saw five in the app and three on their home screen, with
+     * nothing to explain the difference.
+     *
+     * The product rule ("3 rows per platform") and the setting are the same
+     * answer, because 3 is what the setting says when nobody has touched it.
+     * Reading it from the board satisfies the rule for everyone AND keeps the
+     * promise the settings screen makes to the few who changed it.
+     */
+    @Test
+    fun `the widget draws the depth the station's own settings ask for`() {
+        assertEquals(
+            "an untouched station still gets three",
+            3,
+            DepartureWidgetProvider.rowCapFor(BoardConfig()),
+        )
+        assertEquals(5, DepartureWidgetProvider.rowCapFor(BoardConfig(rowsPerPlatform = 5)))
+        assertEquals(2, DepartureWidgetProvider.rowCapFor(BoardConfig(rowsPerPlatform = 2)))
+    }
+
+    /**
+     * Storage is not trusted. `BoardConfig.rowCap` clamps, and the widget must
+     * go through it rather than reading the raw field — a corrupted or
+     * hand-edited 40 would otherwise build forty rows per platform into a
+     * RemoteViews collection.
+     */
+    @Test
+    fun `a nonsense stored depth is clamped, not obeyed`() {
+        assertEquals(
+            BoardConfig.MAX_ROWS_PER_PLATFORM,
+            DepartureWidgetProvider.rowCapFor(BoardConfig(rowsPerPlatform = 40)),
+        )
+        assertEquals(
+            BoardConfig.MIN_ROWS_PER_PLATFORM,
+            DepartureWidgetProvider.rowCapFor(BoardConfig(rowsPerPlatform = 0)),
+        )
+    }
+
+    /** And the depth it resolves actually bounds the rows it builds. */
+    @Test
+    fun `raising the setting puts more trains on the widget`() {
+        fun rowsAt(config: BoardConfig): Int {
+            val cap = DepartureWidgetProvider.rowCapFor(config)
+            return MultiLineBoardProcessor.rowsFrom(
+                MultiLineBoardProcessor.buildGroups(
+                    feeds = listOf(
+                        feed("inbound", "Platform 1", "A", "B", "C", "D", "E", "F"),
+                    ),
+                    isBus = false,
+                    rowCap = cap,
+                ),
+                rowCap = cap,
+            ).filterIsInstance<MultiLineBoardProcessor.Row.Departure>().size
+        }
+
+        assertEquals(3, rowsAt(BoardConfig()))
+        assertEquals(5, rowsAt(BoardConfig(rowsPerPlatform = 5)))
     }
 }

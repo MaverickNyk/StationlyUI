@@ -41,7 +41,7 @@ class LineShortNamesTest {
 
     @Test
     fun `display name expands hyphenated ids into words`() {
-        assertEquals("Hammersmith City", LineShortNames.displayName("hammersmith-city"))
+        assertEquals("Hammersmith & City", LineShortNames.displayName("hammersmith-city"))
         assertEquals("Northern", LineShortNames.displayName("northern"))
     }
 
@@ -76,7 +76,10 @@ class LineShortNamesTest {
 
     @Test
     fun `abbreviate rewrites a full line name inside a finished header`() {
-        assertEquals("H&C Plat. 1", LineShortNames.abbreviate("Hammersmith City Plat. 1"))
+        // The input is what `displayName` now produces — headers are BUILT from
+        // it, so a literal here that no longer matches would be testing a string
+        // the app can never hand this function.
+        assertEquals("H&C Plat. 1", LineShortNames.abbreviate("Hammersmith & City Plat. 1"))
         assertEquals("Nor. Platform 2 Westbound", LineShortNames.abbreviate("Northern Platform 2 Westbound"))
     }
 
@@ -129,5 +132,53 @@ class LineShortNamesTest {
         assertEquals("Some-new-line", LineShortNames.shortName("some-new-line"))
         assertEquals("", LineShortNames.shortName(""))
         assertEquals("", LineShortNames.shortName(null))
+    }
+
+    // ── full names that are not the title-cased id ───────────────────────────
+
+    /**
+     * **The one the widget showed.** A single-line platform block takes its
+     * header from `joinLines`, which for one line is `displayName` — and
+     * `displayName` was nothing but "split on hyphens and capitalise each
+     * word". That is right for "victoria" and wrong for every line whose name
+     * is not a word.
+     *
+     * So the DLR's platform headers read "Dlr Platform 9", on the home board,
+     * on the screensaver and on the home-screen widget. Nobody writes "Dlr". It
+     * reads as a rendering fault because it is one.
+     */
+    @Test
+    fun `an initialism keeps its capitals`() {
+        assertEquals("DLR", LineShortNames.displayName("dlr"))
+        assertEquals("DLR", LineShortNames.displayName("DLR"))
+    }
+
+    /**
+     * The two ampersand lines. TfL's own names carry the "&", and dropping it
+     * left "Hammersmith City", which is not the name of anything.
+     */
+    @Test
+    fun `the ampersand lines get their ampersand`() {
+        assertEquals("Hammersmith & City", LineShortNames.displayName("hammersmith-city"))
+        assertEquals("Waterloo & City", LineShortNames.displayName("waterloo-city"))
+    }
+
+    /**
+     * Everything else still title-cases, which is the rule that works for the
+     * lines named after words and for the bus routes that will never be in any
+     * map.
+     */
+    @Test
+    fun `an ordinary line still title-cases, and so does a bus route`() {
+        assertEquals("Victoria", LineShortNames.displayName("victoria"))
+        assertEquals("Mildmay", LineShortNames.displayName("mildmay"))
+        assertEquals("53", LineShortNames.displayName("53"))
+        assertEquals("", LineShortNames.displayName(null))
+    }
+
+    /** And the header the widget builds now says it properly. */
+    @Test
+    fun `a single-line header names the DLR correctly`() {
+        assertEquals("DLR", LineShortNames.joinLines(listOf("dlr")))
     }
 }

@@ -93,10 +93,39 @@ object LineShortNames {
         return key.replaceFirstChar { it.uppercase() }
     }
 
-    /** Full display name, for the single-line case where there is room. */
+    /**
+     * Lines whose name is not their title-cased id.
+     *
+     * Small on purpose. Title-casing is right for every line named after a word
+     * — Victoria, Mildmay, Windrush — and for the bus routes, which are numbers
+     * and will never be in any map. This holds only the ids where that rule
+     * produces something nobody writes.
+     *
+     * Keyed lowercase; [displayName] lowercases before looking up, so the
+     * backend sending "DLR" and the database holding "dlr" land on one row.
+     */
+    private val FULL_NAMES: Map<String, String> = mapOf(
+        // An initialism. Title-casing it gave "Dlr", which appeared on every
+        // DLR platform header — home board, screensaver and home-screen widget
+        // alike, because all three build headers through `joinLines`.
+        "dlr" to "DLR",
+        // TfL's own names carry the ampersand. Without it "Hammersmith City" is
+        // not the name of anything, and neither is "Waterloo City".
+        "hammersmith-city" to "Hammersmith & City",
+        "waterloo-city" to "Waterloo & City",
+    )
+
+    /**
+     * Full display name, for the single-line case where there is room.
+     *
+     * [FULL_NAMES] first, then title-case the id. The fallback is what makes
+     * this safe for the hundreds of bus routes and for any line the backend
+     * adds tomorrow: an unfamiliar name is far better than an empty header.
+     */
     fun displayName(line: String?): String {
         val key = line?.trim().orEmpty()
         if (key.isEmpty()) return ""
+        FULL_NAMES[key.lowercase()]?.let { return it }
         return key.split('-').joinToString(" ") { part ->
             part.replaceFirstChar { it.uppercase() }
         }
