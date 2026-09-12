@@ -195,4 +195,47 @@ class WidgetMultiLineBoardTest {
         assertEquals(3, rowsAt(BoardConfig()))
         assertEquals(5, rowsAt(BoardConfig(rowsPerPlatform = 5)))
     }
+
+    // ── where a tap goes ────────────────────────────────────────────────────
+
+    /**
+     * A BOUND widget opens the app, from anywhere on it.
+     *
+     * The gear used to be the only live target, and then it started opening
+     * this widget's own configuration — so "tap the board to open the app"
+     * became the only way in and had to work everywhere on the board. Two
+     * separate wirings deliver that: an `OnClickPendingIntent` on the board
+     * container, and a `PendingIntentTemplate` on the rows, because a
+     * RemoteViews collection swallows its parent's click and its items cannot
+     * carry their own intent.
+     */
+    @Test
+    fun `every part of a bound widget opens the app`() {
+        assertEquals(
+            WidgetTapTarget.APP,
+            DepartureWidgetProvider.tapTargetFor(isBound = true),
+        )
+    }
+
+    /**
+     * An UNBOUND widget sends every tap to the configuration screen instead.
+     *
+     * The empty state says "tap to choose a station", so the tap has to land
+     * somewhere that can choose one. Opening the app would be an instruction
+     * the app cannot carry out — the binding lives on the widget, and the user
+     * would arrive at a home screen with nothing to do.
+     *
+     * This is one answer used by BOTH wirings on purpose. They were two
+     * independent `if (isBound)` expressions, forty lines apart, and a change
+     * to one would have left an unbound widget whose header opens the picker
+     * and whose rows open the app — a dead end reachable only by tapping the
+     * wrong half of a widget that is already in its broken state.
+     */
+    @Test
+    fun `every part of an unbound widget opens the place that can fix it`() {
+        assertEquals(
+            WidgetTapTarget.CONFIGURE,
+            DepartureWidgetProvider.tapTargetFor(isBound = false),
+        )
+    }
 }
