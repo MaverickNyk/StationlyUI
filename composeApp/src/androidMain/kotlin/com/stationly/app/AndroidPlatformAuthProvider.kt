@@ -90,6 +90,21 @@ class AndroidPlatformAuthProvider(
         Result.failure(e)
     }
 
+    /**
+     * Rename the signed-in user, and re-publish the identity.
+     *
+     * ## Why the re-publish is not optional
+     * `AuthIdentityPublisher` mirrors `FirebaseAuth` into the shared session
+     * store from an `AuthStateListener`, and that listener fires on sign-in,
+     * sign-out and token change — **not** on a profile update. So a rename
+     * changed the account and left the stored display name at the old value
+     * until the next cold start: the home avatar's monogram, and the name the
+     * device session is registered under, would both go on saying what the user
+     * had just changed.
+     *
+     * `updateProfile` mutates `auth.currentUser` in place, so re-reading it
+     * after the await gives the new name.
+     */
     override suspend fun updateDisplayName(name: String): Result<Unit> = try {
         val user = auth.currentUser ?: throw IllegalStateException("Not signed in.")
         user.updateProfile(
@@ -97,6 +112,17 @@ class AndroidPlatformAuthProvider(
                 .setDisplayName(name)
                 .build()
         ).await()
+        auth.currentUser?.let { fresh ->
+            com.stationly.core.session.AuthIdentity.publish(
+                uid = fresh.uid,
+                email = fresh.email,
+                displayName = fresh.displayName,
+                photoUrl = fresh.photoUrl?.toString(),
+                provider = com.stationly.core.session.AuthIdentity.providerLabelFor(
+                    fresh.providerData.map { it.providerId }
+                ),
+            )
+        }
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
