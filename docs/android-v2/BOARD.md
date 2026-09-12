@@ -63,8 +63,11 @@ BLOCKED ON OWNER:  🔴 Q5 is now the biggest risk on the branch and it is NOT
 NEXT UP:           **Two things, both needing a human at the phone.**
                    (1) Walk the release build — it is installed and running, and
                    an R8 failure lands on the screen nobody opened.
-                   (2) Dock or charge the phone with Stationly set as the
-                   screensaver: AV2-6.2 has never been seen render.
+                   (2) Set Stationly as the screensaver, then dock or charge
+                   the phone and look at it. AV2-6.2's settings screen IS
+                   verified (it launches and composes, crash buffer empty); the
+                   DREAM is not, because a screensaver only runs with the screen
+                   on and the doze dream wins while it is off.
                    Then AV2-8.3's rollout.
                    Everything else on this board is in Review.
 ```
