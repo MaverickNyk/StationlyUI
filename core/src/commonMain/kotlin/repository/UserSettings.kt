@@ -214,8 +214,26 @@ object UserSettings {
             Platform.storageManager.loadDurable(key(LAYOUT_KEY))
                 ?.let { name -> HomeLayout.entries.firstOrNull { it.name == name } }
         }.getOrNull() ?: HomeLayout.LIST
-        _widgets.value = emptyMap()
-        _widgetTotal.value = 0
+        // ── Widget placement is NOT cleared here, and that is the fix ──
+        //
+        // It is a fact about the DEVICE — which widgets are on this home screen
+        // — not about the account, and it is never read from disk, so there is
+        // nothing here to load and nothing to invalidate. Clearing it made this
+        // function silently destroy an answer that something else had just
+        // measured.
+        //
+        // Observed on a Pixel: the placement probe runs from the host's
+        // `onResume` and reported `observed 2 widget(s) across 2 board(s)`; the
+        // first screen to call `ensureLoaded()` then ran this and emptied the
+        // map. So the station screen's delete confirmation stopped warning that
+        // a widget was showing the station about to be deleted — the exact
+        // warning the probe exists to enable — depending purely on which of the
+        // two ran last. It worked when navigating back into an already-loaded
+        // session and failed on a cold start.
+        //
+        // The session boundaries that SHOULD forget it still do: `reset()` at
+        // logout and `forgetAccount()` at deletion. Both are followed by a
+        // foreground, and the probe replaces the map wholesale on every one.
         _loaded.value = true
     }
 
