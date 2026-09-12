@@ -143,11 +143,11 @@ internal fun FareSheet(
             ) {
                 WindowRow(
                     label = strings["explore.fares.sheet.window.am"] ?: "Morning peak",
-                    value = "${formatHhMm(MORNING_PEAK_START)} – ${formatHhMm(MORNING_PEAK_END)}",
+                    value = "${formatHhMm(MORNING_PEAK_START)} to ${formatHhMm(MORNING_PEAK_END)}",
                 )
                 WindowRow(
                     label = strings["explore.fares.sheet.window.pm"] ?: "Evening peak",
-                    value = "${formatHhMm(EVENING_PEAK_START)} – ${formatHhMm(EVENING_PEAK_END)}",
+                    value = "${formatHhMm(EVENING_PEAK_START)} to ${formatHhMm(EVENING_PEAK_END)}",
                 )
                 WindowRow(
                     label = strings["explore.fares.sheet.window.weekend"] ?: "Weekends",

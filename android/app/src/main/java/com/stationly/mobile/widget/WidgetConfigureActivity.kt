@@ -528,7 +528,7 @@ private fun WidgetsScreen(
     ScreenHeading(
         "Widgets",
         "A widget shows one station's live departures on your Home Screen, " +
-            "updated as the trains are. Add as many as you like — one per station.",
+            "updated as the trains are. Add as many as you like, one for each station.",
     )
     Spacer(Modifier.height(20.dp))
 
@@ -770,10 +770,10 @@ private fun ConfigureScreen(
         when (widgetNav) {
             PlatformNav.SCROLL ->
                 "Every platform in one list. Scroll inside the widget to reach " +
-                    "the rest — which can be fiddly on a small one."
+                    "the rest. On a small widget that is fiddly."
             PlatformNav.STEP ->
                 "One platform at a time, with an arrow either side of its name. " +
-                    "A station with a single platform just shows it."
+                    "A station with one platform shows it without the arrows."
         },
     )
 
@@ -949,7 +949,7 @@ private fun NoBoardsYet(onOpenApp: () -> Unit) {
     )
     Spacer(Modifier.height(6.dp))
     SettingsCaption(
-        "Add one in Stationly first — then it'll be here, ready to put on your Home Screen.",
+        "Add one in Stationly first. It'll be here when you come back, ready to put on your Home Screen.",
     )
     Spacer(Modifier.height(16.dp))
     Button(onClick = { performHaptic(HapticType.TAP); onOpenApp() }) { Text("Open Stationly") }

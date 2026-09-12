@@ -187,7 +187,7 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
                 if (screensaverIsStartedBySystem) {
                     Text(
                         text = strings["dream.settings.whenitshows"]
-                            ?: "Your screensaver appears on its own — while the phone " +
+                            ?: "Your screensaver appears on its own while the phone " +
                             "is charging or docked, or idle on the lock screen. " +
                             "Which of those is up to you, in Settings → Display → " +
                             "Screen saver.",
@@ -302,7 +302,7 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
                                     "scroll to see past the first few."
                             PlatformNav.STEP ->
                                 "One platform at a time, with an arrow either side of its " +
-                                    "name. A station with a single platform just shows it."
+                                    "name. A station with one platform shows it without the arrows."
                         },
                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
                         fontSize = 12.sp,
