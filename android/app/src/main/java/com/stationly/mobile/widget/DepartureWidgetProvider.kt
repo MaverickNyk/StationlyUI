@@ -818,7 +818,43 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 pageCount = pageCount,
             )
             WidgetPageStore.setPage(context, appWidgetId, next)
-            updateOne(context, appWidgetId)
+
+            // ── A PARTIAL update, and that is what makes the motion happen ───
+            //
+            // `updateOne` rebuilds the whole RemoteViews, which replaces the
+            // flipper's children. A ViewFlipper animates between the children
+            // it ALREADY HOLDS, so a full rebuild leaves the out-animation
+            // with nothing to play against and the board simply cuts.
+            //
+            // `partiallyUpdateAppWidget` applies only the actions below onto
+            // the view tree already on the home screen. The children are
+            // untouched, `setDisplayedChild` moves between two views that
+            // exist, and the launcher does the cross-fade.
+            //
+            // It is also the reason an ambient redraw does NOT animate. A push
+            // or a minute tick goes through the full path, which rebuilds and
+            // cuts; only a press comes through here. iOS draws the same
+            // distinction with three timestamps (`boardTransition`), because a
+            // page move is direct manipulation the user is waiting on and a new
+            // payload landing is ambient. Android gets the same outcome from
+            // which update path it is on, without needing the timestamps.
+            val pages = PlatformPages.split(
+                boardRowsFor(
+                    selections, selection, boundTo,
+                    ROWS_PER_PLATFORM,
+                    WidgetSettings.pinOf(context, appWidgetId),
+                )
+            )
+            val partial = RemoteViews(context.packageName, R.layout.widget_departure_board)
+            partial.setDisplayedChild(R.id.platform_flipper, next)
+            // The bar has to travel with the page it names, and it is in the
+            // same partial so the two can never disagree by a frame.
+            partial.setTextViewText(
+                R.id.platform_pager_title,
+                PlatformPages.title(pages.getOrElse(next) { emptyList() }),
+            )
+            partial.setTextViewText(R.id.platform_pager_count, "${next + 1}/$pageCount")
+            AppWidgetManager.getInstance(context).partiallyUpdateAppWidget(appWidgetId, partial)
         }
 
         /**
