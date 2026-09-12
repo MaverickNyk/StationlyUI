@@ -264,8 +264,35 @@ object UserSyncCoordinator {
      */
     fun reconcileTopics() {
         scope.launch {
-            runCatching { buildLifecycle().reconcileTopics() }
-                .onFailure { Log.w("UserSync", "Topic reconcile failed (retries next foreground)", it) }
+            // ── UNDER THE SAME LOCK, and this was found on hardware ──
+            //
+            // Without it this races [reconcile], and the race is not theoretical:
+            // on a Pixel 7 Pro running the release build it unsubscribed a LIVE
+            // board. The sequence, from one app open:
+            //
+            //   43.076  reconcile: +0 -6          (plan computed from a snapshot)
+            //   44.398  subscribed Station_940GZZDLRVC    ← the board reconcile,
+            //   44.882  subscribed LineStatus_dlr_dlr        restoring a board
+            //   45.965  unsubscribed Station_940GZZDLRVC  ← THIS, executing a
+            //   46.924  unsubscribed LineStatus_dlr_dlr      four-second-old plan
+            //
+            // The plan was correct when it was made and wrong by the time it
+            // ran: each FCM call takes a few hundred milliseconds, so a six-topic
+            // plan takes four seconds to execute, and the board reconcile
+            // subscribed two of those topics in the middle of it. The DLR board
+            // ended up with no subscription and would have stopped receiving
+            // departures, silently, until something re-subscribed it.
+            //
+            // This is the hazard AV2-4.2's own task (b) names — "two systems
+            // subscribing to the same topics is how a topic gets unsubscribed out
+            // from under a board that still needs it" — reintroduced in a new
+            // shape by the reconcile added to fix it. The mutex already exists
+            // for exactly this and says so; the new call site simply was not
+            // under it.
+            reconcileMutex.withLock {
+                runCatching { buildLifecycle().reconcileTopics() }
+                    .onFailure { Log.w("UserSync", "Topic reconcile failed (retries next foreground)", it) }
+            }
         }
     }
 

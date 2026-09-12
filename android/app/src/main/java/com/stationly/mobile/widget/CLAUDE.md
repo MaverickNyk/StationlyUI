@@ -23,12 +23,24 @@ widget/
 │                                actions, RemoteViews builder,
 │                                AlarmManager watchdog + colour-fade
 │                                alarms.
+│                                ⚠️ Editing this file breaks the
+│                                incremental compile — see the banner
+│                                at the top of it. Rebuild the module.
 ├── WidgetBindingStore.kt        appWidgetId → groupingId, in
 │                                `widget_prefs`. The whole of "which
 │                                station is this widget for".
-├── WidgetConfigureActivity.kt   Compose. Two modes: PICKER (an
-│                                appWidgetId — which station?) and
-│                                MANAGER (no id — which widget?).
+├── WidgetConfigureActivity.kt   Compose. Three modes: MANAGER (no id —
+│                                which widget?), BIND (an appWidgetId —
+│                                which station?) and PIN (a station,
+│                                then ask the launcher to place one).
+├── WidgetPinner.kt              `requestPinAppWidget`, so "Add to Home
+│                                Screen" can live on the station itself.
+├── WidgetRedrawTargets.kt       Which widgets a push is about. Pure,
+│                                tested — the push names a POLE and a
+│                                binding names a STOP.
+├── WidgetPlacementProbe.kt      What is actually on the home screen,
+│                                asked of AppWidgetManager. Fills
+│                                `Board.widget`.
 └── CLAUDE.md                    This file.
 ```
 
@@ -55,13 +67,19 @@ External entry points:
      `perPlatformCap` parameter)
    - Then calls `FreshDataNotifier.notifyPredictions(...)`, whose
      widget leg is `DepartureWidgetProvider.updateFromStorage(context)`
-   - `updateFromStorage` loops the placed ids and renders **each one
-     from its own binding**. (It used to call `updateWidgetContent`,
-     which took one board and fanned it out to every id. That function
-     is deleted — a helper that shows one station on every widget is a
-     loaded gun in a file whose one rule is never to show the wrong
-     stop. Today a push for station A still redraws a widget bound to
-     station B, from B's own rows; targeting the redraw is AV2-5.3.)
+   - `updateForStation` redraws **only the widgets bound to the stop in
+     the push** (AV2-5.3). The push names the naptan departures were
+     FETCHED from and a binding names the HUB, so the id is resolved
+     THROUGH the selections — matching it against bindings directly
+     would silently never update a bus widget. `WidgetRedrawTargets`
+     is that rule, extracted and tested.
+   - `updateFromStorage` is the redraw-everything path (watchdog,
+     manual refresh, clear) and still loops the placed ids, rendering
+     **each one from its own binding**. (It used to call
+     `updateWidgetContent`, which took one board and fanned it out to
+     every id. That function is deleted — a helper that shows one
+     station on every widget is a loaded gun in a file whose one rule
+     is never to show the wrong stop.)
 2. **Watchdog fires** (`ACTION_ETA_TICK`) → `updateFromStorage(context)`
    - Reads predictions back from SQL
    - Re-derives each row's `eta` from `targetEpochMs + now` via the
@@ -154,6 +172,21 @@ FCM, watchdog and manual refresh all go
 The watchdog scheduling sits at the END of `updateAppWidget` so every
 path re-arms it. Don't bypass `updateAppWidget` or you'll leak alarms.
 
+**1a. One widget is one STATION, and a station is all of its boards.**
+`renderWidget` takes every selection whose `groupingId` matches the
+binding and feeds them to `MultiLineBoardProcessor` — the same grouping
+the home screen and the screensaver render from. It used to resolve the
+binding to `selections.first { … }` and draw that one, so a user
+tracking a station in both directions saw half their board with nothing
+to say the other half existed. It looked correct in every screenshot,
+because a widget showing one platform looks exactly like a widget that
+only knows about one platform.
+
+Verified on a Pixel 7 Pro: a station given a second line rendered
+`6 departures across 3 platform(s)` where the old code drew one block.
+The log says the platform count for exactly that reason — "with 6
+departures" was true either way.
+
 **1b. Never substitute another station's board.**
 `renderWidget` resolves this id's binding against the live selections.
 No binding, or a binding whose station is no longer one of the user's
@@ -211,11 +244,28 @@ through these abstractions:
 - `ui/util/PredictionTicker.tickPredictions` — the filter+reformat
   function. Used by Compose `rememberTickedPredictions` (which wraps
   it with a minute-tick state) AND directly by the widget.
-- `core/.../util/GlobalBoardProcessor.processPredictions` with
-  `perPlatformCap = 3` — the display cap. Both home and widget call
-  this on their post-tick list.
+- `core/.../util/MultiLineBoardProcessor` — the grouping. Feeds in
+  (one per pole/line/direction), platform blocks out, ordered and
+  labelled. Home, dream and widget all render from it, which is what
+  stops them disagreeing about what a station looks like.
+- `core/.../util/GlobalBoardProcessor.processPredictions` — the flat
+  display cap, still used for "has anything loaded", the SDUI binding
+  and the fallback state.
+- `core/.../util/LineStatusRanker.rotation` — which line speaks for a
+  board carrying several. Worst first, de-duplicated on (severity,
+  reason) because sub-surface lines share track and share incidents.
+  The widget has room for one line of status and takes the first.
+
 - `SqlStorage.getPredictionsTimestamp` — the "X ago" source. All
   three call this same function.
+
+**Depth is the widget's own size.** `rowCapForHeight` turns
+`OPTION_APPWIDGET_MIN_HEIGHT` into departures-per-platform: 2 on a
+one-cell strip, 3 (the shipped default) normally, 4 when the user has
+dragged it tall. This is the thing iOS cannot do — WidgetKit gives a
+family and a layout per family, where Android's home screen is a free
+grid and the resize gesture is the user saying how much board they
+want.
 
 If you find yourself writing tick-related logic ONLY in this file,
 you've probably broken consistency. Either add it to the shared

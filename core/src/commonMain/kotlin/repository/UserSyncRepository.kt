@@ -5,6 +5,7 @@ import com.stationly.core.service.SduiApiService
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.user.effectiveBoards
 import com.stationly.core.platform.StorageManager
+import com.stationly.core.platform.WidgetRestore
 import com.stationly.core.usecase.StationLifecycleUseCase
 import kotlinx.coroutines.flow.first
 
@@ -185,6 +186,20 @@ class UserSyncRepository(
         val cloudKeys = cloudSelections.map { key(it.station, it.line, it.direction) }.toSet()
         val localByKey = local.associateBy { key(it.station, it.line, it.direction) }
 
+        // ── The whole rewrite, declared as one ──
+        //
+        // Everything below runs with the selection table in an intermediate
+        // state: a board is discarded, then another is set up, and between those
+        // two calls `getAllSelections()` answers honestly and misleadingly. The
+        // Android widget reads that table on every redraw, and a redraw landing
+        // in the gap drew a BOUND widget as "Choose a station" — observed on a
+        // Pixel 7 Pro, once, in the middle of an otherwise correct reconcile.
+        //
+        // [WidgetRestore] is the existing answer to exactly that question and
+        // the login restore already uses it; this path is the other destructive
+        // one and had been left out. It suppresses one branch — the empty-state
+        // wipe — so boards written DURING the rewrite still publish normally.
+        WidgetRestore.during {
         local.filter { key(it.station, it.line, it.direction) !in cloudKeys }.forEach { sel ->
             val remaining = sqlStorage.getAllSelections().filterNot {
                 it.station == sel.station && it.line == sel.line && it.direction == sel.direction
@@ -216,6 +231,7 @@ class UserSyncRepository(
                 existing.patternIds != restored.patternIds
             if (filterChanged) lifecycle.updateBoardFilter(restored)
         }
+        } // WidgetRestore.during
 
         // No configuration is adopted here. Appearance is device-local — see
         // UserSettings — so a board arriving from another device keeps whatever
