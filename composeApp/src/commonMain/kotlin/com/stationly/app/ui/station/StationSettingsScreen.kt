@@ -153,6 +153,18 @@ fun StationSettingsScreen(
      * that is absent.
      */
     onAddWidget: (() -> Unit)? = null,
+    /**
+     * Open the settings for the widget ALREADY showing this station.
+     *
+     * Separate from [onAddWidget] because they are different verbs and the row
+     * picks between them on [widgetPlacement]. Null on a platform that cannot
+     * edit a placed widget's settings from inside the app — see
+     * `widgetsAreEditableInApp`.
+     */
+    onOpenWidgetSettings: (() -> Unit)? = null,
+    /** What the app knows about widgets showing this station. */
+    widgetPlacement: com.stationly.core.model.user.WidgetPlacement =
+        com.stationly.core.model.user.WidgetPlacement(),
     viewModel: StationSettingsViewModel = viewModel(key = "station-settings-$stationId") {
         StationSettingsViewModel(stationId)
     },
@@ -304,6 +316,47 @@ fun StationSettingsScreen(
             // legible for the whole scroll rather than being the thing that
             // scrolls away first.
             Spacer(Modifier.height(8.dp))
+
+            // ── The widget, first ──────────────────────────────────────────
+            //
+            // At the TOP because this is the moment the want exists: somebody
+            // looking at a station's settings is looking at the station, and
+            // "put this on my home screen" is the thing they are most likely to
+            // have come here for. It sat under the board arrangement and above
+            // Delete, which is where settings go to be undiscovered.
+            //
+            // ## It knows whether this station already HAS one
+            // The app tracks every placed widget and the station it shows
+            // (`UserSettings.widgets`, kept current by the placement probe), so
+            // this row does not have to offer "add" to somebody who added one
+            // months ago. When a widget exists the row goes to THAT widget's
+            // settings; when none does, it offers to make one. One row, two
+            // honest states, rather than one row that is wrong half the time.
+            if (onAddWidget != null || onOpenWidgetSettings != null) {
+                val placement = widgetPlacement
+                val hasWidget = placement.placed
+                // `families` is one entry per widget showing this station, so
+                // its size is how many there are. `placed` is the question the
+                // row actually asks; the count only changes the wording.
+                val widgetCount = placement.families.size
+                SettingsSectionLabel("Home screen")
+                SettingsCard {
+                    SettingsActionRow(
+                        icon = Icons.Rounded.GridView,
+                        title = if (hasWidget) "Widget settings" else "Add to Home Screen",
+                        subtitle = when {
+                            widgetCount > 1 -> "$widgetCount widgets show this station"
+                            hasWidget -> "Choose what this station's widget shows"
+                            else -> "A widget showing this station's live departures"
+                        },
+                        onClick = {
+                            if (hasWidget) onOpenWidgetSettings?.invoke()
+                            else onAddWidget?.invoke()
+                        },
+                    )
+                }
+                Spacer(Modifier.height(28.dp))
+            }
 
             // ── How this station appears on the home screen ──
             //
@@ -476,24 +529,6 @@ fun StationSettingsScreen(
                     subtitle = "Add a line, change a direction, or set a filter",
                     onClick = { onEditLines(null) },
                 )
-            }
-
-            // ── Home screen ──
-            //
-            // Here, on the station, rather than in a widget settings screen the
-            // user would have to know to go looking for. This is the moment the
-            // want exists.
-            if (onAddWidget != null) {
-                Spacer(Modifier.height(28.dp))
-                SettingsSectionLabel("Home screen")
-                SettingsCard {
-                    SettingsActionRow(
-                        icon = Icons.Rounded.GridView,
-                        title = "Add to Home Screen",
-                        subtitle = "A widget showing this station's live departures",
-                        onClick = onAddWidget,
-                    )
-                }
             }
 
             Spacer(Modifier.height(28.dp))

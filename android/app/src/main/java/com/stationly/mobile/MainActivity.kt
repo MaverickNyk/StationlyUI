@@ -26,6 +26,7 @@ import com.stationly.mobile.widget.WidgetConfigureActivity
 import com.stationly.mobile.widget.WidgetPlacementProbe
 import com.stationly.mobile.widget.WidgetPinner
 import kotlinx.coroutines.launch
+import com.stationly.mobile.widget.WidgetBindingStore
 
 /**
  * The Android host: the Android half of a contract that is one function
@@ -154,6 +155,31 @@ class MainActivity : ComponentActivity() {
                         { groupingId -> WidgetPinner.pin(this@MainActivity, groupingId) }
                     } else {
                         null
+                    },
+                    // The station already HAS a widget, so this opens that
+                    // widget's own settings rather than offering to make a
+                    // second one.
+                    //
+                    // The id comes from the binding store, which is the app's
+                    // own record of which widget shows what — the same map the
+                    // manager lists from. `firstOrNull` because a station can
+                    // legitimately have two widgets and the row has to open
+                    // ONE: the first is the one the manager lists first, and the
+                    // page it opens lists the rest a tap away.
+                    onOpenWidgetSettingsForStation = { groupingId ->
+                        val id = WidgetBindingStore.all(this@MainActivity)
+                            .entries.firstOrNull { it.value == groupingId }?.key
+                        startActivity(
+                            if (id != null) {
+                                WidgetConfigureActivity.reconfigureIntent(this@MainActivity, id)
+                            } else {
+                                // The probe said there was one and the store
+                                // disagrees — a widget removed since the last
+                                // look. The manager is the honest destination:
+                                // it lists what is actually there.
+                                WidgetConfigureActivity.managerIntent(this@MainActivity)
+                            }
+                        )
                     },
                 )
                 // Outside `App` because it is the one thing on screen the shared

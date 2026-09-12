@@ -1,6 +1,7 @@
 package com.stationly.app.ui.dream
 
 import com.stationly.app.platform.DreamPrefsBackend
+import com.stationly.core.model.user.PlatformNav
 
 /**
  * Style of clock the user picked for the dream screen. Stored as a string
@@ -74,6 +75,7 @@ object DreamSettings {
     private const val KEY_LAYOUT      = "layout"
     private const val KEY_THEME      = "theme"
     private const val KEY_CLOCK_STYLE = "clock_style"
+    private const val KEY_PLATFORM_NAV = "platform_nav"
     private const val KEY_STATION_ID  = "station_id"  // optional override
 
     /**
@@ -214,6 +216,24 @@ object DreamSettings {
 
     fun getClockStyle(): ClockStyle = ClockStyle.fromStored(read(KEY_CLOCK_STYLE))
     fun setClockStyle(style: ClockStyle) = write(key(KEY_CLOCK_STYLE), style.storedAs)
+
+    /**
+     * How the dream reaches platforms that do not fit on one screen.
+     *
+     * Device-local, beside the layout and the theme, rather than on the board:
+     * the same station is read from a phone on a bedside table and from a
+     * tablet on a desk, and how far away the reader is sitting is a fact about
+     * the DEVICE. The widget's copy of this question lives on the board because
+     * a widget is a fixed box whose size the station's own settings can speak
+     * to.
+     *
+     * Stored by NAME and read through the enum's own fallback, so a value this
+     * build has never heard of degrades to scrolling rather than throwing.
+     */
+    fun getPlatformNav(): PlatformNav =
+        PlatformNav.entries.firstOrNull { it.name == read(KEY_PLATFORM_NAV) } ?: PlatformNav.SCROLL
+
+    fun setPlatformNav(nav: PlatformNav) = write(key(KEY_PLATFORM_NAV), nav.name)
 
     /**
      * Optional override telling the dream WHICH of the user's saved stations

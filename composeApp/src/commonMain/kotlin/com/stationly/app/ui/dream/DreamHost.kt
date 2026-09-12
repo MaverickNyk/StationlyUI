@@ -50,6 +50,7 @@ import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import com.stationly.core.model.user.PlatformNav
 
 /**
  * Top-level dream composable — port of Android `dream/DreamHost.kt`, hosted
@@ -72,6 +73,7 @@ fun DreamHost(onExit: () -> Unit) {
     val theme by remember { mutableStateOf(DreamSettings.getTheme()) }
     val clockStyle by remember { mutableStateOf(DreamSettings.getClockStyle()) }
     val preferredStation by remember { mutableStateOf(DreamSettings.getStationId()) }
+    val platformNav by remember { mutableStateOf(DreamSettings.getPlatformNav()) }
 
     var snapshot by remember { mutableStateOf(DreamSnapshot(null, emptyList(), null)) }
 
@@ -134,8 +136,8 @@ fun DreamHost(onExit: () -> Unit) {
                 ) { showExit = !showExit }
         ) {
             when (layout) {
-                DreamLayout.FULLSCREEN_BOARD -> FullscreenBoardLayout(snapshot, sduiStrings)
-                DreamLayout.CLOCK_AND_BOARD  -> ClockAndBoardHost(snapshot, clockStyle, sduiStrings)
+                DreamLayout.FULLSCREEN_BOARD -> FullscreenBoardLayout(snapshot, sduiStrings, platformNav)
+                DreamLayout.CLOCK_AND_BOARD  -> ClockAndBoardHost(snapshot, clockStyle, sduiStrings, platformNav)
             }
 
             AnimatedVisibility(
@@ -169,6 +171,7 @@ private fun ClockAndBoardHost(
     snapshot: DreamSnapshot,
     clockStyle: ClockStyle,
     sduiStrings: Map<String, String>,
+    platformNav: PlatformNav,
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -202,9 +205,9 @@ private fun ClockAndBoardHost(
                 .fillMaxHeight()
         ) {
             if (isLandscape) {
-                LandscapeLayout(snapshot, clockStyle, dim, sduiStrings)
+                LandscapeLayout(snapshot, clockStyle, dim, sduiStrings, platformNav)
             } else {
-                PortraitLayout(snapshot, clockStyle, dim, sduiStrings)
+                PortraitLayout(snapshot, clockStyle, dim, sduiStrings, platformNav)
             }
         }
     }
@@ -264,6 +267,7 @@ private fun LandscapeLayout(
     clockStyle: ClockStyle,
     dim: DreamDims,
     sduiStrings: Map<String, String>,
+    platformNav: PlatformNav,
 ) {
     val lineColor = lineColorOf(snapshot.selection?.line)
     // Hero through the shared tick layer, sorted by ETA AFTER ticking so it
@@ -320,6 +324,7 @@ private fun LandscapeLayout(
                     }
                     DreamBoard(
                         snapshot = snapshot,
+                        platformNav = platformNav,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = boardMaxHeight),
@@ -341,6 +346,7 @@ private fun PortraitLayout(
     clockStyle: ClockStyle,
     dim: DreamDims,
     sduiStrings: Map<String, String>,
+    platformNav: PlatformNav,
 ) {
     val lineColor = lineColorOf(snapshot.selection?.line)
     val tickedNextDeparture = StationlyFormatters
@@ -390,6 +396,7 @@ private fun PortraitLayout(
                     }
                     DreamBoard(
                         snapshot = snapshot,
+                        platformNav = platformNav,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = boardMaxHeight),
