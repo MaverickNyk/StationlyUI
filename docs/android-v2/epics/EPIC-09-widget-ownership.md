@@ -367,3 +367,37 @@ an app no way to re-point a placed widget except by the user opening its gear.
   the only one that leaves a signed-out account's board live on the home screen.
 - **T6** The ETA watchdog is re-armed on every pass through `updateFromStorage`,
   not only from inside `updateAppWidget`.
+
+---
+
+## AV2-9.9 — One platform, drawn as two blocks · `M` · found 2026-09-12
+
+**Seen while verifying the pager on the phone.** King's Cross paged to 4, and
+pages 1 and 2 were BOTH headed "Piccadilly Platform 6 (Eastbound)", with
+different departures on each. Page 4 was "Piccadilly Platform 5 (Westbound)", so
+the pager itself is fine: the BOARD has two blocks for one platform.
+
+**Why paging is what exposed it.** Scrolling draws the blocks in a run, so a
+second Platform 6 header a few rows below the first reads as the board simply
+being long. Stepping puts each block on its own page with a counter, and "1/4"
+and "2/4" carrying the same title is unmissable.
+
+**Where it comes from.** `buildGroups` keys a block on something that separates
+two feeds which resolve trains to the same platform. King's Cross Piccadilly is
+tracked in BOTH directions, and `headerFor` only appends a compass suffix when
+every feed in the group agrees, so two groups can print an identical header
+while being distinct keys underneath.
+
+**This is not an Android bug and not a widget bug.** `MultiLineBoardProcessor`
+is shared, so the same station splits the same way on the home screen and on
+iOS. The widget is only the surface that made it visible.
+
+- **T1** Reproduce in `MultiLineBoardProcessorTest` from two feeds of one line
+  in opposite directions that both resolve trains to one platform. The test is
+  the deliverable even if the fix is deferred.
+- **T2** Decide the rule: merge blocks whose header would be identical, or make
+  the header carry what actually distinguishes them. Merging is probably right,
+  because a passenger standing on Platform 6 wants one queue.
+- **T3** Check the pin against whichever rule wins: `BoardPin.Kind.PLATFORM`
+  matches on the LABEL, so two blocks with one label are two blocks one pin
+  promotes.
