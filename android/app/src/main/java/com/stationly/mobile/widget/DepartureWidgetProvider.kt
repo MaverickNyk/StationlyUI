@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.SystemClock
 import android.widget.RemoteViews
 import com.stationly.core.model.PredictionDisplay
+import com.stationly.core.model.user.BoardConfig
 import com.stationly.core.model.UserSelection
 // ── ⚠️ Editing THIS FILE breaks the incremental compile. Rebuild the module. ──
 //
@@ -497,17 +498,41 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 )
             }
 
-            // THREE rows per platform. Not two, not "it depends".
+            // Rows per platform: three, unless this station asks for more.
             //
-            // This briefly varied with the widget's height — 2 on a short one, 4
-            // on a tall one — which was a nice idea and the wrong one: the rule
-            // is a product rule, it is the same three the home screen and the
-            // screensaver draw (`GlobalBoardProcessor`, `perPlatformCap = 3`),
-            // and a widget that shows fewer than the app for the same station is
-            // just a widget that is missing departures. Height decides how many
-            // BLOCKS you can see at once, which the scroll already handles; it
-            // does not get to decide how deep a platform is.
-            val rowCap = ROWS_PER_PLATFORM
+            // This briefly varied with the widget's HEIGHT — 2 on a short one, 4
+            // on a tall one — which was a nice idea and the wrong one. Height
+            // decides how many BLOCKS you can see at once, which the scroll
+            // already handles; it does not get to decide how deep a platform is,
+            // because a widget showing fewer departures than the app for the
+            // same platform is not a smaller widget, it is a widget missing
+            // trains.
+            //
+            // Then it was a hard 3, which was wrong in the other direction: the
+            // station's own "Show up to N per platform" already exists and the
+            // home screen and screensaver obey it. Three is its DEFAULT. Reading
+            // the board keeps the product rule for everyone and keeps the
+            // settings screen's promise to whoever changed it.
+            //
+            // `runBlocking` around a suspend read, deliberately. Android's
+            // `loadDurable` is a plain SharedPreferences get wearing a `suspend`
+            // modifier — no dispatcher switch, no I/O wait, nothing that can
+            // actually suspend — so this completes without ever parking a
+            // thread. It is here because `renderWidget` is reached from a
+            // broadcast receiver AND from `FreshDataNotifier`, and making the
+            // whole chain suspend to carry one prefs read would be a larger
+            // change than the thing it enables. The surrounding code already
+            // reads SQL synchronously on this thread, so the contract is
+            // unchanged: callers are off the main thread already.
+            val rowCap = kotlinx.coroutines.runBlocking {
+                com.stationly.core.repository.UserSettings.ensureLoaded()
+                // Keyed on the grouping id — the HUB — which is exactly what
+                // `configOf` is keyed on everywhere else (the station settings
+                // screen passes the same thing). `selection.groupingId` rather
+                // than `boundTo` only because the latter is nullable here and
+                // they are the same string by construction.
+                rowCapFor(com.stationly.core.repository.UserSettings.configOf(selection.groupingId))
+            }
             val boardRows = com.stationly.core.util.MultiLineBoardProcessor.rowsFrom(
                 com.stationly.core.util.MultiLineBoardProcessor.buildGroups(
                     feeds = feeds,
@@ -601,14 +626,31 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         }
 
         /**
-         * Departures drawn per platform block.
+         * Departures drawn per platform block — three, unless the station says
+         * otherwise.
          *
-         * The same three the home screen and the screensaver use, so one station
-         * looks like itself on every surface. A widget showing fewer departures
-         * than the app for the same platform is not a smaller widget, it is a
-         * widget missing trains.
+         * This is the DEFAULT and not a number the widget owns. Every station
+         * carries `BoardConfig.rowsPerPlatform` ("Show up to N per platform",
+         * 2 to 5), which the home screen and the screensaver already obey. Read
+         * it here too, via [rowCapFor], or the widget silently overrides a
+         * setting the app made a promise about: set a station to 5 and the app
+         * shows five while the home screen shows three, with nothing to explain
+         * the difference.
+         *
+         * The product rule and the setting are the same answer — 3 is what the
+         * setting says when nobody has touched it — so reading it from the board
+         * satisfies both.
          */
-        const val ROWS_PER_PLATFORM = 3
+        const val ROWS_PER_PLATFORM = BoardConfig.DEFAULT_ROWS_PER_PLATFORM
+
+        /**
+         * How deep each platform goes on the widget for this board.
+         *
+         * Through `rowCap` rather than the raw field, which clamps: storage is
+         * not trusted, and a hand-edited 40 would otherwise build forty rows per
+         * platform into a RemoteViews collection.
+         */
+        fun rowCapFor(config: BoardConfig): Int = config.rowCap
 
         /**
          * Update a single widget instance

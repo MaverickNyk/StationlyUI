@@ -26,9 +26,12 @@ data class ModeIconEntry(
  *   2. tints.json colour     → drawn roundel tinted per backend
  *   3. null                  → caller's hardcoded mode colour
  *
- * The Android actual is a no-op: the shipping Android app is the native
- * `android/` module with its own ModeIconCache; composeApp's Android target
- * doesn't drive a widget.
+ * The Android actual is a REAL implementation, not a stub — it was written as
+ * one, before `:composeApp` became the Android app. It caches into the very
+ * directory `android/`'s own `ModeIconCache` uses (`<filesDir>/mode_icons/`),
+ * so the two agree on a file layout rather than on code: the shared UI and the
+ * home-screen widget draw the same roundels, and neither re-downloads what the
+ * other already fetched.
  */
 expect object ModeIconStore {
     /** Download missing icons + write the tint map; wipes PNGs on version bump. */
