@@ -653,6 +653,26 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         fun rowCapFor(config: BoardConfig): Int = config.rowCap
 
         /**
+         * One answer, used by both of the widget's body wirings.
+         *
+         * A bound widget opens the app from anywhere on it. An unbound one
+         * opens its configuration instead: the empty state says "tap to choose
+         * a station", so the tap has to land somewhere that can choose one.
+         * Opening the app would be an instruction the app cannot carry out —
+         * the binding lives on the widget, and the user would arrive at a home
+         * screen with nothing to do.
+         *
+         * It is a function rather than two `if (isBound)` expressions because
+         * that is what it was: two of them, forty lines apart, one for the
+         * board container and one for the rows collection. Changing one and not
+         * the other leaves an unbound widget whose header opens the picker and
+         * whose rows open the app — a dead end reachable only by tapping the
+         * wrong half of a widget that is already in its broken state.
+         */
+        fun tapTargetFor(isBound: Boolean): WidgetTapTarget =
+            if (isBound) WidgetTapTarget.APP else WidgetTapTarget.CONFIGURE
+
+        /**
          * Update a single widget instance
          * This mirrors the MindTheTimeAndroid implementation exactly
          */
@@ -869,13 +889,12 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 addCategory(Intent.CATEGORY_LAUNCHER)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
-            val boardIntent = if (isBound) {
-                android.app.PendingIntent.getActivity(
+            val boardIntent = when (tapTargetFor(isBound)) {
+                WidgetTapTarget.APP -> android.app.PendingIntent.getActivity(
                     context, 0, openApp,
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
                 )
-            } else {
-                configureIntent
+                WidgetTapTarget.CONFIGURE -> configureIntent
             }
             views.setOnClickPendingIntent(R.id.departure_board, boardIntent)
 
@@ -892,18 +911,20 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // platform wants one TEMPLATE on the collection plus a fill-in per
             // item, and the template must be MUTABLE for the fill-in to merge.
             // The fill-in is empty because every row does the same thing.
-            val rowsTemplate = if (isBound) {
-                android.app.PendingIntent.getActivity(
-                    context, appWidgetId, openApp,
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE,
-                )
-            } else {
-                android.app.PendingIntent.getActivity(
-                    context, appWidgetId,
-                    WidgetConfigureActivity.reconfigureIntent(context, appWidgetId),
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE,
-                )
-            }
+            //
+            // The SAME answer the board container uses — see `tapTargetFor`.
+            // These were two independent `if (isBound)` expressions and had to
+            // agree, forty lines apart, forever.
+            val rowsTemplate = android.app.PendingIntent.getActivity(
+                context,
+                appWidgetId,
+                when (tapTargetFor(isBound)) {
+                    WidgetTapTarget.APP -> openApp
+                    WidgetTapTarget.CONFIGURE ->
+                        WidgetConfigureActivity.reconfigureIntent(context, appWidgetId)
+                },
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE,
+            )
             views.setPendingIntentTemplate(R.id.rows_list, rowsTemplate)
 
             // Set up manual refresh intent
@@ -1186,3 +1207,14 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         }
     }
 }
+
+/**
+ * Where a tap on the widget's BODY goes — see
+ * [DepartureWidgetProvider.tapTargetFor].
+ *
+ * Top level rather than nested in the companion: Kotlin does not flatten a
+ * companion's nested types into the outer class's namespace, so it would have
+ * to be spelled `DepartureWidgetProvider.Companion.TapTarget` at every call
+ * site and in every test.
+ */
+enum class WidgetTapTarget { APP, CONFIGURE }
