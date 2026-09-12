@@ -181,4 +181,49 @@ class LineShortNamesTest {
     fun `a single-line header names the DLR correctly`() {
         assertEquals("DLR", LineShortNames.joinLines(listOf("dlr")))
     }
+
+    // ── the list form, for cards that enumerate a station's lines ────────────
+
+    /**
+     * `joinLines` builds a board HEADER — "Dist & Circ." — and the rule inside
+     * it is the one every station card wants: one line gets its full name
+     * because there is room, several switch to short forms because that is
+     * exactly when width runs out.
+     *
+     * Three cards spelled that rule out for themselves and two of them got it
+     * wrong, always taking the short form. So a station on one Overground line
+     * read "Mild." — a truncation with a full stop after it, in a card with
+     * room for "Mildmay" twice over. It looks like a rendering fault rather
+     * than a name.
+     */
+    @Test
+    fun `one line in a list gets its full name`() {
+        assertEquals("Mildmay", LineShortNames.listLines(listOf("mildmay")))
+        assertEquals("DLR", LineShortNames.listLines(listOf("dlr")))
+    }
+
+    /** Several switch to short forms, separated the way a card lists things. */
+    @Test
+    fun `several lines are short and dot-separated`() {
+        assertEquals(
+            "Picc. · Met. · Circ.",
+            LineShortNames.listLines(listOf("piccadilly", "metropolitan", "circle")),
+        )
+    }
+
+    /** De-duplicated: both directions of one line are one line. */
+    @Test
+    fun `a line named twice is listed once`() {
+        assertEquals("Victoria", LineShortNames.listLines(listOf("victoria", "victoria")))
+    }
+
+    /**
+     * Blank rather than a stray separator, so the caller can substitute its own
+     * fallback ("No lines yet", or the mode) with a plain `ifBlank`.
+     */
+    @Test
+    fun `no lines is blank, not a separator`() {
+        assertEquals("", LineShortNames.listLines(emptyList()))
+        assertEquals("", LineShortNames.listLines(listOf("", "  ")))
+    }
 }

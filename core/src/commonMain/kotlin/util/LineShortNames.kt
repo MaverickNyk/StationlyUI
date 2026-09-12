@@ -205,5 +205,31 @@ object LineShortNames {
         }
     }
 
+    /**
+     * The lines at a station, for a card that ENUMERATES them rather than
+     * heading a board: "Mildmay", "Picc. · Met. · Circ.".
+     *
+     * Same rule as [joinLines] — one line gets its full name because there is
+     * room for it, several switch to short forms because that is exactly when
+     * width runs out — with the separator a list wants instead of the "&" a
+     * header wants.
+     *
+     * It exists because three cards spelled that rule out for themselves and
+     * two took the short form unconditionally. A station on one Overground line
+     * then read "Mild.", a truncation with a full stop after it, in a card with
+     * room for "Mildmay" twice over.
+     *
+     * Blank when there are no lines, so the caller can supply its own fallback
+     * with a plain `ifBlank` rather than getting a stray separator.
+     */
+    fun listLines(lines: List<String>): String {
+        val distinct = lines.filter { it.isNotBlank() }.distinct()
+        return when {
+            distinct.isEmpty() -> ""
+            distinct.size == 1 -> displayName(distinct[0])
+            else -> distinct.joinToString(" · ") { shortName(it) }
+        }
+    }
+
     private const val MAX_NAMED_LINES = 3
 }
