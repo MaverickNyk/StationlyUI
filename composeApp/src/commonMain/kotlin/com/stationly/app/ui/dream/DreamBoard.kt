@@ -45,6 +45,7 @@ import com.stationly.core.util.resolveBoardFallbackCopy
 import com.stationly.core.util.GlobalBoardProcessor
 import com.stationly.core.util.LegacyRow
 import com.stationly.core.util.LineShortNames
+import com.stationly.app.ui.util.tickPredictions
 import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.StaleColor
 import com.stationly.core.util.StationlyFormatters
@@ -152,6 +153,38 @@ fun DreamBoard(
         )
     }
 
+    // ── The station's platforms, rebuilt each minute ────────────────────────
+    //
+    // The same three steps the widget takes: tick every feed against ONE
+    // wall-clock reading, group into platform blocks, cap each block. Rebuilt
+    // here rather than carried on the snapshot because a screensaver runs all
+    // night between pushes — finished rows would go on saying "2 min" until
+    // the next one landed.
+    //
+    // Empty when the snapshot carries no feeds, which is every caller that
+    // still builds a DreamSnapshot by hand (the settings preview). Those fall
+    // through to the legacy single-board rows below, unchanged.
+    val boardRows: List<MultiLineBoardProcessor.Row> =
+        remember(snapshot.feeds, snapshot.rowCap, nowMs) {
+            if (snapshot.feeds.isEmpty()) emptyList() else {
+                val ticked = snapshot.feeds.map { feed ->
+                    feed.copy(
+                        predictions = StationlyFormatters.sortPredictions(
+                            tickPredictions(feed.predictions, nowMs)
+                        )
+                    )
+                }
+                MultiLineBoardProcessor.rowsFrom(
+                    MultiLineBoardProcessor.buildGroups(
+                        feeds = ticked,
+                        isBus = MultiLineBoardProcessor.isBus(sel?.mode),
+                        rowCap = snapshot.rowCap,
+                    ),
+                    rowCap = snapshot.rowCap,
+                )
+            }
+        }
+
     val legacyRows: List<LegacyRow> = remember(sel, predictions, lineStatus, nowMs) {
         if (sel == null) {
             listOf(LegacyRow.Header("Add a board on the home screen"))
@@ -237,16 +270,27 @@ fun DreamBoard(
                 }
             }
 
-            // ── Rows — scroll independently; centred when short in
-            //    fullscreen (Android's fillViewport + centre gravity). ──
+            // ── Rows — scroll independently, and always fill from the TOP ──
+            //
+            // Fullscreen used to centre them vertically, a port of v1 Android's
+            // `fillViewport` + centre gravity. Seen on a phone for the first
+            // time on 2026-09-12 (the dream had never been rendered), that is
+            // plainly wrong in portrait: three departures floated in the middle
+            // of the panel with a hand's width of black between them and the
+            // station name above, and the same again below. It reads as a board
+            // that failed to load rather than one with three trains on it.
+            //
+            // Top is also the only arrangement with a referent. Every departure
+            // board in the network fills downward from the first row, and the
+            // empty space sits at the BOTTOM where its blank rows would be —
+            // which is what the space below now is. Centring only ever looked
+            // right on a wide short panel, and the layout does not know it is
+            // on one.
             Column(
                 modifier = Modifier
                     .weight(1f, fill = fullscreen)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(
-                    rowGap,
-                    if (fullscreen) Alignment.CenterVertically else Alignment.Top
-                )
+                verticalArrangement = Arrangement.spacedBy(rowGap, Alignment.Top),
             ) {
                 if (fallbackRows != null) {
                     fallbackRows.forEach { (text, bold) ->
@@ -257,6 +301,57 @@ fun DreamBoard(
                                 textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
                             )
+                        }
+                    }
+                } else if (boardRows.isNotEmpty()) {
+                    // The whole station: a header per platform, its departures
+                    // under it. `row.title` is already complete — the processor
+                    // built it from the block's own lines and direction — so it
+                    // is NOT passed through `platformHeaderText`, which would
+                    // prefix the single selection's line onto a header that may
+                    // belong to a different one.
+                    boardRows.forEach { row ->
+                        when (row) {
+                            is MultiLineBoardProcessor.Row.PlatformHeader -> DreamActiveStrip {
+                                Text(
+                                    row.title,
+                                    color = BoardAmber, fontSize = rowSp, fontWeight = FontWeight.Bold,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                                )
+                            }
+                            is MultiLineBoardProcessor.Row.Departure -> DreamActiveStrip {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    // Per ROW, not per selection: the processor
+                                    // decides block by block whether a prefix
+                                    // helps — a single-line block does not need
+                                    // one, a mixed block does.
+                                    if (row.linePrefix.isNotBlank()) {
+                                        Text(
+                                            row.linePrefix, color = BoardAmber, fontSize = rowSp,
+                                            fontWeight = FontWeight.Bold, maxLines = 1,
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                    }
+                                    Text(
+                                        row.destination, color = BoardAmber, fontSize = rowSp,
+                                        fontWeight = FontWeight.Normal,
+                                        modifier = Modifier.weight(1f), maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (row.eta.isNotBlank()) {
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            row.eta, color = BoardAmber, fontSize = rowSp,
+                                            fontWeight = FontWeight.Bold,
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 } else {

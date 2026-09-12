@@ -3,6 +3,9 @@ package com.stationly.app.ui.dream
 import com.stationly.core.model.LineStatus
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.UserSelection
+import com.stationly.core.model.user.BoardConfig
+import com.stationly.core.repository.UserSettings
+import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.platform.Platform
 import kotlinx.datetime.Clock
 
@@ -15,6 +18,18 @@ data class DreamSnapshot(
     val selection: UserSelection?,
     val predictions: List<PredictionDisplay>,
     val lineStatus: LineStatus?,
+    /**
+     * One feed per board at this station — the input `MultiLineBoardProcessor`
+     * takes, exactly as the widget builds it.
+     *
+     * Raw and UNTICKED on purpose. The rows have to be rebuilt each minute
+     * against the current clock or a screensaver left on overnight goes on
+     * saying "2 min" until the next push, so [DreamBoard] ticks these and
+     * groups them rather than being handed finished rows.
+     */
+    val feeds: List<MultiLineBoardProcessor.Feed> = emptyList(),
+    /** Departures per platform block — the station's own setting, default 3. */
+    val rowCap: Int = BoardConfig.DEFAULT_ROWS_PER_PLATFORM,
     /** Wall-clock millis at which the data was last synced — drives the "X ago" timer. */
     val lastUpdatedMs: Long = Clock.System.now().toEpochMilliseconds(),
 ) {
@@ -40,19 +55,78 @@ data class DreamSnapshot(
  *
  * Pure SQL read — call from a background dispatcher.
  */
+/**
+ * Every board at the station the dream is pointed at.
+ *
+ * ## A station is not a board
+ * The dream used to resolve its setting with `firstOrNull { it.station == id }`
+ * and render that ONE board. A station routinely carries several — four lines
+ * at an interchange, both directions of each — so the screensaver named
+ * "King's Cross St. Pancras Underground Station" and drew Piccadilly, Platform
+ * 6, Eastbound. Three trains and then a screen of black, with nothing on it to
+ * say the other three lines existed.
+ *
+ * Precisely the defect the widget had, fixed the same way and for the same
+ * reason: `first` on a list that has more than one answer silently discards
+ * the rest, and a departure board that shows less than the user asked for
+ * looks exactly like a station that is quiet.
+ *
+ * ## The fallbacks are deliberate
+ * A [preferredStationId] naming a station the user has since deleted, or none
+ * at all (the "Auto" row), falls back to the first board's WHOLE station —
+ * never to that one board. The screensaver runs unattended; a panel that is
+ * empty all night is worse than one showing the top station.
+ *
+ * ## Keyed on the naptan, not the hub
+ * A bus hub's poles have different naptans and the setting stores one of them,
+ * so this shows that pole. Widening to the hub would put the other side of the
+ * road on a board the user chose one side of.
+ */
+fun dreamBoardsFor(
+    selections: List<UserSelection>,
+    preferredStationId: String?,
+): List<UserSelection> {
+    val anchor = selections.firstOrNull { it.station == preferredStationId }
+        ?: selections.firstOrNull()
+        ?: return emptyList()
+    return selections.filter { it.station == anchor.station }
+}
+
 fun loadDreamSnapshot(preferredStationId: String?): DreamSnapshot {
     val selections = Platform.sqlStorage.getAllSelections()
-    val selection = selections.firstOrNull { it.station == preferredStationId }
-        ?: selections.firstOrNull()
+    val boards = dreamBoardsFor(selections, preferredStationId)
+    val selection = boards.firstOrNull()
         ?: return DreamSnapshot(null, emptyList(), null)
 
-    val predictions = Platform.sqlStorage.getPredictions(selection.station, selection.line, selection.direction)
+    // One feed per board at this station, the way the widget and the home
+    // screen build them. The dream used to read the FIRST board's predictions
+    // and render those alone; see dreamBoardsFor.
+    val feeds = boards.map { b ->
+        MultiLineBoardProcessor.Feed(
+            stationId = b.station,
+            line = b.line,
+            direction = b.direction,
+            predictions = runCatching {
+                Platform.sqlStorage.getPredictions(b.station, b.line, b.direction)
+            }.getOrNull().orEmpty(),
+        )
+    }
+
+    // The UNION, so a station with one quiet line and one busy one reads as
+    // having data. The fallback copy ("no upcoming departures") is driven off
+    // this, and judging it by one board put that message over a board that had
+    // trains on three other platforms.
+    val predictions = feeds.flatMap { it.predictions }
     val lineStatus  = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
+
+    // The station's own "Show up to N per platform", default 3 — the same
+    // setting the home screen and the widget obey, read the same way.
+    val rowCap = UserSettings.configOf(selection.groupingId).rowCap
     // "X ago" should reflect when the data was last synced from the backend
     // (FCM landed / REST returned), NOT when this snapshot was loaded from SQL.
     val lastUpdatedMs = Platform.sqlStorage.getLastUpdatedTimestamp(selection.station, selection.line, selection.direction)
         ?: Clock.System.now().toEpochMilliseconds()
-    return DreamSnapshot(selection, predictions, lineStatus, lastUpdatedMs)
+    return DreamSnapshot(selection, predictions, lineStatus, feeds, rowCap, lastUpdatedMs)
 }
 
 /**

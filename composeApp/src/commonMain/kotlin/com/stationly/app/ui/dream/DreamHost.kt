@@ -87,6 +87,11 @@ fun DreamHost(onExit: () -> Unit) {
 
     // Initial load + reload on every fresh-data signal.
     LaunchedEffect(preferredStation) {
+        // Before the first snapshot: it reads the station's "Show up to N per
+        // platform", and an unloaded store answers with defaults for every
+        // board. A dream runs in the app's process but not necessarily after
+        // any screen has opened, so nothing else here has done this.
+        runCatching { com.stationly.core.repository.UserSettings.ensureLoaded() }
         snapshot = withContext(Dispatchers.Default) { loadDreamSnapshot(preferredStation) }
         FreshDataNotifier.events.collect {
             snapshot = withContext(Dispatchers.Default) { loadDreamSnapshot(preferredStation) }
