@@ -18,6 +18,74 @@ Template:
 
 ---
 
+## S017 — 2026-09-12 — owner feedback, against the phone throughout
+
+**Outcome:** DONE (six fixes, all verified on the Pixel 7 Pro)
+**Gate:** GREEN, including the XCFramework — `commonMain` changed in several places, all shared fixes iOS wants too.
+**Commits:** `c3dbfa0` `e2846a6` `d89570a` `f68eb4c` `9dfc46e` `6b6c740`
+
+**Did.** Worked the owner's feedback list, TDD, with the device in the loop for
+every item rather than at the end. The avatar's "?", the widget's depth rule,
+the gear opening a real settings page, the widget body opening the app, the
+screensaver's missing Start button and its station picker, mode icons on every
+list you configure from.
+
+**Learned — five things, and four of them were only reachable from hardware.**
+
+**1. The screensaver had never been rendered, and it can be.** A dream runs only
+with the screen on and the doze dream wins while it is off, which is why every
+previous pass verified the settings screen and stopped. It previews from the
+CLI: Settings → Display → Screen saver → the eye on the tile. `Somnambulator`
+does NOT work on this device (SDK 37) — `am start` succeeds and nothing binds.
+`dumpsys dreams` is the honest check: `mCurrentDream`, `mCrashRetryCount`,
+`mLastCrashTimeMillis`. One render found two defects: rows centred vertically
+(three departures floating between two voids, reading as a board that failed to
+load) and a whole interchange drawn as ONE board — the same defect the widget
+had, with the empty space below being the other platforms all along.
+
+**2. Starting to write an identity key is a DATA MIGRATION.** `UserSettings`
+namespaces by uid from `firebase_user_uid`, and until this session the only
+writer of that key in the entire codebase was `AuthBridge.swift`. So every
+Android user's arrangement lived in `::anon` — silently and consistently,
+because one namespace used forever is indistinguishable from the right one.
+Publishing the identity to fix the avatar pointed `load()` at a namespace that
+had never existed, in the same commit. The owner's phone showed it: real
+settings in `::anon`, an empty bucket beside it under the uid, and a home
+screen quietly reverted from CAROUSEL to the default list. Adoption now rescues
+it once and CONSUMES the anon namespace — without the consuming, the second
+person to sign in on a shared phone inherits the first person's arrangement.
+
+**3. Never `am force-stop` before probing a widget tap.** A stopped Android app
+cannot be launched by its own PendingIntents until a human opens it. Every tap
+target then reports "nothing happened", with no logcat line, indistinguishable
+from unwired clicks. This cost several rounds and a wrong conclusion about
+`setPendingIntentTemplate`; the same probes without the force-stop showed the
+gear, the board body and the collection rows all working. Always include a
+known-good control in the same run. (`uiautomator dump` is no help either — the
+widget clock ticks, so the window is never idle.)
+
+**4. A constant the widget owned was overriding a setting the app promised.**
+The widget hardcoded three rows per platform. Every station carries "Show up to
+N per platform", 2–5, default 3, which the home screen and screensaver already
+obeyed. Three was that setting's default all along, so reading the board keeps
+the product rule for everyone AND the promise to whoever changed it. Verified
+both directions on the device.
+
+**5. Four station cards each invented their own rule for naming lines**, and the
+two errors were opposite halves of one missing rule — "Mild." in a card with
+room for "Mildmay" twice over, and four full line names ellipsised into
+uselessness. `joinLines` had documented the right rule for board headers since
+before any of them existed.
+
+**Next agent needs to know:** the only criterion left that a session cannot
+reach is walking the RELEASE build — everything walked on 2026-09-12 was the
+staging debug build, and an R8 failure lands on the screen nobody opened. Q5 is
+still the owner's call and still the biggest risk on the branch. The device
+notes above are in memory (`android-test-device`, `android-dream-preview`) so
+they survive a context loss.
+
+---
+
 ## S016 — 2026-09-11 — EPIC-04, EPIC-05, EPIC-06, EPIC-07 · **eleven stories**
 
 **Outcome:** DONE (11 stories to Review; AV2-8.1 In Progress; Q7 fixed, Q5 escalated)
