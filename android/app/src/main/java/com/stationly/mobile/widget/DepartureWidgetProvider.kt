@@ -8,6 +8,8 @@ import android.os.SystemClock
 import android.widget.RemoteViews
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.user.BoardConfig
+import com.stationly.core.model.user.PlatformNav
+import com.stationly.core.util.PlatformPages
 import com.stationly.core.model.UserSelection
 // ── ⚠️ Editing THIS FILE breaks the incremental compile. Rebuild the module. ──
 //
@@ -89,6 +91,10 @@ class DepartureWidgetProvider : AppWidgetProvider() {
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
         super.onDeleted(context, appWidgetIds)
         WidgetBindingStore.unbind(context, appWidgetIds)
+        // The page index belongs with the binding: both answer "what is this
+        // widget showing", and leaving one behind means a widget id reissued by
+        // the launcher inherits a stranger's platform.
+        WidgetPageStore.forget(context, appWidgetIds)
         // Tell the app, in case it is open behind the home screen — the station
         // screen's delete warning and the SDUI `widget.count` fact both read
         // this, and both would otherwise describe a widget the user has just
@@ -127,6 +133,31 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 return
             }
         }
+        // ── Stepping to the next or previous platform ────────────────────
+        //
+        // The chevrons on a paging widget are PendingIntents and nothing more,
+        // because a RemoteViews tree holds no state. So the tap lands here: it
+        // moves the stored index and redraws THAT widget only. The step wraps
+        // (see PlatformPages.step) and is computed against the board as it is
+        // right now, not as it was when the intent was created.
+        if (intent.action == ACTION_PLATFORM_STEP) {
+            val id = intent.getIntExtra(
+                AppWidgetManager.EXTRA_APPWIDGET_ID,
+                AppWidgetManager.INVALID_APPWIDGET_ID,
+            )
+            val delta = intent.getIntExtra(EXTRA_PLATFORM_DELTA, 1)
+            if (id == AppWidgetManager.INVALID_APPWIDGET_ID) return
+            val pendingResult = goAsync()
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                try {
+                    runCatching { stepPlatform(context, id, delta) }
+                } finally {
+                    pendingResult.finish()
+                }
+            }
+            return
+        }
+
         val actions = listOf(ACTION_UPDATE_WIDGET, ACTION_MANUAL_REFRESH)
         if (intent.action in actions) {
             // Debounce the user-tap path. The btn_refresh PendingIntent
@@ -194,6 +225,19 @@ class DepartureWidgetProvider : AppWidgetProvider() {
     companion object {
         const val ACTION_UPDATE_WIDGET = "com.stationly.mobile.ACTION_UPDATE_WIDGET"
         const val ACTION_MANUAL_REFRESH = "com.stationly.mobile.ACTION_MANUAL_REFRESH"
+
+        /**
+         * A chevron on a [BoardConfig.platformNav] = STEP widget was tapped.
+         *
+         * Fired as an EXPLICIT broadcast at this provider, the same way
+         * [ACTION_MANUAL_REFRESH] is, so it needs no `<action>` in the manifest
+         * — an explicit intent is delivered by component, not by filter, and
+         * the receiver is `exported="false"` anyway.
+         */
+        const val ACTION_PLATFORM_STEP = "com.stationly.mobile.ACTION_PLATFORM_STEP"
+
+        /** +1 or -1, carried on [ACTION_PLATFORM_STEP]. */
+        const val EXTRA_PLATFORM_DELTA = "platform_delta"
 
         /**
          * Minimum gap between two `ACTION_MANUAL_REFRESH` broadcasts that
@@ -524,15 +568,17 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // change than the thing it enables. The surrounding code already
             // reads SQL synchronously on this thread, so the contract is
             // unchanged: callers are off the main thread already.
-            val rowCap = kotlinx.coroutines.runBlocking {
+            //
+            // Keyed on the grouping id — the HUB — which is exactly what
+            // `configOf` is keyed on everywhere else (the station settings
+            // screen passes the same thing). `selection.groupingId` rather than
+            // `boundTo` only because the latter is nullable here and they are
+            // the same string by construction.
+            val config = kotlinx.coroutines.runBlocking {
                 com.stationly.core.repository.UserSettings.ensureLoaded()
-                // Keyed on the grouping id — the HUB — which is exactly what
-                // `configOf` is keyed on everywhere else (the station settings
-                // screen passes the same thing). `selection.groupingId` rather
-                // than `boundTo` only because the latter is nullable here and
-                // they are the same string by construction.
-                rowCapFor(com.stationly.core.repository.UserSettings.configOf(selection.groupingId))
+                com.stationly.core.repository.UserSettings.configOf(selection.groupingId)
             }
+            val rowCap = rowCapFor(config)
             val boardRows = com.stationly.core.util.MultiLineBoardProcessor.rowsFrom(
                 com.stationly.core.util.MultiLineBoardProcessor.buildGroups(
                     feeds = feeds,
@@ -622,6 +668,8 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 mode = selection.mode,
                 boundSelection = selection,
                 boardRows = boardRows,
+                platformNav = config.platformNav,
+                platformPage = WidgetPageStore.pageOf(context, appWidgetId),
             )
         }
 
@@ -651,6 +699,107 @@ class DepartureWidgetProvider : AppWidgetProvider() {
          * platform into a RemoteViews collection.
          */
         fun rowCapFor(config: BoardConfig): Int = config.rowCap
+
+        /**
+         * A chevron's broadcast.
+         *
+         * The request code mixes the widget id with the direction, because two
+         * PendingIntents that differ only in an EXTRA are the SAME PendingIntent
+         * as far as the system is concerned — `FLAG_UPDATE_CURRENT` would then
+         * make both chevrons carry whichever delta was registered last, and the
+         * widget would step one way whichever arrow you pressed.
+         */
+        private fun platformStepIntent(
+            context: Context,
+            appWidgetId: Int,
+            delta: Int,
+        ): android.app.PendingIntent {
+            val intent = Intent(context, DepartureWidgetProvider::class.java).apply {
+                action = ACTION_PLATFORM_STEP
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+                putExtra(EXTRA_PLATFORM_DELTA, delta)
+            }
+            return android.app.PendingIntent.getBroadcast(
+                context,
+                appWidgetId * 2 + if (delta > 0) 1 else 0,
+                intent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                    android.app.PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+
+        /**
+         * This station's board, as the widget draws it.
+         *
+         * Extracted because [stepPlatform] has to count the platforms before it
+         * can wrap, and counting them means building the same rows the renderer
+         * builds. Two copies of "what the board is" would drift the moment one
+         * of them learned about a new preference — which is precisely what the
+         * depth setting just did.
+         */
+        internal fun boardRowsFor(
+            selections: List<com.stationly.core.model.UserSelection>,
+            selection: com.stationly.core.model.UserSelection,
+            boundTo: String,
+            rowCap: Int,
+        ): List<com.stationly.core.util.MultiLineBoardProcessor.Row> {
+            val nowMs = System.currentTimeMillis()
+            val feeds = selections.filter { it.groupingId == boundTo }.map { sel ->
+                com.stationly.core.util.MultiLineBoardProcessor.Feed(
+                    stationId = sel.station,
+                    line = sel.line,
+                    direction = sel.direction,
+                    predictions = com.stationly.core.util.StationlyFormatters.sortPredictions(
+                        tickPredictions(
+                            com.stationly.core.platform.Platform.sqlStorage
+                                .getPredictions(sel.station, sel.line, sel.direction),
+                            nowMs,
+                        )
+                    ),
+                )
+            }
+            return com.stationly.core.util.MultiLineBoardProcessor.rowsFrom(
+                com.stationly.core.util.MultiLineBoardProcessor.buildGroups(
+                    feeds = feeds,
+                    isBus = com.stationly.core.util.MultiLineBoardProcessor.isBus(selection.mode),
+                    rowCap = rowCap,
+                ),
+                rowCap = rowCap,
+            )
+        }
+
+        /**
+         * Move one stepping widget to the next or previous platform.
+         *
+         * Computed against the board as it is NOW rather than against whatever
+         * it looked like when the chevron's intent was created: the page count
+         * changes under a widget nightly, and a delta applied to a stale count
+         * is how a tap lands on a platform that no longer exists.
+         *
+         * Redraws that one widget. Stepping widget A must not repaint widget B,
+         * which is sitting on somebody's home screen showing a platform they
+         * chose.
+         */
+        private fun stepPlatform(context: Context, appWidgetId: Int, delta: Int) {
+            val boundTo = WidgetBindingStore.boundStation(context, appWidgetId) ?: return
+            val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
+            val selection = selections.firstOrNull { it.groupingId == boundTo } ?: return
+            val config = kotlinx.coroutines.runBlocking {
+                com.stationly.core.repository.UserSettings.ensureLoaded()
+                com.stationly.core.repository.UserSettings.configOf(selection.groupingId)
+            }
+            val pageCount = PlatformPages.count(
+                boardRowsFor(selections, selection, boundTo, rowCapFor(config))
+            )
+            if (pageCount <= 1) return
+            val next = PlatformPages.step(
+                current = PlatformPages.clamp(WidgetPageStore.pageOf(context, appWidgetId), pageCount),
+                delta = delta,
+                pageCount = pageCount,
+            )
+            WidgetPageStore.setPage(context, appWidgetId, next)
+            updateOne(context, appWidgetId)
+        }
 
         /**
          * One answer, used by both of the widget's body wirings.
@@ -722,7 +871,36 @@ class DepartureWidgetProvider : AppWidgetProvider() {
              * it did.
              */
             boardRows: List<com.stationly.core.util.MultiLineBoardProcessor.Row>? = null,
+            /**
+             * How this station's platforms are reached — see [PlatformNav].
+             *
+             * SCROLL is the default and is what every widget did before the
+             * setting existed, so a caller that does not pass it gets the old
+             * behaviour rather than a surprise.
+             */
+            platformNav: PlatformNav = PlatformNav.SCROLL,
+            /** Which platform a STEP widget is parked on. Ignored when scrolling. */
+            platformPage: Int = 0,
         ) {
+            // ── One platform at a time, when the station asks for it ────────
+            //
+            // The rows are cut here rather than in the loop below, so
+            // everything downstream — the row builder, the fallback, the
+            // logging — sees "the board" and does not need to know which mode
+            // it is in.
+            //
+            // The bar hides itself on a single-platform board even in STEP
+            // mode: two chevrons that can only return you to where you are is a
+            // control that lies about having somewhere to go. That is a
+            // rendering decision and not a setting, because the platform count
+            // changes nightly and a user should not have to re-choose when TfL
+            // drops one.
+            val pageCount = boardRows?.let { PlatformPages.count(it) } ?: 0
+            val stepping = platformNav == PlatformNav.STEP && pageCount > 1
+            val safePage = PlatformPages.clamp(platformPage, pageCount)
+            val drawnRows =
+                if (stepping) PlatformPages.page(boardRows.orEmpty(), safePage) else boardRows
+
             // Says what it DREW, not just how many rows it had.
             //
             // "with 6 departures" was true of a widget showing one platform and
@@ -936,6 +1114,36 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
             views.setOnClickPendingIntent(R.id.btn_refresh, refreshPendingIntent)
+
+            // ── The platform pager bar ───────────────────────────────────────
+            //
+            // Hidden entirely unless this widget is stepping AND has somewhere
+            // to step to. When it is shown the collection below holds one
+            // platform, so the bar is the only thing naming which.
+            if (stepping) {
+                views.setViewVisibility(R.id.platform_pager, android.view.View.VISIBLE)
+                views.setTextViewText(
+                    R.id.platform_pager_title,
+                    PlatformPages.title(drawnRows.orEmpty()),
+                )
+                // "2/3" rather than dots: a RemoteViews cannot draw a pager
+                // indicator without a view per dot, and the number says the
+                // same thing in less space on a control this size.
+                views.setTextViewText(
+                    R.id.platform_pager_count,
+                    "${safePage + 1}/$pageCount",
+                )
+                views.setOnClickPendingIntent(
+                    R.id.btn_platform_prev,
+                    platformStepIntent(context, appWidgetId, delta = -1),
+                )
+                views.setOnClickPendingIntent(
+                    R.id.btn_platform_next,
+                    platformStepIntent(context, appWidgetId, delta = 1),
+                )
+            } else {
+                views.setViewVisibility(R.id.platform_pager, android.view.View.GONE)
+            }
             views.setViewVisibility(R.id.btn_refresh, android.view.View.VISIBLE)
             views.setViewVisibility(R.id.progress_refresh, android.view.View.GONE)
 
@@ -1026,7 +1234,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     false
                 }
                 
-                if (boardRows != null && boardRows.isNotEmpty()) {
+                if (drawnRows != null && drawnRows.isNotEmpty()) {
                     // ── The multi-line board ────────────────────────────────
                     //
                     // Every line and direction the user tracks at this hub, in
@@ -1041,7 +1249,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     // need one, a mixed block does — and that is the difference
                     // between "(Cir.) Edgware Road" where it helps and a prefix
                     // on every row where it is noise.
-                    boardRows.forEach { row ->
+                    drawnRows.forEach { row ->
                         when (row) {
                             is com.stationly.core.util.MultiLineBoardProcessor.Row.PlatformHeader -> {
                                 val header = RemoteViews(context.packageName, R.layout.widget_platform_header)

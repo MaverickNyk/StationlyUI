@@ -127,6 +127,66 @@
             tools:text="00:59" />
     </LinearLayout>
 
+    <!-- ── Platform pager (PlatformNav.STEP only) ──────────────────────────
+         One platform at a time, with a chevron either side of its name.
+
+         It lives OUT here rather than inside the collection on purpose: a
+         RemoteViews collection item cannot carry its own PendingIntent (only a
+         fill-in merged into one template), and this widget's template already
+         means "open the app". Chevrons inside the list would open the app
+         instead of paging. Out here they get a real setOnClickPendingIntent.
+
+         GONE in scroll mode, which is the default and what every widget did
+         before this existed. -->
+    <LinearLayout
+        android:id="@+id/platform_pager"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:background="@drawable/departure_board_active_row_background"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/btn_platform_prev"
+            android:layout_width="34dp"
+            android:layout_height="30dp"
+            android:contentDescription="Previous platform"
+            android:padding="7dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_chevron_left" />
+
+        <TextView
+            android:id="@+id/platform_pager_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:gravity="center"
+            android:singleLine="true"
+            android:textColor="@color/tfl_amber"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/platform_pager_count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="2dp"
+            android:textColor="@color/tfl_amber"
+            android:textSize="11sp" />
+
+        <ImageView
+            android:id="@+id/btn_platform_next"
+            android:layout_width="34dp"
+            android:layout_height="30dp"
+            android:contentDescription="Next platform"
+            android:padding="7dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_chevron_right" />
+    </LinearLayout>
+
     <!-- Dynamic Rows Container (API < 31) -->
     <LinearLayout
         android:id="@+id/rows_container"

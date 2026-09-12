@@ -335,7 +335,12 @@ class WidgetConfigureActivity : ComponentActivity() {
      * others, which are on screen showing stations that did not change.
      */
     private fun commit(targetId: Int, groupingId: String) {
+        val wasBoundTo = WidgetBindingStore.boundStation(this, targetId)
         WidgetBindingStore.bind(this, targetId, groupingId)
+        // A widget pointed at a different station starts at that station's
+        // FIRST platform. Keeping the index would open a Bank widget on "the
+        // third one", which is a sentence about the station it used to show.
+        if (wasBoundTo != groupingId) WidgetPageStore.reset(this, targetId)
         redraw(targetId)
         // A binding is a placement change: this is the moment a board acquires a
         // widget, or hands one over to another board. The app's own view of the
