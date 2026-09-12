@@ -204,7 +204,9 @@ class WidgetConfigureActivity : ComponentActivity() {
                 val isFirstPlacement = remember {
                     appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID &&
                         WidgetBindingStore.boundStation(
-                            this@WidgetConfigureActivity, appWidgetId,
+                            this@WidgetConfigureActivity,
+                            appWidgetId,
+                            WidgetBindingStore.currentUid(),
                         ) == null
                 }
 
@@ -309,7 +311,7 @@ class WidgetConfigureActivity : ComponentActivity() {
         AppWidgetManager.getInstance(this)
             .getAppWidgetIds(ComponentName(this, DepartureWidgetProvider::class.java))
             .map { id ->
-                val bound = WidgetBindingStore.boundStation(this, id)
+                val bound = WidgetBindingStore.boundStation(this, id, WidgetBindingStore.currentUid())
                 PlacedWidget(id, hubs.firstOrNull { it.groupingId == bound })
             }
 
@@ -380,8 +382,11 @@ class WidgetConfigureActivity : ComponentActivity() {
      * others, which are on screen showing stations that did not change.
      */
     private fun commit(targetId: Int, groupingId: String) {
-        val wasBoundTo = WidgetBindingStore.boundStation(this, targetId)
-        WidgetBindingStore.bind(this, targetId, groupingId)
+        val wasBoundTo = WidgetBindingStore.boundStation(this, targetId, WidgetBindingStore.currentUid())
+        // Stamped with the account placing it, so another account signing in on
+        // this phone gets the honest empty state rather than inheriting a live
+        // widget in somebody else's configuration. See WidgetBindingStore.
+        WidgetBindingStore.bind(this, targetId, groupingId, WidgetBindingStore.currentUid())
         // A widget pointed at a different station starts at that station's
         // FIRST platform. Keeping the index would open a Bank widget on "the
         // third one", which is a sentence about the station it used to show.
@@ -761,7 +766,7 @@ private fun ConfigureScreen(
     val scope = rememberCoroutineScope()
 
     var bound by remember {
-        mutableStateOf(WidgetBindingStore.boundStation(context, appWidgetId))
+        mutableStateOf(WidgetBindingStore.boundStation(context, appWidgetId, WidgetBindingStore.currentUid()))
     }
     // Open on the picker only when there is genuinely nothing to be about.
     var choosing by remember { mutableStateOf(bound == null) }

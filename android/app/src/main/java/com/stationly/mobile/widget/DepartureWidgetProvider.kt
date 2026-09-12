@@ -420,8 +420,11 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             val affectedHubs = WidgetRedrawTargets.hubsFedBy(selections, pushedStationId)
             if (affectedHubs.isEmpty()) return
 
+            // Read once for the whole sweep rather than per widget: this runs on
+            // every prediction push, and the answer cannot change inside a loop.
+            val uid = WidgetBindingStore.currentUid()
             val targets = WidgetRedrawTargets.widgetsShowing(
-                bindings = appWidgetIds.toList().associateWith { WidgetBindingStore.boundStation(context, it) },
+                bindings = appWidgetIds.toList().associateWith { WidgetBindingStore.boundStation(context, it, uid) },
                 hubs = affectedHubs,
             )
             for (id in targets) {
@@ -462,7 +465,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             appWidgetId: Int,
             selections: List<UserSelection>,
         ) {
-            val boundTo = WidgetBindingStore.boundStation(context, appWidgetId)
+            val boundTo = WidgetBindingStore.boundStation(context, appWidgetId, WidgetBindingStore.currentUid())
             // The board's selections, in the user's own order. A hub can hold
             // several (lines, directions); the widget renders the first, which
             // is the depth v1 had. Rendering a whole multi-line hub in
@@ -798,7 +801,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
          * chose.
          */
         private fun stepPlatform(context: Context, appWidgetId: Int, delta: Int) {
-            val boundTo = WidgetBindingStore.boundStation(context, appWidgetId) ?: return
+            val boundTo = WidgetBindingStore.boundStation(context, appWidgetId, WidgetBindingStore.currentUid()) ?: return
             val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
             val selection = selections.firstOrNull { it.groupingId == boundTo } ?: return
             val pageCount = PlatformPages.count(

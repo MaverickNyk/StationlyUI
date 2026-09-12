@@ -55,9 +55,17 @@ object WidgetPlacementProbe {
             // app was force-stopped.
             WidgetBindingStore.prune(context)
 
+            // The signed-in account's widgets only. This feeds the station
+            // screen's "a widget is showing this station" warning and the SDUI
+            // `widget.count` fact, and both are statements about the person
+            // looking at them: counting another account's leftover binding
+            // would warn somebody about a widget they cannot see.
+            val uid = WidgetBindingStore.currentUid()
+
             // `toList()` because `mapNotNull` is not defined on `IntArray`.
             val byBoard = ids.toList().mapNotNull { id ->
-                val board = WidgetBindingStore.boundStation(context, id) ?: return@mapNotNull null
+                val board = WidgetBindingStore.boundStation(context, id, uid)
+                    ?: return@mapNotNull null
                 board to family(manager.getAppWidgetOptions(id))
             }.groupBy({ it.first }, { it.second })
 
