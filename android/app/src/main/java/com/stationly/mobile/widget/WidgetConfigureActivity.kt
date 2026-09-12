@@ -81,6 +81,7 @@ import com.stationly.app.ui.common.SegmentedRow
 import com.stationly.app.ui.common.pressHighlight
 import com.stationly.core.model.user.PlatformNav
 import com.stationly.app.ui.station.PinPicker
+import androidx.compose.ui.draw.clip
 
 /**
  * Everything about widgets, in one place, shaped for Android rather than ported
@@ -433,8 +434,32 @@ class WidgetConfigureActivity : ComponentActivity() {
                 Toast.LENGTH_LONG,
             ).show()
             WidgetPinner.clearPending(this)
+            // Stay where we are. The user is still in the app and there is
+            // nothing on the home screen to go and look at.
+            finish()
+            return
         }
+        // ── Land on the home screen, where the widget now is ────────────────
+        //
+        // Finishing alone drops the user back on whatever was behind this
+        // screen, which is the app they started from — so the widget they just
+        // added is behind it, and the flow ends with them pressing back twice
+        // to find out whether it worked.
+        //
+        // An app cannot scroll the launcher to the page the widget landed on;
+        // there is no API for it, and the launcher already animates there
+        // itself. What an app CAN do is get out of the way, which is the half
+        // that was missing.
+        //
+        // After `finish()`, so the app is not left sitting under the home
+        // screen in the back stack.
         finish()
+        startActivity(
+            Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            },
+        )
     }
 
     /**
@@ -555,20 +580,7 @@ private fun WidgetsScreen(
     }
 
     if (widgets.isEmpty()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                Icons.Rounded.GridView,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "No widgets on your Home Screen yet.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        NoWidgetsYet(canAdd = canAdd)
         return
     }
 
@@ -596,6 +608,119 @@ private fun WidgetsScreen(
     Spacer(Modifier.height(10.dp))
     SettingsCaption("Tap a widget to change its station or how much it shows.")
 }
+
+/**
+ * Nothing on the home screen yet, said in a way that helps.
+ *
+ * ## Why this is not one grey line
+ * It used to be "No widgets on your Home Screen yet." and nothing else, which
+ * is a dead end on the one screen that exists to get you out of it. Somebody
+ * opening this has either never had a widget or has just removed their last
+ * one; either way the question in their head is what a widget IS and how to get
+ * one, and the screen knew both and said neither.
+ *
+ * ## It draws the thing rather than describing it
+ * A picture of a departure board answers "what will I get" in less time than a
+ * sentence can, and it is the same dark panel the widget actually renders, so
+ * nobody is surprised by what lands.
+ *
+ * ## Both routes, and which one this launcher supports
+ * `canAdd` is `requestPinAppWidget` support, read at composition because a
+ * launcher can be swapped. Where it is missing the button is not shown, so the
+ * manual route is the only instruction and it has to be complete.
+ */
+@Composable
+private fun NoWidgetsYet(canAdd: Boolean) {
+    val border = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.10f)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        // A miniature of the real thing: the dark panel, amber text, a platform
+        // header and two departures. Deliberately not a screenshot, which would
+        // go stale the first time the board's design moved.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                .background(WidgetPreviewInk)
+                .padding(10.dp),
+        ) {
+            Text(
+                "Your station",
+                color = WidgetPreviewAmber,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            Spacer(Modifier.height(6.dp))
+            PreviewRow("Platform 2", "", bold = true)
+            PreviewRow("Stratford", "Due")
+            PreviewRow("Stratford", "4 min")
+        }
+
+        Spacer(Modifier.height(20.dp))
+        Text(
+            "Live departures on your Home Screen",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(6.dp))
+        SettingsCaption(
+            if (canAdd) {
+                "One station per widget, updating itself as the trains move. " +
+                    "Tap Add a widget above, or long-press your Home Screen and " +
+                    "choose Widgets."
+            } else {
+                "One station per widget, updating itself as the trains move. " +
+                    "To add one, long-press your Home Screen, tap Widgets, then " +
+                    "drag Stationly out."
+            },
+        )
+        Spacer(Modifier.height(16.dp))
+        // Removal is the launcher's, not ours. Said plainly rather than offered
+        // as a button that cannot work: `deleteAppWidgetId` only affects widgets
+        // the CALLER hosts, and a placed widget belongs to the launcher's host.
+        // There is no API that lets this app remove one.
+        SettingsCaption(
+            "To remove a widget later, touch and hold it on your Home Screen and " +
+                "choose Remove. That one is the launcher's job, not ours.",
+        )
+    }
+}
+
+/** One line of the miniature board. */
+@Composable
+private fun PreviewRow(left: String, right: String, bold: Boolean = false) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            left,
+            color = WidgetPreviewAmber,
+            fontSize = 12.sp,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier.weight(1f),
+            textAlign = if (bold) androidx.compose.ui.text.style.TextAlign.Center
+            else androidx.compose.ui.text.style.TextAlign.Start,
+        )
+        if (right.isNotBlank()) {
+            Text(right, color = WidgetPreviewAmber, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/**
+ * The widget's own ink, not the app theme's.
+ *
+ * The board is dark and amber in every app theme — that is the one thing about
+ * it that does not follow the user's choice — so a preview drawn in theme
+ * colours would be a preview of something else.
+ */
+private val WidgetPreviewInk = androidx.compose.ui.graphics.Color(0xFF0D0D0D)
+private val WidgetPreviewAmber = androidx.compose.ui.graphics.Color(0xFFFFC819)
 
 /**
  * CONFIGURE mode: one widget's settings page.
