@@ -32,12 +32,17 @@ WORKING TREE:      clean
 MASTER:            merged in at 91a51f7 — the eight iOS commits that shipped
                    v1.0 (production Firebase, the iOS 26 icon, iPhone-only,
                    the TestFlight scripts). No conflicts; none of it is Android.
-DEVICE:            NOTHING IN THIS SESSION HAS BEEN RUN ON A PHONE. Eleven
-                   stories, all reasoned + unit-tested, zero device passes. The
-                   per-story handoffs each carry their own device script; the
-                   three that most need one are AV2-4.3 (add a board, cold
-                   start, is it still there), AV2-6.2 (the screensaver renders
-                   at all) and AV2-8.1 (walk every screen on a release build).
+DEVICE:            ✅ RUN ON THE PIXEL 7 PRO, 2026-09-12 — including the
+                   MINIFIED RELEASE build, installed over the live versionCode 2.
+                   It launched clean, migrated the database 2 → 3 in place,
+                   rendered two widgets bound to two different stations, shed
+                   six stale FCM topics, and converged its boards onto the
+                   cloud list. The device found TWO defects nothing else could
+                   (a live board unsubscribed by a racing reconcile, and a bound
+                   widget flashing "Choose a station"); both fixed.
+                   STILL OWED: the screen-by-screen walk (the phone locked and
+                   it is the owner's daily device), the screensaver, and the
+                   1 → 3 migration from a genuine Play-store v1 install.
 BLOCKED ON OWNER:  🔴 Q5 is now the biggest risk on the branch and it is NOT
                    what it says on the tin: master has no migrations, so every
                    App Store iOS user's database is stamped version 1 while
@@ -46,13 +51,11 @@ BLOCKED ON OWNER:  🔴 Q5 is now the biggest risk on the branch and it is NOT
                    options written out in the question.
                    Q7 FIXED this session. Q3 answered (EPIC-06 header).
                    Q1/Q2/Q4/Q6 are decisions or console work, not blockers.
-NEXT UP:           **One thing, and it needs a phone.** AV2-8.1 (b): the release
-                   APK is built, at HEAD, sitting in
-                   android/app/build/outputs/apk/staging/release/. Sign it,
-                   install it, walk every screen. Then AV2-8.2's two upgrade
-                   paths, then AV2-8.3's rollout.
-                   `versionCode` is already 3, so that APK installs OVER a live
-                   v1 and migrates 1 → 3 in one pass. Not reversible.
+NEXT UP:           **Walk the release build by hand.** It is installed and
+                   running on the Pixel; what is left is opening every screen,
+                   because an R8 failure lands on the one nobody opened. Then
+                   the screensaver (AV2-6.2 has never been seen), then AV2-8.2's
+                   1 → 3 upgrade from a genuine Play-store v1, then the rollout.
                    Everything else on this board is in Review.
 ```
 
@@ -81,12 +84,12 @@ Twenty stories. In the order somebody signing off should read them:
 
 | Story | Session | What to look at |
 |---|---|---|
-| **AV2-4.3** | S016 | **The worst bug on the branch, and it had been live since the cutover.** Android wrote `boards` (the shared SelectionViewModel) and reconciled against `stations` (the legacy path), and the backend derives neither from the other on a write. So a board saved on Android left no trace in the array its own next foreground compared against — and that reconcile DELETES any local selection the cloud list does not have. On an account whose `stations` is empty, which is every account created on v2, that is every board the user has, gone within fifteen minutes, silently. Four device passes missed it because the test account's legacy array already described its one board. |
+| **AV2-4.3** | S016 · device 2026-09-12 | **The worst bug on the branch, and it had been live since the cutover.** Android wrote `boards` (the shared SelectionViewModel) and reconciled against `stations` (the legacy path), and the backend derives neither from the other on a write. So a board saved on Android left no trace in the array its own next foreground compared against — and that reconcile DELETES any local selection the cloud list does not have. On an account whose `stations` is empty, which is every account created on v2, that is every board the user has, gone within fifteen minutes, silently. Four device passes missed it because the test account's legacy array already described its one board. |
 | AV2-6.2 | S016 | **Unverified on hardware, and it is the one surface you cannot open by tapping.** The screensaver is the shared one now and v1's `dream/` package is deleted. Failure mode is a blank screen on a bedside table with no crash dialog. Four-step device script in the handoff. |
-| AV2-4.2 | S016 | The FCM topic ledger only ever grew — `unsubscribe` never removed from it — so the diff this story asks for would have made a re-added board silently never receive another push. Also: a token rotation was dropping `stationly_all` permanently, on a device that went on reporting itself subscribed. |
+| AV2-4.2 | S016 · device 2026-09-12 | **Six stale topics shed on first run, including the exact two AV2-4.1 named.** And the device caught the reconcile racing the board reconcile and unsubscribing a LIVE board — fixed by taking the mutex that already existed for it. The FCM topic ledger only ever grew — `unsubscribe` never removed from it — so the diff this story asks for would have made a re-added board silently never receive another push. Also: a token rotation was dropping `stationly_all` permanently, on a device that went on reporting itself subscribed. |
 | AV2-7.3 | S016 | The support stub's reason for being safe had stopped being true. `enabled` comes from the BACKEND, and these composables are the Android app now — one config change would have put the money surface in front of Android users with a checkout that does nothing. Fixed with a platform capability rather than a bigger comment. |
 | AV2-4.4 | S016 | Android has never uploaded a single activity event: `ActivityUploader` was complete and nothing called it. Also two objects could MINT the device id, one of them during logout. |
-| AV2-5.3 | S016 | `Board.widget` was empty on every Android device, so deleting a station never warned about the widget it was blanking, and `widget.count` reported zero for a phone covered in them. `board.count` was counting the widget map — wrong on both platforms. |
+| AV2-5.3 | S016 · device 2026-09-12 | **The widget draws the WHOLE station now** — it rendered one board at a hub, so tracking a station both ways showed half of it, and it looked right in every screenshot. Measured: `6 departures across 3 platform(s)`. Depth follows the widget's own size, which iOS cannot do. Also: `Board.widget` was empty on every Android device, so deleting a station never warned about the widget it was blanking, and `widget.count` reported zero for a phone covered in them. `board.count` was counting the widget map — wrong on both platforms. |
 | AV2-7.1 | S016 | The trap the story opens with is NOT set (the backend serves Play links correctly). What is new is Play In-App Updates: flexible for the nudge, immediate for the block. **Cannot be verified before an internal-track release.** |
 | AV2-5.4 | S016 | The guide is wired and deliberately has no Android door — every instruction in the served payload is an iOS gesture. The exact config change is written out in the epic. |
 | AV2-7.2 | S016 | Built nothing, which is the right outcome. The audit found there is no platform key to audit: one payload for both platforms, and three payloads whose content is platform-specific. One of them is an **iOS** bug (the About screen's `market://` rate link). |

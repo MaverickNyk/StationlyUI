@@ -399,6 +399,59 @@ five.
 Counted by hub now, from the process-wide selection cache — one per station,
 however many lines and directions are ticked inside it, which is what a board is.
 
+### The widget shows the WHOLE station now, 2026-09-12
+
+The story's task list stops at "which widgets redraw". What it did not ask, and
+what a device answered, is **what one widget draws**: `renderWidget` resolved its
+binding to `selections.first { it.groupingId == bound }` and rendered that one
+board. A binding names a HUB, and a hub routinely carries several boards — both
+directions of one line, four lines at one interchange — so a user tracking a
+station both ways saw half their board with nothing on it to say so.
+
+It looked correct in every screenshot ever taken, because a widget showing one
+platform looks exactly like a widget that only knows about one platform. The log
+said `with 6 departures` either way, which is why it now says the platform count.
+
+`MultiLineBoardProcessor` is what the home screen and the screensaver already
+render from, so the widget feeds it the same way — one `Feed` per (pole, line,
+direction) — and the three surfaces cannot disagree about a station any more.
+`LineStatusRanker.rotation` picks which line speaks when several share a board,
+and `lastUpdated` takes the newest across them so a station does not look stale
+because one of its lines is quiet.
+
+**Measured on a Pixel 7 Pro**, giving Hackney Wick a second line:
+
+```
+before   Updating widget 6 for Hackney Wick Rail Station with 6 departures
+after    … with 6 departures across 3 platform(s)
+```
+
+**Depth is the widget's own size**, which is the third thing this epic says
+Android can do and iOS cannot. `rowCapForHeight` turns
+`OPTION_APPWIDGET_MIN_HEIGHT` into departures-per-platform: 2 on a one-cell
+strip, 3 (unchanged, the shipped default) normally, 4 when dragged tall.
+WidgetKit gives iOS a family and a layout per family; Android's home screen is a
+free grid, so **the same station at two sizes is two different boards and the
+resize gesture is the user saying which they meant**.
+
+#### A bound widget flashed "Choose a station", mid-reconcile
+
+Seen once in the release-build log, and it is the rule this package exists to
+protect:
+
+```
+Updating widget 6 for Hackney Wick Rail Station with 6 departures
+Updating widget 6 for Stationly with 0 departures (UNBOUND)   ← here
+Updating widget 6 for Hackney Wick Rail Station with 6 departures
+```
+
+A cross-device reconcile discards boards and sets them up again; a redraw landing
+between those two calls finds the bound hub genuinely absent from the table.
+`WidgetRestore` is the existing answer — the login restore has always used it —
+and `reconcileBoards` now declares its rewrite the same way. The widget leaves its
+last good render on screen instead: stale by a second beats telling somebody
+their board is gone.
+
 ### Handoff notes — S016, 2026-09-11
 
 **Task (a) was already done and nobody knew.** The commit is `fd9a627`, dated two
