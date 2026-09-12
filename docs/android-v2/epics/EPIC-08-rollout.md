@@ -48,8 +48,9 @@ navigation and lifecycle, Coil 3, kotlinx-serialization across new types.
 - [ ] **b.** Walk every screen. **Still the one that matters, and it needs a
       phone.** Serialization and reflection failures under R8 surface as runtime
       crashes on screens nobody opened during testing.
-- [x] **c.** Add keep rules for anything the new graph needs. *(Audited — none
-      needed. See the findings.)*
+- [x] **c.** Add keep rules for anything the new graph needs. *(None needed, and
+      that is now **verified against the shipped `mapping.txt`** rather than
+      reasoned from the rule files. See the findings.)*
 - [x] **d.** Confirm `debugSymbolLevel = "FULL"` still applies. *(It applies and
       it has nothing to do — see the findings, because "no symbols in the AAB"
       looks exactly like the setting having been lost.)*
@@ -100,19 +101,51 @@ itself ran. `--no-build-cache` makes it go away. Worth knowing before somebody
 reads it as R8 refusing the graph — which is what it looks like, because it is
 the one task in the build most likely to genuinely fail.
 
-#### No new keep rules are needed, and the reason is worth keeping
+#### No new keep rules are needed, and here is the evidence rather than the argument
 
-The new graph is mostly Compose Multiplatform, Coil 3, JetBrains lifecycle and
-Play Core, and every one of those ships **consumer ProGuard rules** in its own
-artifact. The reflection in our code is unchanged: Gson over `com.stationly.core.model.**`
-(kept wholesale) and kotlinx-serialization, whose generated `$$serializer`s and
-`Companion`s are pinned explicitly under `com.stationly.**` so an SDK bump cannot
-silently drop them.
+"It built" is not evidence, which is this story's whole point — so the claim is
+checked against the 76 MB `mapping.txt` the release actually produced.
 
-The shared UI adds exactly **three** `@Serializable` files in `com.stationly.app.**`
-(`SduiConditions`, `SupportStore`, `SupportMoneyConfig`) and the existing
-wildcards already cover them. Checked rather than assumed — this is the story
-whose whole point is that "it built" is not evidence.
+| What | Expected | In the mapping |
+|---|---|---|
+| Every manifest component | name preserved | ✅ all 7, unrenamed |
+| `ActivityUploadWorker` | name **and** `<init>(Context, WorkerParameters)` | ✅ both |
+| kotlinx `$$serializer` classes | present, unobfuscated | ✅ **99** |
+| `SduiAppComponent` polymorphic subclasses | present | ✅ **61** |
+| `com.stationly.core.model.**` (Gson reflects) | unobfuscated | ✅ (`UserSelection`, `Board`, `BoardSelection`) |
+| Shared-UI `@Serializable` (`SupportMoneyConfig`) | class **and** its `$$serializer` | ✅ both |
+| `TopicLedger`, `InAppUpdate` (nothing reflects on them) | obfuscated | ✅ `i6.t`, `X5.e` |
+
+That last row matters as much as the others: things nothing reflects on **are**
+being shrunk and renamed, so the rules are not accidentally keeping the world.
+
+#### The WorkManager worker is saved by the second rule, not the one people quote
+
+`androidx.work`'s consumer rules open with
+
+```
+-keep class * extends androidx.work.Worker
+```
+
+and `ActivityUploadWorker` is a `CoroutineWorker`, which extends
+`ListenableWorker` and **not** `Worker`. That rule does not cover it. The next
+one does:
+
+```
+-keep public class * extends androidx.work.ListenableWorker {
+    public <init>(...);
+}
+```
+
+which is why both the class name and the `(Context, WorkerParameters)`
+constructor survive — the exact two things WorkManager reflects on to
+instantiate a job it read back out of its own database.
+
+Worth writing down because the failure would be **delayed and silent**:
+WorkManager persists `workerClassName` at enqueue time, so a rename would not
+break the run that scheduled it — it would break the one after the next release,
+as a job that quietly fails to instantiate and cancels itself. Exactly the shape
+that reaches users and not a test.
 
 #### `debugSymbolLevel = "FULL"` is applied and has nothing to extract
 
