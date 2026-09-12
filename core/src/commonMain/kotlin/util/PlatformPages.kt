@@ -99,6 +99,40 @@ object PlatformPages {
     ): List<MultiLineBoardProcessor.Row> =
         if (page.firstOrNull() is MultiLineBoardProcessor.Row.PlatformHeader) page.drop(1) else page
 
+    /**
+     * A page's body at a FIXED height: trimmed if long, padded with blanks if
+     * short.
+     *
+     * ## Why a page has its own floor
+     * [MultiLineBoardProcessor.MIN_BOARD_ROWS] is a floor for the WHOLE board,
+     * which is correct for a scrolling surface — three platforms with two
+     * trains each already clears it and needs no padding at all. Page that same
+     * board and every page is two rows, so stepping from a platform with three
+     * trains to one with two SHRINKS the widget. Android resizes the host cell
+     * and the user's home screen layout jumps under their finger.
+     *
+     * So a page is always the same height, whatever the data does. That is the
+     * iOS widget principle: a widget occupies the space it claimed.
+     *
+     * It is also why the widget has no depth setting. A control that changes
+     * the height of something sitting on a home screen is a control for
+     * breaking somebody's layout, and "how many rows" is a question the board
+     * inside the app can answer where there is room to answer it.
+     */
+    fun bodyPadded(
+        page: List<MultiLineBoardProcessor.Row>,
+        rows: Int,
+    ): List<MultiLineBoardProcessor.Row> {
+        val body = body(page).take(rows)
+        if (body.size >= rows) return body
+        val blank = MultiLineBoardProcessor.Row.Departure(
+            linePrefix = "",
+            destination = "",
+            eta = "",
+        )
+        return body + List(rows - body.size) { blank }
+    }
+
     /** How many platforms this board has to step through. */
     fun count(rows: List<MultiLineBoardProcessor.Row>): Int = split(rows).size
 

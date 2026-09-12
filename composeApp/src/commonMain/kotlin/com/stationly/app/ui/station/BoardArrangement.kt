@@ -471,8 +471,17 @@ private fun DepthSlider(rows: Int, label: String, onChange: (Int) -> Unit) {
  * changed nothing.
  */
 @OptIn(ExperimentalLayoutApi::class)
+/**
+ * Public because TWO surfaces pin now, and they pin different things.
+ *
+ * The station's settings screen pins on the board; the widget configuration
+ * screen pins on the WIDGET, because a widget's settings are its own (owner,
+ * 2026-09-12). They are the same control over the same vocabulary, so they are
+ * the same composable — a second copy would drift the moment one of them
+ * learned a new pin kind.
+ */
 @Composable
-private fun PinPicker(
+fun PinPicker(
     pin: BoardPin?,
     platforms: List<String>,
     stops: List<StopOption>,

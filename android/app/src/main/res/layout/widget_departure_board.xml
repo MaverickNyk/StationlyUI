@@ -137,7 +137,23 @@
          instead of paging. Out here they get a real setOnClickPendingIntent.
 
          GONE in scroll mode, which is the default and what every widget did
-         before this existed. -->
+         before this existed.
+
+         ── This bar IS the platform header, it does not sit above one ───────
+         In step mode `PlatformPages.body()` drops the `PlatformHeader` row and
+         this bar names the platform instead, so the two have to occupy the
+         same box or the whole board below shifts the moment anyone steps. It
+         therefore copies `widget_platform_header.xml` exactly: 2dp top margin,
+         the active-row background, a 2dp side inset, and a 15sp bold TextView
+         left to decide the height on its own.
+
+         The height is structural, not a number kept in step by hand. A
+         horizontal LinearLayout measures its `match_parent` children AFTER it
+         has settled its own `wrap_content` height, so the chevrons fill this
+         row without ever being able to grow it, at any font scale. The first
+         cut gave them a fixed 30dp box, which stood a third of a row proud of
+         every other line on the board. Nothing in here may be given a height
+         that can exceed the title's. -->
     <LinearLayout
         android:id="@+id/platform_pager"
         android:layout_width="match_parent"
@@ -146,14 +162,33 @@
         android:background="@drawable/departure_board_active_row_background"
         android:gravity="center_vertical"
         android:orientation="horizontal"
+        android:paddingStart="2dp"
+        android:paddingEnd="2dp"
         android:visibility="gone">
 
+        <!-- The arrow's ink lands 4dp in from the board, level with the
+             destination text of every row under it: 2dp of bar inset plus 2dp
+             of start padding here. That only holds while the glyph is the
+             narrower constraint, which is what the 8dp-wide content box (28 -
+             2 - 18) buys — `fitCenter` then has no width left over to centre
+             the arrow in, so the padding decides where it sits instead of the
+             drawable's aspect doing it.
+
+             The other 18dp is dead space and is meant to be: it is the tap
+             target, pointing INWARDS across the bar where there is nothing
+             else to hit, so a thumb on a home screen gets 28dp to aim at while
+             the arrow stays the size of a letter. Enlarging the glyph instead
+             is what turns this back into a Material icon button. -->
         <ImageView
             android:id="@+id/btn_platform_prev"
-            android:layout_width="34dp"
-            android:layout_height="30dp"
+            android:layout_width="28dp"
+            android:layout_height="match_parent"
+            android:layout_marginEnd="28dp"
             android:contentDescription="Previous platform"
-            android:padding="7dp"
+            android:paddingStart="2dp"
+            android:paddingTop="2dp"
+            android:paddingEnd="18dp"
+            android:paddingBottom="2dp"
             android:scaleType="fitCenter"
             android:src="@drawable/ic_chevron_left" />
 
@@ -169,20 +204,38 @@
             android:textSize="15sp"
             android:textStyle="bold" />
 
+        <!-- "1/2" is a fixed 28dp slot, and `btn_platform_prev` carries a 28dp
+             end margin whose only job is to cancel it out. A weighted TextView
+             centres in what is LEFT of the row, so a counter down one side
+             alone drags the platform name off-centre by half its width: 9.3dp
+             on the bar this replaces, measured on the device. Under a station
+             name that is itself centred, and above rows that are, that is the
+             kind of wrongness you see without being able to name it.
+
+             Fixed rather than `wrap_content` for the same reason — a counter
+             that grew with the page count would walk the title sideways as the
+             user stepped. 28dp holds "10/12" at 11sp, and past that it clips
+             rather than pushing, which is the right way round. -->
         <TextView
             android:id="@+id/platform_pager_count"
-            android:layout_width="wrap_content"
+            android:layout_width="28dp"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="2dp"
+            android:gravity="center"
             android:textColor="@color/tfl_amber"
             android:textSize="11sp" />
 
+        <!-- The mirror of the back arrow: ink 4dp from the board's edge, level
+             with the ETA column, and 18dp of inward padding doing the same job
+             as its own tap target. -->
         <ImageView
             android:id="@+id/btn_platform_next"
-            android:layout_width="34dp"
-            android:layout_height="30dp"
+            android:layout_width="28dp"
+            android:layout_height="match_parent"
             android:contentDescription="Next platform"
-            android:padding="7dp"
+            android:paddingStart="18dp"
+            android:paddingTop="2dp"
+            android:paddingEnd="2dp"
+            android:paddingBottom="2dp"
             android:scaleType="fitCenter"
             android:src="@drawable/ic_chevron_right" />
     </LinearLayout>
