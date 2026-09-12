@@ -10,9 +10,11 @@
 SPRINT:            5-6 — release surfaces + rollout (sprints 1-4 complete)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
 LAST SESSION:      S016 (2026-09-11) — EPIC-04, EPIC-05, EPIC-06 and EPIC-07
-                   closed. Eleven stories. The headline is AV2-4.3: Android was
-                   writing `boards` and reading `stations`, so every board a
-                   user saved was deleted by their own next foreground.
+                   closed, plus Q7 and AV2-8.1/8.3(a). The headline is AV2-4.3:
+                   Android was writing `boards` and reading `stations`, so every
+                   board a user saved was deleted by their own next foreground.
+                   Q5 turned out to be far bigger than its own text says — read
+                   it before planning any merge to master.
 GATE:              GREEN (see the close-out log)
                    :core:testDebugUnitTest                  PASS
                    :core:verify…DatabaseMigration           PASS
@@ -44,8 +46,13 @@ BLOCKED ON OWNER:  🔴 Q5 is now the biggest risk on the branch and it is NOT
                    options written out in the question.
                    Q7 FIXED this session. Q3 answered (EPIC-06 header).
                    Q1/Q2/Q4/Q6 are decisions or console work, not blockers.
-NEXT UP:           AV2-8.1 (b)-(d): install the release build and walk it. Then
-                   AV2-8.2 on hardware, then AV2-8.3.
+NEXT UP:           **One thing, and it needs a phone.** AV2-8.1 (b): the release
+                   APK is built, at HEAD, sitting in
+                   android/app/build/outputs/apk/staging/release/. Sign it,
+                   install it, walk every screen. Then AV2-8.2's two upgrade
+                   paths, then AV2-8.3's rollout.
+                   `versionCode` is already 3, so that APK installs OVER a live
+                   v1 and migrates 1 → 3 in one pass. Not reversible.
                    Everything else on this board is in Review.
 ```
 
