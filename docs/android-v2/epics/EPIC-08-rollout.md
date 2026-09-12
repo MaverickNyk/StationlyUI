@@ -242,6 +242,34 @@ _(none yet)_
       the Q2 threshold — **measured, not assumed**.
 - [ ] **e.** Update Play Console listing, screenshots and the data-safety form if
       the new surfaces change what is collected.
+      *(**The permission half is answered, S016: nothing changed.** Checked
+      rather than assumed — see below. Screenshots and the listing copy are
+      still owner work, and they do change: the home screen, the widget manager
+      and the screensaver all look different now.)*
+
+### Permissions: v2 asks for exactly what v1 asks for (verified S016)
+
+The app's own `AndroidManifest.xml` declares the **same five** permissions as
+`origin/master` — INTERNET, ACCESS_NETWORK_STATE, ACCESS_FINE_LOCATION,
+ACCESS_COARSE_LOCATION, POST_NOTIFICATIONS. Byte-identical sets.
+
+The merged release manifest carries eight more (WAKE_LOCK,
+RECEIVE_BOOT_COMPLETED, FOREGROUND_SERVICE, AD_ID,
+BIND_GET_INSTALL_REFERRER_SERVICE, C2DM RECEIVE, READ_GSERVICES, and the
+generated DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION) and **every one of them was
+already in v1's merged manifest**: WorkManager, Firebase Analytics and Play
+Services are all dependencies on master too. A declared dependency merges its
+manifest whether or not the app calls it, so using WorkManager for the first
+time in AV2-4.4 added nothing.
+
+**Play In-App Updates — the one dependency this session added — contributes zero
+permissions**, and exactly one component:
+`com.google.android.play.core.common.PlayCoreDialogWrapperActivity`.
+
+Worth checking rather than assuming, because a new permission on a live app is
+visible in the Play listing, can require a data-safety update, and on some
+permissions gates the update behind a user prompt. The answer here is that there
+is nothing to declare.
 
 ### Acceptance criteria
 - [ ] Staged rollout begun with a documented rollback plan that does **not**
