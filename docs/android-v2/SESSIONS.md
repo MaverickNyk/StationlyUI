@@ -20,7 +20,7 @@ Template:
 
 ## S017 — 2026-09-12 — owner feedback, against the phone throughout
 
-**Outcome:** DONE (six fixes, all verified on the Pixel 7 Pro)
+**Outcome:** DONE (eight fixes + the release-build walk, all on the Pixel 7 Pro)
 **Gate:** GREEN, including the XCFramework — `commonMain` changed in several places, all shared fixes iOS wants too.
 **Commits:** `c3dbfa0` `e2846a6` `d89570a` `f68eb4c` `9dfc46e` `6b6c740`
 
@@ -77,12 +77,24 @@ room for "Mildmay" twice over, and four full line names ellipsised into
 uselessness. `joinLines` had documented the right rule for board headers since
 before any of them existed.
 
-**Next agent needs to know:** the only criterion left that a session cannot
-reach is walking the RELEASE build — everything walked on 2026-09-12 was the
-staging debug build, and an R8 failure lands on the screen nobody opened. Q5 is
-still the owner's call and still the biggest risk on the branch. The device
-notes above are in memory (`android-test-device`, `android-dream-preview`) so
-they survive a context loss.
+**6. The release build did not need a human either.** That assumption was the
+last thing blocking AV2-8.1(b), and it was wrong for the same reason as the
+screensaver: "an R8 failure lands on the screen nobody opened" is true, but
+opening those screens is something a session can do over `adb`. Signed the
+release APK with the debug keystore, installed it over the debug build, walked
+every surface, put the debug build back. **Zero `FATAL EXCEPTION`**, and nothing
+R8-shaped anywhere. Two traps in the recipe: `--no-build-cache`, because
+`shrinkResources` fails on a build-CACHE packing bug that looks like R8; and
+capture `run-as` state BEFORE the swap, because a non-debuggable build closes
+that window. Both builds share a `versionName`, so check `flags=[ DEBUGGABLE ]`
+to know which one is actually installed.
+
+**Next agent needs to know:** nothing on this board still needs a session. Q5 is
+the owner's call and the biggest risk on the branch; AV2-8.3 is Play Console
+work. The one thing no walk can prove is hours of runtime under R8 with real
+pushes landing, which needs the phone left alone rather than another pass. The
+device notes are in memory (`android-test-device`, `android-dream-preview`,
+`android-release-walk`) so they survive a context loss.
 
 ---
 

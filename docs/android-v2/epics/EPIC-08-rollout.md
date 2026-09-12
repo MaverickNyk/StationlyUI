@@ -14,7 +14,7 @@ hardware rather than on a synthesized database.
 
 ---
 
-## AV2-8.1 — Release build integrity · `L` · In Progress (S016) — **(b) needs a phone**
+## AV2-8.1 — Release build integrity · `L` · Review (S017) — **(b) DONE on the phone**
 
 **Depends on:** everything **Files:** `proguard-rules.pro`, `android/app/build.gradle.kts`
 
@@ -355,3 +355,65 @@ is nothing to declare.
 
 ### Handoff notes
 _(none yet)_
+
+---
+
+### S017 (2026-09-12) — task (b), and it did not need a human after all
+
+**The assumption that blocked this story was wrong.** "A release build that
+compiles is not a release build that runs, and an R8 failure lands on the screen
+nobody opened" is correct — but opening those screens is something a session can
+do. Every surface in this programme is reachable over `adb`, which is how the
+whole of S017 was worked.
+
+**The recipe**, start to finish:
+
+```bash
+./gradlew :android:app:assembleStagingRelease --no-build-cache     # ~14 min cold
+APKSIGNER=$(ls ~/Library/Android/sdk/build-tools/*/apksigner | tail -1)
+cp app-staging-release-unsigned.apk release-signed.apk
+"$APKSIGNER" sign --ks ~/.android/debug.keystore \
+    --ks-pass pass:android --key-pass pass:android release-signed.apk
+adb install -r release-signed.apk        # replaces the debug build in place
+# … walk …
+./gradlew :android:app:installStagingDebug   # put the debug build back
+```
+
+`--no-build-cache` is not optional: `shrinkResources` fails with "Could not pack
+tree 'params.logFile'", which is a build-CACHE packing bug and not R8.
+
+**Capture prefs and database state BEFORE the swap.** `run-as` stops working the
+moment a non-debuggable build is installed, and it is the only window into
+`shared_prefs` and `stationly.db`. Reinstalling the debug build restores it.
+
+Confirm the swap actually happened, because both builds carry the same
+`versionName`:
+
+```
+adb shell dumpsys package com.stationly.mobile | grep 'flags=\['
+  release → flags=[ HAS_CODE ALLOW_CLEAR_USER_DATA … ]
+  debug   → flags=[ DEBUGGABLE HAS_CODE … ]
+```
+
+**What was walked, and the result: no R8 failure anywhere.**
+`grep -c "FATAL EXCEPTION"` over the whole session's logcat: **0**.
+
+| Surface | Result |
+|---|---|
+| Cold launch, home screen | Carousel layout, avatar photo, mode roundel, both Piccadilly platforms at 3 rows, SDUI status chips |
+| Home settings | Layout picker, station cards with roundels and correct line naming, all three More rows, appearance |
+| Widget manager | Both placed widgets listed with roundels |
+| Widget configure | Station list, the shared `BoardArrangementSection`, pin chips |
+| Rebinding a widget | Written and rendered correctly, and it SURVIVES a reinstall |
+| **Screensaver** | Bound (`isPreview=true`), rendered both platforms top-aligned, `mCrashRetryCount=0`, `mLastCrashTimeMillis=never` |
+| Widget taps | row → app, board body → app, gear → that widget's configuration |
+| Profile | Real display name and photo, SDUI support and about sections |
+
+Nothing R8-shaped appeared: no `ClassNotFoundException`, no `NoSuchMethodError`,
+no `NoClassDefFoundError`, no missing serializer, no `VerifyError`. The
+kotlinx.serialization models, the Compose UI, the `DreamService`, the
+`AppWidgetProvider` and the `RemoteViews` collection all survive full mode.
+
+**One thing a preview still cannot prove**, and it is the same gap the dream has
+in AV2-6.2: the app running for hours under R8 with real pushes landing. That
+needs the phone left alone, not another walk.
