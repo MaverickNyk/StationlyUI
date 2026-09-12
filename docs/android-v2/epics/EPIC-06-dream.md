@@ -145,9 +145,14 @@ through `MainActivity` and the whole app history instead of returning to
 Settings. Also keep `excludeFromRecents="true"`.
 
 ### Acceptance criteria
-- [ ] The screensaver renders the shared board. **Needs a device.**
-- [ ] Settings → Display → Screensaver → gear opens the settings screen, and back
-      returns to Settings rather than into the app. **Needs a device.**
+- [ ] The screensaver renders the shared board. **STILL UNSEEN — see below.**
+- [~] Settings → Display → Screensaver → gear opens the settings screen.
+      **HALF VERIFIED on the Pixel 7 Pro, 2026-09-12:** `DreamSettingsActivity`
+      was started directly, became the resumed activity, and the crash buffer
+      stayed empty — so the shared `DreamSettingsScreen` composes inside it, and
+      the ~700 lines it replaced are genuinely gone rather than merely
+      unreferenced. The BACK behaviour (returning to Settings rather than walking
+      into the app) is the half that needs a person, because it is a gesture.
 - [x] The dream shows a multi-line, filtered board correctly, not just the first
       selection. *(By construction: it is the shared board renderer.)*
 
@@ -192,6 +197,25 @@ and is one-sided now — the same shape `V1V2StorageContractTest` took when
 `DeviceIdProvider` went. The data it protects did not move: every v1 install's
 theme is still under `StationlyPrefs/app_theme`, and the shared reader's
 `loadDurable() ?: loadString()` fallback is still the entire upgrade path.
+
+### Why the dream itself is still unseen, 2026-09-12
+
+Tried, and worth writing down so nobody repeats the hour:
+
+- The device's screensaver was set to **Clock** and `screensaver_enabled = 0`, so
+  Stationly's dream had never been eligible to start. Pointing
+  `secure screensaver_components` at `.dream.StationlyDreamService` and enabling
+  it works (and was restored afterwards).
+- `am start -n com.android.systemui/.Somnambulator` is the way to start a dream
+  from a shell, and it does start one — but the phone was **dozing with the
+  screen off**, and `DozeService` takes precedence: `dumpsys dreams` kept
+  reporting `mCurrentDream=…DozeService`. A screensaver only runs with the
+  screen on.
+- Waking the phone needs an input event, and this is the owner's daily device.
+  That is where an agent stops.
+
+So the remaining check is genuinely a human one, and it is small: set Stationly
+as the screensaver, dock or charge the phone, and look at it.
 
 ### Handoff notes — S016, 2026-09-11
 
