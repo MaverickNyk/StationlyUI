@@ -89,6 +89,7 @@ import com.stationly.app.ui.theme.isDarkTheme
 import com.stationly.core.model.user.HomeLayout
 import com.stationly.core.model.user.BoardConfig
 import com.stationly.core.model.user.BoardView
+import com.stationly.app.platform.widgetsAreEditableInApp
 import com.stationly.core.repository.UserSettings
 import com.stationly.core.model.UserSelection
 import com.stationly.core.util.BoardLabels
@@ -570,11 +571,23 @@ fun StationSettingsScreen(
                 )
                 if (onHomeScreen) {
                     append("\n\nA widget is showing this station. It will stop showing departures. ")
-                    // The same gesture, in the same words the widget itself uses
-                    // in that state (`EmptyWidgetView`). Two surfaces describing
-                    // one tap differently is how a user ends up hunting for a
-                    // control that was named twice.
-                    append("Touch and hold it, then tap Edit Widget, to choose another station.")
+                    // The gesture, and it is NOT the same on both platforms —
+                    // see [widgetsAreEditableInApp]. Each sentence is the words
+                    // that platform's own widget uses in that state, because two
+                    // surfaces describing one tap differently is how a user ends
+                    // up hunting for a control that was named twice.
+                    //
+                    // Android reached this with the iOS sentence for as long as
+                    // the shared UI has been the Android app: there is no "Edit
+                    // Widget" menu item there to touch and hold for, and the app
+                    // can simply do it for them instead.
+                    append(
+                        if (widgetsAreEditableInApp) {
+                            "Open Settings \u2192 Widgets to point it at another station."
+                        } else {
+                            "Touch and hold it, then tap Edit Widget, to choose another station."
+                        },
+                    )
                 }
             },
             confirmLabel = "Delete",
