@@ -81,6 +81,8 @@ import kotlin.math.sin
 import com.stationly.app.platform.HapticType
 import com.stationly.app.platform.performHaptic
 import com.stationly.app.ui.common.pressScale
+import com.stationly.app.ui.common.SegmentedRow
+import com.stationly.core.model.user.PlatformNav
 
 /**
  * Screensaver configuration screen — port of Android's
@@ -113,6 +115,7 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
     var theme      by remember { mutableStateOf(DreamSettings.getTheme()) }
     var clockStyle by remember { mutableStateOf(DreamSettings.getClockStyle()) }
     var stationId  by remember { mutableStateOf(DreamSettings.getStationId()) }
+    var platformNav by remember { mutableStateOf(DreamSettings.getPlatformNav()) }
 
     var stations by remember { mutableStateOf<List<UserSelection>>(emptyList()) }
     LaunchedEffect(Unit) {
@@ -271,6 +274,40 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
                             }
                         }
                     }
+                }
+
+                // ── How platforms are reached ───────────────────────────
+                //
+                // A screensaver is read from across a room and nobody walks
+                // over to scroll it, so a station with several platforms is
+                // either stepped through or half-invisible. The dream is
+                // `isInteractive = true`, which is what makes the chevrons real
+                // controls rather than a picture of one — without it the first
+                // tap would dismiss the screensaver.
+                Section(label = strings["dream.settings.section.platforms"] ?: "Platforms") {
+                    SegmentedRow(
+                        options = PlatformNav.entries,
+                        selected = platformNav,
+                        onSelect = {
+                            platformNav = it
+                            DreamSettings.setPlatformNav(it)
+                        },
+                        label = { it.label },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        text = when (platformNav) {
+                            PlatformNav.SCROLL ->
+                                "Every platform in one list. You'll need to reach over and " +
+                                    "scroll to see past the first few."
+                            PlatformNav.STEP ->
+                                "One platform at a time, with an arrow either side of its " +
+                                    "name. A station with a single platform just shows it."
+                        },
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                    )
                 }
 
                 // ── Station picker (only when there is a choice to make) ─

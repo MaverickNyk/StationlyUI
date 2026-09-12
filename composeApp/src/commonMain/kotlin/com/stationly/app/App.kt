@@ -81,6 +81,7 @@ fun App(
      * cannot place widgets from inside the app at all.
      */
     onAddWidgetForStation: ((String) -> Unit)? = null,
+    onOpenWidgetSettingsForStation: ((String) -> Unit)? = null,
 ) {
     val uriHandler = LocalUriHandler.current
 
@@ -215,6 +216,7 @@ fun App(
                     onPasswordResetBannerShown = onPasswordResetBannerShown,
                     onManageWidgets            = onManageWidgets,
                     onAddWidgetForStation      = onAddWidgetForStation,
+                    onOpenWidgetSettingsForStation = onOpenWidgetSettingsForStation,
                 )
                 LoadingOverlay(visible = busyLabel != null, label = busyLabel)
 

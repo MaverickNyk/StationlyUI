@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
+import com.stationly.core.model.user.PlatformNav
 
 /**
  * Fullscreen departure-board dream — port of Android
@@ -31,7 +32,11 @@ import androidx.compose.ui.unit.dp
  * either rotation — same rule as Android.
  */
 @Composable
-fun FullscreenBoardLayout(snapshot: DreamSnapshot, sduiStrings: Map<String, String>) {
+fun FullscreenBoardLayout(
+    snapshot: DreamSnapshot,
+    sduiStrings: Map<String, String>,
+    platformNav: PlatformNav = PlatformNav.SCROLL,
+) {
     val ld = LocalLayoutDirection.current
     val cutout = WindowInsets.displayCutout.asPaddingValues()
     val horizDp = maxOf(cutout.calculateLeftPadding(ld), cutout.calculateRightPadding(ld))
@@ -72,6 +77,7 @@ fun FullscreenBoardLayout(snapshot: DreamSnapshot, sduiStrings: Map<String, Stri
         ) {
             DreamBoard(
                 snapshot   = snapshot,
+                platformNav = platformNav,
                 modifier   = Modifier
                     .widthIn(max = cardMaxWidth)
                     .heightIn(max = cardMaxHeight)

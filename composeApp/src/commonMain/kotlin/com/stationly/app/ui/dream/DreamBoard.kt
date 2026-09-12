@@ -52,6 +52,12 @@ import com.stationly.core.util.StationlyFormatters
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import com.stationly.core.model.user.PlatformNav
+import com.stationly.core.util.PlatformPages
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import com.stationly.app.ui.common.pressScale
+import com.stationly.app.platform.HapticType
 
 /**
  * The dream's departure board — pure-Compose port of Android
@@ -102,6 +108,8 @@ fun DreamBoard(
      * stronger amber border + larger radius, small inter-row margin.
      */
     fullscreen: Boolean = false,
+    /** How this screensaver reaches platforms that do not fit — see [PlatformNav]. */
+    platformNav: PlatformNav = PlatformNav.SCROLL,
 ) {
     val sel = snapshot.selection
     // Self-tick row ETAs once per minute — shared contract with home/widget.
@@ -270,7 +278,25 @@ fun DreamBoard(
                 }
             }
 
-            // ── Rows — scroll independently, and always fill from the TOP ──
+            // ── One platform at a time, when the screensaver is set to step ─────────
+    //
+    // The dream is `isInteractive = true`, so touches reach the views and the
+    // chevrons are real controls rather than decoration. Without that they
+    // would dismiss the dream instead, which is why this is a setting the
+    // SCREENSAVER owns rather than one inherited from the board.
+    //
+    // The index is remembered across recompositions but not across sessions: a
+    // screensaver that resumes on "the third platform" from last night is
+    // answering a question nobody asked. It resets whenever the platform count
+    // changes, which is what a board reshuffling under it looks like.
+    val pageCount = PlatformPages.count(boardRows)
+    val stepping = platformNav == PlatformNav.STEP && pageCount > 1
+    var page by remember(pageCount) { mutableStateOf(0) }
+    val pagedRows = remember(boardRows, page, stepping) {
+        if (stepping) PlatformPages.page(boardRows, page) else boardRows
+    }
+
+    // ── Rows — scroll independently, and always fill from the TOP ──
             //
             // Fullscreen used to centre them vertically, a port of v1 Android's
             // `fillViewport` + centre gravity. Seen on a phone for the first
@@ -303,14 +329,26 @@ fun DreamBoard(
                             )
                         }
                     }
-                } else if (boardRows.isNotEmpty()) {
+                } else if (pagedRows.isNotEmpty()) {
+                    // The bar between the chevrons names the platform, so the
+                    // page's own header would draw it twice — same rule the
+                    // widget follows. See PlatformPages.body.
+                    if (stepping) {
+                        DreamPlatformPager(
+                            title = PlatformPages.title(pagedRows),
+                            position = page + 1,
+                            count = pageCount,
+                            rowSp = rowSp,
+                            onStep = { delta -> page = PlatformPages.step(page, delta, pageCount) },
+                        )
+                    }
                     // The whole station: a header per platform, its departures
                     // under it. `row.title` is already complete — the processor
                     // built it from the block's own lines and direction — so it
                     // is NOT passed through `platformHeaderText`, which would
                     // prefix the single selection's line onto a header that may
                     // belong to a different one.
-                    boardRows.forEach { row ->
+                    (if (stepping) PlatformPages.body(pagedRows) else pagedRows).forEach { row ->
                         when (row) {
                             is MultiLineBoardProcessor.Row.PlatformHeader -> DreamActiveStrip {
                                 Text(
@@ -509,5 +547,72 @@ private fun DreamTflRoundel(color: Color, size: androidx.compose.ui.unit.Dp) {
             topLeft = Offset(0f, r - r * 0.17f),
             size = Size(this.size.width, r * 0.34f)
         )
+    }
+}
+
+/**
+ * The screensaver's platform stepper: a chevron either side of the name.
+ *
+ * ## Why a screensaver has buttons at all
+ * `StationlyDreamService` sets `isInteractive = true`, so touches reach the
+ * views rather than dismissing the dream. Without that these would be a picture
+ * of a control — the first tap would end the screensaver, which is the opposite
+ * of what the arrow says it does.
+ *
+ * Sized off the board's own row scale so it belongs to the panel rather than
+ * sitting on it: at fullscreen the rows are large enough to read across a room,
+ * and a fixed-size control beside them would look like a dialog.
+ *
+ * The targets are deliberately larger than the glyphs. This is tapped on a
+ * phone propped on a bedside table, at arm's length, usually in the dark.
+ */
+@Composable
+private fun DreamPlatformPager(
+    title: String,
+    position: Int,
+    count: Int,
+    rowSp: androidx.compose.ui.unit.TextUnit,
+    onStep: (Int) -> Unit,
+) {
+    DreamActiveStrip {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            DreamPagerChevron("\u2039", rowSp) { onStep(-1) }
+            Text(
+                title,
+                color = BoardAmber,
+                fontSize = rowSp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "$position/$count",
+                color = BoardAmber.copy(alpha = 0.65f),
+                fontSize = rowSp * 0.7f,
+                maxLines = 1,
+            )
+            DreamPagerChevron("\u203a", rowSp) { onStep(1) }
+        }
+    }
+}
+
+@Composable
+private fun DreamPagerChevron(
+    glyph: String,
+    rowSp: androidx.compose.ui.unit.TextUnit,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .pressScale(onClick = onClick, haptic = HapticType.SELECTION),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(glyph, color = BoardAmber, fontSize = rowSp * 1.3f, fontWeight = FontWeight.Bold)
     }
 }

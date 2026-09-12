@@ -29,6 +29,7 @@ import com.stationly.app.ui.station.HomeSettingsScreen
 import com.stationly.app.ui.station.StationSettingsScreen
 import com.stationly.app.ui.widgets.WidgetGuideScreen
 import com.stationly.app.ui.summary.SummaryScreen
+import androidx.compose.runtime.collectAsState
 
 @Composable
 fun AppNavigation(
@@ -53,6 +54,8 @@ fun AppNavigation(
      * [com.stationly.app.ui.station.StationSettingsScreen].
      */
     onAddWidgetForStation: ((String) -> Unit)? = null,
+    /** Open the settings of the widget already showing this station. */
+    onOpenWidgetSettingsForStation: ((String) -> Unit)? = null,
 ) {
     val navController = rememberNavController()
 
@@ -351,6 +354,14 @@ fun AppNavigation(
                     // Bound to THIS station: the row is on its screen, so the
                     // station never has to be chosen again.
                     onAddWidget = onAddWidgetForStation?.let { add -> { add(stationId) } },
+                    onOpenWidgetSettings = onOpenWidgetSettingsForStation
+                        ?.let { open -> { open(stationId) } },
+                    // Straight off the store the placement probe keeps current,
+                    // so the row knows whether this station already has a widget
+                    // rather than always offering to add another.
+                    widgetPlacement = com.stationly.core.repository.UserSettings
+                        .widgets.collectAsState().value[stationId]
+                        ?: com.stationly.core.model.user.WidgetPlacement(),
                     // ── Come back to the station you were editing ──
                     //
                     // Not "come back to the home screen". A user on page C of a
