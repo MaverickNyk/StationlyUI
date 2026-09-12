@@ -8,6 +8,37 @@ import android.os.SystemClock
 import android.widget.RemoteViews
 import com.stationly.core.model.PredictionDisplay
 import com.stationly.core.model.UserSelection
+// ── ⚠️ Editing THIS FILE breaks the incremental compile. Rebuild the module. ──
+//
+// Change one character in `DepartureWidgetProvider.kt` — a comment will do —
+// and the next `:android:app:compileStagingDebugKotlin` reports the three
+// top-level functions below as unresolved references, on a tree that built
+// cleanly a second earlier. It is not your edit. The fix is a full module
+// recompile:
+//
+//     rm -rf android/app/build/kotlin android/app/build/tmp/kotlin-classes
+//     ./gradlew :android:app:compileStagingDebugKotlin
+//
+// Characterised rather than guessed at, because it cost an hour once. Ruled
+// OUT, each by a deliberate experiment on a freshly rebuilt tree:
+//
+//   · fully-qualified names vs these imports — fails identically either way,
+//     and with the imports it fails ON the import lines
+//   · the Gradle build cache — fails the same with `--no-build-cache`
+//   · `@JvmStatic` on the companion member below — fails without it
+//   · deleted sibling packages / stale outputs — fails after a clean rebuild
+//   · the module in general — editing `WidgetBindingStore.kt` in the same
+//     package is fine, so it is this file
+//
+// The imports stay because seven fully-qualified call sites read worse, not
+// because they help.
+import com.stationly.mobile.ui.util.BoardFallbackKind
+import com.stationly.mobile.ui.util.BoardFallbackState
+import com.stationly.mobile.ui.util.NetworkState
+import com.stationly.mobile.ui.util.StationStripFitter
+import com.stationly.mobile.ui.util.buildFallbackRowRemoteViews
+import com.stationly.mobile.ui.util.computeBoardFallbackState
+import com.stationly.mobile.ui.util.tickPredictions
 import com.stationly.core.util.StationlyFormatters
 import com.stationly.mobile.R
 import com.stationly.mobile.util.HomeConfigStore
@@ -393,6 +424,29 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             val selection = selections.firstOrNull { it.groupingId == boundTo }
 
             if (selection == null) {
+                // ── "Missing" and "being rewritten" are not the same answer ──
+                //
+                // A cross-device reconcile discards boards and sets them up
+                // again, and between those two calls the bound hub genuinely is
+                // not in the table. A redraw landing in that gap drew a widget
+                // with a perfectly good binding as "Choose a station" — seen on a
+                // Pixel 7 Pro, mid-reconcile, in the release build:
+                //
+                //   Updating widget 6 for Hackney Wick Rail Station with 6 departures
+                //   Updating widget 6 for Stationly with 0 departures (UNBOUND)   <- here
+                //   Updating widget 6 for Hackney Wick Rail Station with 6 departures
+                //
+                // Leaving the last good render on screen is the right answer:
+                // stale by a second beats telling somebody their board is gone.
+                // The rewrite says so itself — `WidgetRestore`, which the login
+                // restore has always used and which `reconcileBoards` now does.
+                if (com.stationly.core.platform.WidgetRestore.inProgress) {
+                    android.util.Log.d(
+                        "Widget",
+                        "Widget $appWidgetId left as-is — board list is mid-rewrite",
+                    )
+                    return
+                }
                 updateAppWidget(
                     context, appWidgetManager, appWidgetId,
                     isBound = false,
@@ -403,14 +457,26 @@ class DepartureWidgetProvider : AppWidgetProvider() {
 
             val prefs = context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
 
-            var lineStatusSeverity: String? = null
-            var lineStatusReason: String? = null
-            val cachedStatus = com.stationly.core.platform.Platform.sqlStorage
-                .getLineStatus(selection.mode, selection.line)
-            if (cachedStatus != null) {
-                lineStatusSeverity = cachedStatus.statusSeverityDescription
-                lineStatusReason = cachedStatus.reason
-            }
+            // ── THE WHOLE STATION, not the first board at it ────────────────
+            //
+            // A binding names a HUB, and a hub can carry several boards: both
+            // directions of one line, or four lines at one interchange. Until
+            // now the widget resolved the binding to `selections.first { … }`
+            // and drew that one — so a user tracking Royal Victoria in both
+            // directions had a widget showing half of what the app showed them,
+            // with nothing on it to say the other half existed. It looked
+            // correct in every screenshot ever taken of it, because a widget
+            // showing one platform looks exactly like a widget that only knows
+            // about one platform.
+            //
+            // The fix is not a widget-shaped one. `MultiLineBoardProcessor` is
+            // what the home screen and the screensaver already render from, and
+            // it takes exactly this: one `Feed` per (pole, line, direction),
+            // grouped into platform blocks, ordered, labelled and padded. The
+            // widget feeds it the same way, so the three surfaces cannot
+            // disagree about what a station looks like.
+            val boardSelections = selections.filter { it.groupingId == boundTo }
+            val nowMs = System.currentTimeMillis()
 
             // Re-derive each row's `eta` from its absolute `targetEpochMs`
             // against the current wall clock AND drop rows whose train
@@ -418,23 +484,78 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // helper shared with the Compose-side tick layer so home +
             // dream + widget cannot drift — same formula, same threshold,
             // same source of truth. See PredictionTicker.tickPredictions.
-            val nowMs = System.currentTimeMillis()
-            val rawPredictions = com.stationly.core.platform.Platform.sqlStorage
-                .getPredictions(selection.station, selection.line, selection.direction)
-            val tickedPredictions = com.stationly.core.util.StationlyFormatters.sortPredictions(
-                com.stationly.mobile.ui.util.tickPredictions(rawPredictions, nowMs)
+            val feeds = boardSelections.map { sel ->
+                val raw = com.stationly.core.platform.Platform.sqlStorage
+                    .getPredictions(sel.station, sel.line, sel.direction)
+                com.stationly.core.util.MultiLineBoardProcessor.Feed(
+                    stationId = sel.station,
+                    line = sel.line,
+                    direction = sel.direction,
+                    predictions = com.stationly.core.util.StationlyFormatters.sortPredictions(
+                        tickPredictions(raw, nowMs)
+                    ),
+                )
+            }
+
+            // Depth from the widget's OWN size — the thing iOS cannot do.
+            // WidgetKit gives a family and a fixed layout per family; here two
+            // widgets for the same station at different sizes are two different
+            // boards, and the resize gesture is the user saying which they meant.
+            val rowCap = rowCapForHeight(
+                appWidgetManager.getAppWidgetOptions(appWidgetId)
+                    ?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0) ?: 0,
             )
-            // After dropping departed rows the visible window may need
-            // upcoming trains shifted into it — re-cap at the display
-            // limit of 3 per platform here, matching the home/dream
-            // dot-matrix layout.
+            val boardRows = com.stationly.core.util.MultiLineBoardProcessor.rowsFrom(
+                com.stationly.core.util.MultiLineBoardProcessor.buildGroups(
+                    feeds = feeds,
+                    isBus = com.stationly.core.util.MultiLineBoardProcessor.isBus(selection.mode),
+                    rowCap = rowCap,
+                ),
+                rowCap = rowCap,
+            )
+
+            // Still the flat list, for the three things that are not rows: has
+            // anything loaded, the SDUI template binding, and the fallback
+            // state. Union across every board at this hub, so a station with one
+            // quiet line and one busy one reads as having data.
             val predictions = com.stationly.core.util.GlobalBoardProcessor
-                .processPredictions(tickedPredictions, perPlatformCap = 3)
+                .processPredictions(feeds.flatMap { it.predictions }, perPlatformCap = rowCap)
+
+            // ── One status line for a board that may carry several ──
+            //
+            // `LineStatusRanker.rotation` is the home screen's rule: disrupted
+            // lines worst-first, de-duplicated on (severity, reason) because the
+            // sub-surface lines share track and share incidents, and a single
+            // spoken entry when everything is healthy — "Good Service" four
+            // times tells you nothing four times. The widget has room for one,
+            // so it takes the first, which is the worst.
+            val statusEntries = boardSelections.distinctBy { it.mode to it.line }.mapNotNull { sel ->
+                com.stationly.core.platform.Platform.sqlStorage
+                    .getLineStatus(sel.mode, sel.line)
+                    ?.let {
+                        com.stationly.core.util.LineStatusRanker.Entry(
+                            lineLabel = com.stationly.core.util.LineShortNames.displayName(sel.line),
+                            severity = it.statusSeverityDescription,
+                            reason = it.reason.orEmpty(),
+                        )
+                    }
+            }
+            val worst = com.stationly.core.util.LineStatusRanker.rotation(statusEntries).firstOrNull()
+            val lineStatusSeverity: String? = worst?.let {
+                com.stationly.core.util.LineStatusRanker.label(it)
+            }
+            val lineStatusReason: String? = worst?.reason
+
             // Pull the SQL row timestamp so the chronometer reflects when
             // FCM/REST last gave us this data — not when this redraw fired.
-            val lastUpdatedMs = com.stationly.core.platform.Platform.sqlStorage
-                .getLastUpdatedTimestamp(selection.station, selection.line, selection.direction)
-                ?: System.currentTimeMillis()
+            // The NEWEST across the hub's boards: the timer means "when did we
+            // last hear anything about this station", and taking the first
+            // board's would make a station look stale because one of its lines
+            // is quiet.
+            val lastUpdatedMs = boardSelections.mapNotNull { sel ->
+                com.stationly.core.platform.Platform.sqlStorage
+                    .getLastUpdatedTimestamp(sel.station, sel.line, sel.direction)
+            }.maxOrNull() ?: System.currentTimeMillis()
 
             var sduiPayload: com.stationly.core.model.sdui.SduiWidgetPayload? = null
             val sduiJson = prefs.getString("sdui_layout_${selection.station}", null)
@@ -472,7 +593,45 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 hasAnyBoard = true,
                 mode = selection.mode,
                 boundSelection = selection,
+                boardRows = boardRows,
             )
+        }
+
+        /**
+         * Departures per platform, decided by how tall the user made the widget.
+         *
+         * ## Why this exists at all, and why it is Android's alone
+         * WidgetKit gives iOS a FAMILY — `systemSmall`, `systemMedium` — and a
+         * layout per family; the sizes are Apple's and the app picks a design for
+         * each. Android's home screen is a free grid: the user drags a corner and
+         * the widget is whatever size they wanted. So the same station at two
+         * sizes is two genuinely different boards, and the resize gesture is the
+         * user saying which one they meant.
+         *
+         * ## The numbers
+         * [minHeightDp] is `OPTION_APPWIDGET_MIN_HEIGHT` — the height the host has
+         * actually given this instance in its current orientation. A launcher
+         * cell is ~70dp with 30dp of margin between, so ~110dp is one cell.
+         *
+         * Three is the number this widget has always drawn and stays the default,
+         * so an untouched widget looks exactly as it did. A one-cell strip drops
+         * to two: with several platforms now on the board, three each would push
+         * every block but the first off a short widget. A tall one goes to four,
+         * which is where the extra height earns something.
+         *
+         * Zero-or-unknown answers three rather than guessing. On API 31+ the rows
+         * live in a scrollable collection so being wrong costs a scroll, and
+         * below that it costs a clipped row; neither is worth a worse default.
+         *
+         * Takes the Int rather than the `Bundle` it came from, because a `Bundle`
+         * throws in a plain JVM unit test and this is arithmetic, not Android —
+         * the same split `TopicLedger` and `WidgetRedrawTargets` use.
+         */
+        internal fun rowCapForHeight(minHeightDp: Int): Int = when {
+            minHeightDp <= 0  -> 3
+            minHeightDp < 110 -> 2
+            minHeightDp < 250 -> 3
+            else              -> 4
         }
 
         /**
@@ -514,10 +673,33 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             mode: String? = null,
             /** The bound board, for the one query that needs its full identity. */
             boundSelection: UserSelection? = null,
+            /**
+             * The WHOLE station's board, already grouped into platform blocks by
+             * `MultiLineBoardProcessor` — the same rows the home screen draws.
+             *
+             * Null for every caller that is not rendering a bound board (the
+             * waiting state, the clear, the initial render), which is why this is
+             * optional rather than a parameter every call site has to answer.
+             * When it is null the legacy single-line path below runs exactly as
+             * it did.
+             */
+            boardRows: List<com.stationly.core.util.MultiLineBoardProcessor.Row>? = null,
         ) {
+            // Says what it DREW, not just how many rows it had.
+            //
+            // "with 6 departures" was true of a widget showing one platform and
+            // of one showing three, which is exactly the distinction that
+            // mattered when this widget rendered only the first board at a hub:
+            // the log looked identical either way, so the defect was invisible
+            // from a device log as well as from a screenshot. The platform count
+            // is the one number that separates them.
+            val platformCount = boardRows
+                ?.count { it is com.stationly.core.util.MultiLineBoardProcessor.Row.PlatformHeader }
             android.util.Log.d(
                 "Widget",
-                "Updating widget $appWidgetId for $stationName with ${predictions.size} departures" +
+                "Updating widget $appWidgetId for $stationName with " +
+                    "${predictions.size} departures" +
+                    (platformCount?.let { " across $it platform(s)" } ?: "") +
                     if (!isBound) " (UNBOUND)" else "",
             )
 
@@ -780,6 +962,44 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     false
                 }
                 
+                if (boardRows != null && boardRows.isNotEmpty()) {
+                    // ── The multi-line board ────────────────────────────────
+                    //
+                    // Every line and direction the user tracks at this hub, in
+                    // the blocks `MultiLineBoardProcessor` grouped them into.
+                    // The two row types map onto the two layouts this widget has
+                    // always had, so nothing about the dot-matrix changes — what
+                    // changes is how many blocks reach it.
+                    //
+                    // `linePrefix` comes from the ROW, not from the widget's idea
+                    // of "the line": the processor decides per block whether a
+                    // prefix is needed at all — a block with one line does not
+                    // need one, a mixed block does — and that is the difference
+                    // between "(Cir.) Edgware Road" where it helps and a prefix
+                    // on every row where it is noise.
+                    boardRows.forEach { row ->
+                        when (row) {
+                            is com.stationly.core.util.MultiLineBoardProcessor.Row.PlatformHeader -> {
+                                val header = RemoteViews(context.packageName, R.layout.widget_platform_header)
+                                header.setTextViewText(R.id.platform_name, row.title)
+                                rowViews.add(header)
+                            }
+                            is com.stationly.core.util.MultiLineBoardProcessor.Row.Departure -> {
+                                val dep = RemoteViews(context.packageName, R.layout.widget_departure_row)
+                                val destination = if (row.linePrefix.isBlank()) row.destination
+                                else row.linePrefix + " " + row.destination
+                                dep.setTextViewText(R.id.destination_text, destination)
+                                dep.setTextViewText(R.id.eta_text, row.eta)
+                                dep.setInt(
+                                    R.id.destination_text, "setGravity",
+                                    android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL,
+                                )
+                                rowViews.add(dep)
+                            }
+                        }
+                    }
+                } else {
+
                 val legacyRows = com.stationly.core.util.GlobalBoardProcessor.prepareLegacyRows(
                     predictions,
                     lineName,
@@ -820,6 +1040,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         }
                     }
                 }
+                } // end the legacy single-line path
             }
             
             // Shared fallback message — when there's nothing real to render
@@ -836,13 +1057,13 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     .atZone(java.time.ZoneId.of("Europe/London"))
                     .toLocalTime()
                 val fallbackState = if (!hasSelection) {
-                    com.stationly.mobile.ui.util.BoardFallbackState(
-                        com.stationly.mobile.ui.util.BoardFallbackKind.CONNECTING, 0L
+                    BoardFallbackState(
+                        BoardFallbackKind.CONNECTING, 0L
                     )
                 } else {
-                    com.stationly.mobile.ui.util.computeBoardFallbackState(
+                    computeBoardFallbackState(
                         hasPredictions = predictions.isNotEmpty(),
-                        isOnline = com.stationly.mobile.ui.util.NetworkState.isOnline.value,
+                        isOnline = NetworkState.isOnline.value,
                         lastUpdatedMs = lastUpdatedMs,
                         nowMs = nowMs,
                         londonTime = londonTime,
@@ -859,17 +1080,17 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         "board.fallback.connecting.title"  to "No boards yet",
                         "board.fallback.connecting.detail" to "Tap to add your first board",
                     ) else emptyMap()
-                    com.stationly.mobile.ui.util.buildFallbackRowRemoteViews(
+                    buildFallbackRowRemoteViews(
                         context, fallbackState, widgetStrings,
                     )
                 } else if (rowViews.isEmpty()) {
                     // Edge case: hasSelection && hasPredictions logically true, but
                     // the row list ended up empty (cap=0 or filter drop). Pad with
                     // an empty 4-row placeholder so the widget doesn't collapse.
-                    com.stationly.mobile.ui.util.buildFallbackRowRemoteViews(
+                    buildFallbackRowRemoteViews(
                         context,
-                        com.stationly.mobile.ui.util.BoardFallbackState(
-                            com.stationly.mobile.ui.util.BoardFallbackKind.NO_UPCOMING
+                        BoardFallbackState(
+                            BoardFallbackKind.NO_UPCOMING
                         ),
                         emptyMap(),
                     )
