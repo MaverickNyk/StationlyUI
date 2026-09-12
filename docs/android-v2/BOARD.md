@@ -9,7 +9,12 @@
 ```
 SPRINT:            5-6 — release surfaces + rollout (sprints 1-4 complete)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S016 (2026-09-11) — EPIC-04, EPIC-05, EPIC-06 and EPIC-07
+LAST SESSION:      S017 (2026-09-12) — owner feedback, worked against the
+                   PHONE throughout. The screensaver was RENDERED for the first
+                   time in the programme and was wrong in two ways; the widget's
+                   gear became a real settings page; and the identity fix caught
+                   a self-inflicted data bug (below) before it could ship.
+                   S016 (2026-09-11) — EPIC-04, EPIC-05, EPIC-06 and EPIC-07
                    closed, plus Q7 and AV2-8.1/8.3(a). The headline is AV2-4.3:
                    Android was writing `boards` and reading `stations`, so every
                    board a user saved was deleted by their own next foreground.
@@ -49,9 +54,24 @@ DEVICE:            ✅ RUN ON THE PIXEL 7 PRO, 2026-09-12 — including the
                    task (a) and task (b) at once — a v1 database inside a v2
                    install IS the Auto Backup path. Device backed up first and
                    restored after.
-                   STILL OWED: the screen-by-screen walk (the phone is the
-                   owner's daily device and waking it is not mine to do), and
-                   the screensaver, which has never been seen render.
+                   ✅ THE SCREENSAVER HAS NOW BEEN SEEN (2026-09-12). It can
+                   be previewed from the CLI after all: Settings → Display →
+                   Screen saver → the eye on the Stationly tile. One render
+                   found two defects — rows centred vertically (three
+                   departures floating between two voids) and a whole
+                   interchange drawn as ONE board. `Somnambulator` does not
+                   work on this device; `dumpsys dreams` tells you whether it
+                   bound and whether it has ever crashed.
+                   ✅ Screens walked 2026-09-12: home (carousel), home
+                   settings, profile, station cards, widget manager, widget
+                   configure, add-a-widget, screensaver settings, and the live
+                   widgets on the home screen — including every tap target.
+                   ⚠️ NEVER `am force-stop` before probing a widget tap. A
+                   stopped app cannot be launched by its OWN PendingIntents, so
+                   every target reports "nothing happened" and looks exactly
+                   like broken click wiring. Always include the gear as a
+                   control in the same run.
+                   STILL OWED: the release build walked by a human (AV2-8.1 b).
 BLOCKED ON OWNER:  🔴 Q5 is now the biggest risk on the branch and it is NOT
                    what it says on the tin: master has no migrations, so every
                    App Store iOS user's database is stamped version 1 while
@@ -60,14 +80,14 @@ BLOCKED ON OWNER:  🔴 Q5 is now the biggest risk on the branch and it is NOT
                    options written out in the question.
                    Q7 FIXED this session. Q3 answered (EPIC-06 header).
                    Q1/Q2/Q4/Q6 are decisions or console work, not blockers.
-NEXT UP:           **Two things, both needing a human at the phone.**
-                   (1) Walk the release build — it is installed and running, and
-                   an R8 failure lands on the screen nobody opened.
-                   (2) Set Stationly as the screensaver, then dock or charge
-                   the phone and look at it. AV2-6.2's settings screen IS
-                   verified (it launches and composes, crash buffer empty); the
-                   DREAM is not, because a screensaver only runs with the screen
-                   on and the doze dream wins while it is off.
+NEXT UP:           **One thing needing a human at the phone**, plus the
+                   owner decision.
+                   (1) Walk the RELEASE build — it is installed and running, and
+                   an R8 failure lands on the screen nobody opened. This is the
+                   only criterion S017 could not reach: everything walked on
+                   2026-09-12 was the staging DEBUG build.
+                   (2) Q5, which is the owner's call and still the biggest risk
+                   on the branch.
                    Then AV2-8.3's rollout.
                    Everything else on this board is in Review.
 ```
@@ -98,11 +118,11 @@ Twenty stories. In the order somebody signing off should read them:
 |---|---|---|
 | **AV2-8.2** | device 2026-09-12 | **R1 has a hardware pass.** A genuine v1 database migrated 1 → 3 in one launch: no crash, every board kept with its id, the bus hub's two poles still separate, `ActivityEventEntity` created, Q7's key live on a MIGRATED database rather than a created one. Tasks (a) and (b) at once, because a v1 database inside a v2 install is what Auto Backup delivers. The one criterion left open is "does not sign the user out", which the fixture could not answer. |
 | **AV2-4.3** | S016 · device 2026-09-12 | **The worst bug on the branch, and it had been live since the cutover.** Android wrote `boards` (the shared SelectionViewModel) and reconciled against `stations` (the legacy path), and the backend derives neither from the other on a write. So a board saved on Android left no trace in the array its own next foreground compared against — and that reconcile DELETES any local selection the cloud list does not have. On an account whose `stations` is empty, which is every account created on v2, that is every board the user has, gone within fifteen minutes, silently. Four device passes missed it because the test account's legacy array already described its one board. |
-| AV2-6.2 | S016 | **Unverified on hardware, and it is the one surface you cannot open by tapping.** The screensaver is the shared one now and v1's `dream/` package is deleted. Failure mode is a blank screen on a bedside table with no crash dialog. Four-step device script in the handoff. |
+| **AV2-6.2** | S016 · device 2026-09-12 | **It has now been rendered, and it was wrong in two ways nothing else could have caught.** Previewed via Settings → Display → Screen saver → the eye on the tile (`Somnambulator` does not work on this Pixel; `dumpsys dreams` is the honest check). It bound, has never crashed — and (1) centred its rows vertically, leaving three departures floating between two voids, and (2) named a whole interchange while drawing ONE board, the same defect the widget had. Both fixed. Also this story's own feedback: Android has no Start button (the OS starts a dream, and this screen is reached FROM system Settings), and the station picker listed BOARDS, so King's Cross drew eight identical rows that all wrote the same value and all lit up together. |
 | AV2-4.2 | S016 · device 2026-09-12 | **Six stale topics shed on first run, including the exact two AV2-4.1 named.** And the device caught the reconcile racing the board reconcile and unsubscribing a LIVE board — fixed by taking the mutex that already existed for it. The FCM topic ledger only ever grew — `unsubscribe` never removed from it — so the diff this story asks for would have made a re-added board silently never receive another push. Also: a token rotation was dropping `stationly_all` permanently, on a device that went on reporting itself subscribed. |
 | AV2-7.3 | S016 | The support stub's reason for being safe had stopped being true. `enabled` comes from the BACKEND, and these composables are the Android app now — one config change would have put the money surface in front of Android users with a checkout that does nothing. Fixed with a platform capability rather than a bigger comment. |
 | AV2-4.4 | S016 | Android has never uploaded a single activity event: `ActivityUploader` was complete and nothing called it. Also two objects could MINT the device id, one of them during logout. |
-| AV2-5.3 | S016 · device 2026-09-12 | **The widget draws the WHOLE station now** — it rendered one board at a hub, so tracking a station both ways showed half of it, and it looked right in every screenshot. Measured: `6 departures across 3 platform(s)`. Depth follows the widget's own size, which iOS cannot do. Also: `Board.widget` was empty on every Android device, so deleting a station never warned about the widget it was blanking, and `widget.count` reported zero for a phone covered in them. `board.count` was counting the widget map — wrong on both platforms. |
+| AV2-5.3 | S016 · device 2026-09-12 | **The widget draws the WHOLE station now** — it rendered one board at a hub, so tracking a station both ways showed half of it, and it looked right in every screenshot. Measured: `6 departures across 3 platform(s)`. Depth follows the STATION's own "Show up to N per platform" (default 3) — it briefly followed the widget's size instead, which contradicted the product rule and silently overrode a setting the app had promised; the owner's feedback on 2026-09-12 settled it and the size-varying cap is gone. Also: `Board.widget` was empty on every Android device, so deleting a station never warned about the widget it was blanking, and `widget.count` reported zero for a phone covered in them. `board.count` was counting the widget map — wrong on both platforms. |
 | AV2-7.1 | S016 | The trap the story opens with is NOT set (the backend serves Play links correctly). What is new is Play In-App Updates: flexible for the nudge, immediate for the block. **Cannot be verified before an internal-track release.** |
 | AV2-5.4 | S016 | The guide is wired and deliberately has no Android door — every instruction in the served payload is an iOS gesture. The exact config change is written out in the epic. |
 | AV2-7.2 | S016 | Built nothing, which is the right outcome. The audit found there is no platform key to audit: one payload for both platforms, and three payloads whose content is platform-specific. One of them is an **iOS** bug (the About screen's `market://` rate link). |

@@ -122,7 +122,7 @@ v1's. These four are what made 6.2 possible in the same session.
 
 ---
 
-## AV2-6.2 — Host the shared dream · `M` · Review (S016) — **UNVERIFIED ON HARDWARE**
+## AV2-6.2 — Host the shared dream · `M` · Review (S016) — **VERIFIED ON HARDWARE, S017**
 
 **Depends on:** AV2-6.1 **Files:** `StationlyDreamService`, `DreamSettingsActivity`, `AndroidManifest.xml`
 
@@ -249,3 +249,78 @@ the same as having seen it.
 in. `Platform.initialize` runs in `StationlyApplication.onCreate`, which the
 system runs before binding the service — but a dream is one of the few things
 that can start the process on its own.
+
+---
+
+### S017 (2026-09-12) — it has been seen, and it was wrong twice
+
+**It can be previewed from the CLI**, which is what the "four steps" above did
+not know. No docking, no charging, no unlocking, no human:
+
+```bash
+adb shell am start -a android.settings.DREAM_SETTINGS
+adb shell input tap 435 955      # the eye on the Stationly tile
+adb shell dumpsys dreams | grep -E 'mCurrentDream|mCrash'
+adb exec-out screencap -p > dream.png
+adb shell input tap 540 1170 && adb shell input keyevent KEYCODE_BACK
+```
+
+`com.android.systemui/.Somnambulator` does **not** work on this Pixel (SDK 37):
+`am start` reports success and no dream binds, with nothing in logcat. Do not
+spend time on it. `dumpsys dreams` is the honest check either way —
+`mCurrentDream=null` means it never bound, and `mCrashRetryCount` /
+`mLastCrashTimeMillis` say whether the dream has ever thrown. On this device:
+bound with `isPreview=true`, `mCrashRetryCount=0`, `mLastCrashTimeMillis=never`.
+
+**It was not blank.** The composable rendered, the theme followed the app, the
+clock ticked and the "ago" timer moved. The guess above — `AndroidAppContext`
+uninitialised in a process the dream started — did not materialise.
+
+**Two defects, neither reachable from a test, a compile, or the settings screen:**
+
+1. **The rows were centred vertically.** `DreamBoard` had
+   `if (fullscreen) Alignment.CenterVertically else Alignment.Top`, a port of v1
+   Android's `fillViewport` + centre gravity. In portrait that put three
+   departures in the middle of the panel with a hand's width of black above and
+   below — it reads as a board that failed to load rather than one with three
+   trains on it. Rows fill from the TOP now, which is also the only arrangement
+   with a referent: every departure board in the network fills downward, and the
+   empty space belongs at the bottom where its blank rows would be.
+
+2. **It named a station and drew one board.** Step 4 of the script above is
+   exactly the criterion that failed. `loadDreamSnapshot` resolved the setting
+   with `firstOrNull { it.station == id }`, so the panel said "King's Cross St.
+   Pancras Underground Station" above Piccadilly, Platform 6, Eastbound — a
+   quarter of what the user tracks there. The same defect the widget had
+   (`WidgetMultiLineBoardTest`), and the empty space below those three rows was
+   the other platforms all along. The dream now builds the same feeds the widget
+   and home screen build and draws a header per platform; on the phone,
+   Platform 6 Eastbound and Platform 5 Westbound under one station name.
+
+   Three things this had to get right, each asserted in `DreamBoardsForTest`
+   rather than assumed: the feeds are carried RAW and the rows rebuilt each
+   minute (finished rows would say "2 min" all night between pushes); the key is
+   the NAPTAN and not the hub (a bus hub's poles are separate choices); and a
+   deleted station or "Auto" falls back to the first board's WHOLE station,
+   never to that one board.
+
+**And the settings screen itself had two, from the owner's own feedback:**
+
+- **No Start button on Android.** iOS has no system screensaver, so the app is
+  the only thing that can present one. Android's is started by the OS, and this
+  screen is reached FROM system Settings — so "Start now" was a round trip back
+  to where the user had just been. It is replaced by the sentence somebody on
+  this screen is actually asking for: when the screensaver appears, and where to
+  change that. Behind `screensaverIsStartedBySystem`.
+- **The station picker listed BOARDS.** The setting is one naptan; the picker
+  listed `getAllSelections()` raw. King's Cross drew eight rows with the same
+  name, differing only in "Piccadilly · Outbound" / "Circle · Inbound". All eight
+  wrote the same value, so tapping any lit up all of them — and the dream then
+  showed whichever board sorted first, not the one tapped. A picker offering a
+  choice it had no way to honour. `dreamStationOptions` collapses on the key the
+  setting stores, so rows and outcomes are one-to-one, and rows carry the mode
+  roundel like every other list you configure from.
+
+**Still owed:** nothing on this story. The only thing a preview cannot prove is
+the dream surviving a real overnight run with pushes landing — step 3 above —
+and that needs the phone left charging.
