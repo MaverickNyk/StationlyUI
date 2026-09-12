@@ -767,18 +767,8 @@ private fun StationChoiceRow(
                     }
                     if (hub.lines.isNotEmpty()) Spacer(Modifier.width(2.dp))
                     Text(
-                        // `joinLines`' own rule, which is the one the board
-                        // headers use: one line gets its FULL name because
-                        // there is room for it, several switch to short forms
-                        // because that is exactly when width runs out. Spelling
-                        // it out rather than calling `joinLines` only because
-                        // that joins with "&" for a header, and this row is a
-                        // list of what the station carries.
-                        hub.lines
-                            .joinToString(" · ") {
-                                if (hub.lines.size == 1) LineShortNames.displayName(it)
-                                else LineShortNames.shortName(it)
-                            }
+                        // The shared rule — see LineShortNames.listLines.
+                        LineShortNames.listLines(hub.lines)
                             .ifBlank { hub.mode.replaceFirstChar { c -> c.uppercase() } },
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

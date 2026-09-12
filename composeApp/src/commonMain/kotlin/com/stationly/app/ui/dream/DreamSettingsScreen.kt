@@ -299,11 +299,7 @@ fun DreamSettingsScreen(onBack: () -> Unit, onStartDream: () -> Unit) {
                                     // first — and through LineShortNames, not a
                                     // raw title-case, which is what put "Dlr"
                                     // on every DLR header.
-                                    subtitle = option.lines
-                                        .joinToString(" · ") {
-                                            if (option.lines.size == 1) LineShortNames.displayName(it)
-                                            else LineShortNames.shortName(it)
-                                        }
+                                    subtitle = LineShortNames.listLines(option.lines)
                                         .ifBlank { option.mode.replaceFirstChar { c -> c.uppercase() } },
                                     lineColor = lineColorForTheme(
                                         option.lines.firstOrNull(),
