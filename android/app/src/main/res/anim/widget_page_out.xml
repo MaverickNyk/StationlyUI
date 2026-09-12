@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Leaving platform. Fades faster than the arrival rises, so the two do not
+     both sit at half opacity in the middle of the swap and read as a flicker.
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android">
+    <alpha
+        android:duration="90"
+        android:fromAlpha="1.0"
+        android:interpolator="@android:interpolator/accelerate_quad"
+        android:toAlpha="0.0" />
+</set>

@@ -1395,7 +1395,23 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 } else rowViews
             }
 
-            applyRowsToWidget(views, finalRowViews)
+            // ── Stepping goes to the flipper, scrolling to the list ─────────
+            //
+            // Only when there is more than one platform AND real rows to show.
+            // A fallback board (no upcoming departures, signal lost) keeps the
+            // ordinary path: its rows are a MESSAGE, and cross-fading a message
+            // between two identical pages would be motion for its own sake.
+            if (stepping && finalRowViews === rowViews) {
+                applyPagesToFlipper(
+                    context = context,
+                    views = views,
+                    pages = PlatformPages.split(boardRows.orEmpty()),
+                    page = safePage,
+                    rowCap = ROWS_PER_PLATFORM,
+                )
+            } else {
+                applyRowsToWidget(views, finalRowViews)
+            }
 
             // Important: Handle appWidgetId correctly if updating all from invalid
             if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
@@ -1418,7 +1434,69 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         // unused: a helper that fans one station out to every widget is a
         // loaded gun in a file whose one rule is never to show the wrong stop.
 
+        /**
+         * Every platform as its own child of the flipper, with [page] shown.
+         *
+         * ## Why all of them, when only one is visible
+         * A `ViewFlipper` animates between CHILDREN it already holds. Rebuilding
+         * it with a single child on every step would replace the view the
+         * animation is supposed to be leaving, and the cross-fade would have
+         * nothing to fade from. So the whole board goes in and the flipper is
+         * told which one to show; stepping is then one remotable call and the
+         * launcher does the motion.
+         *
+         * It also means a step rebuilds nothing: the next platform is already
+         * inflated on the home screen when the chevron is pressed.
+         */
+        private fun applyPagesToFlipper(
+            context: Context,
+            views: RemoteViews,
+            pages: List<List<com.stationly.core.util.MultiLineBoardProcessor.Row>>,
+            page: Int,
+            rowCap: Int,
+        ) {
+            views.setViewVisibility(R.id.rows_list, android.view.View.GONE)
+            views.setViewVisibility(R.id.rows_container, android.view.View.GONE)
+            views.setViewVisibility(R.id.platform_flipper, android.view.View.VISIBLE)
+            views.removeAllViews(R.id.platform_flipper)
+            pages.forEach { p ->
+                val pageViews = RemoteViews(context.packageName, R.layout.widget_platform_page)
+                // `bodyPadded`: the bar names the platform, and every page is
+                // the same height so the widget cannot resize as it flips.
+                com.stationly.core.util.PlatformPages.bodyPadded(p, rowCap).forEach { row ->
+                    departureRowViews(context, row)?.let {
+                        pageViews.addView(R.id.platform_page_rows, it)
+                    }
+                }
+                views.addView(R.id.platform_flipper, pageViews)
+            }
+            // Remotable on ViewAnimator, which is what makes the design work:
+            // stepping is one call and no rebuild.
+            views.setDisplayedChild(R.id.platform_flipper, page)
+        }
+
+        /** One departure row, or null for a header (the pager bar names it). */
+        private fun departureRowViews(
+            context: Context,
+            row: com.stationly.core.util.MultiLineBoardProcessor.Row,
+        ): RemoteViews? {
+            if (row !is com.stationly.core.util.MultiLineBoardProcessor.Row.Departure) return null
+            val dep = RemoteViews(context.packageName, R.layout.widget_departure_row)
+            val destination =
+                if (row.linePrefix.isBlank()) row.destination
+                else row.linePrefix + " " + row.destination
+            dep.setTextViewText(R.id.destination_text, destination)
+            dep.setTextViewText(R.id.eta_text, row.eta)
+            dep.setInt(
+                R.id.destination_text, "setGravity",
+                android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL,
+            )
+            dep.setOnClickFillInIntent(R.id.departure_row_root, Intent())
+            return dep
+        }
+
         private fun applyRowsToWidget(views: RemoteViews, rowViews: List<RemoteViews>) {
+            views.setViewVisibility(R.id.platform_flipper, android.view.View.GONE)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                 views.setViewVisibility(R.id.rows_container, android.view.View.GONE)
                 views.setViewVisibility(R.id.rows_list, android.view.View.VISIBLE)

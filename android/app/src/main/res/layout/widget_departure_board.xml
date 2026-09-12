@@ -248,6 +248,26 @@
         android:layout_weight="1"
         android:orientation="vertical" />
         
+    <!-- ── Stepping container (PlatformNav.STEP) ───────────────────────────
+         One child per platform, cross-faded by `setDisplayedChild`.
+
+         A separate container from `rows_list` rather than a mode of it: a
+         ListView cannot animate a wholesale content swap, and a ViewFlipper
+         cannot scroll. Each mode gets the widget that does its job, and exactly
+         one of the two is ever VISIBLE.
+
+         The animations are fixed here at inflate time because `setInAnimation`
+         is not a @RemotableViewMethod. See widget_page_in.xml for why that
+         rules out a directional slide. -->
+    <ViewFlipper
+        android:id="@+id/platform_flipper"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:inAnimation="@anim/widget_page_in"
+        android:outAnimation="@anim/widget_page_out"
+        android:visibility="gone" />
+
     <!-- Native Scrolling Container (API >= 31) -->
     <ListView
         android:id="@+id/rows_list"

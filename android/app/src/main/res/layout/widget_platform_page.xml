@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     One platform's departures, as a single child of the pager's ViewFlipper.
+
+     A flipper animates between CHILDREN, so a page has to be one view rather
+     than a run of rows. The rows are added into this with `addView`, the same
+     call the pre-API-31 path already uses for `rows_container`.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/platform_page_rows"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical" />

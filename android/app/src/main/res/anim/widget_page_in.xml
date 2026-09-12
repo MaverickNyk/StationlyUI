@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Arriving platform.
+
+     A cross-fade with a short rise rather than a slide. RemoteViews cannot
+     change a ViewFlipper's animation per tap: `setInAnimation` is not a
+     @RemotableViewMethod, so the in and out animations are fixed at inflate
+     time and BOTH chevrons get the same one. A slide would then travel the
+     same direction whichever arrow you pressed, which is worse than not
+     sliding at all. A rise reads as "next thing" without claiming a direction.
+
+     120ms because this is a departure board, not a toy: long enough to see,
+     short enough that pressing the arrow twice does not queue up a wait.
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shareInterpolator="false">
+    <alpha
+        android:duration="120"
+        android:fromAlpha="0.0"
+        android:interpolator="@android:interpolator/decelerate_quad"
+        android:toAlpha="1.0" />
+    <translate
+        android:duration="140"
+        android:fromYDelta="6%p"
+        android:interpolator="@android:interpolator/decelerate_quad"
+        android:toYDelta="0" />
+</set>
