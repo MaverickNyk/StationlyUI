@@ -334,10 +334,30 @@ class MultiLineBoardProcessorTest {
     // board picked.
 
     @Test
-    fun `block order is the soonest train, and no setting can change it`() {
-        // This board reads 10, 9, 2 because that is the order the trains arrive
-        // in, not because anything was configured. Block order is fixed — see
-        // BoardConfig for why the sort that used to be here was removed.
+    fun `block order is the platform name, and no setting can change it`() {
+        // 2, 9, 10 — the order the signs on the wall are in, and NOT the order
+        // the trains arrive in, which here is the exact opposite.
+        //
+        // ## Why this test says the opposite of what it used to
+        // The board was ordered by whichever platform had the next train. That
+        // reads well in a screenshot and badly in life: the blocks swap places
+        // under you every time a push lands, so the thing you came to look at is
+        // somewhere else each time you look.
+        //
+        // It is worst on the widget, where only one block is on screen. Two
+        // captures of the same widget on the owner's phone, a minute apart and
+        // untouched:
+        //
+        //     06:06   < DLR Platform 9    1/2 >
+        //     06:07   < DLR Platform 10   1/2 >
+        //
+        // Ten follows nine rather than sorting between one and two: a plain
+        // string comparison is wrong on any station with more than nine
+        // platforms, which is most terminals.
+        //
+        // Block order is still fixed — see BoardConfig for why the user-facing
+        // sort that used to be here was removed. What changed is which fixed
+        // order it is.
         val rows = MultiLineBoardProcessor.buildRows(
             feeds = listOf(
                 feed("northern", predictions = listOf(
@@ -349,8 +369,38 @@ class MultiLineBoardProcessorTest {
             isBus = false,
         )
         assertEquals(
-            listOf("Northern Platform 10 Northbound", "Northern Platform 9 Northbound",
-                "Northern Platform 2 Northbound"),
+            listOf("Northern Platform 2 Northbound", "Northern Platform 9 Northbound",
+                "Northern Platform 10 Northbound"),
+            headers(rows),
+        )
+    }
+
+    @Test
+    fun `a stop with letters instead of numbers still has an order`() {
+        // "Platform" is the tube word. The same ordering runs over bus poles,
+        // which are lettered and not numbered, and over anything else the
+        // backend hands us — so an unnumbered label falls back to the label
+        // itself rather than to map order, which is arbitrary and changes as
+        // departures arrive.
+        // One feed per POLE, because a bus block is keyed on the naptan and not
+        // on the letter — every pole at a hub has its own id. Listed here
+        // soonest-first, which is the order they must NOT come back in.
+        val rows = MultiLineBoardProcessor.buildRows(
+            feeds = listOf(
+                feed("39", stationId = "490C", predictions = listOf(
+                    pred("Clapham Junction", 1, platform = "", stopLetter = "C"),
+                )),
+                feed("39", stationId = "490A", predictions = listOf(
+                    pred("Putney", 2, platform = "", stopLetter = "A"),
+                )),
+                feed("39", stationId = "490B", predictions = listOf(
+                    pred("Wandsworth", 3, platform = "", stopLetter = "B"),
+                )),
+            ),
+            isBus = true,
+        )
+        assertEquals(
+            listOf("Bus 39 Stop A", "Bus 39 Stop B", "Bus 39 Stop C"),
             headers(rows),
         )
     }
@@ -452,10 +502,11 @@ class MultiLineBoardProcessorTest {
             prefs = BoardConfig(pin = BoardPin(BoardPin.Kind.LINE, "victoria")),
         )
         assertEquals(
-            listOf("Victoria Platform 6 Northbound", "Victoria Platform 3 Northbound",
+            listOf("Victoria Platform 3 Northbound", "Victoria Platform 6 Northbound",
                 "Northern Platform 1 Northbound"),
             headers(rows),
-            "both Victoria blocks lead — soonest first between them",
+            "both Victoria blocks lead, and among themselves they are in " +
+                "platform order like every other block on the board",
         )
     }
 
@@ -533,8 +584,10 @@ class MultiLineBoardProcessorTest {
         // One leg per PLATFORM, never per departure: Platform 1 has two trains
         // and contributes exactly one leg, for its soonest. Depth bounds a
         // block's rows and a leg is not a row.
-        assertEquals(listOf("Morden", "Epping", "Brixton"), legs.map { it.towards })
-        assertEquals(listOf("1 min", "2 min", "9 min"), legs.map { it.eta })
+        //
+        // 1, 8, 9 — platform order, which here is the reverse of arrival order.
+        assertEquals(listOf("Brixton", "Morden", "Epping"), legs.map { it.towards })
+        assertEquals(listOf("9 min", "1 min", "2 min"), legs.map { it.eta })
     }
 
     // ── What the "show first" picker is allowed to offer ──
@@ -731,17 +784,39 @@ class MultiLineBoardProcessorTest {
     }
 
     @Test
-    fun `collapsed legs are ordered soonest first — not by the eta label`() {
-        // "10 min" sorts BEFORE "2 min" as a string. Ordering on the label is
-        // the bug this pins; the sort key is the absolute arrival time.
+    fun `collapsed legs are ordered by platform, like the board they summarise`() {
+        // Platform 3 leads with a train ten minutes out while Platform 4 has one
+        // in two, because a card that reorders itself on every push is one the
+        // user has to re-read every time they glance at it — and for a collapsed
+        // station this card is the ONLY thing the home screen says. Same rule,
+        // same reason, as the board's own block order.
         val legs = MultiLineBoardProcessor.collapsedLegs(
             feeds = listOf(
-                feed("victoria", predictions = listOf(pred("Brixton", 10, platform = "Platform 3"))),
                 feed("northern", predictions = listOf(pred("Morden", 2, platform = "Platform 4"))),
+                feed("victoria", predictions = listOf(pred("Brixton", 10, platform = "Platform 3"))),
             ),
             isBus = false,
         )
-        assertEquals(listOf("2 min", "10 min"), legs.map { it.eta })
+        assertEquals(listOf("10 min", "2 min"), legs.map { it.eta })
+    }
+
+    @Test
+    fun `a leg shows its platform's soonest train — not the eta label's first`() {
+        // "10 min" sorts BEFORE "2 min" as a string. The absolute arrival time
+        // is the key, and this is the half of that trap the ordering change did
+        // not move: which departure a leg picks is still whichever is soonest on
+        // its own platform.
+        val legs = MultiLineBoardProcessor.collapsedLegs(
+            feeds = listOf(
+                feed("victoria", predictions = listOf(
+                    pred("Later", 10, platform = "Platform 3"),
+                    pred("Sooner", 2, platform = "Platform 3"),
+                )),
+            ),
+            isBus = false,
+        )
+        assertEquals(listOf("2 min"), legs.map { it.eta })
+        assertEquals(listOf("Sooner"), legs.map { it.towards })
     }
 
     @Test
@@ -756,6 +831,8 @@ class MultiLineBoardProcessorTest {
             feed("central", predictions = listOf(pred("Epping", 3, platform = "Platform 3"))),
         )
         val legs = MultiLineBoardProcessor.collapsedLegs(feeds = feeds, isBus = false)
+        // Platforms 1, 2, 3 — which here is also arrival order, so this case
+        // says nothing about the sort and everything about the COUNT.
         assertEquals(listOf("1 min", "2 min", "3 min"), legs.map { it.eta })
         // The height budget charges the open board per leg, so its count has to
         // agree with what the card will draw — see HomeBoardBudget.

@@ -145,4 +145,20 @@ object PlatformPages {
      */
     fun title(page: List<MultiLineBoardProcessor.Row>): String =
         (page.firstOrNull() as? MultiLineBoardProcessor.Row.PlatformHeader)?.title.orEmpty()
+
+    /**
+     * The same title, shortened for a bar that has almost no room.
+     *
+     * The widget's pager spends its width on two chevrons and a page marker
+     * before the text gets any, and a `RemoteViews` cannot measure text, so it
+     * cannot walk [MultiLineBoardProcessor.headerVariants] the way a Compose
+     * surface does — it has to commit to a rung. This is that commitment, and it
+     * is the lossless one: "Platform" becomes "Plat.", line names become the
+     * forms the roundel uses, the direction stays.
+     *
+     * It is also what the board inside the app already shows on every row, so
+     * the widget stops being the one surface that spells "Platform" out.
+     */
+    fun compactTitle(page: List<MultiLineBoardProcessor.Row>): String =
+        MultiLineBoardProcessor.compactHeader(title(page))
 }
