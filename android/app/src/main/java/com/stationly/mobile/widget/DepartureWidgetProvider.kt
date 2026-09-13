@@ -161,24 +161,29 @@ class DepartureWidgetProvider : AppWidgetProvider() {
 
         val actions = listOf(ACTION_UPDATE_WIDGET, ACTION_MANUAL_REFRESH)
         if (intent.action in actions) {
-            // Debounce the user-tap path. The btn_refresh PendingIntent
-            // fires this action on every tap with no spam protection of
-            // its own — and TfL rate-limits aggressive callers — so we
-            // gate the refresh on at least MANUAL_REFRESH_DEBOUNCE_MS
-            // since the last successful one. ACTION_UPDATE_WIDGET (the
-            // programmatic-redraw path from AndroidWidgetManager) is
-            // exempt because it doesn't hit the backend.
+            // ── Coalesce a tap into a fetch already running ─────────────────
+            //
+            // NOT a time lockout. A refresh that has completed costs nothing to
+            // run again, and dropping the tap somebody made because they want
+            // newer numbers gives them a control that did nothing and said
+            // nothing. See REFRESH_IN_FLIGHT_CEILING_MS, and
+            // `WidgetRefreshService.swift` where iOS reached this first.
+            //
+            // ACTION_UPDATE_WIDGET is exempt: it repaints from SQL and never
+            // reaches the backend, so there is no work to coalesce.
+            val refreshPrefs =
+                context.getSharedPreferences(WidgetBindingStore.PREFS, Context.MODE_PRIVATE)
             if (intent.action == ACTION_MANUAL_REFRESH) {
-                val prefs = context.getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
-                val lastRefresh = prefs.getLong("last_refresh_ms", 0L)
-                if (System.currentTimeMillis() - lastRefresh < MANUAL_REFRESH_DEBOUNCE_MS) {
+                val startedAt = refreshPrefs.getLong(KEY_REFRESH_STARTED_AT, 0L)
+                val now = System.currentTimeMillis()
+                if (!mayRefresh(startedAt, now)) {
                     android.util.Log.d(
                         "Widget",
-                        "Manual refresh debounced — last fired ${(System.currentTimeMillis() - lastRefresh) / 1000}s ago"
+                        "Refresh coalesced into the one started ${(now - startedAt) / 1000}s ago",
                     )
                     return
                 }
-                prefs.edit().putLong("last_refresh_ms", System.currentTimeMillis()).apply()
+                refreshPrefs.edit().putLong(KEY_REFRESH_STARTED_AT, now).apply()
             }
             val pendingResult = goAsync()
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
@@ -217,6 +222,13 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     android.util.Log.e("Widget", "Error during refresh", e)
                     updateFromStorage(context)
                 } finally {
+                    // Released here and nowhere else, so a fetch that throws,
+                    // returns early or is killed cannot leave the guard raised
+                    // and the button inert. A guard that leaks is a button that
+                    // stops working and never says why.
+                    if (intent.action == ACTION_MANUAL_REFRESH) {
+                        refreshPrefs.edit().remove(KEY_REFRESH_STARTED_AT).apply()
+                    }
                     pendingResult.finish()
                 }
             }
@@ -241,15 +253,51 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         const val EXTRA_PLATFORM_DELTA = "platform_delta"
 
         /**
-         * Minimum gap between two `ACTION_MANUAL_REFRESH` broadcasts that
-         * will actually round-trip to the backend. A user tapping the
-         * widget's refresh button repeatedly used to hit TfL each time
-         * — fine until the tenth tap pushed us past the rate-limit cap
-         * for the device's outbound IP. 15s is long enough to discourage
-         * spam-tapping, short enough that a legitimate "I want fresh
-         * data right now" retry isn't ignored.
+         * How long an in-flight refresh may be assumed alive before a new tap
+         * is allowed to start another.
+         *
+         * ## This replaced a 15-second lockout, and the distinction matters
+         * The old rule was a DEBOUNCE: after any refresh, every tap for fifteen
+         * seconds was silently dropped. That protects TfL from a drummed
+         * button, and it also refuses the tap a user makes because they
+         * genuinely want newer numbers. The control did nothing and said
+         * nothing, which is indistinguishable from broken.
+         *
+         * It is also unnecessary. The thing worth preventing was never "two
+         * refreshes close together", it was "two refreshes at once": a refresh
+         * that has COMPLETED costs nothing to run again, and the fan-out is one
+         * request per unique naptan either way.
+         *
+         * So the guard is on CONCURRENCY. A tap while a fetch is running is
+         * coalesced into it; a tap after one finishes goes straight through,
+         * however soon.
+         *
+         * The ceiling exists only so a refresh killed mid-flight, the process
+         * reclaimed or a crash, cannot leave the button permanently inert.
+         * Above the network timeout, so a legitimately slow fetch is never
+         * mistaken for a dead one.
+         *
+         * iOS reached this first and for the same reasons; see
+         * `WidgetRefreshService.inFlightCeiling`.
          */
-        const val MANUAL_REFRESH_DEBOUNCE_MS: Long = 15_000L
+        const val REFRESH_IN_FLIGHT_CEILING_MS: Long = 12_000L
+
+        /** `widget_prefs` key holding the start time of a refresh in flight. */
+        internal const val KEY_REFRESH_STARTED_AT = "refresh_started_at"
+
+        /**
+         * Whether a tap may start a refresh, given what is already running.
+         *
+         * A stamp from the FUTURE is treated as stale rather than as a lockout:
+         * a clock that went backwards, a user changing it or an NTP step, would
+         * otherwise wedge the button until real time caught up. Erring towards
+         * the button working is the right side to err on.
+         */
+        fun mayRefresh(startedAt: Long, now: Long): Boolean {
+            if (startedAt <= 0L) return true
+            val elapsed = now - startedAt
+            return elapsed < 0L || elapsed >= REFRESH_IN_FLIGHT_CEILING_MS
+        }
         /**
          * Watchdog tick — fires only when FCM has gone silent for
          * [ETA_TICK_DEBOUNCE_MS]. On fire, re-renders the widget so the
