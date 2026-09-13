@@ -242,7 +242,36 @@ object MultiLineBoardProcessor {
         prediction: PredictionDisplay,
         feed: Feed,
         isBus: Boolean,
-    ): String = if (isBus) feed.stationId else prediction.platform
+    ): String = if (isBus) feed.stationId else platformKey(prediction.platform)
+
+    /**
+     * One physical platform, whatever the backend called it this time.
+     *
+     * ## The bug this fixes, seen at King's Cross on 2026-09-12
+     * The key was `prediction.platform` RAW while [groupLabelFor] returned
+     * `prediction.platform.trim()`. So two feeds reporting the same platform
+     * with different whitespace got different KEYS and an identical LABEL: two
+     * blocks, one header, and nothing on screen to explain why. The widget paged
+     * to four and pages 1 and 2 were both "Piccadilly Platform 6 (Eastbound)".
+     *
+     * A station tracked in both directions is fetched with two separate calls,
+     * and TfL does not pad its platform strings consistently between them, so
+     * this is the ordinary case rather than the awkward one.
+     *
+     * ## Normalising the KEY does not license normalising the LABEL
+     * The platform string is backend-owned and shown verbatim — the consistency
+     * contract in BOARD_AND_DREAM_UI.md. This decides only which departures
+     * belong together; [groupLabelFor] still shows whichever spelling arrived
+     * first, untouched.
+     *
+     * Case and inner whitespace as well as the ends, because "Platform 6",
+     * "platform 6" and "Platform  6" are one place a passenger can stand, and a
+     * board that splits them is wrong in a way the reader cannot diagnose.
+     */
+    private fun platformKey(platform: String): String =
+        platform.trim().lowercase().replace(WHITESPACE_RUN, " ")
+
+    private val WHITESPACE_RUN = Regex("\\s+")
 
     /**
      * Every departure across every feed, each still paired with the feed it came
@@ -828,7 +857,15 @@ object MultiLineBoardProcessor {
         val all = feeds.withFeeds()
         if (all.isEmpty()) return emptyList()
 
+        // Grouped on the NORMALISED key so one platform is one block whatever
+        // the backend called it this time, then keyed back to the spelling that
+        // arrived — `key` is read as a bus pole's naptan by the STOP pin and is
+        // not ours to lowercase. See [platformKey].
         return all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus) }
+            .mapKeys { (_, entries) ->
+                if (isBus) entries.first().second.stationId
+                else entries.first().first.platform.trim()
+            }
             .entries
             .sortedWith(groupOrder(isBus, prefs, nowMs, policy))
             .map { (key, entries) ->

@@ -1041,4 +1041,91 @@ class MultiLineBoardProcessorTest {
             groups.first { it.key == "490008805N" }.departures.map { it.prediction.destination },
         )
     }
+
+    // ── one platform is one block, however the backend spells it ────────────
+
+    /**
+     * **Seen at King's Cross, on a phone, 2026-09-12.** The widget paged to 4
+     * and pages 1 and 2 were BOTH headed "Piccadilly Platform 6 (Eastbound)",
+     * with different Cockfosters departures on each.
+     *
+     * `groupKeyFor` keyed rail on `prediction.platform` RAW while
+     * `groupLabelFor` returned `prediction.platform.trim()`. So two feeds
+     * reporting the same physical platform with different whitespace got
+     * different keys and the same label: two blocks, one header, and no way for
+     * a reader to tell why.
+     *
+     * TfL's platform strings are not consistently padded, and a station tracked
+     * in both directions is fetched with two separate calls, which is exactly
+     * where the two spellings come from.
+     *
+     * Scrolling hid this. A repeated header a few rows down reads as the board
+     * being long. Paging put each block on its own numbered page and made it
+     * unmissable, which is the only reason it was found.
+     */
+    @Test
+    fun `one platform spelled two ways is one block`() {
+        val groups = MultiLineBoardProcessor.buildGroups(
+            feeds = listOf(
+                MultiLineBoardProcessor.Feed(
+                    stationId = "940GZZLUKSX", line = "piccadilly", direction = "outbound",
+                    predictions = listOf(pred("Cockfosters", 1, "Platform 6")),
+                ),
+                MultiLineBoardProcessor.Feed(
+                    stationId = "940GZZLUKSX", line = "piccadilly", direction = "outbound",
+                    predictions = listOf(pred("Arnos Grove", 3, " Platform 6 ")),
+                ),
+            ),
+            isBus = false,
+        )
+        assertEquals(1, groups.size, "two spellings of one platform are one block")
+        assertEquals(2, groups.single().departures.size)
+    }
+
+    /**
+     * The label stays VERBATIM from the backend, which is the consistency
+     * contract in BOARD_AND_DREAM_UI.md: the client never relabels a platform.
+     * Normalising the KEY does not license normalising what is shown, so the
+     * merged block still reads exactly as the backend spelled it.
+     */
+    @Test
+    fun `merging on a normalised key still shows the backend's own label`() {
+        val groups = MultiLineBoardProcessor.buildGroups(
+            feeds = listOf(
+                MultiLineBoardProcessor.Feed(
+                    stationId = "940GZZLUKSX", line = "piccadilly", direction = "outbound",
+                    predictions = listOf(pred("Cockfosters", 1, "Platform 6")),
+                ),
+                MultiLineBoardProcessor.Feed(
+                    stationId = "940GZZLUKSX", line = "piccadilly", direction = "outbound",
+                    predictions = listOf(pred("Arnos Grove", 3, "platform 6")),
+                ),
+            ),
+            isBus = false,
+        )
+        assertEquals(1, groups.size)
+        assertTrue(
+            groups.single().header.contains("Platform 6"),
+            "kept the backend's spelling, not a normalised one",
+        )
+    }
+
+    /** Genuinely different platforms stay genuinely different. */
+    @Test
+    fun `two real platforms are still two blocks`() {
+        val groups = MultiLineBoardProcessor.buildGroups(
+            feeds = listOf(
+                MultiLineBoardProcessor.Feed(
+                    stationId = "940GZZLUKSX", line = "piccadilly", direction = "outbound",
+                    predictions = listOf(pred("Cockfosters", 1, "Platform 6")),
+                ),
+                MultiLineBoardProcessor.Feed(
+                    stationId = "940GZZLUKSX", line = "piccadilly", direction = "inbound",
+                    predictions = listOf(pred("Heathrow", 3, "Platform 5")),
+                ),
+            ),
+            isBus = false,
+        )
+        assertEquals(2, groups.size)
+    }
 }
