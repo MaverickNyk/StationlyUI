@@ -265,6 +265,9 @@ class WidgetConfigureActivity : ComponentActivity() {
                                 appWidgetId = m.appWidgetId,
                                 isFirstPlacement = isFirstPlacement,
                                 onBind = { commit(m.appWidgetId, it) },
+                                onFirstPlacementDone = { groupingId ->
+                                    applyDefaultsAndFinish(m.appWidgetId, groupingId)
+                                },
                                 onDone = ::finish,
                                 onNoBoards = ::openAppAndFinish,
                                 loadPinOptions = ::pinOptions,
@@ -419,6 +422,54 @@ class WidgetConfigureActivity : ComponentActivity() {
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             runCatching { DepartureWidgetProvider.updateOne(this@WidgetConfigureActivity, targetId) }
         }
+    }
+
+    /**
+     * The settings a freshly placed widget starts with, then out of the way.
+     *
+     * ## Why stepping is the default when there is more than one platform
+     * A widget is a fixed cell. Scrolling inside one fights the launcher's own
+     * scroll and is a gesture almost nobody makes, so a multi-platform station
+     * placed on the default would show one platform and hide the rest behind an
+     * interaction the user never discovers. With one platform the arrows have
+     * nowhere to go and the bar hides itself anyway, so SCROLL is the honest
+     * setting to store.
+     *
+     * Nothing pinned, because a pin is a statement about how somebody uses a
+     * station and the app has not been told yet.
+     *
+     * Read off the board that exists RIGHT NOW. A station whose second platform
+     * is quiet tonight starts on SCROLL and the user can change it; guessing
+     * from anything other than the live board would be guessing.
+     */
+    private fun applyDefaultsAndFinish(appWidgetId: Int, groupingId: String) {
+        runCatching {
+            val selections = Platform.sqlStorage.getAllSelections()
+            val selection = selections.firstOrNull { it.groupingId == groupingId }
+            val platforms = selection?.let {
+                MultiLineBoardProcessor.pinnablePlatforms(
+                    feeds = selections.filter { s -> s.groupingId == groupingId }.map { s ->
+                        MultiLineBoardProcessor.Feed(
+                            stationId = s.station,
+                            line = s.line,
+                            direction = s.direction,
+                            predictions = runCatching {
+                                Platform.sqlStorage.getPredictions(s.station, s.line, s.direction)
+                            }.getOrNull().orEmpty(),
+                        )
+                    },
+                    isBus = MultiLineBoardProcessor.isBus(it.mode),
+                ).size
+            } ?: 0
+            WidgetSettings.setNav(
+                this,
+                appWidgetId,
+                if (platforms > 1) PlatformNav.STEP else PlatformNav.SCROLL,
+            )
+            WidgetSettings.setPin(this, appWidgetId, null)
+            redraw(appWidgetId)
+        }
+        finish()
     }
 
     /**
@@ -590,7 +641,19 @@ private fun WidgetsScreen(
     }
 
     SettingsSectionLabel("On your Home Screen")
-    Spacer(Modifier.height(10.dp))
+    Spacer(Modifier.height(6.dp))
+    // ── What these are, for somebody who already has one ────────────────────
+    //
+    // AV2-9.2 wrote this explanation for the EMPTY state, which means the only
+    // person who ever read it was the one who had not made a widget yet.
+    // Somebody with two still has to infer what they are looking at. Shorter
+    // than the empty state's paragraph on purpose: it is a reminder, not a
+    // lesson, and the list underneath is already showing them the answer.
+    SettingsCaption(
+        "Each one shows a station's live departures, updating itself as the " +
+            "trains move.",
+    )
+    Spacer(Modifier.height(12.dp))
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         widgets.forEach { widget ->
             val hub = widget.hub
@@ -757,6 +820,8 @@ private fun ConfigureScreen(
     appWidgetId: Int,
     isFirstPlacement: Boolean,
     onBind: (String) -> Unit,
+    /** Apply this station's defaults and leave, on a first placement only. */
+    onFirstPlacementDone: (String) -> Unit,
     onDone: () -> Unit,
     onNoBoards: () -> Unit,
     loadPinOptions: suspend (Hub) -> PinOptions,
@@ -813,6 +878,20 @@ private fun ConfigureScreen(
                 bound = groupingId
                 onBind(groupingId)
                 choosing = false
+                // ── Placing a widget is ONE step ────────────────────────────
+                //
+                // It used to be two: choose a station, then land on a settings
+                // page nobody asked for at the moment they were trying to put
+                // a widget on their home screen. The settings are still one tap
+                // away behind the gear and in the manager, which is where
+                // somebody who wants them looks.
+                //
+                // The widget starts on that station's sensible defaults rather
+                // than on nothing: stepping when there is more than one
+                // platform to step between, nothing pinned.
+                if (isFirstPlacement) {
+                    onFirstPlacementDone(groupingId)
+                }
             },
         )
         if (hub != null) {
