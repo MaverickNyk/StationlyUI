@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Arriving platform, moving BACK (the left chevron). The mirror of
+     widget_page_in: in from the left, because going back should not look
+     like going forward. See widget_page_in.xml for why this needs its own
+     flipper rather than its own call.
+-->
+<translate xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="200"
+    android:fromXDelta="-100%p"
+    android:interpolator="@android:interpolator/decelerate_quad"
+    android:toXDelta="0" />

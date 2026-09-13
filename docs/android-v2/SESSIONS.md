@@ -18,6 +18,68 @@ Template:
 
 ---
 
+## S019 — 2026-09-13 — EPIC-10: the flicker, three animations, the platform sort
+
+**Outcome:** AV2-10.2, AV2-10.6 DONE. AV2-10.7 PART-DONE (highest-consequence
+adoption made; the key-by-key inventory is not). Plus one unstoried owner
+request: sort platforms by name, use the short forms.
+**Gate:** GREEN, including the XCFramework — `core/commonMain` changed and iOS
+shares every line of it.
+
+**Did:**
+
+- **Found the flicker, which was two things and neither was in the story's
+  candidate list.** A redraw storm (132 renders per refresh tap, measured) AND
+  `ViewAnimator.showOnly` animating on `mAnimateFirstTime`, so every single
+  redraw played the in-animation — under a comment in our own code explaining
+  that it could not. 132 flashes per tap. Now 4 renders, none of which animate.
+- **Three animations, where AV2-9.5 had concluded one was the limit.**
+  `setInAnimation` is genuinely not remotable; the answer is three flippers
+  stacked in one slot rather than one flipper told what to do. Forward slides in
+  from the right, back from the left, refresh rises and squashes open from the
+  bottom. All three caught mid-flight on the Pixel.
+- **Motion means "you did that".** A refresh press arms a one-shot, expiring
+  flag; pushes, ticks and other widgets' refreshes animate nothing.
+- **Platform blocks now sort by NAME, board-wide**, with a "nothing left to
+  catch" key above it so a dead platform still cannot lead. The picker and the
+  collapsed card share the key, so the three surfaces cannot disagree.
+- **The widget pager uses the short forms** — "DLR Plat. 9", which is what the
+  in-app board has always printed on its rows.
+- **The screensaver turns its own pages** (8s dwell) and its chevrons grew to
+  60dp on the fullscreen surface.
+- **SDUI: the surfaces with no screen above them now warm the served config.**
+
+**Learned** — three things worth carrying:
+
+1. **`android:animateFirstView` defaults to true**, and `removeAllViews` sets
+   `mFirstTime`, so `setDisplayedChild(view, 0)` right after a rebuild DOES
+   animate. A comment asserting otherwise sat in the file for two sessions while
+   the owner reported flashing.
+2. **A constraint on one view is not a constraint on the layout.** "One flipper,
+   one animation" was true and produced the wrong conclusion for a whole story.
+   The question to ask is what the layout can hold, not what the view can be
+   told.
+3. **Ordering a board by "soonest" makes it move under the reader.** Caught on
+   the device, not in review: two captures of the same widget a minute apart,
+   untouched, read `DLR Platform 9  1/2` then `DLR Platform 10  1/2`.
+
+**Next agent needs to know:**
+
+- **The remaining redraw waste is a multi-line station pushing once per line**,
+  all naming the same naptan — King's Cross redraws its widget ~6 times per 30s
+  cycle. Silent, so it is efficiency and not a bug. Coalescing is the fix.
+- **AV2-10.7 is part-done and the note under it says exactly what is left.** The
+  consequence path was traced and closed; the key-by-key diff against what the
+  backend serves was not attempted.
+- **The owner's home screen has four Stationly widgets** (ids 16, 19, 20, 21)
+  where they placed two. An app cannot remove a placed widget —
+  `deleteAppWidgetId` only affects widgets the CALLER hosts — so the two spares
+  have to be dragged off by hand. Say so rather than trying.
+- The dream's auto-advance is built but has NOT been watched run: the preview
+  renders a frame and a CLI session cannot reliably capture 8 seconds of it.
+
+---
+
 ## S018 — 2026-09-12/13 — EPIC-09, the owner's review of S017
 
 **Outcome:** DONE (8 of 9 stories; AV2-9.9 raised and left in Ready)

@@ -76,6 +76,14 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
+                // ── The board's rules are served, and nothing here has a
+                // screen above it to have fetched them ─────────────────────
+                //
+                // A widget is redrawn by a push in a process where no Activity
+                // need ever have started, so without this it runs on the values
+                // that were compiled while the app beside it runs on the ones
+                // the backend sent. See SduiConfig.ensureLoaded.
+                com.stationly.core.config.SduiConfig.ensureLoaded()
                 updateFromStorage(context)
             } finally {
                 pendingResult.finish()
@@ -95,6 +103,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         // widget showing", and leaving one behind means a widget id reissued by
         // the launcher inherits a stranger's platform.
         WidgetPageStore.forget(context, appWidgetIds)
+        WidgetMotion.forget(context, appWidgetIds)
         WidgetSettings.forget(context, appWidgetIds)
         // Tell the app, in case it is open behind the home screen — the station
         // screen's delete warning and the SDUI `widget.count` fact both read
@@ -126,6 +135,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 val pendingResult = goAsync()
                 CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                     try {
+                        com.stationly.core.config.SduiConfig.ensureLoaded()
                         updateFromStorage(context)
                     } finally {
                         pendingResult.finish()
@@ -151,6 +161,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             val pendingResult = goAsync()
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                 try {
+                    com.stationly.core.config.SduiConfig.ensureLoaded()
                     runCatching { stepPlatform(context, id, delta) }
                 } finally {
                     pendingResult.finish()
@@ -184,10 +195,32 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     return
                 }
                 refreshPrefs.edit().putLong(KEY_REFRESH_STARTED_AT, now).apply()
+                // ── This press, and only this press, is owed an animation ────
+                //
+                // Armed here rather than decided at render time because by the
+                // time the board is redrawn there is nothing left to say who
+                // asked for it: a refresh redraw and a push redraw arrive on
+                // the same path, with the same data, and one of them is direct
+                // manipulation the user is waiting on while the other is
+                // ambient. Only the tap knows, so the tap writes it down.
+                //
+                // One-shot and scoped to the widget that was pressed. A refresh
+                // fans out several redraws and touches every widget on the same
+                // hub; flipping all of them, several times each, is what the
+                // owner saw as flashing. See WidgetMotion.
+                WidgetMotion.armRefresh(
+                    context,
+                    intent.getIntExtra(
+                        AppWidgetManager.EXTRA_APPWIDGET_ID,
+                        AppWidgetManager.INVALID_APPWIDGET_ID,
+                    ),
+                    now,
+                )
             }
             val pendingResult = goAsync()
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                 try {
+                    com.stationly.core.config.SduiConfig.ensureLoaded()
                     if (intent.action != ACTION_UPDATE_WIDGET) {
                         showRefreshSpinner(
                             context,
@@ -599,6 +632,22 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             appWidgetManager: AppWidgetManager,
             appWidgetId: Int,
             selections: List<UserSelection>,
+            /**
+             * The motion this redraw was asked for, when the caller knows.
+             *
+             * Null is the ordinary case and means "ask the store" — a refresh
+             * press arms a one-shot flag that the first redraw after it spends,
+             * because by the time the fetch lands there is nothing on the redraw
+             * itself to say a finger started it. Every other caller (a push, the
+             * minute tick, a sync, a rebind) leaves this null and gets
+             * [WidgetMotion.NONE].
+             *
+             * A chevron passes its direction explicitly: it redraws immediately
+             * and has no flag to leave.
+             */
+            motion: WidgetMotion? = null,
+            /** The platform being left, for an animated step. */
+            fromPage: Int? = null,
         ) {
             val boundTo = WidgetBindingStore.boundStation(context, appWidgetId, WidgetBindingStore.currentUid())
             // The board's selections, in the user's own order. A hub can hold
@@ -823,6 +872,12 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 boardRows = boardRows,
                 platformNav = widgetNav,
                 platformPage = WidgetPageStore.pageOf(context, appWidgetId),
+                // Spend the flag even when the caller named a motion, so a
+                // refresh followed straight away by a chevron does not leave a
+                // flip owed and play it minutes later against a push.
+                motion = WidgetMotion.consumeRefresh(context, appWidgetId)
+                    .let { armed -> motion ?: armed },
+                fromPage = fromPage,
             )
         }
 
@@ -947,86 +1002,44 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 )
             )
             if (pageCount <= 1) return
-            val next = PlatformPages.step(
-                current = PlatformPages.clamp(WidgetPageStore.pageOf(context, appWidgetId), pageCount),
-                delta = delta,
-                pageCount = pageCount,
+            val current = PlatformPages.clamp(
+                WidgetPageStore.pageOf(context, appWidgetId), pageCount,
             )
+            val next = PlatformPages.step(current, delta, pageCount)
             WidgetPageStore.setPage(context, appWidgetId, next)
 
-            // ── A PARTIAL update, and that is what makes the motion happen ───
+            // ── A FULL redraw, carrying the direction it was pressed in ──────
             //
-            // `updateOne` rebuilds the whole RemoteViews, which replaces the
-            // flipper's children. A ViewFlipper animates between the children
-            // it ALREADY HOLDS, so a full rebuild leaves the out-animation
-            // with nothing to play against and the board simply cuts.
+            // This used to be a `partiallyUpdateAppWidget` that appended the
+            // destination to the flipper and moved onto it, because a
+            // ViewFlipper animates only between children it ALREADY holds and a
+            // full rebuild left the out-animation with nothing to play against.
             //
-            // `partiallyUpdateAppWidget` applies only the actions below onto
-            // the view tree already on the home screen. The children are
-            // untouched, `setDisplayedChild` moves between two views that
-            // exist, and the launcher does the cross-fade.
+            // It does not need to any more: [applyPagesToFlipper] writes BOTH
+            // frames itself — the board being left and the board arriving — so
+            // the animation has its pair whether the update is partial or full.
+            // Full is the better of the two here:
             //
-            // It is also the reason an ambient redraw does NOT animate. A push
-            // or a minute tick goes through the full path, which rebuilds and
-            // cuts; only a press comes through here. iOS draws the same
-            // distinction with three timestamps (`boardTransition`), because a
-            // page move is direct manipulation the user is waiting on and a new
-            // payload landing is ambient. Android gets the same outcome from
-            // which update path it is on, without needing the timestamps.
-            val pages = PlatformPages.split(
-                boardRowsFor(
-                    selections, selection, boundTo,
-                    ROWS_PER_PLATFORM,
-                    WidgetSettings.pinOf(context, appWidgetId),
-                )
+            //  - it redraws from SQL, so a step also brings the ETAs up to the
+            //    current minute instead of sliding onto a stale copy of a board
+            //    that was built whenever the last push landed;
+            //  - it goes through the one render path, so the pager bar, the
+            //    status line, the timer and the rows cannot drift apart the way
+            //    a hand-maintained partial makes them;
+            //  - a full update with the same layout id is `reapply`, not a
+            //    re-inflate, so it costs no more on screen than the partial did.
+            //
+            // The direction is passed rather than inferred: forward slides in
+            // from the right, back slides in from the left, and each lives in
+            // its own flipper because the animation cannot be set at runtime.
+            renderWidget(
+                context,
+                AppWidgetManager.getInstance(context),
+                appWidgetId,
+                selections,
+                motion = WidgetMotion.step(delta),
+                fromPage = current,
             )
-            val partial = RemoteViews(context.packageName, R.layout.widget_departure_board)
-            // ── Add the page we are moving to, then flip onto it ─────────────
-            //
-            // A render leaves the flipper holding exactly one child: the page
-            // on screen. So the step appends the destination as child 1 and
-            // moves there, which means the OUTGOING frame is the board the user
-            // is actually looking at rather than a duplicate of the incoming
-            // one. That is what makes this read as the board moving.
-            //
-            // No `removeAllViews` first: that would destroy the very view the
-            // out-animation has to play against, and the flip would have
-            // nothing to leave from.
-            //
-            // The next render collapses back to a single child at index 0, so
-            // the children never accumulate across steps.
-            val pageViews = RemoteViews(context.packageName, R.layout.widget_platform_page)
-            com.stationly.core.util.PlatformPages
-                .bodyPadded(pages.getOrElse(next) { emptyList() }, ROWS_PER_PLATFORM)
-                .forEach { row ->
-                    departureRowViews(context, row)?.let {
-                        pageViews.addView(R.id.platform_page_rows, it)
-                    }
-                }
-            partial.addView(R.id.platform_flipper, pageViews)
-            //
-            // `applyPagesToFlipper` puts the page the user is looking at at
-            // index 0, so the flipper holds [current, +1, +2, ... , -1]. The
-            // next page is therefore always child 1 and the previous is always
-            // the last child, whatever the absolute page number happens to be.
-            //
-            // That is the whole trick: a render can never change the displayed
-            // index (it is always 0) and so can never animate, while a press
-            // moves off 0 and the launcher plays the cross-fade. Motion means
-            // "you did that", never "a push arrived".
-            //
-            // The flipper is left on the moved-to child; the next render
-            // rotates the pages under it and returns to 0 showing the same
-            // board, which is a no-op on screen.
-            partial.setDisplayedChild(R.id.platform_flipper, 1)
-            // The bar has to travel with the page it names, and it is in the
-            // same partial so the two can never disagree by a frame.
-            partial.setTextViewText(
-                R.id.platform_pager_title,
-                PlatformPages.title(pages.getOrElse(next) { emptyList() }),
-            )
-            partial.setTextViewText(R.id.platform_pager_count, "${next + 1}/$pageCount")
-            AppWidgetManager.getInstance(context).partiallyUpdateAppWidget(appWidgetId, partial)
         }
 
         /**
@@ -1109,6 +1122,24 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             platformNav: PlatformNav = PlatformNav.SCROLL,
             /** Which platform a STEP widget is parked on. Ignored when scrolling. */
             platformPage: Int = 0,
+            /**
+             * Whether this redraw moves anything, and how — see [WidgetMotion].
+             *
+             * Defaults to NONE so that every caller who has not thought about it
+             * gets a silent redraw, which is the right answer for all of them:
+             * the waiting state, the clear, the initial render and the dozen
+             * ambient paths that redraw a board nobody touched.
+             */
+            motion: WidgetMotion = WidgetMotion.NONE,
+            /**
+             * The platform being left, for [WidgetMotion.NEXT] / [WidgetMotion.PREV].
+             *
+             * The outgoing frame has to be the board the user is looking at, or
+             * the slide has nothing to slide away. Null (and every non-stepping
+             * motion) uses [platformPage] itself, which is right for a refresh:
+             * the same board turning over in place.
+             */
+            fromPage: Int? = null,
         ) {
             // ── One platform at a time, when the station asks for it ────────
             //
@@ -1362,7 +1393,15 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // platform, so the bar is the only thing naming which.
             if (stepping) {
                 views.setViewVisibility(R.id.platform_pager, android.view.View.VISIBLE)
-                views.setTextViewText(R.id.platform_pager_title, PlatformPages.title(pagedRows))
+                // `compactTitle`, not `title`: this bar has two chevrons and a
+                // page marker to pay for before the text gets any width, and a
+                // RemoteViews cannot measure to pick a rung. "DLR Plat. 9" is
+                // also exactly what the board inside the app prints on every
+                // row, so the widget stops being the one surface that spells it
+                // out in full.
+                views.setTextViewText(
+                    R.id.platform_pager_title, PlatformPages.compactTitle(pagedRows),
+                )
                 // "2/3" rather than dots: a RemoteViews cannot draw a pager
                 // indicator without a view per dot, and the number says the
                 // same thing in less space on a control this size.
@@ -1626,6 +1665,8 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     pages = PlatformPages.split(boardRows.orEmpty()),
                     page = safePage,
                     rowCap = ROWS_PER_PLATFORM,
+                    motion = motion,
+                    fromPage = PlatformPages.clamp(fromPage ?: safePage, pageCount),
                 )
             } else {
                 applyRowsToWidget(views, finalRowViews)
@@ -1653,18 +1694,39 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         // loaded gun in a file whose one rule is never to show the wrong stop.
 
         /**
-         * Every platform as its own child of the flipper, with [page] shown.
+         * Draw the paged board into the flipper whose animation this motion wants.
          *
-         * ## Why all of them, when only one is visible
-         * A `ViewFlipper` animates between CHILDREN it already holds. Rebuilding
-         * it with a single child on every step would replace the view the
-         * animation is supposed to be leaving, and the cross-fade would have
-         * nothing to fade from. So the whole board goes in and the flipper is
-         * told which one to show; stepping is then one remotable call and the
-         * launcher does the motion.
+         * ## Three flippers, one slot
+         * `ViewFlipper.setInAnimation` is not a `@RemotableViewMethod`, so an
+         * update cannot choose an animation — a flipper's pair is fixed when the
+         * layout is inflated. One flipper therefore means one animation for
+         * every kind of change, which is how "next platform", "previous
+         * platform" and "you pressed refresh" were all the same apologetic
+         * cross-fade, and why a slide was impossible: it would have travelled
+         * the same way whichever arrow you pressed.
          *
-         * It also means a step rebuilds nothing: the next platform is already
-         * inflated on the home screen when the chevron is pressed.
+         * So the layout stacks three, each with its own pair, and this picks
+         * one. The two it is not using are emptied and hidden; the one it is
+         * gets both frames written into it. Because the outgoing frame is a
+         * fresh copy of the board already on screen, swapping which flipper is
+         * VISIBLE is invisible — the pixels do not change at the moment of the
+         * swap, only afterwards, as the animation runs.
+         *
+         * ## Why a silent redraw is silent
+         * [WidgetMotion.NONE] writes ONE child and never calls
+         * `setDisplayedChild`. That matters more than it sounds: a flipper with
+         * `animateFirstView` left at its default animates the first child shown
+         * after a `removeAllViews`, so the previous version of this function —
+         * which ended on `setDisplayedChild(flipper, 0)` and carried a comment
+         * explaining that index 0 could not animate — played the in-animation on
+         * every single redraw. One refresh tap measured 132 redraws across four
+         * placed widgets. That is the "multiple flashes ... zoo zoo zoo" the
+         * owner reported, and it is why scoping the redraws had not fixed it:
+         * one redraw was already one flash.
+         *
+         * `animateFirstView="false"` in the layout plus no `setDisplayedChild`
+         * here makes an ambient redraw cost nothing visually, however many of
+         * them arrive.
          */
         private fun applyPagesToFlipper(
             context: Context,
@@ -1672,59 +1734,60 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             pages: List<List<com.stationly.core.util.MultiLineBoardProcessor.Row>>,
             page: Int,
             rowCap: Int,
+            motion: WidgetMotion,
+            fromPage: Int,
         ) {
             views.setViewVisibility(R.id.rows_list, android.view.View.GONE)
             views.setViewVisibility(R.id.rows_container, android.view.View.GONE)
-            views.setViewVisibility(R.id.platform_flipper, android.view.View.VISIBLE)
-            views.removeAllViews(R.id.platform_flipper)
-            // ── ONE child: the page being looked at, and nothing else ────────
+            // Every flipper emptied and hidden first, including the one about to
+            // be used. A stage left holding children from the last motion is how
+            // a step lands on a stale page, and a stage left VISIBLE behind the
+            // live one is a second board taking up the slot.
+            WidgetMotion.flippers.forEach { id ->
+                views.removeAllViews(id)
+                views.setViewVisibility(id, android.view.View.GONE)
+            }
+            val stage = motion.flipperId
+            views.setViewVisibility(stage, android.view.View.VISIBLE)
+
+            if (!motion.animates) {
+                views.addView(stage, pageViews(context, pages.getOrNull(page), rowCap))
+                // NO `setDisplayedChild`. A flipper with one child is already
+                // showing it, and asking again is exactly what flashed.
+                return
+            }
+
+            // The board being left, then the board arriving.
+            views.addView(stage, pageViews(context, pages.getOrNull(fromPage), rowCap))
+            views.addView(stage, pageViews(context, pages.getOrNull(page), rowCap))
+            // ── Two calls, and both are needed ──────────────────────────────
             //
-            // The flipper used to hold every platform, rebuilt on every render.
-            // That is where the flashing lived: a render replaces each child,
-            // and with four platforms and a board redrawn dozens of times by a
-            // burst of pushes, the launcher is re-inflating four subtrees over
-            // and over. It only showed up in STEP mode, which is exactly what
-            // the owner reported, because scroll mode has one list to rebuild
-            // rather than N.
-            //
-            // A render now writes a single child at index 0. There is nothing
-            // to animate to and almost nothing to rebuild, so a render is
-            // invisible however many of them arrive.
-            //
-            // The step still animates: `stepPlatform` ADDS the page it is
-            // moving to as child 1 and flips, so the outgoing frame is the one
-            // genuinely on screen. The next render collapses back to one child.
-            // See there.
-            //
-            // ── the old comment, kept because the reasoning still applies ────
-            //
-            // This is what stops a full render animating. A render rebuilds the
-            // flipper's children, and asking it to show child N afterwards
-            // plays the in/out animation against views that have only just
-            // appeared — so every FCM push, every minute tick and every refresh
-            // made the board flip. With three widgets on the home screen that
-            // is three boards flipping at once for something nobody touched.
-            //
-            // Rotating instead means the displayed index never changes on a
-            // render: child 0 is always what the user is looking at, so there
-            // is nothing to animate TO. Motion is then left to the one thing
-            // that should have it, which is a press — see `stepPlatform`, where
-            // a partial update moves the child and the launcher animates it.
-            val ordered = pages.drop(page).take(1)
-            ordered.forEach { p ->
-                val pageViews = RemoteViews(context.packageName, R.layout.widget_platform_page)
-                // `bodyPadded`: the bar names the platform, and every page is
-                // the same height so the widget cannot resize as it flips.
-                com.stationly.core.util.PlatformPages.bodyPadded(p, rowCap).forEach { row ->
+            // `ViewAnimator.showOnly` animates when `!mFirstTime ||
+            // mAnimateFirstTime`, and `removeAllViews` has just set mFirstTime.
+            // With `animateFirstView="false"` in the layout the first call is
+            // therefore silent — it only lands on the outgoing frame and clears
+            // mFirstTime — and the second one moves off it and animates. One
+            // call alone would be the silent one, and the board would cut.
+            views.setDisplayedChild(stage, 0)
+            views.setDisplayedChild(stage, 1)
+        }
+
+        /** One platform, padded to a fixed height so the widget cannot resize. */
+        private fun pageViews(
+            context: Context,
+            page: List<com.stationly.core.util.MultiLineBoardProcessor.Row>?,
+            rowCap: Int,
+        ): RemoteViews {
+            val pageViews = RemoteViews(context.packageName, R.layout.widget_platform_page)
+            // `bodyPadded`: the pager bar names the platform, so the header comes
+            // off, and every page is the same height whatever the data does.
+            com.stationly.core.util.PlatformPages.bodyPadded(page.orEmpty(), rowCap)
+                .forEach { row ->
                     departureRowViews(context, row)?.let {
                         pageViews.addView(R.id.platform_page_rows, it)
                     }
                 }
-                views.addView(R.id.platform_flipper, pageViews)
-            }
-            // ZERO, always: the rotation above already put the current page
-            // there. Setting anything else here is what made a render animate.
-            views.setDisplayedChild(R.id.platform_flipper, 0)
+            return pageViews
         }
 
         /** One departure row, or null for a header (the pager bar names it). */
@@ -1748,7 +1811,19 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         }
 
         private fun applyRowsToWidget(views: RemoteViews, rowViews: List<RemoteViews>) {
-            views.setViewVisibility(R.id.platform_flipper, android.view.View.GONE)
+            // ── EVERY flipper, not just the resting one ─────────────────────
+            //
+            // A full update onto a widget already on screen is `reapply`, which
+            // runs these actions against the live views and does NOT reset
+            // anything back to what the XML says. So a widget whose last render
+            // was a backward step left `platform_flipper_prev` VISIBLE, and
+            // switching that station to scroll would have drawn the old paged
+            // board on top of the new list. The XML default only ever applies to
+            // the first inflate.
+            WidgetMotion.flippers.forEach { id ->
+                views.removeAllViews(id)
+                views.setViewVisibility(id, android.view.View.GONE)
+            }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                 views.setViewVisibility(R.id.rows_container, android.view.View.GONE)
                 views.setViewVisibility(R.id.rows_list, android.view.View.VISIBLE)

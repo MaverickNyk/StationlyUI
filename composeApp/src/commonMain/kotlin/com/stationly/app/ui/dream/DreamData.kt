@@ -180,3 +180,20 @@ fun dreamStationOptions(selections: List<UserSelection>): List<DreamStationOptio
                 lines = boards.map { it.line }.distinct(),
             )
         }
+
+/**
+ * How long the screensaver holds one platform before turning to the next.
+ *
+ * Eight seconds, and the number is a reading speed rather than a taste. A page
+ * is a header and up to five departures; a glance from across a room takes two
+ * to three seconds to find the one you want on it, and the eye needs to land
+ * more than once because nobody watches a screensaver continuously. Much
+ * shorter and the board is a slideshow you cannot read; much longer and a
+ * four-platform station takes most of a minute to say everything it knows,
+ * which on a surface people look at for two seconds at a time means it never
+ * finishes saying it.
+ *
+ * Only applies when the screensaver is set to step. In scroll mode every
+ * platform is already on screen and there is nothing to turn.
+ */
+const val DREAM_PAGE_DWELL_MS: Long = 8_000L

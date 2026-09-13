@@ -153,6 +153,7 @@ class FcmMessagingService : FirebaseMessagingService() {
             
             matchingSelections.forEach { selection ->
                 CoroutineScope(Dispatchers.IO).launch {
+                    com.stationly.core.config.SduiConfig.ensureLoaded()
                     if (extractedPredictions.isNotEmpty()) {
                         Platform.sqlStorage.savePredictions(selection.station, selection.line, selection.direction, extractedPredictions)
                     }
@@ -178,6 +179,11 @@ class FcmMessagingService : FirebaseMessagingService() {
         try {
             val status = gson.fromJson(payloadJson, LineStatus::class.java)
             CoroutineScope(Dispatchers.IO).launch {
+                // Which severity counts as the worst one is SERVED
+                // (`BoardPolicy.severityOrder`), and this runs in a process
+                // where no screen need ever have opened to fetch it. See
+                // SduiConfig.ensureLoaded.
+                com.stationly.core.config.SduiConfig.ensureLoaded()
                 // Read the previous status BEFORE saving so we can diff
                 // for a transition notification. Looking up by mode+line
                 // matches the same shape the rest of the app uses.
@@ -360,6 +366,10 @@ class FcmMessagingService : FirebaseMessagingService() {
             matchingSelections.forEach { selection ->
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
+                        // BEFORE the write, not after: `rowReserve` decides how
+                        // many rows this stores, so a sync on compiled rules
+                        // writes a differently-shaped board than the app reads.
+                        com.stationly.core.config.SduiConfig.ensureLoaded()
                         syncPredictionsUseCase.execute(payload, selection)
                         // Single fan-out point: the app's open board, the
                         // dream, the widget. Same helper the widget refresh

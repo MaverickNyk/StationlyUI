@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     The board arriving after a REFRESH the user asked for.
+
+     Bottom to top, and deliberately not a slide: a refresh is not a move to
+     somewhere else, it is the same board with new numbers on it, so it borrows
+     the motion of the thing it is imitating. A split-flap board rolls its rows
+     up from underneath — the new value rises into place and squashes open as it
+     lands. That is a vertical rise, a short scale from a top pivot, and a fade.
+
+     A third of the height rather than all of it, because a full-height travel
+     is a SLIDE, and the slide already means "another platform". The two have to
+     be told apart at a glance from across a home screen.
+
+     Only ever played when a finger hit the refresh button. A push landing, a
+     minute ticking over or another widget being refreshed all redraw this board
+     with no animation at all — motion means "you did that". See
+     WidgetMotion.
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shareInterpolator="false">
+    <translate
+        android:duration="230"
+        android:fromYDelta="34%p"
+        android:interpolator="@android:interpolator/decelerate_quad"
+        android:toYDelta="0" />
+    <scale
+        android:duration="230"
+        android:fromYScale="0.82"
+        android:toYScale="1.0"
+        android:fromXScale="1.0"
+        android:toXScale="1.0"
+        android:pivotX="50%"
+        android:pivotY="0%"
+        android:interpolator="@android:interpolator/decelerate_quad" />
+    <alpha
+        android:duration="150"
+        android:fromAlpha="0.0"
+        android:interpolator="@android:interpolator/decelerate_quad"
+        android:toAlpha="1.0" />
+</set>

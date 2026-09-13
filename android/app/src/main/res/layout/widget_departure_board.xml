@@ -285,9 +285,29 @@
          cannot scroll. Each mode gets the widget that does its job, and exactly
          one of the two is ever VISIBLE.
 
-         The animations are fixed here at inflate time because `setInAnimation`
-         is not a @RemotableViewMethod. See widget_page_in.xml for why that
-         rules out a directional slide.
+         ── THREE flippers, which is what buys three animations ─────────────
+
+         `setInAnimation` is not a @RemotableViewMethod, so a flipper's in/out
+         pair is fixed when this file is inflated and cannot be chosen per tap.
+         One flipper therefore means one animation for every kind of change,
+         which is how "next platform", "previous platform" and "refresh" all
+         ended up as the same apologetic cross-fade.
+
+         So there are three, stacked in the same slot with exactly one VISIBLE.
+         A GONE child takes no weight, so the visible one fills the row whichever
+         it is. An update picks a motion by picking a flipper, writes the
+         outgoing frame and the incoming frame into it, and shows it — and
+         because the outgoing frame is a fresh copy of what is already on screen,
+         the swap between flippers is invisible.
+
+         `animateFirstView="false"` is load-bearing and not tidiness. Without it
+         `ViewAnimator.showOnly` animates the FIRST child shown after a
+         `removeAllViews`, so every ambient redraw — every push, every minute
+         tick, every one of the dozens a single refresh used to fan out — played
+         the in-animation. That is what the owner saw as "multiple flashes", and
+         no amount of scoping the redraws could fix it, because one redraw was
+         already one flash. With it off, a plain render is silent and only a
+         deliberate second `setDisplayedChild` moves anything.
 
          The chevrons are 52dp wide and their INK is 10dp. The glyph did not
          grow; the TARGET did. A miss on a home-screen widget does not do
@@ -301,8 +321,31 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
+        android:animateFirstView="false"
         android:inAnimation="@anim/widget_page_in"
         android:outAnimation="@anim/widget_page_out"
+        android:visibility="gone" />
+
+    <!-- The same slot, stepping BACKWARDS. -->
+    <ViewFlipper
+        android:id="@+id/platform_flipper_prev"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:animateFirstView="false"
+        android:inAnimation="@anim/widget_page_back_in"
+        android:outAnimation="@anim/widget_page_back_out"
+        android:visibility="gone" />
+
+    <!-- The same slot, on a refresh the user asked for. -->
+    <ViewFlipper
+        android:id="@+id/platform_flipper_refresh"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:animateFirstView="false"
+        android:inAnimation="@anim/widget_refresh_in"
+        android:outAnimation="@anim/widget_refresh_out"
         android:visibility="gone" />
 
     <!-- Native Scrolling Container (API >= 31) -->

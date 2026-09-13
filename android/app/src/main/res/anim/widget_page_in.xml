@@ -1,27 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-     Arriving platform.
+     Arriving platform, moving FORWARD (the right chevron).
 
-     A cross-fade with a short rise rather than a slide. RemoteViews cannot
-     change a ViewFlipper's animation per tap: `setInAnimation` is not a
-     @RemotableViewMethod, so the in and out animations are fixed at inflate
-     time and BOTH chevrons get the same one. A slide would then travel the
-     same direction whichever arrow you pressed, which is worse than not
-     sliding at all. A rise reads as "next thing" without claiming a direction.
+     A full-width slide in from the right, no fade. The board is one surface
+     sliding sideways, the way every pager on the phone behaves, so the motion
+     says "the next platform" rather than "something changed".
 
-     120ms because this is a departure board, not a toy: long enough to see,
-     short enough that pressing the arrow twice does not queue up a wait.
+     ## How a directional slide is possible at all
+     `setInAnimation` is not a @RemotableViewMethod, so a ViewFlipper's
+     animation pair is fixed when the layout is inflated and cannot be chosen
+     per tap. This file used to be a fade-and-rise for exactly that reason: one
+     flipper can only have one animation, and a slide that travelled the same
+     way whichever arrow you pressed was worse than not sliding.
+
+     The answer is not one flipper but three, one per motion, stacked in the
+     same slot with one visible — see widget_departure_board.xml. Each carries
+     its own pair here, and the update picks a motion by picking a flipper.
+
+     200ms: long enough to read as travel, short enough that pressing the arrow
+     twice does not queue up a wait.
 -->
-<set xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shareInterpolator="false">
-    <alpha
-        android:duration="120"
-        android:fromAlpha="0.0"
-        android:interpolator="@android:interpolator/decelerate_quad"
-        android:toAlpha="1.0" />
-    <translate
-        android:duration="140"
-        android:fromYDelta="6%p"
-        android:interpolator="@android:interpolator/decelerate_quad"
-        android:toYDelta="0" />
-</set>
+<translate xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="200"
+    android:fromXDelta="100%p"
+    android:interpolator="@android:interpolator/decelerate_quad"
+    android:toXDelta="0" />
