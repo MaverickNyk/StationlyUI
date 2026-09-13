@@ -382,7 +382,22 @@ data class WidgetState(
     val direction: String = "",
     // Transport mode (e.g. "tube"). Same optional+defaulted pattern; the iOS
     // widget tints the header roundel per mode like Android's mode_icon.
-    val mode: String = ""
+    val mode: String = "",
+    /**
+     * The naptan these departures were fetched from, so a listener can tell
+     * WHICH board changed.
+     *
+     * Added because Android's `AndroidWidgetManager.updateWidget` broadcasts on
+     * every processed payload and the receiver, having no id to go on, redrew
+     * every placed widget. One refresh produced 156 renders across four
+     * widgets, arriving as a burst of flashes; every FCM push did a smaller
+     * version of the same thing.
+     *
+     * Blank means "not stated", which keeps the old behaviour of redrawing
+     * everything. That is the right default for a caller that genuinely does
+     * not know, and it is what `showWaitingState` and `clearWidgetData` are.
+     */
+    val stationId: String = ""
 )
 
 /**

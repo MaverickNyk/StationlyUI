@@ -212,29 +212,57 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         // children: the board visibly flickered several times
                         // for a single press.
                         //
-                        // `notifyAll` once, not `notifyPredictions` per stop.
+                        // ── This widget's board, not every board ────────
                         //
-                        // That is the documented use rather than a shortcut: a
-                        // refresh that fetched EVERY tracked stop cannot name
-                        // one scope, because it changed all of them, and
-                        // `notifyAll` exists for exactly the caller that cannot.
-                        // It is "always correct and merely expensive", and here
-                        // the expensive version is the cheap one: one redraw
-                        // instead of one per stop.
+                        // The refresh button belongs to ONE widget and means
+                        // "bring THIS board up to date". It used to fetch every
+                        // tracked stop, which is why refreshing one widget
+                        // visibly disturbed the others: eight fetches, a
+                        // status push per line in reply, and every placed
+                        // widget redrawn for each.
                         //
-                        // A fourth, narrower entry point was written first and
-                        // then deleted. `FreshDataFanOutTest` rejected it, and
-                        // was right to: the fan-out has one entry point per
-                        // scope on purpose, and this caller already had one.
-                        selections.forEach { repo.fetchInitialData(it) }
-                        com.stationly.mobile.util.FreshDataNotifier.notifyAll(context)
+                        // Scoped to the hub this widget is bound to. An
+                        // INVALID id means a programmatic caller that really
+                        // does mean everything, and it still gets everything.
+                        val tappedId = intent.getIntExtra(
+                            AppWidgetManager.EXTRA_APPWIDGET_ID,
+                            AppWidgetManager.INVALID_APPWIDGET_ID,
+                        )
+                        val boundHub =
+                            if (tappedId == AppWidgetManager.INVALID_APPWIDGET_ID) null
+                            else WidgetBindingStore.boundStation(
+                                context, tappedId, WidgetBindingStore.currentUid(),
+                            )
+                        val toFetch =
+                            if (boundHub == null) selections
+                            else selections.filter { it.groupingId == boundHub }
+
+                        toFetch.forEach { repo.fetchInitialData(it) }
+
+                        // The app and the dream still need to know, and they
+                        // are a flow emit either way. The WIDGET half is the
+                        // expensive one, so it is aimed: this widget when the
+                        // tap named one, everything when it did not.
+                        toFetch.map { it.station }.distinct().forEach { station ->
+                            com.stationly.mobile.util.FreshDataNotifier
+                                .notifyPredictions(context, station)
+                        }
                     } else {
-                        // ACTION_UPDATE_WIDGET path: someone (typically the
-                        // SummaryViewModel via AndroidWidgetManager) wants
-                        // us to redraw from the current SQL state. No
-                        // backend fetch involved, no other surfaces to
-                        // notify — just paint.
-                        updateFromStorage(context)
+                        // ── ACTION_UPDATE_WIDGET: redraw from SQL ───────────
+                        //
+                        // Scoped when the sender said which board changed.
+                        // `ProcessPredictionsUseCase` broadcasts this on EVERY
+                        // processed payload, and without an id the receiver had
+                        // to assume all of them: one refresh over several stops
+                        // measured 156 renders across four widgets, arriving as
+                        // a burst of flashes, and every push did a smaller
+                        // version of the same thing.
+                        //
+                        // Blank still means everything, which is what
+                        // `showWaitingState` and `clearWidgetData` mean.
+                        val changed = intent.getStringExtra("stationId").orEmpty()
+                        if (changed.isBlank()) updateFromStorage(context)
+                        else updateForStation(context, changed)
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("Widget", "Error during refresh", e)
@@ -486,6 +514,36 @@ class DepartureWidgetProvider : AppWidgetProvider() {
          * So the push's naptan is resolved through the selections to the hubs it
          * feeds, and the widgets bound to those hubs are the ones drawn.
          */
+        /**
+         * Redraw only the widgets whose board rides [pushedLineId].
+         *
+         * The line twin of [updateForStation], and it exists for the same
+         * measured reason: a status push used to redraw every placed widget, so
+         * one refresh tap produced 44 renders as the backend answered with a
+         * push per line. See WidgetRedrawTargets.hubsOn.
+         */
+        fun updateForLine(context: Context, pushedLineId: String) {
+            val appWidgetManager = AppWidgetManager.getInstance(context)
+            val appWidgetIds = appWidgetManager.getAppWidgetIds(
+                android.content.ComponentName(context, DepartureWidgetProvider::class.java)
+            )
+            if (appWidgetIds.isEmpty()) return
+
+            val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
+            val hubs = WidgetRedrawTargets.hubsOn(selections, pushedLineId)
+            if (hubs.isEmpty()) return
+
+            val uid = WidgetBindingStore.currentUid()
+            val targets = WidgetRedrawTargets.widgetsShowing(
+                bindings = appWidgetIds.toList()
+                    .associateWith { WidgetBindingStore.boundStation(context, it, uid) },
+                hubs = hubs,
+            )
+            for (id in targets) {
+                renderWidget(context, appWidgetManager, id, selections)
+            }
+        }
+
         fun updateForStation(context: Context, pushedStationId: String) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
             val appWidgetIds = appWidgetManager.getAppWidgetIds(
@@ -923,7 +981,29 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 )
             )
             val partial = RemoteViews(context.packageName, R.layout.widget_departure_board)
-            // ── Relative, because the children are ROTATED ──────────────────
+            // ── Add the page we are moving to, then flip onto it ─────────────
+            //
+            // A render leaves the flipper holding exactly one child: the page
+            // on screen. So the step appends the destination as child 1 and
+            // moves there, which means the OUTGOING frame is the board the user
+            // is actually looking at rather than a duplicate of the incoming
+            // one. That is what makes this read as the board moving.
+            //
+            // No `removeAllViews` first: that would destroy the very view the
+            // out-animation has to play against, and the flip would have
+            // nothing to leave from.
+            //
+            // The next render collapses back to a single child at index 0, so
+            // the children never accumulate across steps.
+            val pageViews = RemoteViews(context.packageName, R.layout.widget_platform_page)
+            com.stationly.core.util.PlatformPages
+                .bodyPadded(pages.getOrElse(next) { emptyList() }, ROWS_PER_PLATFORM)
+                .forEach { row ->
+                    departureRowViews(context, row)?.let {
+                        pageViews.addView(R.id.platform_page_rows, it)
+                    }
+                }
+            partial.addView(R.id.platform_flipper, pageViews)
             //
             // `applyPagesToFlipper` puts the page the user is looking at at
             // index 0, so the flipper holds [current, +1, +2, ... , -1]. The
@@ -938,10 +1018,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // The flipper is left on the moved-to child; the next render
             // rotates the pages under it and returns to 0 showing the same
             // board, which is a no-op on screen.
-            partial.setDisplayedChild(
-                R.id.platform_flipper,
-                if (delta > 0) 1 else pageCount - 1,
-            )
+            partial.setDisplayedChild(R.id.platform_flipper, 1)
             // The bar has to travel with the page it names, and it is in the
             // same partial so the two can never disagree by a frame.
             partial.setTextViewText(
@@ -1600,7 +1677,26 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             views.setViewVisibility(R.id.rows_container, android.view.View.GONE)
             views.setViewVisibility(R.id.platform_flipper, android.view.View.VISIBLE)
             views.removeAllViews(R.id.platform_flipper)
-            // ── The current page goes FIRST, and the flipper stays on 0 ──────
+            // ── ONE child: the page being looked at, and nothing else ────────
+            //
+            // The flipper used to hold every platform, rebuilt on every render.
+            // That is where the flashing lived: a render replaces each child,
+            // and with four platforms and a board redrawn dozens of times by a
+            // burst of pushes, the launcher is re-inflating four subtrees over
+            // and over. It only showed up in STEP mode, which is exactly what
+            // the owner reported, because scroll mode has one list to rebuild
+            // rather than N.
+            //
+            // A render now writes a single child at index 0. There is nothing
+            // to animate to and almost nothing to rebuild, so a render is
+            // invisible however many of them arrive.
+            //
+            // The step still animates: `stepPlatform` ADDS the page it is
+            // moving to as child 1 and flips, so the outgoing frame is the one
+            // genuinely on screen. The next render collapses back to one child.
+            // See there.
+            //
+            // ── the old comment, kept because the reasoning still applies ────
             //
             // This is what stops a full render animating. A render rebuilds the
             // flipper's children, and asking it to show child N afterwards
@@ -1614,8 +1710,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // is nothing to animate TO. Motion is then left to the one thing
             // that should have it, which is a press — see `stepPlatform`, where
             // a partial update moves the child and the launcher animates it.
-            val ordered = if (pages.isEmpty()) pages else
-                pages.subList(page, pages.size) + pages.subList(0, page)
+            val ordered = pages.drop(page).take(1)
             ordered.forEach { p ->
                 val pageViews = RemoteViews(context.packageName, R.layout.widget_platform_page)
                 // `bodyPadded`: the bar names the platform, and every page is

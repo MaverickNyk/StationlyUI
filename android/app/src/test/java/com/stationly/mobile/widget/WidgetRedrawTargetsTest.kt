@@ -100,4 +100,62 @@ class WidgetRedrawTargetsTest {
 
         assertEquals(listOf(12), targets)
     }
+
+    // ── a line-status push is not every widget's business ───────────────────
+
+    /**
+     * **The flicker, measured.** One refresh tap produced 44 widget renders.
+     *
+     * `notifyLineStatus` redrew EVERY placed widget, and a refresh fetches
+     * every tracked stop, so the backend answered with a line-status push per
+     * line. Eight lines times three widgets is the burst the owner described as
+     * "multiple flashes": widget 16, 19, 20, over and over, four seconds after a
+     * tap they had already forgotten about.
+     *
+     * A line-status change is only about the widgets whose board actually rides
+     * that line. The same rule `hubsFedBy` already applies to a station push,
+     * and for the same reason: a push names something in the DATA model and a
+     * binding names a hub, so the two have to be resolved through the
+     * selections rather than compared.
+     */
+    @Test
+    fun `a line push only reaches the hubs that ride that line`() {
+        val selections = listOf(
+            sel("940GZZLUKSX", "940GZZLUKSX", "piccadilly", "outbound"),
+            sel("940GZZLUKSX", "940GZZLUKSX", "circle", "inbound"),
+            sel("940GZZDLBNK", "940GZZDLBNK", "dlr", "outbound"),
+        )
+        assertEquals(setOf("940GZZLUKSX"), WidgetRedrawTargets.hubsOn(selections, "piccadilly"))
+        assertEquals(setOf("940GZZDLBNK"), WidgetRedrawTargets.hubsOn(selections, "dlr"))
+    }
+
+    /** A line nobody tracks reaches nothing, rather than everything. */
+    @Test
+    fun `a line no board rides redraws nothing`() {
+        val selections = listOf(sel("940GZZDLBNK", "940GZZDLBNK", "dlr", "outbound"))
+        assertEquals(emptySet<String>(), WidgetRedrawTargets.hubsOn(selections, "victoria"))
+    }
+
+    /**
+     * Line ids arrive from the push payload and from the local database, and
+     * only one of those is ours. Same reason `hubsFedBy` is case-insensitive.
+     */
+    @Test
+    fun `line matching ignores case`() {
+        val selections = listOf(sel("940GZZDLBNK", "940GZZDLBNK", "dlr", "outbound"))
+        assertEquals(setOf("940GZZDLBNK"), WidgetRedrawTargets.hubsOn(selections, "DLR"))
+    }
+
+    /**
+     * A bus hub's poles are separate selections under one hub, so a route push
+     * must reach the hub once rather than not at all.
+     */
+    @Test
+    fun `a bus route reaches its hub through either pole`() {
+        val selections = listOf(
+            sel("490008805N", "490HUB", "39", "inbound"),
+            sel("490012211N", "490HUB", "39", "outbound"),
+        )
+        assertEquals(setOf("490HUB"), WidgetRedrawTargets.hubsOn(selections, "39"))
+    }
 }

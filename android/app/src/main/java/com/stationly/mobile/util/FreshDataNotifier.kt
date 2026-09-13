@@ -83,7 +83,12 @@ object FreshDataNotifier {
      */
     fun notifyLineStatus(context: Context, lineId: String) {
         announce(FreshData.Line(lineId))
-        redrawWidget(context)
+        // Only the widgets whose board rides this line. It used to redraw every
+        // placed widget, and a refresh that fetches every tracked stop draws a
+        // status push per line in reply: measured at 44 renders from one tap,
+        // arriving as a burst of flashes several seconds later. See
+        // WidgetRedrawTargets.hubsOn.
+        DepartureWidgetProvider.updateForLine(context, lineId)
     }
 
     /**

@@ -20,6 +20,11 @@ class AndroidWidgetManager(
         val intent = android.content.Intent("com.stationly.mobile.ACTION_UPDATE_WIDGET")
         intent.setComponent(android.content.ComponentName(context.packageName, "com.stationly.mobile.widget.DepartureWidgetProvider"))
         intent.putExtra("ACTION_TYPE", "UPDATE_WIDGET")
+        // Which board changed. Without it the receiver has to assume "all of
+        // them", and this fires once per processed payload: a refresh over
+        // several stops then redrew every placed widget several times each.
+        // Blank stays "all", which is what the other two callers mean.
+        intent.putExtra("stationId", state.stationId)
         context.sendBroadcast(intent)
     }
 
