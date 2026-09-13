@@ -189,7 +189,13 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                 try {
                     if (intent.action != ACTION_UPDATE_WIDGET) {
-                        showRefreshSpinner(context)
+                        showRefreshSpinner(
+                            context,
+                            intent.getIntExtra(
+                                AppWidgetManager.EXTRA_APPWIDGET_ID,
+                                AppWidgetManager.INVALID_APPWIDGET_ID,
+                            ),
+                        )
                         val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
                         val repo = com.stationly.core.repository.DepartureRepository(
                             com.stationly.core.service.TflApiServiceFactory.create(),
@@ -197,19 +203,31 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                             com.stationly.core.platform.Platform.sqlStorage,
                             com.stationly.core.usecase.SyncPredictionsUseCase(com.stationly.core.platform.Platform.sqlStorage)
                         )
-                        selections.forEach { selection ->
-                            repo.fetchInitialData(selection)
-                            // Same fan-out the FCM service uses — tells the
-                            // app's board and the dream to re-read SQL, then
-                            // redraws the widget. Without this, tapping the
-                            // widget's refresh button would update only the
-                            // widget; an open app or active dream would stay
-                            // on stale data until the next FCM landed.
-                            com.stationly.mobile.util.FreshDataNotifier.notifyPredictions(
-                                context,
-                                stationId = selection.station,
-                            )
-                        }
+                        // ── Fetch everything, THEN redraw once ──────────
+                        //
+                        // This used to redraw inside the loop, once per stop.
+                        // A user tracking eight boards got eight full
+                        // RemoteViews rebuilds per widget from one tap, and on
+                        // a paging widget each rebuild replaces the flipper's
+                        // children: the board visibly flickered several times
+                        // for a single press.
+                        //
+                        // `notifyAll` once, not `notifyPredictions` per stop.
+                        //
+                        // That is the documented use rather than a shortcut: a
+                        // refresh that fetched EVERY tracked stop cannot name
+                        // one scope, because it changed all of them, and
+                        // `notifyAll` exists for exactly the caller that cannot.
+                        // It is "always correct and merely expensive", and here
+                        // the expensive version is the cheap one: one redraw
+                        // instead of one per stop.
+                        //
+                        // A fourth, narrower entry point was written first and
+                        // then deleted. `FreshDataFanOutTest` rejected it, and
+                        // was right to: the fan-out has one entry point per
+                        // scope on purpose, and this caller already had one.
+                        selections.forEach { repo.fetchInitialData(it) }
+                        com.stationly.mobile.util.FreshDataNotifier.notifyAll(context)
                     } else {
                         // ACTION_UPDATE_WIDGET path: someone (typically the
                         // SummaryViewModel via AndroidWidgetManager) wants
@@ -386,11 +404,22 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
             )
 
-        fun showRefreshSpinner(context: Context) {
+        /**
+         * Spin the widget that was pressed, and only that one.
+         *
+         * [appWidgetId] is `INVALID` for callers that genuinely mean all of
+         * them, which is the programmatic path. A user's tap always names its
+         * own widget: spinning every board because one was pressed is three
+         * widgets claiming to be busy on behalf of one, and it is half of what
+         * the owner saw as flickering.
+         */
+        fun showRefreshSpinner(context: Context, appWidgetId: Int) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
-            val ids = appWidgetManager.getAppWidgetIds(
-                android.content.ComponentName(context, DepartureWidgetProvider::class.java)
-            )
+            val ids =
+                if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) intArrayOf(appWidgetId)
+                else appWidgetManager.getAppWidgetIds(
+                    android.content.ComponentName(context, DepartureWidgetProvider::class.java)
+                )
             val views = RemoteViews(context.packageName, com.stationly.mobile.R.layout.widget_departure_board)
             views.setViewVisibility(com.stationly.mobile.R.id.btn_refresh, android.view.View.GONE)
             views.setViewVisibility(com.stationly.mobile.R.id.progress_refresh, android.view.View.VISIBLE)
@@ -894,7 +923,25 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 )
             )
             val partial = RemoteViews(context.packageName, R.layout.widget_departure_board)
-            partial.setDisplayedChild(R.id.platform_flipper, next)
+            // ── Relative, because the children are ROTATED ──────────────────
+            //
+            // `applyPagesToFlipper` puts the page the user is looking at at
+            // index 0, so the flipper holds [current, +1, +2, ... , -1]. The
+            // next page is therefore always child 1 and the previous is always
+            // the last child, whatever the absolute page number happens to be.
+            //
+            // That is the whole trick: a render can never change the displayed
+            // index (it is always 0) and so can never animate, while a press
+            // moves off 0 and the launcher plays the cross-fade. Motion means
+            // "you did that", never "a push arrived".
+            //
+            // The flipper is left on the moved-to child; the next render
+            // rotates the pages under it and returns to 0 showing the same
+            // board, which is a no-op on screen.
+            partial.setDisplayedChild(
+                R.id.platform_flipper,
+                if (delta > 0) 1 else pageCount - 1,
+            )
             // The bar has to travel with the page it names, and it is in the
             // same partial so the two can never disagree by a frame.
             partial.setTextViewText(
@@ -1217,9 +1264,16 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // Set up manual refresh intent
             val refreshIntent = Intent(context, DepartureWidgetProvider::class.java).apply {
                 action = ACTION_MANUAL_REFRESH
+                // Which widget was pressed. Without it the spinner had no
+                // choice but to spin EVERY widget, so tapping refresh on one
+                // board set all of them going.
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
             }
             val refreshPendingIntent = android.app.PendingIntent.getBroadcast(
-                context, 1, refreshIntent,
+                // Request code per widget: two PendingIntents differing only in
+                // an extra are the SAME PendingIntent, so a shared code would
+                // give every widget whichever id was registered last.
+                context, appWidgetId, refreshIntent,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
             views.setOnClickPendingIntent(R.id.btn_refresh, refreshPendingIntent)
@@ -1546,7 +1600,23 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             views.setViewVisibility(R.id.rows_container, android.view.View.GONE)
             views.setViewVisibility(R.id.platform_flipper, android.view.View.VISIBLE)
             views.removeAllViews(R.id.platform_flipper)
-            pages.forEach { p ->
+            // ── The current page goes FIRST, and the flipper stays on 0 ──────
+            //
+            // This is what stops a full render animating. A render rebuilds the
+            // flipper's children, and asking it to show child N afterwards
+            // plays the in/out animation against views that have only just
+            // appeared — so every FCM push, every minute tick and every refresh
+            // made the board flip. With three widgets on the home screen that
+            // is three boards flipping at once for something nobody touched.
+            //
+            // Rotating instead means the displayed index never changes on a
+            // render: child 0 is always what the user is looking at, so there
+            // is nothing to animate TO. Motion is then left to the one thing
+            // that should have it, which is a press — see `stepPlatform`, where
+            // a partial update moves the child and the launcher animates it.
+            val ordered = if (pages.isEmpty()) pages else
+                pages.subList(page, pages.size) + pages.subList(0, page)
+            ordered.forEach { p ->
                 val pageViews = RemoteViews(context.packageName, R.layout.widget_platform_page)
                 // `bodyPadded`: the bar names the platform, and every page is
                 // the same height so the widget cannot resize as it flips.
@@ -1557,9 +1627,9 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 }
                 views.addView(R.id.platform_flipper, pageViews)
             }
-            // Remotable on ViewAnimator, which is what makes the design work:
-            // stepping is one call and no rebuild.
-            views.setDisplayedChild(R.id.platform_flipper, page)
+            // ZERO, always: the rotation above already put the current page
+            // there. Setting anything else here is what made a render animate.
+            views.setDisplayedChild(R.id.platform_flipper, 0)
         }
 
         /** One departure row, or null for a header (the pager bar names it). */

@@ -65,43 +65,58 @@
             android:paddingEnd="4dp"
             android:orientation="horizontal">
 
-            <!-- ── 40dp of target around a 20dp glyph ──────────────────────
-                 The icon did not grow; the padding did. These sit on a home
-                 screen next to `departure_board`, whose click opens the app, so
-                 a miss on refresh does not do nothing: it launches Stationly.
-                 A 24dp box with 2dp padding was well under the 48dp Android
-                 asks for and the owner was hitting the board instead.
+            <!-- ── Target grows sideways only ──────────────────────────────
+                 A miss here does not do nothing: it falls through to
+                 `departure_board`, whose click opens the app, so an icon a
+                 fraction too small launches Stationly instead of refreshing.
 
-                 The margin between them comes off as the padding goes on, so
-                 the row occupies the same width and the header does not move.
-                 `scaleType` is fitCenter by default on a bare ImageView, so the
-                 glyph fits the CONTENT box and the padding is target only. -->
+                 The first attempt at this was a 40dp box, and it broke two
+                 things the owner saw immediately. It was TALLER than the 22dp
+                 roundel beside it, so the whole header row grew; and two 40dp
+                 boxes are 80dp, which overran the 68dp margin the station name
+                 is centred inside, so the name ran under the refresh icon and
+                 the icon appeared to drift towards the middle.
+
+                 So the box is wide and short: 32dp across, which is what fits
+                 (two of them plus the 4dp end padding is the 68dp the title
+                 reserves), and 26dp tall, which is what the roundel already
+                 makes the row. Height is where there was no room; width is
+                 where there was. The glyph is 20dp in both, unchanged. -->
             <ImageView
                 android:id="@+id/btn_refresh"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
+                android:layout_width="32dp"
+                android:layout_height="26dp"
                 android:contentDescription="Refresh"
-                android:padding="10dp"
+                android:paddingStart="6dp"
+                android:paddingTop="3dp"
+                android:paddingEnd="6dp"
+                android:paddingBottom="3dp"
                 android:scaleType="fitCenter"
                 android:src="@drawable/ic_refresh" />
 
-            <!-- Matches the refresh button it replaces, so the header does not
-                 shift by 16dp the moment a fetch starts. -->
+            <!-- Matches the refresh button it replaces exactly, so the header
+                 does not jump the moment a fetch starts. -->
             <ProgressBar
                 android:id="@+id/progress_refresh"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:padding="10dp"
+                android:layout_width="32dp"
+                android:layout_height="26dp"
+                android:paddingStart="6dp"
+                android:paddingTop="3dp"
+                android:paddingEnd="6dp"
+                android:paddingBottom="3dp"
                 android:visibility="gone"
                 android:indeterminate="true"
                 android:indeterminateTint="#FFB900" />
 
             <ImageView
                 android:id="@+id/btn_settings"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
+                android:layout_width="32dp"
+                android:layout_height="26dp"
                 android:contentDescription="Settings"
-                android:padding="10dp"
+                android:paddingStart="6dp"
+                android:paddingTop="3dp"
+                android:paddingEnd="6dp"
+                android:paddingBottom="3dp"
                 android:scaleType="fitCenter"
                 android:src="@drawable/ic_settings" />
         </LinearLayout>
