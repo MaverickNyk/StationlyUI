@@ -9,7 +9,13 @@
 ```
 SPRINT:            5-6 — release surfaces + rollout (sprints 1-4 complete)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S017 (2026-09-12) — owner feedback, worked against the
+LAST SESSION:      S018 (2026-09-12/13) — EPIC-09, raised by the owner after
+                   walking S017 on the phone. Eight of nine stories built. The
+                   headline is AV2-9.8: widget bindings were not namespaced by
+                   uid and no sign-out cleared them, so a second account that
+                   happened to track the same hub inherited a LIVE widget in the
+                   first person's configuration.
+                   S017 (2026-09-12) — owner feedback, worked against the
                    PHONE throughout. The screensaver was RENDERED for the first
                    time in the programme and was wrong in two ways; the widget's
                    gear became a real settings page; and the identity fix caught
@@ -87,8 +93,9 @@ BLOCKED ON OWNER:  🔴 Q5 is now the biggest risk on the branch and it is NOT
                    options written out in the question.
                    Q7 FIXED this session. Q3 answered (EPIC-06 header).
                    Q1/Q2/Q4/Q6 are decisions or console work, not blockers.
-NEXT UP:           **Q5, and then the rollout.** Nothing on this board still
-                   needs a session to do it.
+NEXT UP:           **AV2-9.9**, then Q5, then the rollout. AV2-9.9 is the
+                   only buildable story left; Q5 and the rollout are not a
+                   session's to do.
                    (1) Q5 is the owner's call and the biggest risk on the
                    branch: master has no migrations, so every App Store iOS
                    database is stamped version 1 holding the CURRENT schema.
@@ -110,7 +117,14 @@ NEXT UP:           **Q5, and then the rollout.** Nothing on this board still
 
 | Story | Epic | Title | Size |
 |---|---|---|---|
-| _(none — the board is clear)_ | | | |
+| AV2-9.9 | 09 | One platform drawn as two blocks | `M` |
+
+> AV2-9.9 is the only story anywhere on this board that a session can pick up.
+> It is in the SHARED `MultiLineBoardProcessor`, so it lands on the home screen
+> and on iOS as well as the widget, and the rule is a product decision: merge
+> blocks whose header would be identical, or make the header carry what
+> distinguishes them. It also interacts with the pin, which matches platforms on
+> their LABEL. Read EPIC-09 before starting.
 
 ### 🅘 In Progress — WIP limit 2
 
@@ -124,6 +138,7 @@ Twenty stories. In the order somebody signing off should read them:
 
 | Story | Session | What to look at |
 |---|---|---|
+| **EPIC-09** (9.1-9.8) | S018 · device 2026-09-12 | **The owner's review of S017, worked against the phone.** Widget settings are the WIDGET's now, not the station's BoardConfig they were silently editing. The depth control is gone rather than moved, because a page floor is not a board floor and stepping resized the widget on the home screen. The pager bar sits in the board (measured: 30.1dp tall to 20.2dp, chevron ink 14.5dp from the edge to 4.2dp). The manager teaches instead of dead-ending, adding a widget ends on the home screen, stepping animates while an ambient tick does not, and a widget is stamped with the account that placed it — without which a second account tracking the same hub inherited a live widget in the first person's configuration. Copy swept of em dashes and apologising, with a lexer-based guard so it cannot come back. |
 | **AV2-8.1** | S016 · device 2026-09-12 | **The release build has been walked, and the assumption that blocked this was wrong.** "An R8 failure lands on the screen nobody opened" is right; opening those screens is something a session can do over `adb`. Signed the release APK with the debug keystore, installed it over the debug build, walked home / home settings / widget manager / widget configure / rebinding / the screensaver / every widget tap target / profile, then put the debug build back. **Zero `FATAL EXCEPTION` across the whole walk**, and nothing R8-shaped: no ClassNotFound, no NoSuchMethod, no missing serializer, no VerifyError. Full recipe and the two traps (`--no-build-cache` for `shrinkResources`; capture `run-as` state BEFORE the swap because it stops working) are in the epic. Still unproven: hours of runtime under R8 with real pushes, which needs the phone left alone rather than another walk. |
 | **AV2-8.2** | device 2026-09-12 | **R1 has a hardware pass.** A genuine v1 database migrated 1 → 3 in one launch: no crash, every board kept with its id, the bus hub's two poles still separate, `ActivityEventEntity` created, Q7's key live on a MIGRATED database rather than a created one. Tasks (a) and (b) at once, because a v1 database inside a v2 install is what Auto Backup delivers. The one criterion left open is "does not sign the user out", which the fixture could not answer. |
 | **AV2-4.3** | S016 · device 2026-09-12 | **The worst bug on the branch, and it had been live since the cutover.** Android wrote `boards` (the shared SelectionViewModel) and reconciled against `stations` (the legacy path), and the backend derives neither from the other on a write. So a board saved on Android left no trace in the array its own next foreground compared against — and that reconcile DELETES any local selection the cloud list does not have. On an account whose `stations` is empty, which is every account created on v2, that is every board the user has, gone within fifteen minutes, silently. Four device passes missed it because the test account's legacy array already described its one board. |

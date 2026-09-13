@@ -18,6 +18,61 @@ Template:
 
 ---
 
+## S018 — 2026-09-12/13 — EPIC-09, the owner's review of S017
+
+**Outcome:** DONE (8 of 9 stories; AV2-9.9 raised and left in Ready)
+**Gate:** GREEN throughout.
+**Commits:** `e254499` (plan) through `b8a3a5e`
+
+**Did.** The owner walked S017 on the phone and sent a list. It became EPIC-09,
+planned with a dependency graph before any code, then worked with three
+subagents in parallel while the main session took the architectural story.
+
+**Learned — five things.**
+
+**1. Verify what is IMPOSSIBLE before planning around it.** Two of the owner's
+asks could not be built: an app cannot remove a placed widget
+(`deleteAppWidgetId` affects only widgets the CALLER hosts) and cannot scroll
+the launcher to a page. Checking first meant no story promised either, and 9.2
+shipped the honest version instead — say where the widget is and what gesture
+removes it.
+
+**2. A page floor is not a board floor.** `MIN_BOARD_ROWS` is a floor for the
+whole board, which is right for scrolling: three platforms with two trains each
+already clears it. Page that same board and every page is two rows, so stepping
+resized the widget on the home screen. Hence a fixed three per page, padded, and
+hence NO depth setting: a control that changes the height of something on a home
+screen is a control for moving everything around it.
+
+**3. Widget settings were editing the user's board.** The configure screen wrote
+`UserSettings.update(groupingId)`, the same BoardConfig the home card renders
+from. They are different shapes answering different questions and now have
+different homes.
+
+**4. A binding outlives its account.** `widget_prefs` is not namespaced by uid
+and no sign-out clears it, so a second account tracking the same hub inherited a
+LIVE widget in the first person's configuration. Stamped rather than cleared,
+because clearing breaks the common case of signing back in as yourself. The fix
+that found the rest of the bug was removing the DEFAULT from `currentUid`: the
+compiler then named all seven readers, including the placement probe that feeds
+the "a widget is showing this station" warning.
+
+**5. Three agents on one working tree is a mistake I made, not one they made.**
+An agent ran `git checkout --` to revert its own mutation test and took another
+session's uncommitted Kotlin with it. AV2-9.5 went out with the flipper XML and
+none of the code that drives it, describing behaviour the build no longer had.
+It was caught only because the agent reported it. **Use `isolation: "worktree"`
+when agents write.**
+
+**Next agent needs to know:** AV2-9.9 is the only buildable story left and it is
+in the SHARED processor, so it lands on iOS too. Q5 and AV2-8.3 are the owner's.
+Two things went unverified because the owner's phone locked mid-pass: the step
+animation, and the manager's new empty state (seeing it means removing their
+last widget). Their home screen is one widget where it should be two, from blind
+tapping earlier in the session — screenshot before every tap on that device.
+
+---
+
 ## S017 — 2026-09-12 — owner feedback, against the phone throughout
 
 **Outcome:** DONE (eight fixes + the release-build walk, all on the Pixel 7 Pro)
