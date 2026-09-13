@@ -43,6 +43,7 @@ import com.stationly.app.platform.KeepScreenAwake
 import com.stationly.app.ui.theme.AppTheme
 import com.stationly.app.ui.theme.LocalAppTheme
 import com.stationly.app.ui.util.HomeConfigCache
+import com.stationly.core.config.SduiConfig
 import com.stationly.app.ui.util.rememberTickedPredictions
 import com.stationly.core.service.NetworkModule
 import com.stationly.core.util.FreshDataNotifier
@@ -82,9 +83,21 @@ fun DreamHost(onExit: () -> Unit) {
     // network refresh; hardcoded fallbacks keep every label functional offline.
     var sduiStrings by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     LaunchedEffect(Unit) {
-        HomeConfigCache.load().takeIf { it.isNotEmpty() }?.let { sduiStrings = it }
+        // ── The strings AND the rules ───────────────────────────────────────
+        //
+        // `sduiStrings` is the copy this screen prints. The same payload also
+        // carries how the board BEHAVES — how long a departed train stays up and
+        // what it says while it does, when a timestamp starts going amber, which
+        // line status counts as the worst — and until now the dream took the
+        // copy and left the rules, so a screensaver ran on compiled values while
+        // the app in front of it ran on served ones. `SduiConfig.refresh` is the
+        // one place a map is adopted; it takes both stores with it.
+        HomeConfigCache.load().takeIf { it.isNotEmpty() }?.let {
+            sduiStrings = it
+            SduiConfig.refresh(it)
+        }
         runCatching { NetworkModule.sduiApi.getHomeConfig().strings }
-            .onSuccess { sduiStrings = it; HomeConfigCache.save(it) }
+            .onSuccess { sduiStrings = it; HomeConfigCache.save(it); SduiConfig.refresh(it) }
     }
 
     // Initial load + reload on every fresh-data signal.

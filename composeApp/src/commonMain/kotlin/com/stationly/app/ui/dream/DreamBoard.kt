@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -37,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.stationly.app.platform.ModeIconStore
+import kotlinx.coroutines.delay
 import com.stationly.core.util.BOARD_FALLBACK_ROW_COUNT
 import com.stationly.core.util.computeBoardFallbackState
 import com.stationly.app.ui.util.rememberMinuteTick
@@ -296,6 +298,36 @@ fun DreamBoard(
         if (stepping) PlatformPages.page(boardRows, page) else boardRows
     }
 
+    // ── And it turns the page by itself ─────────────────────────────────────
+    //
+    // This is the answer to the open question the owner left on the screensaver:
+    // does it get the same arrows as the widget? It gets them AND it does not
+    // wait for them.
+    //
+    // A screensaver is the one surface nobody is holding. It is on a desk, a
+    // dock or a bedside table, being read from across a room, and every other
+    // surface in the app is a thing you hold and press. A page control that only
+    // moves when tapped therefore shows one platform of four to somebody who is
+    // never going to walk over and tap it — which is the widget's behaviour
+    // transplanted into a place where the gesture it assumes does not happen.
+    //
+    // The referent is the departure board hanging over a concourse: it cycles,
+    // steadily, and nobody operates it. The chevrons stay for the case where
+    // somebody IS standing there and wants the next one now, and pressing one
+    // restarts the dwell rather than fighting it — [page] is a key of this
+    // effect, so a manual step cancels the pending advance and begins a fresh
+    // full turn on the platform just chosen.
+    //
+    // Keyed on the page and the count only. A prediction push rewrites
+    // `boardRows` every thirty seconds and must NOT reset the rotation, or a
+    // busy station would sit on platform one indefinitely.
+    if (stepping) {
+        LaunchedEffect(pageCount, page) {
+            delay(DREAM_PAGE_DWELL_MS)
+            page = PlatformPages.step(page, 1, pageCount)
+        }
+    }
+
     // ── Rows — scroll independently, and always fill from the TOP ──
             //
             // Fullscreen used to centre them vertically, a port of v1 Android's
@@ -339,6 +371,7 @@ fun DreamBoard(
                             position = page + 1,
                             count = pageCount,
                             rowSp = rowSp,
+                            fullscreen = fullscreen,
                             onStep = { delta -> page = PlatformPages.step(page, delta, pageCount) },
                         )
                     }
@@ -572,6 +605,7 @@ private fun DreamPlatformPager(
     position: Int,
     count: Int,
     rowSp: androidx.compose.ui.unit.TextUnit,
+    fullscreen: Boolean,
     onStep: (Int) -> Unit,
 ) {
     DreamActiveStrip {
@@ -579,7 +613,7 @@ private fun DreamPlatformPager(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            DreamPagerChevron("\u2039", rowSp) { onStep(-1) }
+            DreamPagerChevron("\u2039", rowSp, fullscreen) { onStep(-1) }
             Text(
                 title,
                 color = BoardAmber,
@@ -596,7 +630,7 @@ private fun DreamPlatformPager(
                 fontSize = rowSp * 0.7f,
                 maxLines = 1,
             )
-            DreamPagerChevron("\u203a", rowSp) { onStep(1) }
+            DreamPagerChevron("\u203a", rowSp, fullscreen) { onStep(1) }
         }
     }
 }
@@ -605,11 +639,21 @@ private fun DreamPlatformPager(
 private fun DreamPagerChevron(
     glyph: String,
     rowSp: androidx.compose.ui.unit.TextUnit,
+    fullscreen: Boolean,
     onClick: () -> Unit,
 ) {
     Box(
         modifier = Modifier
-            .size(44.dp)
+            // ── Sized for the distance it is read from ──────────────────────
+            //
+            // 44dp is the minimum for a control on a phone in the hand, and a
+            // fullscreen screensaver is not that: it is on a dock or a bedside
+            // table and reached for at arm's length, often in the dark, by
+            // somebody who is not looking closely. The board rotates on its own
+            // (see DREAM_PAGE_DWELL_MS), so this is the shortcut rather than the
+            // only way through — but a shortcut you miss is worse than none,
+            // because on a dream a miss lands on the board behind it.
+            .size(if (fullscreen) 60.dp else 44.dp)
             .pressScale(onClick = onClick, haptic = HapticType.SELECTION),
         contentAlignment = Alignment.Center,
     ) {

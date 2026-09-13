@@ -9,7 +9,16 @@
 ```
 SPRINT:            5-6 — release surfaces + rollout (sprints 1-4 complete)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S018 (2026-09-12/13) — EPIC-09, raised by the owner after
+LAST SESSION:      S019 (2026-09-13) — EPIC-10. The flicker, found by MEASURING
+                   it: one refresh tap caused 132 redraws across four widgets,
+                   and every redraw animated because `animateFirstView` defaults
+                   to true. Four redraws now, none of which move. Three
+                   animations where the previous session had concluded one was
+                   the limit — the constraint is on a ViewFlipper, not on a
+                   layout, so there are three flippers. Plus the owner's
+                   platform sort: blocks order by NAME, board-wide, because
+                   ordering by "soonest" made the board move under the reader.
+                   S018 (2026-09-12/13) — EPIC-09, raised by the owner after
                    walking S017 on the phone. Eight of nine stories built. The
                    headline is AV2-9.8: widget bindings were not namespaced by
                    uid and no sign-out cleared them, so a second account that
@@ -117,9 +126,18 @@ NEXT UP:           **AV2-9.9**, then Q5, then the rollout. AV2-9.9 is the
 
 | Story | Epic | Title | Size |
 |---|---|---|---|
+| AV2-10.7 | 10 | SDUI audit — the inventory half | `M` |
 | AV2-9.9 | 09 | One platform drawn as two blocks | `M` |
 
-> AV2-9.9 is the only story anywhere on this board that a session can pick up.
+> AV2-10.7 is PART-DONE. S019 traced the consequence path and closed it: every
+> Android surface that runs with no screen above it — the widget, the two FCM
+> handlers, the screensaver — now warms the served config instead of running on
+> compiled defaults. What is left is the inventory the story actually asks for:
+> diff the keys the backend serves against what each client reads, which is the
+> only way to find one Android ignores entirely. The note under the story lists
+> what was examined and what was not.
+>
+> AV2-9.9 and the above are the only stories on this board a session can pick up.
 > It is in the SHARED `MultiLineBoardProcessor`, so it lands on the home screen
 > and on iOS as well as the widget, and the rule is a product decision: merge
 > blocks whose header would be identical, or make the header carry what
@@ -134,10 +152,12 @@ NEXT UP:           **AV2-9.9**, then Q5, then the rollout. AV2-9.9 is the
 
 ### 🅥 Review — done, awaiting owner sign-off
 
-Twenty stories. In the order somebody signing off should read them:
+Twenty-two entries. In the order somebody signing off should read them:
 
 | Story | Session | What to look at |
 |---|---|---|
+| **EPIC-10** (10.1-10.6) | S017-S019 · device 2026-09-13 | **The widget behaves, and the flicker had two causes.** The refresh guards concurrency rather than time; the chevrons, gear and refresh are hittable without having been resized; adding a widget is one step; the manager says what a widget is. Then S019: one refresh tap was causing **132 redraws** across four widgets (measured, not estimated) because the broadcast carried no station id — and, separately, `ViewAnimator` animates the first child shown after a `removeAllViews` unless `animateFirstView` says otherwise, so every one of those redraws played the in-animation. Under a comment in our own code saying it could not. Now 4 redraws, none of which animate. Three animations where AV2-9.5 concluded one was the limit: three flippers stacked in one slot, each with its own pair, because the constraint is on the VIEW and not on the layout. Forward slides from the right, back from the left, refresh rises and squashes open from the bottom — all three caught mid-flight on the Pixel. The screensaver turns its own pages, because it is the one surface nobody is holding. |
+| **the platform sort** | S019 · device 2026-09-13 | **Unstoried, raised by the owner, and it lands on iOS too.** Blocks were ordered by whichever platform had the next train, so the board reshuffled itself on every push. Caught on the device: two captures of the same widget a minute apart, untouched, reading `DLR Platform 9  1/2` then `DLR Platform 10  1/2` — the thing the widget was placed for had moved behind an arrow. Now ordered by platform NAME, numerically so 10 follows 9, with a "nothing left to catch" key above it so a platform whose trains have all gone still cannot lead. The picker and the collapsed card share the key, so the three surfaces cannot disagree about the same station. The widget's pager also uses the short forms now — "DLR Plat. 9", which is what the in-app board has always printed on its rows. |
 | **EPIC-09** (9.1-9.8) | S018 · device 2026-09-12 | **The owner's review of S017, worked against the phone.** Widget settings are the WIDGET's now, not the station's BoardConfig they were silently editing. The depth control is gone rather than moved, because a page floor is not a board floor and stepping resized the widget on the home screen. The pager bar sits in the board (measured: 30.1dp tall to 20.2dp, chevron ink 14.5dp from the edge to 4.2dp). The manager teaches instead of dead-ending, adding a widget ends on the home screen, stepping animates while an ambient tick does not, and a widget is stamped with the account that placed it — without which a second account tracking the same hub inherited a live widget in the first person's configuration. Copy swept of em dashes and apologising, with a lexer-based guard so it cannot come back. |
 | **AV2-8.1** | S016 · device 2026-09-12 | **The release build has been walked, and the assumption that blocked this was wrong.** "An R8 failure lands on the screen nobody opened" is right; opening those screens is something a session can do over `adb`. Signed the release APK with the debug keystore, installed it over the debug build, walked home / home settings / widget manager / widget configure / rebinding / the screensaver / every widget tap target / profile, then put the debug build back. **Zero `FATAL EXCEPTION` across the whole walk**, and nothing R8-shaped: no ClassNotFound, no NoSuchMethod, no missing serializer, no VerifyError. Full recipe and the two traps (`--no-build-cache` for `shrinkResources`; capture `run-as` state BEFORE the swap because it stops working) are in the epic. Still unproven: hours of runtime under R8 with real pushes, which needs the phone left alone rather than another walk. |
 | **AV2-8.2** | device 2026-09-12 | **R1 has a hardware pass.** A genuine v1 database migrated 1 → 3 in one launch: no crash, every board kept with its id, the bus hub's two poles still separate, `ActivityEventEntity` created, Q7's key live on a MIGRATED database rather than a created one. Tasks (a) and (b) at once, because a v1 database inside a v2 install is what Auto Backup delivers. The one criterion left open is "does not sign the user out", which the fixture could not answer. |

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     The board leaving on a REFRESH: up and away, squashing shut from the
+     bottom edge. The mirror of widget_refresh_in, so the pair reads as one
+     row of a split-flap board turning over.
+
+     Shorter than the arrival, and faded out well before it: two boards at half
+     opacity on top of each other in the middle of the swap is what reads as a
+     flicker, which is the thing this whole animation had to stop doing.
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shareInterpolator="false">
+    <translate
+        android:duration="180"
+        android:fromYDelta="0"
+        android:interpolator="@android:interpolator/accelerate_quad"
+        android:toYDelta="-34%p" />
+    <scale
+        android:duration="180"
+        android:fromYScale="1.0"
+        android:toYScale="0.82"
+        android:fromXScale="1.0"
+        android:toXScale="1.0"
+        android:pivotX="50%"
+        android:pivotY="100%"
+        android:interpolator="@android:interpolator/accelerate_quad" />
+    <alpha
+        android:duration="120"
+        android:fromAlpha="1.0"
+        android:interpolator="@android:interpolator/accelerate_quad"
+        android:toAlpha="0.0" />
+</set>
