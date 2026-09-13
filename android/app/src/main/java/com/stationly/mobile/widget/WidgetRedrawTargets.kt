@@ -39,6 +39,34 @@ object WidgetRedrawTargets {
             .toSet()
 
     /**
+     * The hubs whose board rides [pushedLineId].
+     *
+     * ## The flicker this exists to stop, measured
+     * A line-status push used to redraw EVERY placed widget. One tap on refresh
+     * fetches every tracked stop, the backend answers with a status push per
+     * line, and three widgets times eight lines is 44 renders from one tap,
+     * arriving four seconds later as a burst of flashes.
+     *
+     * A line changing status is only about the widgets whose board actually
+     * rides it. Everything else on the home screen is being redrawn to tell it
+     * something that is not about it.
+     *
+     * Resolved THROUGH the selections rather than compared directly, the same
+     * way [hubsFedBy] resolves a naptan: a push names something in the data
+     * model and a binding names a hub, and on a bus route those are not the
+     * same string. Two poles of one stop are two selections under one hub, so a
+     * route push has to reach that hub once rather than not at all.
+     *
+     * Case-insensitive because line ids arrive from the push payload and from
+     * the local database, and only one of those is ours.
+     */
+    fun hubsOn(selections: List<UserSelection>, pushedLineId: String): Set<String> =
+        selections
+            .filter { it.line.equals(pushedLineId, ignoreCase = true) }
+            .map { it.groupingId }
+            .toSet()
+
+    /**
      * The widget ids showing any of [hubs].
      *
      * @param bindings every placed widget id, mapped to the board it is bound to
