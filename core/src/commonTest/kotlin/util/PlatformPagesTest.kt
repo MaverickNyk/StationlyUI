@@ -221,4 +221,53 @@ class PlatformPagesTest {
         assertEquals(3, body.size)
         assertEquals("No upcoming departures", (body[0] as Row.Departure).destination)
     }
+
+    // ── The pager bar's title, which has almost no room ─────────────────────
+
+    /**
+     * The word "Platform" is boilerplate and the number is the fact. A widget
+     * pager pays for two chevrons and a page marker before the text gets any
+     * width, so it spends what is left on the part that means something.
+     */
+    @Test
+    fun `the pager title drops the word Platform but never the number`() {
+        assertEquals("DLR Plat. 9", PlatformPages.compactTitle(listOf(header("DLR Platform 9"))))
+        assertEquals("Plat. 10", PlatformPages.compactTitle(listOf(header("Platform 10"))))
+    }
+
+    /**
+     * Line names go to the forms the roundel, the map key and the station
+     * signage already use — and, where the lines API has supplied one, to the
+     * backend's own `shortName`. Nothing a passenger cannot read back.
+     */
+    @Test
+    fun `the pager title uses the short line names`() {
+        assertEquals(
+            "Picc. Plat. 5 (Westbound)",
+            PlatformPages.compactTitle(listOf(header("Piccadilly Platform 5 (Westbound)"))),
+        )
+    }
+
+    /**
+     * **The direction stays.** Dropping it is the one shortening that loses
+     * information, and it belongs at the end of a ladder something MEASURED —
+     * not in a fixed choice made by a surface that cannot measure at all.
+     */
+    @Test
+    fun `the pager title keeps the direction, which is the only lossy rung`() {
+        assertTrue(
+            PlatformPages.compactTitle(listOf(header("Northern Platform 2 Southbound")))
+                .contains("Southbound"),
+        )
+    }
+
+    /**
+     * The fallback-copy page has no header, and a title invented from nothing
+     * would be the renderer making something up.
+     */
+    @Test
+    fun `a page with no header has no title to shorten`() {
+        assertEquals("", PlatformPages.compactTitle(listOf(dep("No upcoming departures", ""))))
+        assertEquals("", PlatformPages.compactTitle(emptyList()))
+    }
 }
