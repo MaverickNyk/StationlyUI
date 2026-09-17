@@ -1,65 +1,50 @@
 package com.stationly.core.util
 
 /**
- * Canonical TfL brand colour palette as hex `#RRGGBB` strings.
+ * TfL brand colours, for callers that want the BRAND value rather than what a
+ * themed surface paints.
  *
- * Single source of truth for the Android side — consumed today by
- * `FcmMessagingService` (to tint the notification chip when a status
- * change push is dispatched). The Compose UI keeps its own
- * `TFL_LINE_COLORS` map of pre-parsed `androidx.compose.ui.graphics.Color`
- * instances for direct use in `lineColorForTheme(...)` — same hex
- * values, different shape. iOS (KMP) and any future native consumer
- * can read from this file directly.
+ * A thin delegate over [com.stationly.core.config.LinePalette], which owns the
+ * table and adds the per-theme legibility overrides this object never had.
  *
- * The backend mirrors the same palette in
- * `stationly-backend/src/services/lineIconService.ts` (TypeScript;
- * languages can't share the map directly). When adding or retuning a
- * line, update BOTH files in the same commit — the lockstep is
- * load-bearing for cross-surface visual consistency (a status-change
- * push showing Piccadilly navy on the chip while the in-app pill
- * shows a different blue would be a brand failure).
+ * ## What this used to say, and why it does not any more
+ * The header here claimed to be the single source of truth and instructed
+ * whoever changed a colour to update "BOTH files in the same commit". There
+ * were four: this map, three maps in `Board.kt`, `WidgetTheme.modeColor` in
+ * Swift, and `lineIconService.ts` on the backend. A three-way diff found twenty
+ * of twenty-one lines identical and one deliberate divergence — `northern`,
+ * brand black here and `#888888` on the board, because black is invisible on a
+ * near-black panel. That is the case for a base palette plus overrides rather
+ * than one flat map, and it is now expressed as one.
  *
- * Bus lines (e.g. "bus_39") deliberately don't have entries here —
- * TfL doesn't publish per-bus-line colours; bus routes share the
- * generic bus mode icon and brand red. Callers should default to the
- * brand amber / route-mode colour when this returns null.
+ * Kept as a named object rather than folded away because Android's
+ * `FcmMessagingService` calls [hexFor], and that app is frozen in production.
  */
 object TflLineColors {
 
-    private val palette: Map<String, String> = mapOf(
-        // London Underground
-        "bakerloo"          to "#B36305",
-        "central"           to "#E32017",
-        "circle"            to "#FFD300",
-        "district"          to "#00782A",
-        "hammersmith-city"  to "#F3A9BB",
-        "jubilee"           to "#A0A5A9",
-        "metropolitan"      to "#9B0056",
-        "northern"          to "#000000",
-        "piccadilly"        to "#003688",
-        "victoria"          to "#0098D4",
-        "waterloo-city"     to "#95CDBA",
-        // London Overground (renamed lines, post-2024)
-        "lioness"           to "#E2A12B",
-        "mildmay"           to "#1A6DB4",
-        "windrush"          to "#E2231A",
-        "weaver"            to "#7B2D8B",
-        "suffragette"       to "#00843D",
-        "liberty"           to "#6B717E",
-        // Other rail modes
-        "dlr"               to "#00A4A7",
-        "elizabeth"         to "#6950A1",
-        "tram"              to "#84B817",
-        "cable-car"         to "#E21836",
-    )
-
     /**
-     * Hex string (`#RRGGBB`) for a TfL line id, or `null` if the id
-     * isn't a known TfL rail line (e.g. bus routes, unknown lines).
-     * Case-insensitive on the line id.
+     * The brand colour for a line, or null when TfL publishes none.
+     *
+     * ## This is now a delegate, and the table moved
+     * The palette lives in [com.stationly.core.config.LinePalette], which the
+     * backend can retune and which also carries the per-theme legibility
+     * overrides this object never had. Four copies of these hex values used to
+     * exist — here, in `Board.kt`, in `WidgetTheme.swift` and in the backend's
+     * `lineIconService.ts` — with a comment here instructing whoever changed one
+     * to change "BOTH files", written when there were two.
+     *
+     * The signature is unchanged on purpose: Android's `FcmMessagingService`
+     * calls this to tint a status-change notification chip, and that app is
+     * frozen in production. On Android nothing ever refreshes the store, so this
+     * returns the compiled brand palette — the identical values it always did.
+     *
+     * BRAND rather than themed, deliberately. A notification chip is drawn by
+     * the system on its own background and has no idea what theme our board is
+     * in; asking for a themed colour here would be asking the wrong question.
+     *
+     * Bus routes return null: TfL publishes no per-route colour, so callers fall
+     * back to the mode tint rather than inventing one.
      */
-    fun hexFor(lineId: String?): String? {
-        if (lineId.isNullOrBlank()) return null
-        return palette[lineId.lowercase()]
-    }
+    fun hexFor(lineId: String?): String? =
+        com.stationly.core.config.LinePaletteStore.current.hexFor(lineId)
 }

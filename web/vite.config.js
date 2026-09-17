@@ -4,7 +4,7 @@ const trailingSlashRedirect = {
     name: 'trailing-slash-redirect',
     configureServer(server) {
         server.middlewares.use((req, res, next) => {
-            if (req.url === '/privacy' || req.url === '/terms' || req.url === '/mobile/app/android') {
+            if (req.url === '/privacy' || req.url === '/terms' || req.url === '/mobile/app/android' || req.url === '/mobile/app/ios') {
                 res.writeHead(301, { Location: req.url + '/' });
                 res.end();
                 return;
@@ -27,6 +27,7 @@ export default defineConfig({
                 privacy: 'src/static/privacy/index.html',
                 terms: 'src/static/terms/index.html',
                 androidRedirect: 'src/static/mobile/app/android/index.html',
+                iosRedirect: 'src/static/mobile/app/ios/index.html',
             },
             output: {
                 // Content-hashed JS so a new deploy never serves stale cached code.

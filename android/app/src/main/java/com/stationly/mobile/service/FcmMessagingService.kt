@@ -146,7 +146,7 @@ class FcmMessagingService : FirebaseMessagingService() {
             matchingSelections.forEach { selection ->
                 CoroutineScope(Dispatchers.IO).launch {
                     if (extractedPredictions.isNotEmpty()) {
-                        Platform.sqlStorage.savePredictions(selection.station, selection.line, extractedPredictions)
+                        Platform.sqlStorage.savePredictions(selection.station, selection.line, selection.direction, extractedPredictions)
                     }
                     // Single fan-out (SharedPrefs ping + dream broadcast +
                     // widget redraw). See FreshDataNotifier.
@@ -330,7 +330,7 @@ class FcmMessagingService : FirebaseMessagingService() {
             val stationIdFromTopic = remoteMessage.from?.replace("/topics/Station_", "") ?: ""
             
             // Parse FCM payload using KMP model
-            val payload = gson.fromJson(payloadJson, FcmPayload::class.java)
+            val payload = gson.fromJson(payloadJson, PredictionsPayload::class.java)
             
             // Get all selections
             val allSelections = getAllSelections()

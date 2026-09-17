@@ -27,6 +27,16 @@ kotlin {
     }
 
     sourceSets {
+        // composeApp had no test source set at all. Added for the pure logic
+        // that ships strings straight to the screen — a filter summary built
+        // from two kinds of pick is invisible to every compiler check and
+        // immediately visible to everyone else when it is wrong.
+        val commonTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+            }
+        }
+
         val commonMain by getting {
             dependencies {
                 implementation(project(":core"))

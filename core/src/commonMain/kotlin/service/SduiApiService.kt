@@ -1,5 +1,8 @@
 package com.stationly.core.service
 
+import com.stationly.core.activity.ActivityBatchRequest
+import com.stationly.core.activity.ActivityUploadOutcome
+import com.stationly.core.model.refresh.RefreshPolicy
 import com.stationly.core.model.sdui.*
 import com.stationly.core.platform.Platform
 import io.ktor.client.*
@@ -26,6 +29,15 @@ interface SduiApiService {
     suspend fun getRegisterLayout(): SduiAppScreen
     suspend fun getForgotPasswordLayout(): SduiAppScreen
     suspend fun getAboutLayout(): SduiAppScreen
+
+    /**
+     * The widget guide screen, served by `GET /sdui/app/widget-guide`.
+     *
+     * Unlike every other layout here, a failure is NOT fatal to the screen:
+     * `WidgetGuideDefaults` ships the same guide compiled in, so a cold offline
+     * launch still explains the widget. See `docs/SDUI.md` §3, test 3.
+     */
+    suspend fun getWidgetGuideLayout(): SduiAppScreen
     suspend fun getHomeAnnouncement(): SduiAppScreen
     suspend fun getHomeConfig(): SduiStrings
     /**
@@ -34,6 +46,27 @@ interface SduiApiService {
      * never block on this network call. See [SduiThemeTokens] docstring.
      */
     suspend fun getThemeTokens(): SduiThemeTokens
+
+    /**
+     * The cadence schedule for glanceable surfaces — see
+     * [com.stationly.core.model.refresh.RefreshPolicy].
+     *
+     * Read on cold launch and when a `policy.update` push says the cached copy
+     * is stale, NOT per refresh: the client caches the document and evaluates
+     * it locally, so the schedule costs one small GET a day rather than a
+     * request every time a widget wants to know what to do.
+     */
+    suspend fun getRefreshPolicy(): RefreshPolicy
+
+    /**
+     * Per-platform version floors and store links — see
+     * [com.stationly.core.model.release.ReleasePolicy].
+     *
+     * Deliberately EXEMPT from the server's own version gate, so a client that
+     * has just been refused with a 426 can still fetch the document that
+     * explains the refusal and says where to go.
+     */
+    suspend fun getReleasePolicy(): com.stationly.core.model.release.ReleasePolicy
     suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption>
     suspend fun getNearbyStations(lat: Double, lon: Double, mode: String? = null): List<SduiDropdownOption>
 
@@ -54,10 +87,89 @@ interface SduiApiService {
 
     // User Sync & Firestore
     suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse
-    suspend fun syncStations(uid: String, stations: List<SubscribedStation>): Boolean
+    /**
+     * LEGACY board list — Android's write path. iOS uses [syncBoards].
+     *
+     * A full replace of `users/{uid}.stations`. Calling it from iOS would put
+     * both platforms back on one array and reintroduce the cross-platform wipe
+     * that splitting the lists exists to fix.
+     */
+    /**
+     * LEGACY station list. **[deviceId] has no producer today, deliberately.**
+     *
+     * The server accepts it and uses it as `excludeDeviceId`, and the parameter
+     * is here so Android-next gets echo suppression without a wire change. But
+     * the only callers of this endpoint are in the FROZEN APK, which cannot be
+     * rebuilt to send one — and iOS never calls it at all, because it writes
+     * through `syncBoards`. So nothing sends it and nothing can until a new
+     * Android ships.
+     *
+     * Said out loud because the alternative is reading the parameter as evidence
+     * that echo suppression works on this path. It does not; it is reserved. No
+     * harm follows from that today: the frozen APK has no revision gate to
+     * suppress, guards on uid, and its reconcile is idempotent.
+     */
+    suspend fun syncStations(
+        uid: String,
+        stations: List<SubscribedStation>,
+        deviceId: String? = null,
+    ): Boolean
+    /**
+     * v2 board list. Full replace, guarded by [SyncBoardsRequest.updatedAt].
+     *
+     * A 200 with `applied = false` means the server declined the write and the
+     * caller should re-read rather than retry — either it holds a NEWER list
+     * (`reason = "stale"`), or the write would have emptied a non-empty list
+     * without [allowEmpty] (`reason = "empty_rejected"`).
+     *
+     * The endpoint is platform-neutral by design: Android writes the legacy
+     * `stations` array today and moves to this one unchanged when it adopts the
+     * board model.
+     */
+    suspend fun syncBoards(
+        boards: List<com.stationly.core.model.user.Board>,
+        updatedAt: Long,
+        allowEmpty: Boolean = false,
+        deviceId: String? = null,
+    ): SyncStateResponse
     suspend fun getUserProfile(uid: String): UserProfileResponse
+
+    /**
+     * The account's current revision — the cheap half of the sync fabric.
+     *
+     * Answered from the backend's own SQLite mirror, so asking costs no
+     * Firestore read at all in the common case. A client compares the answer
+     * against the rev it last applied and fetches the profile only when it has
+     * moved; an app open on an account nobody has touched therefore reads
+     * nothing.
+     *
+     * Takes no uid on the wire: the account is whichever one the bearer token
+     * names. The parameter is here only so callers read symmetrically with
+     * [getUserProfile] and so a future multi-account client has a seam.
+     *
+     * Returns 0 when the backend predates the field or cannot answer. **Zero
+     * means "I cannot tell you", and the gate treats it as FETCH** — see
+     * [LocalRevStore.shouldFetch]. Not "nothing has changed": every account that
+     * predates `stateRev` reads 0, so a gate that skipped on zero would switch
+     * off cross-device reconcile for all of them.
+     */
+    suspend fun getUserStateRev(uid: String): Long
     suspend fun logOut(uid: String, deviceId: String? = null): Boolean
     suspend fun deleteAccount(uid: String): Boolean
+
+    /**
+     * Upload a batch of queued activity events.
+     *
+     * Called on a schedule, never per action — see
+     * [com.stationly.core.activity.ActivityLog]. Idempotent server-side, so a
+     * batch whose response was lost is safe to resend.
+     *
+     * Returns the OUTCOME rather than a boolean because the caller's decision
+     * is three-way, not two: a batch the server rejected as malformed must be
+     * discarded, and one that failed transiently must be kept. Collapsing those
+     * to "not ok" either loses events or retries a poisoned batch forever.
+     */
+    suspend fun uploadActivity(request: ActivityBatchRequest): ActivityUploadOutcome
 
     /**
      * Register / unregister this device's FCM token under the user's
@@ -98,6 +210,10 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
         return client.get("$baseUrl/sdui/app/about").body()
     }
 
+    override suspend fun getWidgetGuideLayout(): SduiAppScreen {
+        return client.get("$baseUrl/sdui/app/widget-guide").body()
+    }
+
     override suspend fun getHomeAnnouncement(): SduiAppScreen {
         return client.get("$baseUrl/sdui/app/home-announcement").body()
     }
@@ -108,6 +224,14 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
 
     override suspend fun getThemeTokens(): SduiThemeTokens {
         return client.get("$baseUrl/sdui/app/theme-tokens").body()
+    }
+
+    override suspend fun getRefreshPolicy(): RefreshPolicy {
+        return client.get("$baseUrl/sdui/app/refresh-policy").body()
+    }
+
+    override suspend fun getReleasePolicy(): com.stationly.core.model.release.ReleasePolicy {
+        return client.get("$baseUrl/sdui/app/release-policy").body()
     }
 
     override suspend fun getDropdownData(urlPath: String): List<SduiDropdownOption> {
@@ -163,12 +287,77 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
         }.body()
     }
 
-    override suspend fun syncStations(uid: String, stations: List<SubscribedStation>): Boolean {
+    override suspend fun syncStations(
+        uid: String,
+        stations: List<SubscribedStation>,
+        deviceId: String?,
+    ): Boolean {
         val response = client.post("$baseUrl/user/sync/stations") {
             contentType(ContentType.Application.Json)
-            setBody(SyncStationsRequest(uid, stations))
+            setBody(SyncStationsRequest(uid, stations, deviceId))
         }
         return response.status == HttpStatusCode.OK
+    }
+
+    override suspend fun syncBoards(
+        boards: List<com.stationly.core.model.user.Board>,
+        updatedAt: Long,
+        allowEmpty: Boolean,
+        deviceId: String?,
+    ): SyncStateResponse {
+        // No uid in the body: the server takes it from the validated bearer
+        // token. This endpoint REPLACES a list the user cannot afford to lose,
+        // so a self-asserted uid is not something it should ever accept.
+        val response = client.post("$baseUrl/user/sync/boards") {
+            contentType(ContentType.Application.Json)
+            setBody(SyncBoardsRequest(boards, updatedAt, allowEmpty, deviceId))
+        }
+        return if (response.status == HttpStatusCode.OK) response.body()
+        else SyncStateResponse(success = false, applied = false, reason = "http_${response.status.value}")
+    }
+
+    override suspend fun uploadActivity(request: ActivityBatchRequest): ActivityUploadOutcome {
+        val response = client.post("$baseUrl/user/activity/batch") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+        return when (response.status.value) {
+            200 -> ActivityUploadOutcome.Accepted
+            // 400 is the only status that means "this exact payload is wrong".
+            // 401 will pass once the token refreshes and 429 once the window
+            // rolls, so both keep the batch — and 5xx obviously does.
+            400 -> ActivityUploadOutcome.Rejected
+            else -> ActivityUploadOutcome.Retry
+        }
+    }
+
+    override suspend fun getUserStateRev(uid: String): Long {
+        // Every failure answers 0, and 0 means "I CANNOT TELL YOU".
+        //
+        // Which the gate reads as *go and look* ([LocalRevStore.shouldFetch]),
+        // not as "nothing has changed". Getting that backwards is the single
+        // most dangerous misreading in this whole mechanism: every account that
+        // predates `stateRev` reads 0, so a gate that skipped on zero would
+        // silently disable cross-device reconcile for all of them, and the
+        // symptom — boards not appearing on the other device — looks nothing
+        // like a gate. An earlier version of this comment said exactly that
+        // wrong thing while the code did the right one.
+        //
+        // Answering rather than throwing is the deliberate part: the rev check
+        // is an optimisation, and an optimisation that throws turns a transient
+        // network blip into a visible failure on the most frequent path in the
+        // app. Falling back to a fetch is the correct, and more expensive,
+        // direction — which is the one to fail in.
+        //
+        // The one case worth distinguishing — the account is gone — is not this
+        // call's job. The profile fetch raises `UserNotFoundException` and the
+        // `deleted` push forces a sign-out; both are stronger signals than a
+        // 404 here, and duplicating that decision in two places is how the two
+        // copies drift.
+        return runCatching {
+            val response = client.get("$baseUrl/user/state/rev")
+            if (response.status == HttpStatusCode.OK) response.body<UserStateRevResponse>().rev else 0L
+        }.getOrDefault(0L)
     }
 
     override suspend fun getUserProfile(uid: String): UserProfileResponse {

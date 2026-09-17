@@ -7,7 +7,7 @@
     <meta name="description" content="Redirecting to the Stationly app on Google Play Store.">
     <meta http-equiv="refresh" content="0; url=https://play.google.com/store/apps/details?id=com.stationly.mobile">
     <script>
-        window.location.href = "https://play.google.com/store/apps/details?id=com.stationly.mobile";
+        window.location.replace("https://play.google.com/store/apps/details?id=com.stationly.mobile");
     </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
     <style>
@@ -217,6 +217,13 @@
             color: rgba(255, 255, 255, 0.2);
             line-height: 1.5;
             max-width: 320px;
+        }
+
+        @media (max-width: 380px) {
+            body { padding: 16px; }
+            .card { padding: 36px 20px; border-radius: 22px; }
+            h1 { font-size: 1.3rem; }
+            p { font-size: 0.88rem; margin-bottom: 24px; }
         }
     </style>
 </head>

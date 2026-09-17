@@ -1,0 +1,1573 @@
+# Stationly iOS Widget — Design & WidgetKit Constraints
+
+**Audience:** the next engineer/agent touching `iosApp/StationlyWidget/`.
+**Last updated:** 2026-08-08. **Branch:** `ios-parity`.
+**Companion docs:** `docs/IOS_BUILD_AND_HANDOFF.md` (build/deploy, FCM→widget data
+flow), `docs/IOS_PARITY_PLAN.md` (the phased plan).
+
+The widget is a SwiftUI/WidgetKit reimplementation of the Android home-screen
+departure board (`android/res/layout/widget_departure_board.xml`): TfL amber on
+black, dot-matrix "lit cell" rows, one station per widget — chosen per widget in
+its configuration (§5).
+
+---
+
+## 1. File map (`iosApp/StationlyWidget/`)
+
+| File | Role |
+|---|---|
+| `StationlyWidgetBundle.swift` | `@main` widget bundle entry point |
+| `AppGroupID.swift` / `AppGroupKeys.swift` | The App Group's identifier and every key in it — one declaration each, per target (§5) |
+| `StationlyWidget.swift` | Widget declaration + `DepartureBoardProvider` (the timeline) |
+| `StationConfiguration.swift` | Which station this widget shows — entity, query, configuration intent (§5) |
+| `StationResolution.swift` | What a PLACED widget shows: the resolver ladder (§9.3) |
+| `WidgetPageIntent.swift` | Per-station platform paging + the refresh intent (§6) |
+| `WidgetRefreshService.swift` | The extension's own REST refresh |
+| `WidgetViews.swift` | All views: board, rows, status strip, footer, live clock, empty state |
+| `WidgetTheme.swift` | Design tokens (amber/black palette, mode tints, ETA colours) |
+| `DepartureEntry.swift` | `TimelineEntry` + `WidgetData`/`DepartureRow` models |
+| `AppGroupStorage.swift` | Reads board state from the App Group (written by KMP `IosWidgetManager`) |
+
+Data path (detail in `IOS_BUILD_AND_HANDOFF.md` §5): FCM push → KMP
+`ProcessFcmPayloadUseCase` → `IosWidgetManager.updateWidget` writes the App Group
++ bumps `widget_reload_signal` → `WidgetCenter.reloadAllTimelines()` →
+`DepartureBoardProvider.getTimeline` re-reads the App Group.
+
+---
+
+## 2. The hard WidgetKit constraints (why the design is what it is)
+
+A home-screen widget is a **pre-rendered static snapshot**, not a live view:
+
+1. **No animation API reaches the widget.** `withAnimation`, `TimelineView`,
+   `Canvas` redraws, GIFs — none run. A smooth, per-second marquee is
+   **impossible**. This is the answer to "Android does it, why can't iOS?":
+   the Android widget is a `RemoteViews` tree of REAL views hosted live by the
+   launcher process, so `android:ellipsize="marquee"` +
+   `marqueeRepeatLimit="marquee_forever"` (see
+   `android/app/src/main/res/layout/widget_departure_board.xml`,
+   `status_reason`) animates continuously for free. An iOS widget is an
+   archived snapshot rendered by a system process (`WidgetRenderer_Default`);
+   no view code from the app ever runs while it's on screen. There is no
+   scrolling-text primitive through iOS 26 — Apple's own Stocks/News widgets
+   don't marquee either.
+2. **The only self-updating elements** are the date/timer `Text` styles
+   (`.timer`, `.relative`, `.time`, …). These tick every second on the home
+   screen with zero timeline reloads — Apple's own Clock widget runs on this.
+3. **Timeline entries are honoured at ~1/minute at best.** Sub-minute entry
+   dates get coalesced. Pre-rendered local entries are otherwise free: they do
+   NOT consume the ~40–70/day background-refresh budget; only timeline
+   *reloads* (`.atEnd`, `WidgetCenter.reload…`) do.
+4. **iOS 17 adds default content margins** (~16pt safe area) around widget
+   content unless the configuration opts out.
+
+Everything non-obvious in the widget exists to work around 1–4.
+
+## 3. The three Session-6 design decisions
+
+### 3.1 Full-bleed board (the widget IS the board)
+
+Problem: the board floated inside a black frame — default iOS 17 content
+margins (§2.4) + an internal `.padding(5)` + rounded per-cell corners made it
+read as "a board within the widget".
+
+> **Confirmed 2026-08-14 (§6.3):** an outer margin around the panel was tried
+> and **removed** — the board covers the widget end to end, and the corner-zone
+> insets below remain the only thing keeping content clear of the mask.
+> Breathing room is `BoardMetrics.rowPad`, inside the cells.
+
+Fix:
+- `.contentMarginsDisabled()` on the `WidgetConfiguration`
+  (`StationlyWidget.swift`) — content extends to the physical widget edges.
+- Outer `.padding(...)` removed from `BoardWidgetView` / `SmallWidgetView`.
+- `LitCell` corner radius → **0** (squared cells, full width). The system's own
+  corner mask clips the four outer corners to the widget's continuous radius —
+  no manual rounding needed, and the 2pt black `VStack` gaps between cells read
+  as the panel bezel.
+- Cell text inset is the cells' own `hPad`: **10pt for mid-board rows, deeper
+  for the corner-zone cells** — header 14pt; footer 20pt (16pt on small). The
+  top/bottom cells sit inside the widget's corner-mask zone: at the footer
+  logo's height the curve intrudes ~9–12pt (iOS 26 corner radii are generous),
+  so a 10pt inset left the Stationly mark and the "ago" timer looking clipped.
+  Only the *content* is inset; the lit-cell backgrounds stay full-bleed.
+
+Height behaviour is unchanged: every cell is height-flexible
+(`maxHeight: .infinity` inside `LitCell`) with `layoutPriority` steering the
+share-out, so the column always fills the canvas exactly.
+
+### 3.2 Live HH:MM:SS footer clock (ticks every second)
+
+> **Amended 2026-08-14 (§6.3):** the small family no longer draws this at all —
+> the phone's status bar already says the time. On medium and large it is plain
+> bold system type with **no** digit modifier, matching the in-app board's clock
+> exactly (it was SF Mono, then briefly SF Pro tabular; both looked like a
+> different product beside the app's board).
+
+`LiveClock` (`WidgetViews.swift`): a `.timer`-style `Text` anchored at **local
+midnight** — `Text(Calendar.current.startOfDay(for: entryDate), style: .timer)`.
+Elapsed time since 00:00:00 *is* the time of day, so the system renders a
+self-ticking `18:47:32` with no timeline reloads (§2.2). Used by both the
+medium/large footer and the small widget.
+
+Gotchas baked into the implementation:
+- **Midnight rollover:** the anchor is computed per timeline entry; the
+  per-minute entries re-anchor it within a minute of 00:00.
+- **Greedy layout:** timer Texts expand to fill their container and
+  left-align. `.multilineTextAlignment(.center)` centers the digits inside the
+  expanded frame, keeping the clock mid-board in the footer `ZStack`. (The same
+  greed previously broke the "ago" element — see `LiveAgo`'s comment.)
+- **Known cosmetic limit:** the timer style cannot zero-pad the hour — a
+  single-digit hour renders `8:05:09`, not `08:05:09`. No API for this; accepted.
+
+The old `DateFormatter("HH:mm")` static clock is gone.
+
+### 3.3 Status strip: one colour + stepped marquee
+
+- **Single colour:** severity is **board amber like every other cell** (bold
+  weight carries the emphasis); the green/orange per-severity tinting was
+  removed (`WidgetTheme.statusColor`, `goodService`, `disruption` deleted).
+- **NO marquee — removed by product decision (2026-06-11).** Android's
+  continuously-flowing `ellipsize="marquee"` is impossible in WidgetKit
+  (§2.1). A stepped fallback WAS built and shipped briefly: the per-minute
+  timeline entries advanced a 24-char window through the reason text,
+  anchored to a persisted per-status-text timestamp (two earlier anchors
+  failed: minutes-since-epoch → random mid-word phase; `lastUpdated` → reset
+  to 0 by every push). Verdict from the user: a once-per-minute step doesn't
+  read as a marquee, it reads as broken — **if it can't flow like Android,
+  show static text**. The reason now truncates with a tail. Don't rebuild a
+  stepped marquee; this was tried and rejected. (The severity prefix is
+  `fixedSize()` so the truncation always eats the reason, never the label.)
+
+### 3.4 Widgets stuck on redacted placeholder — FULL INVESTIGATION LOG (2026-06-11)
+
+**Symptom:** newly added small/large widgets render as the redacted
+placeholder (olive blocks) forever; medium coasts on an old archived
+timeline. NOT "blank" — the placeholder archive renders; the *real timeline*
+never lands.
+
+**The definitive error** (device syslog via `idevicesyslog`, which DOES work
+on this iOS 26 device despite older notes saying otherwise):
+
+```
+chronod(ChronoKit): ... timelines/StationlyDepartureBoardWidget/systemSmall----...chrono-timeline
+  destroying promise for 'Unable to unarchive collection:
+  Error Domain=WidgetKit.WidgetArchiver.ArchivingError Code=2'
+chronod(ChronoKit): Task ... Reload failure / Reload state reload -> failed
+```
+
+The extension runs fine (`getTimeline` returns 61 entries per family — proved
+via `providerLog` os_log lines), the extension archives to
+`/var/mobile/tmp/com.apple.chrono/NSIRD_chronod_*/...`, then **chronod cannot
+unarchive the produced collection and rejects it**. Placeholder archives
+(1 entry, redacted) are accepted; timeline archives (61 entries) are not.
+`WidgetCenter` reloads report nothing — the failure is silent app-side.
+
+**Hypotheses tested ON DEVICE and DISPROVED — do not re-try these:**
+
+| # | Hypothesis | Test | Verdict |
+|---|---|---|---|
+| 1 | WidgetRenderer memory kill from per-cell `Canvas` DotGrid (a JetsamEvent red herring — the jetsam victim was locationd) | Replaced Canvas with tiled `UIImage`, then ONE overlay per board, then **removed the texture entirely** | still `Code=2` |
+| 2 | Midnight-anchored `.timer` LiveClock unarchivable | Reverted to static `DateFormatter` HH:mm | still `Code=2` |
+| 3 | Marquee (per-entry varying strings) | Reverted to static truncating reason | still `Code=2` |
+| 4 | `.contentMarginsDisabled()` | Removed it | still `Code=2` |
+| 5 | ANY session code change | **Built the exact `git HEAD` (74b2185) widget sources — the design that was demonstrably live-rendering at 18:47 the same day** | still `Code=2` |
+| 6 | Poisoned chronod cache | Rebooted the device (`idevicediagnostics restart`) | still `Code=2` |
+| 7 | Xcode-26.5-SDK vs iOS-26.3-beta archive-format skew | Checked: Xcode installed Jun 8 — the SAME toolchain built yesterday's binary whose archive was accepted at 18:41 today | ruled out |
+| 8 | **The cached backend mode-icon PNG** (`App Group/mode_icons/overground.png`, fetched from `/modes` by KMP ModeIconStore) poisoning the archive | Re-encode the PNG through `UIGraphicsImageRenderer` before it enters the view (`ModeIconProvider.rerendered`) | **FIXED — `Reload success`, zero unarchive errors, widgets live** |
+
+**ROOT CAUSE: the raw backend mode-icon PNG.** `ModeIconView` embeds the
+`UIImage(contentsOfFile:)` bitmap into every timeline entry's view archive
+(61 entries × 3 families). Something about the file as served (colour space /
+encoding / dimensions — exact property undetermined; the file itself isn't
+readable off-device) makes chronod's unarchiver reject the whole collection
+with `Code=2`. The placeholder always passed because placeholder data uses
+mode `tube`, which has no cached PNG → the *drawn* `TflRoundelMark` fallback.
+Timing fit: the icon cache was re-fetched around the 19:01 first app launch
+after reinstall, which is exactly when archives started failing — the 18:41
+success predated the re-fetch.
+
+**Permanent fix (keep this!):** `ModeIconProvider.icon()` never returns the
+raw file image; it re-renders into a fresh 48pt/`scale 3` standard-format
+bitmap (`rerendered(_:)` in `AppGroupStorage.swift`). Visually identical at
+roundel sizes, guaranteed archive-safe regardless of what the backend serves.
+If other raw images ever enter widget views (e.g. future station photos),
+they MUST go through the same kind of re-render.
+
+**Verification loop for any future change to this pipeline** (no home-screen
+eyeballing needed):
+
+```bash
+idevicesyslog -u <UDID> > /tmp/ws.txt 2>&1 & sleep 2
+xcrun devicectl device process launch --device <UDID> com.stationly.mobile
+sleep 28; kill %1
+grep -i stationly /tmp/ws.txt | grep -oE \
+  'Accepted successfully to [^ ]*timelines/system[A-Za-z]*|Unable to unarchive collection[^"]*|Reload (failure|success)'
+# PASS = "Accepted successfully to .../timelines/system{Small,Medium,Large}"
+# FAIL = "Unable to unarchive collection ... Code=2" + "Reload failure"
+```
+
+**Found along the way (real bugs, fixed):**
+- `applicationDidBecomeActive` is DEAD CODE in a SwiftUI scene-lifecycle app —
+  UIKit never calls it. The foreground auth refresh, FCM queue flush and
+  `reloadAllTimelines()` never ran. Now wired via `scenePhase` in
+  `iOSApp.swift` → `AppDelegate.handleDidBecomeActive()`. (Foreground reloads
+  are budget-exempt; this is what delivers first timelines to newly added
+  widget instances.)
+- `print()` in the widget extension is invisible on device; use `os.Logger`
+  (see `providerLog` in `StationlyWidget.swift`).
+
+### 3.5 What the per-minute timeline now exists for
+
+`DepartureBoardProvider.getTimeline` still emits one entry per minute for the
+next hour (`.atEnd` → ~24 App-Group re-reads/day). Since the clock ticks on
+its own (§3.2), the entries' remaining job is re-anchoring the clock across
+midnight (and giving the system per-minute flip points generally). Do not
+remove them.
+
+### 3.6 Medium content budget (2026-06-12)
+
+Problem: the medium board stacked up to 8 cells (station + platform header(s)
++ 4 rows + status strip + footer). Cell minimums sum to ~176pt against a
+fixed ~155–170pt canvas (Android's 5×3 widget gets ~200–240dp and is
+user-resizable — iOS medium never grows), so SwiftUI compressed every cell
+below its minimum and the board read as crumbled. The TfL look (fonts, amber,
+row surfaces, 2pt bezel gaps) is intentional and was NOT the problem — the
+board simply had more rows than the canvas could pay for.
+
+Fix (`BoardMetrics.singlePlatform` + `BoardWidgetView`):
+
+- **Medium budget = 6 cells (~156pt of minimums)**: station + ONE platform
+  header (first `groupedByPlatform` group only — a second group would cost a
+  second header cell) + exactly 3 departure rows (`maxRows` 4 → 3) + footer.
+- **Status strip is backfill-only on medium**: it renders only when the
+  primary group has fewer than `maxRows` departures (spare slot — quiet
+  boards never show dead space) or when there are no departures at all (the
+  board's one shot at saying WHY, e.g. "Service Closed"). Large keeps it
+  unconditionally.
+- **Footer shed below 150pt** (`GeometryReader`): only SE-class mediums
+  (321×148) fall under the threshold; every other family keeps the live
+  clock/ago footer.
+- **Large is untouched**: every platform group + status + footer — full
+  Android parity (large ≈ the Android widget's real canvas).
+- **Even surplus distribution (same day, follow-up)**: the original
+  layoutPriority ladder (header/footer 2, platform/status 1, rows 0) made
+  ONLY the header and footer balloon when the board had 1–2 departures —
+  mid rows stayed pinned at minimum height. All `.layoutPriority` modifiers
+  were removed: every cell is `maxHeight: .infinity` at equal priority, so
+  the VStack splits spare height evenly; the per-cell `minHeight`s remain
+  as compression floors. Priorities had no remaining job once the medium
+  board was budgeted to fit its canvas.
+
+### 3.7 Mode roundel aspect ratio (2026-06-12)
+
+The station-lockup roundel rendered visibly squashed. Two compounding bugs:
+
+1. `ModeIconProvider.rerendered` (the §3.4 archive-safety re-encode) drew the
+   backend PNG into a FORCED 48×48 square — the TfL roundel is wider than
+   tall (~1.22:1). Now renders onto a canvas that keeps the source aspect
+   (longest side 48pt).
+2. `ModeIconView` pinned the image into a square `size × size` frame. Now
+   height-anchored (full `size` height, natural width clamped 0.6–1.6×) —
+   the iOS equivalent of the Android lockup's 22dp `fitCenter` ImageView.
+
+No cache invalidation needed: the distortion happened at render time; the
+cached PNG on disk was never modified.
+
+---
+
+## 5. One widget, one station (2026-08-07)
+
+The widget used to read a single set of flat App Group keys describing the app's
+PRIMARY station, so every widget on the home screen showed the same board and
+adding a second one was pointless. It is now configurable per instance, on the
+iOS Weather model: **several widgets, each pinned to a place.**
+
+### What the user does
+Long-press the widget → **Edit Widget** → **Station** → a list of their stations,
+each with its name, what runs there, and a mode symbol. Exactly where anyone who
+has configured a Weather widget already expects to find it.
+
+### How it is built
+
+| Piece | Role |
+|---|---|
+| `StationConfiguration.swift` | `StationEntity` (one station), `StationEntityQuery` (the list), `SelectStationIntent` (the configuration) |
+| `StationlyWidget.swift` | `AppIntentConfiguration` + `AppIntentTimelineProvider` — was `StaticConfiguration`/`TimelineProvider` |
+| `core/iosMain/platform/WidgetAppGroup.kt` | The KMP→Swift wire format: `WidgetStationRef`, `WidgetBoard`, `WidgetFeed` |
+| `IosWidgetManager.refreshFromPrimary` | Now writes EVERY station, not just the primary |
+
+Two new App Group keys carry it: `widget_stations` (the directory the picker
+reads) and `widget_board_<groupingId>` (one station's whole board). Keyed rather
+than nested in one blob because NSUserDefaults has no partial write, and
+re-encoding every station's departures on every frame of a live stream is work
+that scales with how many boards the user keeps.
+
+### The decisions worth knowing
+
+- **The id is the app's GROUPING id** — the hub — which is exactly what one card
+  on the home screen is. A bus hub's several poles are one entry in the picker,
+  not one per pole, and "a widget" and "a card" mean the same thing.
+- **The row's icon is the real roundel, and the fallback matters more than it
+  looks.** `DisplayRepresentation.Image(data:)` takes a bitmap, so `RoundelImage`
+  walks the same ladder the board itself does: the backend's cached PNG → a
+  roundel DRAWN in that mode's tint → an SF Symbol. The `/modes` PNGs are simply
+  absent on a fresh install, which is exactly when someone is setting their
+  widgets up, so a picker that only knew how to show cached PNGs would be blank
+  at the worst possible moment. `isTemplate: false` throughout — a template image
+  is re-tinted to the system's foreground colour, flattening every roundel to one
+  shade and throwing away the only thing that distinguishes a bus stop from a
+  tube station at a glance.
+- **The subtitle's line names come from KMP.** `LineShortNames.displayName`
+  resolves them before the directory is written, so the extension holds no line
+  vocabulary at all. The first version prettified canonical ids in Swift and
+  promptly disagreed with the app's own station settings screen about the same
+  station.
+- **The query is an `EntityStringQuery`**, so the search field at the bottom of
+  the sheet actually filters — on station name *or* line name, because at the
+  moment of typing the user has one of the two in mind and no way to say which.
+- **A station's board is MERGED across its lines**, the way the app's card merges
+  it. A user tracking the Circle and the District at Edgware Road and pinning
+  that station is asking for Edgware Road, not for whichever line sorts first.
+- **No per-platform line prefixes**, unlike the app's board ("(Cir.) Edgware
+  Road"). The extension's own REST refresh re-derives rows from the payload and
+  cannot know which line each came from, so prefixes would appear on a push and
+  vanish on a refresh tap — a board that changes shape depending on who wrote it
+  last.
+- **`lineName` is only set when the station tracks exactly one line.** It is what
+  the platform header prefixes ("Piccadilly: Platform 1"), and with two lines on
+  one platform that prefix would name one and be wrong about the other.
+- **The legacy flat keys are still written for the primary.** They are what an
+  unconfigured widget reads — one added before this build, or one whose station
+  has been deleted — and the window between installing an update and WidgetKit
+  next asking for a timeline is exactly when a half-migrated App Group would blank
+  a widget that was working a second ago.
+- **Stale `widget_board_*` keys are pruned on every write.** Left behind, a widget
+  still configured for a deleted station would render its last known departures
+  for ever, with no refresh able to correct them.
+- **Refresh and paging now carry the station id.** With several widgets up,
+  "refresh the widget" would otherwise rewrite the legacy keys and change a board
+  the user was not touching. The debounce stays GLOBAL, though: it exists to
+  protect TfL from a drumming finger, and three widgets are three buttons.
+- **The refresh does one REST call per distinct naptan** (one for rail, one per
+  pole at a bus hub, capped at 3) and keeps only the feeds the user tracks —
+  the endpoint answers with every line calling there.
+
+### What it costs, and the two rules that keep it affordable
+
+`IosWidgetManager.refreshAllBoards` runs on **every stream frame and every
+push** — on a busy station, every few seconds — and it now rebuilds N stations
+rather than one. Two rules hold the cost down, and both are load-bearing rather
+than micro-optimisation:
+
+1. **Every board is built once.** The primary's board used to be built a second
+   time to fill the legacy keys: the same ~3 SQL queries per selection, run
+   twice, per frame.
+2. **Writes are diffed and the reload signal is bumped once, only if something
+   moved** (`putIfChanged`). That signal is what makes Swift call
+   `WidgetCenter.reloadAllTimelines()`. Bumping it unconditionally asked
+   WidgetKit to regenerate every widget's timeline on every push — including
+   pushes for a station none of the user's widgets show — and Apple meters
+   reloads at roughly 40–70/day.
+
+Related: the stale-key sweep reads the ids back out of the directory it already
+writes rather than calling `dictionaryRepresentation()`, which materialises the
+entire user-defaults domain (every Apple-owned key in it) and was doing so on
+the same hot path.
+
+### ⚠️ If the picker is empty
+`widget_stations` is written by KMP, so **the XCFramework has to be rebuilt**
+(§4 of `IOS_HANDOVER.md`). A Swift-only build links the previous framework, the
+key is never written, and the editor shows a "Station" row with nothing in it —
+which looks exactly like a broken `EntityQuery`. This was hit during
+development; check the key is present before debugging AppIntents:
+
+```bash
+xcrun devicectl device copy from --device <id> --domain-type appGroupDataContainer \
+  --domain-identifier group.com.stationly.shared --source / --destination /tmp/pull
+plutil -convert xml1 -o /tmp/ag.xml /tmp/pull/Library/Preferences/group.com.stationly.shared.plist
+python3 -c "import plistlib;d=plistlib.load(open('/tmp/ag.xml','rb'));print(d.get('widget_stations'))"
+```
+
+## 6. Platform paging: arrows, not a tappable header (2026-08-07)
+
+WidgetKit cannot scroll, so the board pages between platform groups (§2). That
+paging was one `Button(intent:)` wrapping the whole header, cycling forwards with
+a "‣ 2/3" hint. It worked and it could not say two things the user needs:
+**which directions exist**, and **how to get back** — from the last platform the
+only route to the first was to keep going forwards, and nothing on screen
+suggested the header was tappable at all.
+
+Now: a chevron at each end of the header cell, and the board slides in the
+direction the arrow points.
+
+- **The platforms are a RING (2026-08-10).** Past the last platform the next
+  arrow press comes round to the first, and back from the first lands on the
+  last. They used to be a line with two ends, and the arrow pointing past an end
+  went dim — the theory being that a dim arrow says "nothing that way". In use it
+  says "this widget's controls are broken": on a two-platform board one of the
+  two arrows is always dead, and a user pressing the same place twice gets a
+  response once. Both arrows are live whenever the section has more than one
+  platform, and none is ever drawn dim.
+- **The "2/4" marker carries the whole position story** as a result, and is
+  therefore `fixedSize()` — it must never be the text a narrow canvas squeezes
+  out. It is also what tells a three-platform board from a two-platform one now
+  that no arrow dims.
+- **Both arrow slots are reserved unconditionally**, so the title stays optically
+  centred and does not shift by half an arrow as it pages. Same trick as the
+  station header's refresh slot, and for the same device-proven reason.
+- **Two normalisations, and the difference is load-bearing.**
+  `WidgetBoardPage.move` CLAMPS what it reads and WRAPS what it writes. Wrapping
+  is the step. Clamping is what a reader does with a stored index it did not
+  write: a station whose Platform 4 goes quiet drops to three groups, and a
+  widget parked on the last page must land on the last platform there IS rather
+  than being flung back to the first. Both the renderer and the intent clamp the
+  stored value the same way, so they always agree about which page is current.
+- **Page state is keyed per STATION and per SECTION** (`widget_page_<id>`,
+  `widget_page_<id>#u`, `widget_page_<id>#d` — see §6.1). There is no supported
+  per-instance identifier in WidgetKit — the provider is handed a configuration,
+  not an instance — so two widgets pinned to the same station page together. That
+  is the one case this cannot separate.
+- **`groupCount` is passed into the intent**, not recomputed inside it. The
+  intent runs with no access to the rendered board, and re-deriving the count
+  from the App Group would use rows ticked to a different minute than the ones
+  the user is looking at, which is exactly when the count can differ by one.
+
+### ⚠️ An arrow must always be a Button
+
+The first version drew the disabled arrow as plain content, on the reasoning
+that something inert should not look tappable. On device that was actively
+wrong: **every non-interactive pixel of a widget belongs to the widget's own tap
+target**, so tapping the dim arrow launched the app — the one thing a disabled
+control must never do.
+
+There is no disabled state left to get wrong, but the rule outlived it: anything
+arrow-shaped on this board is a `Button(intent:)`, and the same reasoning applies
+to anything decorative added later.
+
+## 6.1 One board, three families (2026-08-10)
+
+Three gaps closed at once, and they were all the same gap: **layout decisions
+that lived in one family's view instead of in the shared board.**
+
+### The small family had its own view, and fell behind it
+
+`SmallWidgetView` drew a station lockup, the first three departures of whatever
+block came first, and a footer. So a 2×2 widget had **no refresh button and no
+platform pager** — not by decision, but because those were built in
+`BoardWidgetView` and this view simply never called them. A user tracking three
+platforms saw one of them, with nothing on screen admitting the others existed.
+
+It is deleted. Every family now renders `BoardWidgetView` at its own
+`BoardMetrics`, and the metrics carry what actually differs: type scale, the
+inset of the corner-zone cells, and the width of the tap targets (small's
+refresh slot is 22pt against medium's 30pt, its arrow slot 24pt against 37pt —
+two chevrons and a refresh button have to come out of a third of the width).
+`HeaderLadder` is what makes the header survive that: it steps down through
+KMP's shorter wordings ("Piccadilly Platform 2 Westbound" → "Pic. Plat. 2")
+rather than scaling or ellipsising, which is why the small pager can afford
+arrows at all.
+
+### The large family dropped platforms it had no room for
+
+Large rendered every block top-down against a whole-board row budget: the first
+platform took what it wanted, the next took the remainder, **and a third
+platform got nothing and was not drawn.** No arrow said so, because paging was
+medium-only. On the biggest widget iOS offers, a third platform was unreachable.
+
+Large now draws **two sections**, each a pager of its own (`BoardSection.upper` /
+`.lower`), 3 row cells each:
+
+| Platforms | Upper | Lower |
+|---|---|---|
+| 1 | the block, 6 rows | — |
+| 2 | one block | one block (unchanged from before) |
+| 3 | two blocks, arrows | one block |
+| 4 | two blocks, arrows | two blocks, arrows |
+
+### Which blocks share a section: `WidgetData.sections`
+
+A split purely by count would put the Piccadilly westbound above and the
+Piccadilly eastbound below — two halves of one decision, at opposite ends of the
+widget, each paging past the other line to be compared. So blocks are collected
+into runs of related ones first, and the split falls on a run boundary.
+
+- **Rail: the line**, read off the rows' `lineShort` (KMP resolves it on every
+  rail row; `mixesLines` only decides whether it is *drawn*). A shared
+  Circle/District platform is its own kind and pairs with another shared one.
+- **Bus: the routes calling at the pole.** A bus block IS a pole, so pole
+  identity groups nothing — every block would be its own run. Route 39 northbound
+  and southbound are two naptans on opposite sides of one road, and that
+  association lives in `feeds` (`station` = the pole = the bus block key, `line` =
+  the route).
+- **Neither: the block key**, which yields one run per block and therefore a
+  plain balanced split — the right answer when there is nothing to reason from.
+
+The boundary chosen is the one leaving the halves closest in size, ties going
+UPWARDS so three platforms put the pager on top where the eye lands first.
+
+**This is the one place a renderer reorders KMP's blocks**, and it is bounded:
+order within a run is untouched (unassigned last, the pin, the soonest train),
+runs appear in the order their first member did, and the function is pure — so
+every entry of a timeline sections identically and no page moves under an arrow.
+
+## 6.2 The cell count is fixed; only the data moves (2026-08-10)
+
+**Symptom:** "the widget keeps resizing, the font size keeps changing." It was
+not the font. Every cell is height-flexible at equal priority (§3.6), so the
+NUMBER of cells decides how tall each one is — and the board drew a cell per
+departure it happened to have. Four trains at 09:00, three at 09:03, and the
+whole panel re-laid itself out around the difference. A board that reflows while
+you are reading it looks broken, not live.
+
+So the skeleton is now a constant per family and the data moves inside it:
+
+| | small / medium | large |
+|---|---|---|
+| station | 1 | 1 |
+| platform header | **1, always** — even with no label to put in it | 1 per section = **2, always** |
+| departures | 3 | 3 per section = 6 |
+| status | takes the **3rd departure cell** when the platform can't fill it | **1 of its own**, always |
+| clock | 1 (shed under a 150pt canvas) | 1 |
+| **total** | **6** | **11** |
+
+Which gives, on small and medium:
+
+- **3+ departures** → three rows, no strip.
+- **2** → two rows and the strip.
+- **1** → one row, one dark cell, the strip. *(The dark cell is the point: without
+  it the two remaining cells would each grow by half a row.)*
+- **0** → "No departures right now" in the first cell, a dark cell, the strip —
+  which is where the reason ("Service Closed : …") actually gets said.
+
+and on large, a second platform section that is drawn empty when the station has
+only one platform, rather than collapsing and stretching everything above it.
+
+Three supporting pieces, all of which exist for the same reason:
+
+- **`EmptyRowCell`** is LIT, not black. The black gaps between cells read as the
+  panel bezel, so an unlit two-row gap looks like a hole in the panel rather than
+  an empty row on it.
+- **The status strip takes a departure cell's height** on the paged board
+  (`metrics.row + 10`, not `status + 8`). It is standing in for a row, so at its
+  own smaller minimum it would resize its neighbours every time it appeared.
+- **`SkeletonBoardView` draws the same cell count**, because it is what is on
+  screen immediately before the first data lands.
+
+`NoDeparturesRow` — a bare centred Text at `maxHeight: .infinity` — is gone; it
+was the largest single source of the reflow.
+
+### The status strip says WHICH line (2026-08-10)
+
+`buildBoard` used to send "the first line that has anything to say", with a note
+that ranking "would need a severity ranker the extension does not have". True,
+and the wrong side to look: the extension cannot rank, but KMP can, and
+`LineStatusRanker` — the home board's own — has been in `commonMain` all along.
+At King's Cross a part-closed Northern was hidden behind a healthy Victoria that
+merely sorted first, so the widget said "Good Service" while the app's board said
+"Northern Part Closure".
+
+The widget now gets the **worst line first, named**, through the same ranker and
+the same de-duplication ("Circle, District Minor Delays"). A line with no status
+record counts as Good Service rather than as an unknown severity, which would
+otherwise lead the board with an empty sentence.
+
+**The rotation is not ported.** The home board cycles the remaining disrupted
+lines every 8s; a widget is a sequence of static snapshots with no animation loop
+(§2.1), and a strip that changed its subject on the per-minute timeline is the
+same idea as the stepped marquee that was built and rejected (§3.3). The worst
+line is the one that changes a journey.
+
+### Making it fast
+
+**Do not call `reloadTimelines` from an interactive intent unless the DATA
+changed.** WidgetKit re-renders the tapped widget by itself once `perform()`
+returns, from the timeline it already holds — which is immediate. The paging
+intent also called `reloadTimelines(ofKind:)`, which threw that timeline away
+and rebuilt all 61 entries, each re-ticking every departure, *before* the new
+page could be drawn. That rebuild was the entire lag between the tap and the
+board moving, and it bought nothing: the page number is in the App Group and
+every entry reads it at render time.
+
+`perform()` is now two `UserDefaults` writes and a return. The cost: a second
+widget pinned to the same station shares the counter and waits for its own next
+reload. The refresh intent still reloads, because there the data genuinely
+changed.
+
+The first tap after the widget has been idle is still slow — that is the
+extension process cold-starting, and no code here can avoid it.
+
+### Making it look smooth
+
+A widget cannot animate on its own, but **WidgetKit does animate the view diff
+after an interactive intent** (iOS 17+). Three things make it read as one board
+moving rather than a cut:
+
+1. **The header and every row carry the same `.transition(.push(from:))`.** The
+   push direction comes from the last move, stored in the App Group
+   (`widget_board_page_dir_<id>`): the view is rebuilt from scratch after the
+   intent and has no memory of the previous page, and a transition that always
+   pushes one way makes going back feel like going on.
+2. **Identity is the PAGE, not the row.** `DepartureRow.id` is a fresh UUID on
+   every decode, so keying rows on it would re-insert every row on every minute
+   tick and animate a countdown as though the platform had changed. Rows are
+   `.id("\(page)-\(index)")`.
+3. **The title and its "2/3" marker travel together** inside one transitioning
+   container. The marker is part of what changes; leaving it still while the
+   platform name slides out from under it is what makes a transition look
+   half-finished.
+
+Transitions WidgetKit does not support are ignored rather than failing, so the
+worst case here is the cut we had before.
+
+## 6.3 Breathing room, one face, one ladder (2026-08-14)
+
+Four pieces of owner feedback on the shipped widget, and three of the four are
+the same observation from different angles: the board had accumulated local
+decisions that were each defensible and did not add up to one object.
+
+### Breathing room is INSIDE the cells — the panel still runs edge to edge
+
+⚠️ **This was got wrong once, corrected on device the same day, and the wrong
+version is the tempting one.** The first reading of "more breathing room from the
+edges" put a margin AROUND the panel: a `BoardMetrics.boardInset` of 5–6pt plus a
+`.clipShape(ContainerRelativeShape())` so the panel's corners ran concentric with
+the widget's. It was archive-safe and it looked deliberate, and it was still
+wrong. Owner's correction:
+
+> *"by breathing room I mean the breathing room for the text, the layout and the
+> design — the dot matrix board should be covering the widget space end to end."*
+
+A panel with a border round it stops being the widget and becomes a card inside
+it, which is precisely what §3.1 removed. **Do not reintroduce an outer margin.**
+The `boardInset` field and the clip are gone; there is a comment at the foot of
+`BoardWidgetView.board` holding that ground.
+
+What actually needed room was the text, which sat on a flat 10pt inset at every
+family — comfortable on a 2×2, mean on a 360pt-wide board where a destination had
+340pt of cell and used all of it. So:
+
+- **`BoardMetrics.rowPad`** — 10 / 14 / 16 — is the content inset of every
+  mid-board cell: departures, the status strip, the empty and message cells, a
+  non-pageable platform header, and the skeleton's equivalents. Small keeps 10; it
+  has a third of the width and the destination needs every point.
+- The header and footer keep their own deeper pads (`headerPad` / `footerPad`),
+  because those two cells sit where the widget's corner mask intrudes — that
+  reasoning from §3.1 is load-bearing again now the panel is full-bleed.
+- **The footer-shed threshold measures `geo.size.height`, the FULL canvas**, and
+  the `GeometryReader` sits outside everything — unchanged, and the thing to
+  check first if any of this is ever retuned.
+
+### One typeface: `WidgetTheme.font`
+
+The board was mixing three faces without ever deciding to. SF Pro for names and
+headers; **SF Mono** wherever a number appeared (the ETA, the "2/4" page marker,
+the wall clock); **SF Pro italic** for the "ago" timer. Each was locally sensible
+— mono for digits, italic for a secondary note — and together they read as a
+panel assembled from parts. A departure board is signage: one machine cuts every
+glyph, and the hierarchy is carried by size and weight alone.
+
+`WidgetTheme.font(_:_:)` is now the only place the face is named, and every
+`Text` and SF Symbol in the extension goes through it. `grep '\.font(\.system'`
+over `iosApp/StationlyWidget/` should return nothing.
+
+**Not even tabular figures.** `monospacedDigit()` was applied for a while at the
+three call sites that tick (`LiveClock`, `LiveAgo`, the ETA), on the reasoning
+that a per-second number needs a fixed advance or its column twitches. Sound in
+isolation, wrong here — the in-app board sets no digit modifier on any of the
+three, tabular figures are visibly wider and more evenly spaced, and the
+comparison a user actually makes is between this widget and the app's own board
+seconds later. Two clocks that don't look like one product is a worse defect than
+a digit that shifts a point. If the jitter ever needs fixing, it needs fixing on
+**both** surfaces.
+
+The in-app board matches: `Board.kt`'s `BoardFooter` no longer italicises its
+"ago", which is a **deliberate divergence from Android** — `widget_departure_board.xml`
+sets `textStyle="italic"` on that element. The two surfaces are seen within
+seconds of each other and have to agree; the board-wide rule wins over the
+per-element parity. `MiniBoardClock` lost its `FontFamily.Monospace` for the same
+reason: it is a mockup OF this board shown in settings, and a face the real one
+does not use makes it a picture of a different product.
+
+### The size ladder: station one step over platform, and the clock off it
+
+| | was | is | why |
+|---|---|---|---|
+| platform header (small) | 10 | 12 | **smaller than the departures at 11** — the ladder was inverted on the one family with the least room to spare, so the 2×2 board had no visible hierarchy at all |
+| platform header | 13/15 | 14/16 | raised toward the station rather than the station being raised away |
+| station | 12.5/16/19 | 13/15/17 | **exactly one step above the platform header.** Owner: *"make sure the station font is not too big, it should just be 1 size bigger than the platform rows, that's it."* A first pass took it the other way (14/17/20) and it read as a title bar rather than as the top rung of a board |
+| footer clock | 12/15/18 | —/15/17 | see below |
+
+Departure rows are unchanged throughout at 11 / 12.5 / 14.5; everything moved
+around them. The ETA lost its half-point bump and its mono face — same size as
+the destination beside it, and **bold is what makes it the number you scan for**.
+
+**The footer clock is deliberately NOT on that ladder.** It sits at the
+station's size, bold, which puts it far above the departure row immediately
+above it — and that is the whole job. Folding it into the "everything else" band
+at row size was tried and produced the next piece of feedback:
+
+> *"In the mid rectangular widget the clock row is matching with the row above
+> it, like there is no gap in between."*
+
+There is a gap — the board is one `VStack(spacing: 2)` with no exception at the
+footer, checked. What had gone was the *distinction*: same face, same size, same
+lit surface, so two cells read as one and a 2pt bezel line between them stopped
+registering. The in-app board never had this problem because it never made that
+mistake — `BoardFooter` in `Board.kt` runs its clock at **19sp bold against 15sp
+rows**, on its own lit chip. A widget footer quieter than the app's is the same
+board disagreeing with itself. It stops at the station's size and does not
+outrank it.
+
+### The station name truncates; it never shrinks
+
+`minimumScaleFactor(0.65)` is gone from `DotMatrixHeader`. It made the board's
+loudest line the only one whose size varied with its content — "Bank" at full
+height, "Highbury & Islington" at two thirds of it — so the widget appeared to
+use a different type scale per station. A station name is the one string on the
+board the user already knows (they chose it), so the tail is the cheapest thing
+on the panel to lose. Owner's words: *"the station name should be the biggest
+even though it is cut short with …"*.
+
+**On small the name takes the left-hand space too** (`BoardMetrics.centresStationName`,
+false only there). The header reserves an empty column matching the refresh
+button opposite so the name stays optically centred — 22pt of slot plus 8pt of
+spacing, about a quarter of a 2×2 header, held empty to centre a name that had
+already been cut to three characters. Centring is not worth a quarter of the row
+it centres. Small drops the reservation and reads from the left edge, the roundel
+anchoring it; medium and large keep it, because there the name has width to spare
+and an off-centre title on a wide board looks like a mistake.
+
+### The small family's footer drops the wall clock
+
+A 2×2 footer is ~145pt wide once the maker mark and both insets are out of it,
+and three elements in that space is not a layout, it is a queue. The wall clock
+is the one of the three that is **redundant on this device** — the phone's own
+status bar is a centimetre above the widget and says the same thing — so it comes
+out and the "ago" timer takes the middle. That one has no other source: it is
+the only thing on the panel saying whether these departures are seconds or
+minutes old, which is the question a glance at a departure board is asking.
+
+`BoardMetrics.showsClock` carries it (false on small only). The trailing column
+is still reserved and holds nothing, because that is what keeps the "ago"
+optically centred against the maker mark opposite. `SkeletonBoardView` draws the
+same two bars, since it is what is on screen immediately before the real footer.
+
+Two follow-ups from seeing it on device:
+
+- **Centred, it gets a wide frame** (`LiveAgo.maxWidth`, `ago * 9` instead of the
+  three-column footer's 72pt) so a two-digit-minute reading — "12:07 ago" — shows
+  in full. This is the one place on the board with width going spare; nothing
+  here should be clipped.
+- **`BoardMetrics.footerMinHeight`** replaces the flat `clock + 12`: a footer
+  with no wall clock in it has no business reserving a clock's worth of height,
+  so on small it is sized to the taller of its two remaining tenants
+  (`max(ago, logo) + 7` ≈ 18pt against 23).
+- **And it is PINNED there** (`footerFlexible`), which is the half that actually
+  does the work. Lowering the floor alone looks like it should hand the
+  departure rows their space back and very nearly doesn't: every cell is
+  `maxHeight: .infinity` at equal priority (§3.6), so surplus is split **equally**
+  — returning 5pt to a pool of six cells buys each row less than a point, and the
+  footer grows straight back into most of what it gave up. Pinned, the whole
+  surplus goes to the cells above. It stays a constant per family, so this does
+  not reintroduce the reflow §6.2 removed.
+
+Medium and large keep all three columns — they have the width, and there the
+clock is part of the concourse-board lockup rather than a passenger competing
+for it.
+
+---
+
+## 6.4 One ink, and the words the board writes itself (2026-08-17)
+
+§6.3 settled that the board has **one typeface** and carries hierarchy by size
+and weight. This is the same argument finished, because one thing had been left
+outside it: every word the board writes *about itself*.
+
+### The finding, in one line
+
+**Every piece of static text on this widget was the only text on the panel that
+was not board-amber.**
+
+Four call sites, and it was exactly the four:
+
+| where | on | was | contrast |
+|---|---|---|---|
+| the "no departures" cell | row surface (0.10) | `textMuted` (0.40 grey) | ~3.0 : 1 |
+| empty-state title | black | `textPrimary` (white) | ~21 : 1 |
+| empty-state message | black | `textMuted` | ~3.7 : 1 |
+| empty-state small message | black | `textMuted` | ~3.7 : 1 |
+
+For comparison on the same surfaces: amber is ~11.3 : 1 on a row and ~13.5 : 1
+on black. So everything the board got from TfL — station, platform, destination,
+ETA, status — was amber, and everything the board said in its own voice was a
+grey the panel used nowhere else, at roughly a third of the contrast, at 11pt.
+The one line a widget shows when it has nothing else to show was the hardest
+line on it to read, and it fell below the 4.5 : 1 that body text is normally
+held to.
+
+The greys were never a decision. `textPrimary` / `textSecondary` / `textMuted`
+are a generic app palette that arrived with the first version of the theme and
+were only ever reached by static text, because static text was the only thing
+written after the board's own amber rule existed.
+
+**The rule now**: text on this board is `amber`. `amberDim` is not "quieter
+amber" for this purpose — it means SPENT (a departed row), which an instruction
+the user is meant to act on is not. Hierarchy is size and weight, per §6.3.
+
+Deleted with them: `WidgetTheme.surface` (a second cell colour, unused since
+§3.1 made header and footer ordinary cells), `stationlyRed`, and
+`etaColor(eta:isDue:)`. The last is worth naming because it was a **trap rather
+than merely dead**: it returned amber / white / grey by parsed minutes, which is
+a *different colour policy* from the one `DotMatrixRow` actually applies (red
+when due, amber when live, amberDim once departed). Two rules for one thing,
+with the unused one looking authoritative because it sat in the theme.
+
+### ⚠️ The line: a board needs a station, an empty state does not have one
+
+The board layout was extended to the four `EmptyReason` states — a lit header
+cell with the maker mark where the roundel goes, over a message block — and it
+was **reverted the same day** on the owner's correction:
+
+> The board layout is for a widget that HAS a station. It can be empty — nothing
+> has arrived, every train has gone, nothing is coming — and it is still that
+> station's board. A widget with no station behind it is not a board with
+> nothing on it; it is not a board.
+
+The reasoning is exact, and it is the difference between an empty *board* and an
+empty *widget*:
+
+| the widget has | shows | why |
+|---|---|---|
+| a configured, tracked station | **the board**, with `BoardMessageCell` in a row | it is that station's board; the departures are just not there |
+| no station behind it | **a centred mark and a sentence** | there is nothing to draw a board *of* |
+
+A lit header cell reads as *a departure board for somewhere*. Three of the four
+empty states have no somewhere, so the panel was reporting on a station it did
+not have. **Do not re-extend the board layout to these states.**
+
+`.removed` sits on the no-station side, and it is the interesting one: there IS
+a name, but the station is gone from the user's list, so there is no board to
+draw and the ask is identical to `.needsStation` — pick one. The name goes in
+the title, where it does the one job it can still do: say WHICH widget needs
+attention.
+
+```
+┌───────────────────────────────┐
+│                               │
+│              ▣                │  StationlyMark, m.icon × 2 (28/36/44)
+│                               │
+│     Highbury & Islington      │  m.station bold, amber, truncates
+│   Not in your stations. Touch │  m.row, amber, wraps to 4 lines
+│   and hold, then tap Edit     │
+│            Widget             │
+│                               │
+└───────────────────────────────┘  plain black, no cells, no lattice
+```
+
+### What did change in the empty state, and stays changed
+
+The layout is the original. The paint is not:
+
+1. **Amber, not white and grey.** These four sentences were the entire set of
+   non-amber text on the widget, and the grey ran at about 3:1.
+2. **Type from `BoardMetrics`.** It was a hardcoded 13pt title and 11pt body on
+   *every* family, so a 4×4 got the same small print as a 2×2 on more than twice
+   the canvas. Now `m.station` / `m.row`, the ladder the board already uses.
+3. **The mark scales**, at twice the mode roundel (28/36/44), instead of a flat
+   40pt that crowded a 2×2 and looked lost on a 4×4.
+4. **Small gets a title.** It drew `shortMessage` alone, so a widget whose
+   station had been deleted could say "Station removed" and never *which*.
+
+Title truncates, message wraps, and the split is not arbitrary: a station name
+is a string the user already knows, so its tail is the cheapest thing on the
+panel to lose (the same argument `DotMatrixHeader` makes). The message is a
+sentence they have *not* seen, and truncating it loses the instruction.
+
+### One copy table, every family
+
+The small family had a second table of four shorter strings, and drew *only*
+those — no title. Two tables is two places to change a sentence and one of them
+gets missed, and the short set had already become the *worse* copy: "Choose a
+station" as the entire message, on the family least likely to be understood
+without the gesture. Every family carries both lines now, and small wraps the
+message instead of substituting a different one.
+
+| state | title (amber bold, `m.station`) | message (amber, `m.row`) |
+|---|---|---|
+| `signedOut` | Signed out | Open Stationly to sign in |
+| `noStations` | No stations yet | Open Stationly to add one |
+| `needsStation` | Choose a station | Touch and hold, then tap Edit Widget |
+| `removed` | *the station's name* | Not in your stations. Touch and hold, then tap Edit Widget |
+
+Three of the four titles used to be the literal word "Stationly". A user reading
+a panel headed with the app's own name, over an instruction, under the app's own
+logo, learns nothing from the heading — it is the one line with room to say what
+state this is, spent on a fact the icon already carried.
+
+Both configuration messages name the whole gesture: touch and hold, THEN tap
+Edit Widget. The touch-and-hold alone only opens the jiggle menu, and a user who
+has never configured a widget has no reason to know a second step exists.
+"Touch and hold" rather than "long press", and "Edit Widget" exactly as the menu
+spells it, because those are the words on the phone.
+
+### "No departures right now" was a claim nobody had checked
+
+A board the app has never written (`StationResolver.waiting`) carries an epoch
+timestamp and no rows. That is **not** "the platform is quiet" — it is "nothing
+has arrived yet", and the widget was announcing the first while meaning the
+second. The distinction already existed one layer down: `WidgetData.stateName`
+has called them `waiting` and `quiet` since the resolver landed. It just never
+reached the glass.
+
+| `hasTimestamp` | says |
+|---|---|
+| `false` | Connecting |
+| `true` | Nothing departing right now |
+
+**The words are the app's, not the widget's.** Both are transcribed from
+`BoardFallbackDefaults` in commonMain — the copy table the home board and the
+Android board already share.
+
+### ⚠️ The debt this leaves, and its shape
+
+`BoardFallback.kt` is a **seven-state machine with real detection**: offline,
+signal lost (with a formatted age), disrupted (titled with the live TfL
+severity), late night, early morning, nothing upcoming, connecting. It is
+SDUI-driven from the backend `homeConfig` and kept in lockstep with Android.
+
+The widget reaches **two of the seven, by hand**, because this extension does
+not link the KMP framework — it reads the App Group and nothing else. So at
+02:00 the home board says "Service ended for tonight / Back in the morning" and
+the widget for the same station says "Nothing departing right now". Same
+station, same moment, two answers.
+
+Transcribing beats inventing in the meantime, and the fix has a known shape —
+**the same one `headerVariants` already uses**: KMP resolves the copy, writes it
+to the App Group, and the widget only renders it. It never assembles the string
+itself, exactly as it never assembles a platform header. That needs one new App
+Group key and a write alongside the board payload; it is not started.
+
+---
+
+## 6.5 The board says why it is empty, in the app's own words (2026-08-17)
+
+§6.4 made the widget's static text *look* like the board. This makes it *say the
+same thing the app says*, which turned out to be the larger half.
+
+### The gap
+
+`core/util/BoardFallback.kt` is a **seven-state machine with real detection**,
+SDUI-driven and shared with Android. The widget reached one of the seven, with a
+hardcoded string:
+
+| the app said | the widget said |
+|---|---|
+| Offline · Catching up when you're back | No departures right now |
+| Live updates paused · Last refresh 12 min ago | No departures right now |
+| *Severe delays* · No departures expected here | No departures right now |
+| Service ended for tonight · Back in the morning | No departures right now |
+| Service starting soon · First departures incoming | No departures right now |
+| Nothing departing right now · Watching for the next one | No departures right now |
+
+Same station, same second, two answers. At 02:00 the home board explained the
+network was closed and the widget beside it implied the trains had simply
+stopped coming.
+
+### The division: KMP owns the words, the widget owns the clock
+
+The whole table is published to the App Group (`widget_board_fallback`) by
+`IosWidgetManager.publishFallbackCopy`, and the extension picks a row from it.
+
+**The split is forced, not stylistic.** WidgetKit builds an hour of entries in
+one pass and the correct row *moves inside that hour*: a board becomes "Live
+updates paused" six minutes after its payload lands, and "Service ended for
+tonight" at midnight, both on entries archived long before either moment. A
+finished string resolved app-side would be frozen onto every one of them. So the
+choice happens per entry in `getTimeline`, where each entry's own date is already
+in hand, and lands on `DepartureEntry.fallback`.
+
+It is exactly the `headerVariants` arrangement: core decides the wording, the
+extension decides which one fits, and the extension never writes a sentence.
+
+`BoardFallback.kt` moved from `composeApp` to `core` for this, following
+`TimeWindow.kt`. **Rule: the wording is decided in `core`, once.** A surface may
+decide which kind applies, because that needs a clock and a render time only the
+surface has. It never decides what it says.
+
+### SDUI reaches the widget too
+
+Read from the cache `HomeConfigCache` keeps in shared storage, not from the
+network — this runs on a board write and must not depend on a fetch. That also
+answers the `GOOD_SERVICE` TODO's complaint for one caller: remote config *is*
+reachable from the write path, through the cache rather than the API.
+
+Thresholds travel with the copy. A table whose wording is backend-driven while
+its boundaries are hardcoded would drift the moment either moved. They cross as
+**minutes past local midnight**, not `"HH:mm"` — Swift has no `LocalTime`, and an
+integer is the one shape both halves already agree about. Parsing is core's own
+`parseHHmmOrNull`, the same function `Board.kt` reaches for these very keys.
+
+### ⚠️ The table holds TEMPLATES, not resolved states
+
+`publishFallbackCopy` passes `substituteAge = false`. SIGNAL_LOST's detail is
+`"Last refresh {age} ago"` and the age is not known until an entry renders.
+
+Resolving it app-side uses `BoardFallbackState(kind)`'s default age of zero, so
+`formatAge(0)` bakes in **"Last refresh just now ago"** and deletes the
+placeholder the renderer needs. The widget then finds no `{age}`, substitutes
+nothing, and shows that sentence at every age forever. Silent, permanent, and it
+needs a stale board to reproduce.
+
+Anything that resolves a copy *table* rather than a live state must pass `false`.
+
+### What the widget decides for itself
+
+- **DISRUPTED** takes the **table's** generic title, not the live severity. The
+  app titles it with the severity, which is right for the home board; here the
+  status strip sits directly beneath and always renders on an empty board, so it
+  printed the severity twice in adjacent cells ("Severe Delays" over "No
+  departures expected here" over "Severe Delays : signal failure"). Generic title
+  plus the strip's specific one is strictly more information in the same space,
+  and it is what `BoardMessageCell` already documents.
+- **CONNECTING** has no Compose equivalent. `StationResolver.waiting` dates a
+  board to the epoch when the app has never written one, and Kotlin treats
+  `lastUpdatedMs == 0` as "cannot say how old" and falls through. Here it is a
+  state: a widget can be placed on a station the app has not got to yet, and
+  "Connecting" is what is actually happening. It sits above everything, because
+  nothing below can be true of a board nobody has fetched.
+- **OFFLINE is deliberately not detected.** It needs reachability, which an
+  extension cannot get cheaply, and the one available signal
+  (`lastRefreshFailed`) only moves when the user taps refresh. SIGNAL_LOST says
+  the part the user can act on ("this is old") without claiming a cause we cannot
+  verify. The copy is still published so the day reachability exists, nothing
+  else changes.
+
+### ⚠️ The ordering fix: a closed network is not a fault
+
+Reported off the device:
+
+> "when the service ended for night the text also says the widget hasn't updated
+> since last update ... but the fact is we did check with the backend so our
+> update is recent but the trains are not there"
+
+SIGNAL_LOST was tested **above** the time windows. After the last train nothing
+fetches, because there is nothing to fetch: the app is shut, the stream has
+nothing to push, and the widget's own schedule tapers overnight by design. Five
+hours later the last sync is five hours old — *which is true* — and it was being
+reported as "Live updates paused · Last refresh 5h ago", i.e. the board blaming
+itself for behaving correctly.
+
+The timer was never the bug and is not touched. It already measures the last
+**check**, not the last train: `SqlStorage.saveSyncTimestamp` stamps every sync
+including a zero-row one, and the extension's REST path writes `now`
+unconditionally in `writeBack`. What was wrong is that a gap with a known,
+correct cause was described as a failure.
+
+Two changes, both narrow:
+
+1. **`computeBoardFallbackState` tests the closed-network windows before
+   SIGNAL_LOST.** Outside 00:00–06:00 nothing changes; a stale board at 14:00
+   still says "Live updates paused", because then it genuinely is one. DISRUPTED
+   keeps its place above the windows (an all-day closure is more specific than
+   "ended for tonight").
+2. **The freshness colour ladder is suppressed during those windows**
+   (`BoardFallbackResult.freshnessMatters` → `LiveAgo.staleColor`). The reading
+   stays, because it is true and it is the only thing on the panel saying how old
+   this is. It just stops being drawn in alarm red. The colour answers "can I
+   trust these times?", and in a closed window there are no times to distrust.
+
+**⚠️ Android has not taken change 1.** `android/.../BoardFallbackState.kt` still
+has the old order, so an Android board whose app has been shut all night still
+says "Live updates paused" at 04:00. Left divergent deliberately — the fix was
+found on the iOS widget and this work is iOS-only — and it is a straight port:
+move the SIGNAL_LOST test under the time windows, nothing else moves.
+
+### Two cells, not one line
+
+The message takes the title cell **and** the dark cell under it, so the copy
+arrives as the pair the app writes it as:
+
+```
+┌───────────────────────────────┐
+│ ▣  Highbury & Islington       │  station header
+├───────────────────────────────┤
+│   Service ended for tonight   │  bold — the title cell
+├───────────────────────────────┤
+│      Back in the morning      │  regular — was a dark cell
+├───────────────────────────────┤
+│                               │  status strip, or dark
+├───────────────────────────────┤
+│                               │  dark — the platform header, moved down
+└───────────────────────────────┘
+```
+
+The cell count does not change: the detail lands in a cell that was already
+there holding a place for a train that is not coming. §6.2 is intact.
+
+Weight, not colour, separates them — both are board amber, per §6.4. That
+matches `BoardFallbackRows` in the app, which is a bold title over
+normal-weight detail.
+
+### ⚠️ The blank cell goes at the BOTTOM, never under the station name
+
+The platform header used to be drawn unconditionally, on §6.2's reasoning that a
+cell which comes and goes takes every other cell's height with it. The count rule
+is right and is kept. Drawing the cell *there* when it had nothing to say was
+not.
+
+With no platform to name, `section.group` is nil, the variants are `[""]`, and it
+rendered **a lit strip with nothing in it, directly under the station name** — so
+an empty board opened with a gap and the message it was meant to introduce
+started one cell late.
+
+> "why are we leaving a line above it ... it's okay to leave the line at the
+> bottom rather than leaving something from top"
+
+Exactly right, and it generalises: **trailing dark cells read as a board with
+room left; a leading one reads as a fault.**
+
+So the cell moves rather than disappearing. No header means one extra dark cell
+at the end, the count is identical, nothing resizes. The two floors differ by
+half a point across all three families (`platform + 8` against `row + 10`), which
+is inside the rounding of an equal-share layout.
+
+Keyed on whether there is a header to write, **not** on `speaks`: a station whose
+platform block exists but has emptied out still has a real name to show, and that
+header is useful precisely then.
+
+### ⚠️ No status means no strip, not "Good Service"
+
+`DotMatrixStatusStrip` read `data.status.isEmpty ? "Good Service" : data.status`,
+so a board with no status record told the user their line was running fine.
+Nothing had checked. Same defect as the old "No departures right now" one cell
+above it — static text asserting an unverified fact — arriving through the one
+place that looked like a formatting nicety rather than a claim.
+
+It showed up worst on the board least able to afford it: a station the app has
+not written yet carries `status: ""`, so a widget that knew nothing announced
+good service on a line it had never asked about.
+
+The **cell stays**, dark, holding its place. Dropping it would change the cell
+count.
+
+The colon-splitting moved to `StatusParts`, shared with the fallback resolver —
+which needs the same split to tell a disrupted line from a healthy one, and two
+implementations of "where does the colon go" is one more than a board should
+have.
+
+---
+
+## 7. The App Group is a hand-kept contract (2026-08-08)
+
+Nothing checks that the Kotlin and Swift sides agree about the App Group, and
+both halves of the failure are silent:
+
+- **A wrong KEY** reads `nil`, which is indistinguishable from "the app never
+  wrote it". The project has already paid for this once — the 2026-07-25 App
+  Group ID rename had to find every copy of the identifier, and a missed copy
+  opens an empty suite rather than failing to build. The keys had drifted into
+  the same shape: ~20 raw literals across four Swift files, four of them spelled
+  out in two files each. They now live in one `AppGroupKeys.swift` per target
+  (the app and the extension are separate compilation units and cannot share
+  one), mirroring `AppGroupKeys` in `core/iosMain/platform/Platform.ios.kt`.
+- **A wrong FIELD** in the JSON decodes as absent, and the extension renders an
+  empty board rather than throwing. `WidgetAppGroup.kt` and its Swift mirrors
+  (`StoredBoard`, `StationRef`, `BoardFeed` in `AppGroupStorage.swift`) are the
+  contract: **add fields, never rename them, and change both sides in one
+  commit.**
+
+**Do not nest one key's name inside another's prefix.** The paging keys were
+first called `widget_board_page_<id>`, which sits under the `widget_board_`
+prefix a station's board uses — so any code that ever scans by that prefix reads
+`widget_board_page_940GZZ…` as a station whose id begins "page_". Nothing scans
+by prefix today (the stale-key sweep diffs the directory instead), and the point
+of the rename to `widget_page_<id>` is that nothing can start.
+
+Ownership, which is what tells you whether a change needs a matching one over
+there:
+
+| Keys | Written by | Read by |
+|---|---|---|
+| `widget_station_*`, `widget_predictions`, `widget_status`, … | KMP (primary station) | extension, when unconfigured |
+| `widget_stations`, `widget_board_<id>` | KMP (all stations) | extension + configuration picker |
+| `widget_api_*` | KMP | extension's own REST refresh |
+| `widget_reload_signal` | KMP, and the extension after a refresh | the app's `WidgetReloadObserver` |
+| `widget_page_<id>` (+ `#u`/`#d` sections), `widget_page_dir_<id>` | extension | extension — **but KMP deletes them** when a station is removed, because it is the only side with an event for that. A section added in Swift needs its suffix in `AppGroupKeys.WIDGET_PAGE_SECTIONS` or it leaks |
+| `widget_last_manual_refresh`, `widget_refresh_*` | extension | extension |
+| `widget_placements` | extension (a stamp per station+family, every timeline build) | the app's `HomeStateProbe`, for the delete dialog |
+
+---
+
+## 8. Quick build + deploy (Swift-only widget changes)
+
+**Swift-only** means no Kotlin touched at all — including
+`core/iosMain/platform/Platform.ios.kt`, which is where the widget's data comes
+from. If you edited any Kotlin, rebuild the framework first (`IOS_HANDOVER.md`
+§8) or you will ship the previous one and debug a symptom that is not there;
+§5's "if the picker is empty" note is what that looks like.
+
+From `iosApp/`:
+
+```bash
+xcodebuild -project iosApp.xcodeproj -scheme "iosApp Staging" \
+  -destination 'id=00008030-001E0D9C3EFB802E' -derivedDataPath build/DD \
+  -allowProvisioningUpdates build
+xcrun devicectl device install app --device 00008030-001E0D9C3EFB802E \
+  "build/DD/Build/Products/Debug Staging-iphoneos/iosApp.app"
+xcrun devicectl device process launch --device 00008030-001E0D9C3EFB802E com.stationly.mobile
+```
+
+(The widget extension ships inside `iosApp.app`; reinstalling the app updates
+it. The home-screen snapshot can lag a reinstall — remove/re-add the widget or
+wait for the next timeline reload if it looks stale.)
+
+Full procedure, signing and Xcode-26 gotchas: `IOS_BUILD_AND_HANDOFF.md` §0/§3.
+
+---
+
+## 9. Which station a widget shows, and where a tap goes (2026-08-16)
+
+Four questions a widget has to answer about its own identity. Defect log and
+verification: `SESSION_2026-08-17_WIDGET_STATION.md`, which replaced the
+repointing design described by `SESSION_2026-08-14_WIDGET_CONFIG.md`.
+
+**One rule sits above all of it:**
+
+> A widget shows the station in its own configuration, or it shows why it can't.
+> It never substitutes another station's board.
+
+The two halves of the problem are separate questions, and running one rule for
+both is what let a widget change station on its own:
+
+- **Which station a NEW widget takes.** Add path only, and it cannot move a
+  widget that is already placed. `defaultResult()` and `recommendations()`, both
+  one-liners over the directory (§9.1). This was two files and ~320 lines until
+  2026-08-17; §9.1 records what went and why.
+- **What a PLACED widget shows.** `StationResolution.swift`, on every timeline
+  build. It cannot pick a station the configuration did not name, and when the
+  configuration names nothing it picks nothing (§9.3.2).
+
+### 9.1 A new widget starts on your first station
+
+`defaultResult()` is one line — `readStations().first` — and `recommendations()`
+is the directory, unrotated. They agree by construction, because they are the
+same thing: the station at the top of the user's own home screen.
+
+The gallery shows one swipeable preview per station, each labelled with its name,
+so choosing a different one is a swipe before tapping Add. That is where the user
+chooses; this is only the default if they do not.
+
+**It used to distribute** — the first station no placed widget was already
+configured for, wrapping when they were all taken. That needed the exact home
+screen, which needed `getCurrentConfigurations`, which is async and returns an
+empty list inside `timeline(for:in:)`, which needed a cached snapshot in the App
+Group, a TTL, a rule about when an empty answer may overwrite a good one, and a
+fallback to the §7 placement stamps. About 320 lines, two files, to decide which
+station a new widget *suggests*.
+
+It was removed on 2026-08-17, at the user's call, after a run of bugs that all
+came from the same place: **everything it depended on moves.** Stations get
+added, widgets come and go, and the snapshot is only ever as fresh as the last
+caller that could read it. The cost of removing it is that adding two widgets
+without swiping gives the same station twice, fixed by one swipe or one edit.
+
+#### ⚠️ "A widget must never be empty when I have stations" is an ADD-TIME rule
+
+Settled 2026-08-17 and worth writing down, because it comes back as *"why doesn't
+§9.3.2 just render the first station?"* and the answer is not obvious.
+
+It is the same sentence, and it has two possible homes:
+
+| Where it could live | What it does |
+|---|---|
+| **Add time** (here) | A widget is BORN configured for station 1, so it never reaches the empty state at all |
+| Nil time (§9.3.2) | A widget that has *lost* its station gets given station 1 |
+
+They sound interchangeable and are not, because of §9.5.1: **a widget added
+normally never arrives at the provider with a nil station.** `defaultResult()`
+fills it, or the gallery's `recommendations()` intent does, or iOS pre-fills from
+its own cache — and `entities(for:)` only resolves live stations, so even the
+pre-filled value is one of the user's own. The nil population at the provider is
+therefore almost entirely widgets whose station the user *deleted*, which is the
+one case where going empty is what the user asked for.
+
+So the add-time rule delivers the whole benefit, and a nil-time fallback would
+add nothing to the add path while re-creating bugs 3 and 4 of the session log on
+the delete path — delete station A, A's widget silently shows B; add a station,
+every nil widget migrates onto it because a new station goes to the top.
+
+One edge is accepted knowingly: a widget added while the user tracked **zero**
+stations has an empty configuration nothing can ever write, so it stays on
+"Choose a station" after they add their first one. One tap fixes it permanently.
+Every mechanism that would auto-fill it is one of the five substitution defects.
+
+### 9.2 The directory is in the HOME SCREEN's order
+
+It was `groupBy` insertion order, and the home screen has never agreed — it sorts
+by each board's `position` via `UserSettings.ordered`. Dragging a station to the
+top moved it on the home screen and nowhere else, while the picker, the gallery's
+`recommendations()` and the default above all kept saying "oldest".
+
+⚠️ `boardPrefs()` must run **before** the arrangement: it is what loads
+`UserSettings`, and sorting against an unloaded store sees every board
+`UNPOSITIONED`, ties, and silently falls back to insertion order.
+
+⚠️ **That fallback had no defined order until 2026-08-16.** Boards a user has
+never dragged all tie at `UNPOSITIONED`, `ordered` is a stable sort, and
+`selectAllSelections` had no `ORDER BY` — so "your first station" was whatever
+SQLite felt like returning, and `clearAllData()` + re-insert on a cloud restore
+could redefine it. It is now `ORDER BY id`, which is AUTOINCREMENT insertion
+order and never reused. Three surfaces read "first" off that order and all three
+mean the user's first: the picker, `recommendations()`, and the station a new
+widget takes.
+
+### 9.3 A deleted station's widget SAYS SO; it is never substituted
+
+`readWidgetData(stationId:)` used to REPOINT: a configured station with no stored
+board was silently swapped for "the first station no placed widget is showing".
+Three things were wrong with it.
+
+1. **It moved on its own.** The unclaimed branch derived its answer from the live
+   placement stamps, and that set moves — stamps expire, the app prunes them,
+   adding any other widget changes it. The `anchor` argument was added to stop
+   exactly this and guarded only the rotation branch underneath it.
+2. **It fired on a missing PAYLOAD, not a missing STATION.** Nothing checked the
+   directory, so a station the user still tracked lost its widget during any
+   window where its board key was briefly absent.
+3. **It was unreadable.** A board is glanced at, not read, so "wrong station,
+   right-looking times" is the worst failure available. The defence — the station
+   name being the largest element — assumed a reading the format does not get.
+
+**Substitution was chosen because clearing looked unrecoverable:** *"there is no
+API to un-clear it."* That conflated two different things. It is true of ERASING
+THE CONFIGURATION, which nothing in this codebase can do. It is not true of
+rendering an explanatory state: that is decided fresh on every timeline build and
+persists nothing, so the configured id survives and re-adding a station restores
+its widget by itself. **The recoverability the old design protected is kept in
+full. Only the substitution is gone.**
+
+`StationResolver.board(for:)` is one ordered ladder, total and mutually
+exclusive, first match wins:
+
+| # | condition | result |
+|---|---|---|
+| 1 | signed out | "Sign in to see your board" |
+| 2 | directory empty | "Open the app to add a station" (§9.4) |
+| 3 | no configuration | **asks for one** — see §9.3.2 |
+| 4 | configured id not in the directory | **removed**, named |
+| 5 | station tracked, board not written yet | that station, empty ("waiting") |
+| 6 | otherwise | the live board |
+
+Rung 1 is first because every branch below it looks for a station to show, which
+after a sign-out is the wrong instinct: it would hand a board to a widget the
+previous account left behind. It is also the only rung that must suppress the
+extension's own REST refresh, which authenticates with the API key and would
+refill what the sign-out just cleared.
+
+Rung 4 has one piece of forgiveness before it declares a station gone:
+`directoryEntry(for:in:)` falls back to a **unique name + mode** match. A board's
+directory id is `parentStationId.ifBlank { station }`, so a selection that later
+acquires a hub id changes identity from a pole naptan (`490008805N`) to a
+StopArea (`490G00008805`) — which a cross-device sync can cause, since the legacy
+`stations` payload carries `parentStationId` as optional. Without it the widget
+would announce a station as removed while it sits visibly in the user's list.
+**Uniqueness is what makes it safe**: it keeps Paddington the bus stop from
+matching Paddington the tube station, and an ambiguous directory falls through to
+the removed state, which is unhelpful rather than wrong.
+
+Rung 5 is deliberately not the skeleton and deliberately not another station's
+board. The directory and the per-station boards are separate `NSUserDefaults`
+writes, so a build landing between them sees a station it has no payload for.
+`waiting(at:)` dates its board to the epoch, which is how the trace tells it
+apart from a station whose last train has gone.
+
+**The stale-fetch guard widened from `!isSignedOut` to `!isEmpty`.** Rungs 1, 2
+and 4 all have nothing to fetch, and a removed board carries no `stationId`, so
+the fetch would have fallen through to the legacy keys and quietly refreshed
+somebody else's station into a widget that had just said "removed".
+`WidgetRefreshService.targetStations` skips the same three states for the same
+reason, and only uses the legacy feed for a board with no station id of its own.
+
+### 9.3.2 A widget with no configuration ASKS for one
+
+Rung 3 is not marginal. A widget added while the user tracked no stations can
+never acquire a configuration — `defaultResult()` had nothing to return at the
+time, iOS stored nothing, and nothing afterwards can write a placed widget's
+configuration — and a widget whose station is later deleted arrives here too,
+because iOS nils an unresolvable parameter (§9.3.3). Both show `cfg=nil`.
+
+**It renders `WidgetData.needsStation` and picks nothing.**
+
+⚠️ **This rung is where every substitution bug in this feature came from.** It
+guessed twice, and each guess produced its own defect:
+
+| guess | defect |
+|---|---|
+| `stations[0]` | a newly added station goes to the TOP of the home screen, so every station added dragged every unconfigured widget onto it |
+| a remembered "adopted" station | held still, but put every unconfigured widget on ONE station — and caught widgets whose own station had just been deleted, so deleting station A made its widget show station B |
+
+The second is the important lesson. Each fix made the guess smarter and left the
+guessing in place, and the guessing was the bug. **A provider is handed no widget
+identity**, so nothing here can know which widget is asking or what it showed
+last. The only correct answer to "which station is this?" when nothing has said,
+is to say that nothing has said.
+
+One tap fixes it permanently. Picking a station writes a real configuration, and
+every rung below applies for the life of the widget.
+
+### 9.3.3 Deleting a station UNTAGS its widget — and the sheet lags
+
+A consequence of §9.5.1 worth stating on its own, because it changes what §9.3's
+rung 4 is actually for.
+
+When a station is deleted, `entities(for:)` stops resolving its id. WidgetKit then
+hands the provider `configuration.station == nil` — `cfg=nil` in the trace — and
+reports `station:""` for that widget in `getCurrentConfigurations`. So the widget
+does not reach rung 4 at all; it falls to rung 3 and asks to be given a station.
+
+**That is the intended product behaviour**: deleting a station untags the widgets
+pinned to it. It is also still recoverable, because iOS keeps the STORED
+parameter — re-add the station and it resolves again, and the widget returns to
+it on its own.
+
+⚠️ **Rung 4 is therefore rarer than it looks.** It is reached when the provider
+does get an entity for a station the directory no longer lists, which now means
+essentially the §9.3 grouping-id case, not the ordinary delete.
+
+⚠️ **The Edit sheet can show the deleted station's name for a while.** iOS paints
+the stored parameter from a display representation it cached while the station
+existed, and there is no API that reaches that cache. The board and the sheet
+therefore disagree until the user picks anything from the list, which writes a
+real configuration and ends it permanently.
+
+### 9.4 "No stations at all" is ONE state
+
+⚠️ **Deleting your last board runs the same `wipe()` that signing out does**
+(`refreshAllBoards`, `all.isEmpty()`), so the App Group is byte-identical in both
+cases. A design that showed a *sign-in* panel for the empty directory would tell
+a signed-in user with no boards to sign in.
+
+The widget cannot break the tie: the uid is in the app's **standard** defaults,
+not the App Group, and an extension cannot read those. One empty state — "Open
+the app to add a station" — is true either way and is what ships.
+
+### 9.5 Two widgets added together can take the same station
+
+With §9.1 simplified this is no longer a race, just a consequence: a widget added
+without swiping takes the first station, so two of them take the same one. One
+swipe in the gallery, or one Edit Widget afterwards, and they differ for ever.
+
+The old note here described a genuine race — a claim window that could not be
+closed because a provider is handed no widget identity — which mattered only
+while a distribution rule was trying to use that identity. It is gone with it.
+
+### 9.5.1 ⚠️ iOS pre-fills a new widget's station, and that beats every rule here
+
+Measured on device 2026-08-16. A user with two healthy stations and two widgets
+added a third, and it arrived configured for a station deleted minutes earlier —
+one that was correctly absent from `widget_stations`, and which neither
+`recommendations()` nor `defaultResult()` could have produced, since both map
+over `readStations()`.
+
+**The widget gallery caches its preview configurations, and AppIntents remembers
+recently used entity values.** When iOS pre-fills the parameter from either, it
+is RESOLVED, so `defaultResult()` is never consulted and §9.1 never runs. There
+is no API to invalidate that cache; `reloadAllTimelines()` does not touch it.
+
+The only lever is `StationEntityQuery.entities(for:)`. An id that resolves to
+nothing leaves the parameter unresolved, which is what sends iOS to
+`defaultResult()` and back onto a real station. So that method must **drop** an
+id it cannot account for rather than describing it:
+
+- In the directory, exactly or via §9.3's name+mode match → the directory's entry.
+- Anything else, including an empty id → **nothing**.
+
+### ⚠️ Whatever `entities(for:)` returns, iOS may WRITE INTO A WIDGET
+
+It is not a display hook. The entity handed back is **persisted as a widget's
+configuration** and **cached as a recently-used value for the intent type**, from
+where iOS fills parameters that have none.
+
+**Measured on device, 2026-08-16.** An intermediate version answered a deleted
+station's id with a "tombstone": same id, last known name, subtitle "Removed from
+Stationly". The App Group showed what iOS did with it — entries in
+`widget_placed` that had read `"mode":"overground"` came back as `"mode":""`,
+which is the tombstone's own signature, since it deliberately carries no mode.
+
+From there it spread. A dead station confirmed by us as a resolvable entity is a
+candidate for every widget with an unresolved parameter, so deleted stations kept
+reappearing on widgets the user had never pointed at them — one capture had FIVE
+of six widgets configured for a station that no longer existed. And a parameter
+iOS can fill from its cache is not unresolved, so §9.1 never ran at all.
+
+The symptom that exposed it: a widget correctly showing a live station rebuilt as
+a deleted one after a refresh tap, with the refresh itself demonstrably fine.
+
+```
+1786919919 timeline tap cfg=490G00013695 state=live      ← live station
+1786920183 refresh targets=1 naptans=1
+1786920183 wrote 490G00013695 groups=1                   ← refresh worked
+1786920183 timeline tap cfg=910GHGHI state=removed       ← same widget, dead station
+```
+
+**So: answer only for things that exist.** An id with no station behind it
+resolves to nothing, iOS has nothing to propagate, and an unresolved parameter
+has nowhere to go but `defaultResult()`.
+
+What that costs: the Edit sheet opened on a widget whose station was deleted falls
+back to the name AppIntents cached — a stale label on one row, with the live
+stations listed underneath it. The board still names the dead station honestly,
+because rung 4 runs off the widget's own configuration and never travels through
+an AppEntity.
+
+**Do not reintroduce a descriptive entity of any kind here.** The `tombstone`
+factory has been deleted rather than left unused, with a note in its place.
+
+⚠️ **The empty directory MASKS the removed state, which makes the transition look
+like a malfunction.** With no stations, rung 2 fires first and every widget reads
+"Open the app to add a station" whatever it is configured for. Add one station
+and rung 2 stops firing, rung 4 takes over, and every stale configuration in the
+set becomes visible at once. Nothing changed about those widgets; they were
+covered.
+
+⚠️ **The tombstone needs that proof.** The first version returned one for any
+unresolved id, which answered "Removed station" to a user adding a third widget
+to a perfectly healthy pair. A tombstone is a claim about the user's own history
+and must not be made from an id alone.
+
+### 9.6 A tap opens the app on THAT station
+
+`.widgetURL(entry.render.deepLink)` → `<scheme>://home?station=<groupingId>` →
+`ContentView.onOpenURL` → `BoardFocus` → `SummaryScreen` pages the carousel or
+expands-and-scrolls the list.
+
+⚠️ **`<scheme>` is per environment and must never be written as a literal**
+(`stationly-staging` / `stationly`, from `STATIONLY_URL_SCHEME`). Both sides read
+it from their own Info.plist: the widget in `StationlyDeepLink`, the app in
+`stationlyUrlScheme` next to `ContentView`.
+
+**This cost a release.** The env split parameterised the widget and left
+`.onOpenURL` comparing against `"stationly"`, so on staging iOS routed every
+widget tap to the app and the handler dropped it one line later. The failure is
+invisible from outside — the app opens, on whatever it was last showing, which
+looks exactly like the feature never having been built — and it leaves **no
+trace entry**, because the guard returns before any logging so that foreign URLs
+cannot spend the 40-deep ring. Fixed 2026-08-16.
+
+- The URL is built **once per timeline**, in `BoardRenderState` (§ the archiving
+  rule) — never in `body`, where it would be a percent-encode and a URL parse per
+  entry, per widget, inside the archive pass.
+- It carries the **rendered** station, which since §9.3 is always the configured
+  one as well. A widget in the removed state has no station id, so the URL is nil
+  and a tap just opens the app: there is nothing to deep-link to, and the fix for
+  that widget is a touch-and-hold rather than a tap.
+- It does not fight the arrows or refresh: `Button(intent:)` keeps its own hit
+  region, `widgetURL` claims the rest — §6's rule, now leading somewhere.
+- `BoardFocus` is a singleton flow, **not** a `MainViewController` parameter: the
+  app is normally already running, and the Compose host reads its constructor
+  arguments once in `makeUIViewController`.
+- ⚠️ The `stationly` scheme had **never been registered** (`project.yml`). The
+  note in `AppDelegate` about password-reset links is an instruction nobody
+  followed, so `handleFirebaseActionURL` has never been reachable. Those links now
+  arrive and are logged as `deeplink unhandled` — still not handled, because
+  `deepLinkOobCode` only reaches Compose through `makeUIViewController`.

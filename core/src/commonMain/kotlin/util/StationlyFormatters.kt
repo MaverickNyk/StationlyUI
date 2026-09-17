@@ -245,16 +245,56 @@ object StationlyFormatters {
      * closer. Sorting by absolute target keeps the cross-platform hero
      * picker honest regardless of what the row label says.
      */
-    fun sortPredictions(predictions: List<com.stationly.core.model.PredictionDisplay>): List<com.stationly.core.model.PredictionDisplay> {
-        return predictions.sortedWith(compareBy {
-            it.targetEpochMs ?: run {
-                val raw = it.eta.lowercase().trim()
-                when {
-                    raw.contains("due") -> 0L
-                    raw.contains("min") -> (raw.replace(" min", "").toLongOrNull() ?: 999L) * 60_000L
-                    else -> (raw.toLongOrNull() ?: 999L) * 60_000L
-                }
+    fun sortPredictions(predictions: List<com.stationly.core.model.PredictionDisplay>): List<com.stationly.core.model.PredictionDisplay> =
+        predictions.sortedWith(compareBy { arrivalSortKey(it) })
+
+    /**
+     * How soon this departure actually arrives, as an absolute epoch-millis key.
+     *
+     * The ONE place a prediction is turned into something orderable, so nothing
+     * has to re-derive it. Anything comparing two departures — sorting a board,
+     * picking the soonest across several lines, deciding whether one is
+     * imminent — must go through here rather than parsing [eta], which is a
+     * DISPLAY string: it has already been rounded to a minute, and the
+     * per-platform bump rule deliberately alters it so two same-platform trains
+     * never show the same label. Reading it back is reading a lie.
+     *
+     * Falls back to parsing that string only when `targetEpochMs` is genuinely
+     * absent (pre-formatted SDUI rows, malformed FCM timestamps), and sorts
+     * anything unparseable to the end rather than the front.
+     */
+    fun arrivalSortKey(prediction: com.stationly.core.model.PredictionDisplay): Long =
+        prediction.targetEpochMs ?: run {
+            val raw = prediction.eta.lowercase().trim()
+            when {
+                raw.contains("due") -> 0L
+                raw.contains("min") -> (raw.replace(" min", "").toLongOrNull() ?: 999L) * 60_000L
+                else -> (raw.toLongOrNull() ?: 999L) * 60_000L
             }
-        })
+        }
+
+    /**
+     * The number this row is SHOWING, as an Int. `Due` is 0.
+     *
+     * Deliberately reads the `eta` label rather than recomputing from
+     * `targetEpochMs`, and that is not laziness — it is the opposite of
+     * [arrivalSortKey] and the two must not be confused:
+     *
+     *  - [arrivalSortKey] answers "which train is actually soonest" and is for
+     *    ORDERING and picking. It must ignore the label.
+     *  - this answers "what does this row say" and is for anything that has to
+     *    AGREE with what the user can see — the hero's big number, its progress
+     *    bar, an urgency highlight.
+     *
+     * By the time a row reaches the UI its `eta` has been through
+     * `tickPredictions`, which re-derives the minute AND applies the
+     * per-platform bump so two trains on one platform never show the same label
+     * ("Due, Due" → "Due, 1 min"). Recomputing from the timestamp here would
+     * silently undo that bump and let the hero contradict the row below it.
+     */
+    fun displayedMinutes(prediction: com.stationly.core.model.PredictionDisplay): Int = when {
+        prediction.isDue -> 0
+        prediction.eta.trim().equals("Due", ignoreCase = true) -> 0
+        else -> prediction.eta.replace(" min", "").trim().toIntOrNull() ?: 0
     }
 }

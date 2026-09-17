@@ -6,6 +6,18 @@
     padding: 0 2rem;
 }
 
+@media (max-width: 768px) {
+    .container {
+        padding: 0 1.25rem;
+    }
+}
+
+@media (max-width: 380px) {
+    .container {
+        padding: 0 1rem;
+    }
+}
+
 .container-fluid {
     width: 100%;
     margin: 0 auto;
@@ -221,6 +233,11 @@
         flex-direction: column;
         gap: 1.5rem;
         text-align: center;
+    }
+
+    .footer-links {
+        justify-content: center;
+        gap: 1rem 1.25rem;
     }
 
     .header.nav-open .mobile-menu { display: flex; }

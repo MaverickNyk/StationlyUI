@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Privacy manifest for the APP target. Required: App Store Connect REJECTS
+  uploads whose bundle declares no manifest while calling a required-reason
+  API, so without this file the first TestFlight upload fails validation.
+
+  ── What is declared, and why ──
+
+  Required-reason APIs: UserDefaults only. It is the entire app/widget
+  contract (boards, refresh ledger, device identity, auth token) and is
+  reached from both Swift and Kotlin. Reason CA92.1 = "access info from the
+  app itself or its App Group container", which is exactly our use: the group
+  is `group.com.stationly.staging` / `group.com.stationly.shared`, both owned
+  by this team.
+
+  Audited and NOT used, so deliberately absent — adding an undeclared category
+  is as wrong as omitting a used one: file timestamps, disk space, system boot
+  time, active keyboard. (`AuthBridge.swift` references `creationDate`, but
+  that is a property on Firebase's user-metadata model, not a filesystem API.)
+
+  Third-party SDKs ship their own manifests and are NOT covered here —
+  FirebaseAuth and GoogleSignIn each carry one inside their SPM package, and
+  Apple merges them into the app's privacy report at build time.
+
+  ── Keep this in step with App Store Connect ──
+  The declarations below must MATCH the App Privacy answers in the ASC app
+  record. They are two separate surfaces and Apple compares them; a build that
+  declares email collection against a record claiming "no data collected" is a
+  review rejection, not a warning.
+
+  NSPrivacyTracking is false and NSPrivacyTrackingDomains empty: nothing here
+  is used for tracking as Apple defines it (no linking to third-party data for
+  advertising), so no App Tracking Transparency prompt is required.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<!-- CA92.1 — read/write only this app's own App Group container. -->
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array>
+		<!-- Sign-in identity. Linked to the user by definition; used to sync
+		     their boards across devices, never for tracking or advertising. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeEmailAddress</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<!-- The Firebase uid. Everything server-side is keyed on it. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeUserID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<!-- Our own per-install device id, plus the APNs token. Used to address
+		     this device for widget refresh pushes and to release its
+		     subscriptions on sign-out. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeDeviceID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<!-- Sent to the backend to answer "which stops are near me". Not
+		     retained against the account, hence Linked = false. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypePreciseLocation</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

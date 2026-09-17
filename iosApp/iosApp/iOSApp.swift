@@ -1,16 +1,60 @@
 import SwiftUI
+import UIKit
 import FirebaseCore
 import GoogleSignIn
-// import ComposeApp  // Uncomment after Xcode framework integration
+import composeApp
 
 @main
 struct StationlyApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .preferredColorScheme(.dark)
+        }
+        // SwiftUI runs the SCENE lifecycle: UIKit never calls the app
+        // delegate's applicationDidBecomeActive, so the foreground work that
+        // lived there (auth token refresh, FCM queue flush, widget timeline
+        // reload) silently never ran — verified via device syslog: foregrounding
+        // produced zero chronod activity, and newly added widget instances
+        // starved waiting for a first timeline. scenePhase is the supported
+        // hook; foreground reloads are also exempt from WidgetKit's refresh
+        // budget, so this is the one reload path that's always honoured.
+        //
+        // Same hook drives the live departure stream (LiveStreamBridge):
+        // .active connects/resubscribes, .background disconnects cleanly.
+        // .inactive (Control Center, app switcher) is ignored on purpose —
+        // reconnecting on every brief interruption would thrash the socket.
+        .onChange(of: scenePhase) { phase in
+            if phase == .active {
+                delegate.handleDidBecomeActive()
+                LiveStreamBridge.shared.notifyForeground()
+            } else if phase == .background {
+                LiveStreamBridge.shared.notifyBackground()
+                // Stop claiming the foreground, so the widget extension starts
+                // charging its timeline builds against the budget again.
+                WidgetReloadObserver.shared.markBackgrounded()
+                // Queue the next background wake from the tier in force. Doing
+                // it on the way out matters: this is the moment we know the app
+                // is about to stop being the thing keeping the widget fresh.
+                BackgroundRefreshScheduler.schedule()
+                // Queue tonight's activity upload, for the same reason: this is
+                // when we know the app has stopped being able to do it itself.
+                ActivityUploadScheduler.schedule()
+
+                // Record the session end and flush any debounced settings or
+                // board changes. Inside a background-task assertion because
+                // both touch SQLite and the network, and iOS will otherwise
+                // suspend the process the moment this callback returns — losing
+                // exactly the write of a user who changed a setting and
+                // immediately swiped away.
+                let task = UIApplication.shared.beginBackgroundTask(withName: "stationly.background-flush")
+                Task { @MainActor in
+                    _ = try? await ActivityBridge.shared.appBackgrounded()
+                    if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
+                }
+            }
         }
     }
 }

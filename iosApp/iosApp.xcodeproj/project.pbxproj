@@ -3,27 +3,46 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		0385B7B6CC06D1D60A9ADE8D /* composeApp.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 118F41A10A55B84CE576769B /* composeApp.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		09FED4B446BD58DF150C455A /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = C6D2DD7FE2E0BF5DB2A96B4B /* PrivacyInfo.xcprivacy */; };
 		15004BFF21C3E1734FA5E510 /* DepartureEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BA8E3A8CB73FA587D96BD12 /* DepartureEntry.swift */; };
 		1C81D6F669B7BB6D2FFCCEB3 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 617043448F4869026C2F0BB4 /* FirebaseAuth */; };
+		22EA1CB33A17DCC6FC82406D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F543015C899423D4B01CEB2E /* Assets.xcassets */; };
 		307C2654CD5972A25FB7FD87 /* iOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668CECA83ACC03A83C85A623 /* iOSApp.swift */; };
 		38BC8C0A2A20C409AD35F500 /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17F56BCEA93D417E080182A7 /* AppGroupStorage.swift */; };
-		445C052442747365B7CB2124 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = AC813CE66F97994D9BE8A812 /* FirebaseMessaging */; };
+		3A939B1447CB25EBEE98671B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 258D481022F14E09267EE7BD /* Assets.xcassets */; };
+		4386425835E3A61DCAF722E3 /* BoardFallback.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE4B4A042B8485348641764 /* BoardFallback.swift */; };
+		445C052442747365B7CB2124 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */; };
+		490B0ECE2B0FE3124A257528 /* ActivityUploadScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C1AD1EB4407F8EA35E2F158 /* ActivityUploadScheduler.swift */; };
 		4F51E6F943E79B5999B8A52B /* composeApp.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 118F41A10A55B84CE576769B /* composeApp.xcframework */; };
 		56B0305B5D3847FC6B326502 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE8509E5A49E4A5CAAEB3ADB /* ContentView.swift */; };
+		6DE7FA15AE6C76B0C10ABF8A /* BackgroundRefreshScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89C826F096F43CDC328C3DD8 /* BackgroundRefreshScheduler.swift */; };
+		6E53E082D20E046C732E2ED0 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F97E3E0613AAD3D9909D9DBD /* PrivacyInfo.xcprivacy */; };
 		73956648F92E8FEC62F6D73D /* AuthBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88370C3FDDC238D3448AC2D1 /* AuthBridge.swift */; };
+		7ECDD355828B7FFCA7AF9072 /* AppGroupID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97E45A83D0043D7E5591F183 /* AppGroupID.swift */; };
+		875215AA235312C1FEF7D5E1 /* WidgetPushHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = D168F4502EC6C4FECA881F67 /* WidgetPushHandler.swift */; };
+		8B590E4A471A5538649CEBCF /* WidgetRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AA433530A96563307A6CAA8 /* WidgetRefreshService.swift */; };
+		8E7C81E20D63BC001B6F1D33 /* StationResolution.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DD084811CFD2DD3C10F78DB /* StationResolution.swift */; };
+		99B49945DB0F17F7094153A9 /* RefreshScheduleStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72065508ED95ACC5AA5B3711 /* RefreshScheduleStore.swift */; };
+		9F3A175D3B8A470544BB8BE2 /* AppGroupKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71BBE9EECA29F7BC9A109C5B /* AppGroupKeys.swift */; };
+		A127096D6F3B2879A8B21DBD /* BGTaskIdentifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C3094654CA7F51E16206428 /* BGTaskIdentifier.swift */; };
 		A566BB023C1056C96F41D335 /* StationlyWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EE7E10119EC01AC8676B703D /* StationlyWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		B7C4F6137AC8345E71E92063 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */; };
+		A774AD58CF3505F914CB83D7 /* WidgetPageIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 306E4366DEB79A6AD438619D /* WidgetPageIntent.swift */; };
+		B431C9F829F237B6A780A8FC /* DevicePushCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEDD6C1E78B90F6BC67D20E5 /* DevicePushCoordinator.swift */; };
+		BAE7B40F755CB01E45657AA8 /* HomeStateProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57D3E21FAEDF7ED0B74AE07 /* HomeStateProbe.swift */; };
+		BF44FB5F0C3BD68EF6CDC90C /* DeviceIdentityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3DDAD1D3A60B6A60579F1C5 /* DeviceIdentityStore.swift */; };
 		C0D402F91C254C0EFB1C3A91 /* StationlyWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC75E3E8045F2DC8D1922D50 /* StationlyWidget.swift */; };
 		C3E3BCF8F138F630927C544F /* StationlyWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F7BF3D0F900FDF96129BA89 /* StationlyWidgetBundle.swift */; };
 		C549E9404F60E91D428ED213 /* WidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 725E230C3D1AA4C519DEBC68 /* WidgetViews.swift */; };
-		C87B4FA04BDA1DA04158D48E /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = A55143988C4C8F291BE72E9A /* GoogleService-Info.plist */; };
+		C654091523394E0AFE6EA794 /* PushTraceSwift.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECA4FAF25F90834251640413 /* PushTraceSwift.swift */; };
 		CB006310D02489A5D2220318 /* WidgetTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FD2D2AA7865370F9D9B2E85 /* WidgetTheme.swift */; };
-		F5590281266A7B295361D031 /* FCMBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02C0D79CCE01D0B3BA51EC14 /* FCMBridge.swift */; };
+		CFE992350AE1D45C71A414A2 /* StationConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75982716E6D0AEC8FEED4D33 /* StationConfiguration.swift */; };
+		EE0B2E5554D43A66C83DA33C /* AppGroupKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7171BEFAE1F981889803668C /* AppGroupKeys.swift */; };
+		EEAED07AD42E134D78BBE3AD /* AppGroupID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96749FEEFB87671930DBEF31 /* AppGroupID.swift */; };
 		FDE52B8D57A097A60A4CF366 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B6C1F485E0CF8BB70C9DDD2 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
 
@@ -63,23 +82,45 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		02C0D79CCE01D0B3BA51EC14 /* FCMBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FCMBridge.swift; sourceTree = "<group>"; };
-		118F41A10A55B84CE576769B /* composeApp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = composeApp.xcframework; path = ../composeApp/build/XCFrameworks/debug/composeApp.xcframework; sourceTree = "<group>"; };
+		118F41A10A55B84CE576769B /* composeApp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = composeApp.xcframework; path = ../composeApp/build/XCFrameworks/current/composeApp.xcframework; sourceTree = "<group>"; };
 		17F56BCEA93D417E080182A7 /* AppGroupStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorage.swift; sourceTree = "<group>"; };
+		258D481022F14E09267EE7BD /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		2C3094654CA7F51E16206428 /* BGTaskIdentifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BGTaskIdentifier.swift; sourceTree = "<group>"; };
+		306E4366DEB79A6AD438619D /* WidgetPageIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPageIntent.swift; sourceTree = "<group>"; };
+		4AA433530A96563307A6CAA8 /* WidgetRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetRefreshService.swift; sourceTree = "<group>"; };
 		5BA8E3A8CB73FA587D96BD12 /* DepartureEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DepartureEntry.swift; sourceTree = "<group>"; };
 		668CECA83ACC03A83C85A623 /* iOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSApp.swift; sourceTree = "<group>"; };
+		7171BEFAE1F981889803668C /* AppGroupKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupKeys.swift; sourceTree = "<group>"; };
+		71BBE9EECA29F7BC9A109C5B /* AppGroupKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupKeys.swift; sourceTree = "<group>"; };
+		72065508ED95ACC5AA5B3711 /* RefreshScheduleStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RefreshScheduleStore.swift; sourceTree = "<group>"; };
 		725E230C3D1AA4C519DEBC68 /* WidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetViews.swift; sourceTree = "<group>"; };
+		75982716E6D0AEC8FEED4D33 /* StationConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationConfiguration.swift; sourceTree = "<group>"; };
 		86038AE1032E284E79B32AD6 /* iosApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = iosApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		88370C3FDDC238D3448AC2D1 /* AuthBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthBridge.swift; sourceTree = "<group>"; };
+		89C826F096F43CDC328C3DD8 /* BackgroundRefreshScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefreshScheduler.swift; sourceTree = "<group>"; };
 		8B6C1F485E0CF8BB70C9DDD2 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		8C1AD1EB4407F8EA35E2F158 /* ActivityUploadScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityUploadScheduler.swift; sourceTree = "<group>"; };
 		8F7BF3D0F900FDF96129BA89 /* StationlyWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationlyWidgetBundle.swift; sourceTree = "<group>"; };
 		8FD2D2AA7865370F9D9B2E85 /* WidgetTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetTheme.swift; sourceTree = "<group>"; };
-		A55143988C4C8F291BE72E9A /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
+		96749FEEFB87671930DBEF31 /* AppGroupID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupID.swift; sourceTree = "<group>"; };
+		97E45A83D0043D7E5591F183 /* AppGroupID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupID.swift; sourceTree = "<group>"; };
+		9DD084811CFD2DD3C10F78DB /* StationResolution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationResolution.swift; sourceTree = "<group>"; };
+		9DE4B4A042B8485348641764 /* BoardFallback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardFallback.swift; sourceTree = "<group>"; };
 		C117AD187833E2513BD2F553 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		C357B6723C45127EC27E81E4 /* Staging.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Staging.xcconfig; sourceTree = "<group>"; };
+		C6D2DD7FE2E0BF5DB2A96B4B /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		CE8509E5A49E4A5CAAEB3ADB /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		D168F4502EC6C4FECA881F67 /* WidgetPushHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPushHandler.swift; sourceTree = "<group>"; };
 		DC75E3E8045F2DC8D1922D50 /* StationlyWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationlyWidget.swift; sourceTree = "<group>"; };
+		DEDD6C1E78B90F6BC67D20E5 /* DevicePushCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicePushCoordinator.swift; sourceTree = "<group>"; };
+		E3DDAD1D3A60B6A60579F1C5 /* DeviceIdentityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentityStore.swift; sourceTree = "<group>"; };
+		E4A404729694F80C34072DBE /* Production.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Production.xcconfig; sourceTree = "<group>"; };
+		E57D3E21FAEDF7ED0B74AE07 /* HomeStateProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeStateProbe.swift; sourceTree = "<group>"; };
 		E6E60D8AB263A747C2061338 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		ECA4FAF25F90834251640413 /* PushTraceSwift.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushTraceSwift.swift; sourceTree = "<group>"; };
 		EE7E10119EC01AC8676B703D /* StationlyWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = StationlyWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F543015C899423D4B01CEB2E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F97E3E0613AAD3D9909D9DBD /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -88,8 +129,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1C81D6F669B7BB6D2FFCCEB3 /* FirebaseAuth in Frameworks */,
-				445C052442747365B7CB2124 /* FirebaseMessaging in Frameworks */,
-				B7C4F6137AC8345E71E92063 /* GoogleSignIn in Frameworks */,
+				445C052442747365B7CB2124 /* GoogleSignIn in Frameworks */,
 				4F51E6F943E79B5999B8A52B /* composeApp.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -100,13 +140,22 @@
 		1DB4B685CAEE8BEFEBBAEF94 /* iosApp */ = {
 			isa = PBXGroup;
 			children = (
+				8C1AD1EB4407F8EA35E2F158 /* ActivityUploadScheduler.swift */,
 				8B6C1F485E0CF8BB70C9DDD2 /* AppDelegate.swift */,
+				97E45A83D0043D7E5591F183 /* AppGroupID.swift */,
+				7171BEFAE1F981889803668C /* AppGroupKeys.swift */,
+				F543015C899423D4B01CEB2E /* Assets.xcassets */,
 				88370C3FDDC238D3448AC2D1 /* AuthBridge.swift */,
+				89C826F096F43CDC328C3DD8 /* BackgroundRefreshScheduler.swift */,
+				2C3094654CA7F51E16206428 /* BGTaskIdentifier.swift */,
 				CE8509E5A49E4A5CAAEB3ADB /* ContentView.swift */,
-				02C0D79CCE01D0B3BA51EC14 /* FCMBridge.swift */,
-				A55143988C4C8F291BE72E9A /* GoogleService-Info.plist */,
+				E3DDAD1D3A60B6A60579F1C5 /* DeviceIdentityStore.swift */,
+				DEDD6C1E78B90F6BC67D20E5 /* DevicePushCoordinator.swift */,
+				E57D3E21FAEDF7ED0B74AE07 /* HomeStateProbe.swift */,
 				C117AD187833E2513BD2F553 /* Info.plist */,
 				668CECA83ACC03A83C85A623 /* iOSApp.swift */,
+				C6D2DD7FE2E0BF5DB2A96B4B /* PrivacyInfo.xcprivacy */,
+				ECA4FAF25F90834251640413 /* PushTraceSwift.swift */,
 			);
 			path = iosApp;
 			sourceTree = "<group>";
@@ -122,6 +171,7 @@
 		38B69C3F79CD97858CF7B609 = {
 			isa = PBXGroup;
 			children = (
+				FFC9BEF0F7452C90A6A82EFC /* Config */,
 				1DB4B685CAEE8BEFEBBAEF94 /* iosApp */,
 				ADAB1A96BC30FA36DC37527C /* StationlyWidget */,
 				3666012298E772D226418813 /* Frameworks */,
@@ -143,15 +193,35 @@
 		ADAB1A96BC30FA36DC37527C /* StationlyWidget */ = {
 			isa = PBXGroup;
 			children = (
+				96749FEEFB87671930DBEF31 /* AppGroupID.swift */,
+				71BBE9EECA29F7BC9A109C5B /* AppGroupKeys.swift */,
 				17F56BCEA93D417E080182A7 /* AppGroupStorage.swift */,
+				258D481022F14E09267EE7BD /* Assets.xcassets */,
+				9DE4B4A042B8485348641764 /* BoardFallback.swift */,
 				5BA8E3A8CB73FA587D96BD12 /* DepartureEntry.swift */,
 				E6E60D8AB263A747C2061338 /* Info.plist */,
+				F97E3E0613AAD3D9909D9DBD /* PrivacyInfo.xcprivacy */,
+				72065508ED95ACC5AA5B3711 /* RefreshScheduleStore.swift */,
+				75982716E6D0AEC8FEED4D33 /* StationConfiguration.swift */,
 				DC75E3E8045F2DC8D1922D50 /* StationlyWidget.swift */,
 				8F7BF3D0F900FDF96129BA89 /* StationlyWidgetBundle.swift */,
+				9DD084811CFD2DD3C10F78DB /* StationResolution.swift */,
+				306E4366DEB79A6AD438619D /* WidgetPageIntent.swift */,
+				D168F4502EC6C4FECA881F67 /* WidgetPushHandler.swift */,
+				4AA433530A96563307A6CAA8 /* WidgetRefreshService.swift */,
 				8FD2D2AA7865370F9D9B2E85 /* WidgetTheme.swift */,
 				725E230C3D1AA4C519DEBC68 /* WidgetViews.swift */,
 			);
 			path = StationlyWidget;
+			sourceTree = "<group>";
+		};
+		FFC9BEF0F7452C90A6A82EFC /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				E4A404729694F80C34072DBE /* Production.xcconfig */,
+				C357B6723C45127EC27E81E4 /* Staging.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -162,6 +232,7 @@
 			buildConfigurationList = 0625D4857D840B43D9848A63 /* Build configuration list for PBXNativeTarget "StationlyWidget" */;
 			buildPhases = (
 				B385F4B0ECD8CB528CA0D3F3 /* Sources */,
+				806329D94232E1D28840B092 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -178,11 +249,15 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 29DCA9F0B3A40325067EB163 /* Build configuration list for PBXNativeTarget "iosApp" */;
 			buildPhases = (
+				924B5C1B070681E0A9B85219 /* Select Kotlin XCFramework */,
+				AC2B91FAAAB92175961D382F /* Guard Accidental Production Build */,
+				F68EA993065471377F878D4E /* Select Firebase Config */,
 				297B59D9CE634556D6007C40 /* Sources */,
 				1623B02D10928C8101C1F806 /* Resources */,
 				EF8A6E9BFD470986D9D5C9B5 /* Frameworks */,
 				E99160E501832DB2CECE6CFF /* Embed Foundation Extensions */,
 				DB76241340C08196BD9C492C /* Embed Frameworks */,
+				6A42F74FB35331E793298FD1 /* Copy Compose Resources */,
 			);
 			buildRules = (
 			);
@@ -192,7 +267,6 @@
 			name = iosApp;
 			packageProductDependencies = (
 				617043448F4869026C2F0BB4 /* FirebaseAuth */,
-				AC813CE66F97994D9BE8A812 /* FirebaseMessaging */,
 				B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */,
 			);
 			productName = iosApp;
@@ -206,14 +280,14 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1540;
+				LastUpgradeCheck = 2600;
 				TargetAttributes = {
 					2215E2ECEB5A6C7BC8352FA8 = {
-						DevelopmentTeam = 6D3CXG8U25;
+						DevelopmentTeam = 7T7D5LLYSL;
 						ProvisioningStyle = Automatic;
 					};
 					78B53CC79860CBFC2F5543C6 = {
-						DevelopmentTeam = 6D3CXG8U25;
+						DevelopmentTeam = 7T7D5LLYSL;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -231,6 +305,7 @@
 				7C4F1707FE80007C7DCEAE3C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 				DF1BCD5B98717A06C1B5AE17 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 			);
+			preferredProjectObjectVersion = 77;
 			productRefGroup = 94C98B8B3A2BFC1966447269 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -246,21 +321,118 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C87B4FA04BDA1DA04158D48E /* GoogleService-Info.plist in Resources */,
+				22EA1CB33A17DCC6FC82406D /* Assets.xcassets in Resources */,
+				09FED4B446BD58DF150C455A /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		806329D94232E1D28840B092 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3A939B1447CB25EBEE98671B /* Assets.xcassets in Resources */,
+				6E53E082D20E046C732E2ED0 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		6A42F74FB35331E793298FD1 /* Copy Compose Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Compose Resources";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -e\nARCH_DIR=\"iosArm64Main\"\nif [ \"${PLATFORM_NAME}\" = \"iphonesimulator\" ]; then ARCH_DIR=\"iosSimulatorArm64Main\"; fi\nSRC=\"${SRCROOT}/../composeApp/build/generated/compose/resourceGenerator/assembledResources/${ARCH_DIR}\"\nDST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/compose-resources\"\nif [ ! -d \"${SRC}\" ]; then\n  echo \"warning: compose resources missing at ${SRC} — run: ./gradlew :composeApp:assembleIosArm64MainResources (app falls back to drawn logo/system font)\"\n  exit 0\nfi\nrm -rf \"${DST}\"\nmkdir -p \"${DST}\"\ncp -R \"${SRC}/.\" \"${DST}/\"\necho \"Copied compose-resources (${ARCH_DIR}) into ${DST}\"\n";
+		};
+		924B5C1B070681E0A9B85219 /* Select Kotlin XCFramework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Select Kotlin XCFramework";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -e\nXCF_DIR=\"${SRCROOT}/../composeApp/build/XCFrameworks\"\nWANT=\"${STATIONLY_KOTLIN_BUILD}\"\n# A Release configuration must never link the debug framework. This\n# cannot happen through the intended path — project.yml sets\n# STATIONLY_KOTLIN_BUILD=release for both Release configs — but that\n# assignment LOOKS like a duplicate of the one in Base.xcconfig and is\n# exactly the kind of thing a tidy-up deletes. It is not a duplicate:\n# Base.xcconfig is a PROJECT-level xcconfig and project-level\n# `settings:` beat it, which is what makes the override work at all.\n#\n# Delete it and every archive silently ships unoptimised debug Kotlin\n# built from a different Gradle variant, with a green build and no\n# warning. Failing here makes that a thirty-second fix instead of a\n# TestFlight mystery.\ncase \"${CONFIGURATION}\" in\n  Release*)\n    if [ \"${WANT}\" != \"release\" ]; then\n      echo \"error: ${CONFIGURATION} would link the '${WANT}' Kotlin framework.\"\n      echo \"  STATIONLY_KOTLIN_BUILD must be 'release' for any Release configuration.\"\n      echo \"  Check project.yml still sets it under settings.configs for Release Staging\"\n      echo \"  and Release Production — that override BEATS Base.xcconfig by design.\"\n      exit 1\n    fi ;;\nesac\nif [ ! -d \"${XCF_DIR}/${WANT}/composeApp.xcframework\" ]; then\n  echo \"error: ${WANT} XCFramework missing. Run: ./gradlew :composeApp:assembleComposeApp$(echo ${WANT} | tr '[:lower:]' '[:upper:]' | cut -c1)$(echo ${WANT} | cut -c2-)XCFramework\"\n  exit 1\nfi\n# -n so an existing symlink is replaced rather than followed (which\n# would nest the new link INSIDE the old target's directory).\n#\n# NOTE this symlink is shared mutable state across concurrent builds:\n# two xcodebuild invocations on different configurations (two Xcode\n# windows, or a script running alongside the GUI) race here, and the\n# loser links whatever the winner selected. Builds are sequential in\n# practice and the archive verification in scripts/ios-testflight.sh\n# asserts the outcome, so this is recorded rather than solved — the\n# real fix needs per-configuration framework paths, which XcodeGen\n# cannot express (Xcode does not expand build settings inside a file\n# reference, which is why this is a symlink in the first place).\nln -sfn \"${WANT}\" \"${XCF_DIR}/current\"\necho \"Kotlin XCFramework: ${WANT}\"\n";
+		};
+		AC2B91FAAAB92175961D382F /* Guard Accidental Production Build */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Guard Accidental Production Build";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -e\n[ \"${STATIONLY_ENVIRONMENT}\" = \"production\" ] || exit 0\nif [ \"${CONFIGURATION}\" = \"Debug Production\" ]; then\n  if [ ! -f \"${SRCROOT}/Config/.allow-debug-production\" ]; then\n    echo \"error: refusing to build Debug Production.\"\n    echo \"\"\n    echo \"  Dev builds are staging. You are probably here because Xcode defaulted to\"\n    echo \"  the 'iosApp Production' scheme — it sorts first alphabetically and the\"\n    echo \"  scheme selection is not committed. Switch to 'iosApp Staging'.\"\n    echo \"\"\n    echo \"  This build would point at api.stationly.co.uk AND share a bundle id with\"\n    echo \"  the App Store app, so installing it replaces a real production install.\"\n    echo \"\"\n    echo \"  If you genuinely need it:  touch iosApp/Config/.allow-debug-production\"\n    exit 1\n  fi\n  echo \"warning: Debug Production build — opted in via Config/.allow-debug-production. This app talks to the PRODUCTION backend.\"\nelse\n  echo \"warning: building ${CONFIGURATION} — this targets the PRODUCTION backend and App Store record.\"\nfi\n";
+		};
+		F68EA993065471377F878D4E /* Select Firebase Config */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Select Firebase Config";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -e\nSRC=\"${SRCROOT}/Config/${STATIONLY_FIREBASE_PLIST}.plist\"\nDST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GoogleService-Info.plist\"\nif [ ! -f \"${SRC}\" ]; then\n  echo \"error: Firebase config not found at ${SRC} (STATIONLY_FIREBASE_PLIST=${STATIONLY_FIREBASE_PLIST})\"\n  exit 1\nfi\n# A stub carries no GOOGLE_APP_ID — the same key\n# AppDelegate.configureFirebaseIfAvailable() checks before calling\n# FirebaseApp.configure(). Warn at BUILD time too, so nobody has to\n# discover it by watching a device log after install.\nif ! /usr/libexec/PlistBuddy -c \"Print :GOOGLE_APP_ID\" \"${SRC}\" >/dev/null 2>&1; then\n  echo \"warning: ${STATIONLY_FIREBASE_PLIST}.plist is a PLACEHOLDER (no GOOGLE_APP_ID) — Firebase will not configure and sign-in will be unavailable. See docs/IOS_ENV_SPLIT_AND_TESTFLIGHT.md §6.\"\nfi\nmkdir -p \"$(dirname \"${DST}\")\"\ncp \"${SRC}\" \"${DST}\"\necho \"Firebase config: ${STATIONLY_FIREBASE_PLIST}.plist (${STATIONLY_ENVIRONMENT})\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		297B59D9CE634556D6007C40 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				490B0ECE2B0FE3124A257528 /* ActivityUploadScheduler.swift in Sources */,
 				FDE52B8D57A097A60A4CF366 /* AppDelegate.swift in Sources */,
+				7ECDD355828B7FFCA7AF9072 /* AppGroupID.swift in Sources */,
+				EE0B2E5554D43A66C83DA33C /* AppGroupKeys.swift in Sources */,
 				73956648F92E8FEC62F6D73D /* AuthBridge.swift in Sources */,
+				A127096D6F3B2879A8B21DBD /* BGTaskIdentifier.swift in Sources */,
+				6DE7FA15AE6C76B0C10ABF8A /* BackgroundRefreshScheduler.swift in Sources */,
 				56B0305B5D3847FC6B326502 /* ContentView.swift in Sources */,
-				F5590281266A7B295361D031 /* FCMBridge.swift in Sources */,
+				BF44FB5F0C3BD68EF6CDC90C /* DeviceIdentityStore.swift in Sources */,
+				B431C9F829F237B6A780A8FC /* DevicePushCoordinator.swift in Sources */,
+				BAE7B40F755CB01E45657AA8 /* HomeStateProbe.swift in Sources */,
+				C654091523394E0AFE6EA794 /* PushTraceSwift.swift in Sources */,
 				307C2654CD5972A25FB7FD87 /* iOSApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -269,10 +441,19 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				EEAED07AD42E134D78BBE3AD /* AppGroupID.swift in Sources */,
+				9F3A175D3B8A470544BB8BE2 /* AppGroupKeys.swift in Sources */,
 				38BC8C0A2A20C409AD35F500 /* AppGroupStorage.swift in Sources */,
+				4386425835E3A61DCAF722E3 /* BoardFallback.swift in Sources */,
 				15004BFF21C3E1734FA5E510 /* DepartureEntry.swift in Sources */,
+				99B49945DB0F17F7094153A9 /* RefreshScheduleStore.swift in Sources */,
+				CFE992350AE1D45C71A414A2 /* StationConfiguration.swift in Sources */,
+				8E7C81E20D63BC001B6F1D33 /* StationResolution.swift in Sources */,
 				C0D402F91C254C0EFB1C3A91 /* StationlyWidget.swift in Sources */,
 				C3E3BCF8F138F630927C544F /* StationlyWidgetBundle.swift in Sources */,
+				A774AD58CF3505F914CB83D7 /* WidgetPageIntent.swift in Sources */,
+				875215AA235312C1FEF7D5E1 /* WidgetPushHandler.swift in Sources */,
+				8B590E4A471A5538649CEBCF /* WidgetRefreshService.swift in Sources */,
 				CB006310D02489A5D2220318 /* WidgetTheme.swift in Sources */,
 				C549E9404F60E91D428ED213 /* WidgetViews.swift in Sources */,
 			);
@@ -292,15 +473,15 @@
 		2532FBAA0CDB270850CC20CE /* Debug Production */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				APS_ENVIRONMENT = development;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "$(STATIONLY_APPICON_NAME)";
 				CODE_SIGN_ENTITLEMENTS = iosApp/iosApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
-					"\"../composeApp/build/XCFrameworks/debug\"",
+					"\"../composeApp/build/XCFrameworks/current\"",
 				);
 				INFOPLIST_FILE = iosApp/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -308,17 +489,16 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.stationly.mobile;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX)";
 				SDKROOT = iphoneos;
-				STATIONLY_ENVIRONMENT = production;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Debug Production";
 		};
 		26E3DA0A0E3E5C646AE62FE3 /* Release Production */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E4A404729694F80C34072DBE /* Production.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -367,6 +547,7 @@
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
+				STATIONLY_KOTLIN_BUILD = release;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
@@ -376,15 +557,15 @@
 		51CB68AC8D7F623AAE26B2CA /* Release Production */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				APS_ENVIRONMENT = production;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "$(STATIONLY_APPICON_NAME)";
 				CODE_SIGN_ENTITLEMENTS = iosApp/iosApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
-					"\"../composeApp/build/XCFrameworks/debug\"",
+					"\"../composeApp/build/XCFrameworks/current\"",
 				);
 				INFOPLIST_FILE = iosApp/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -392,27 +573,25 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.stationly.mobile;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX)";
 				SDKROOT = iphoneos;
-				STATIONLY_ENVIRONMENT = production;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Release Production";
 		};
 		63955345AAF9DCCADD923128 /* Debug Staging */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				APS_ENVIRONMENT = development;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "$(STATIONLY_APPICON_NAME)";
 				CODE_SIGN_ENTITLEMENTS = iosApp/iosApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
-					"\"../composeApp/build/XCFrameworks/debug\"",
+					"\"../composeApp/build/XCFrameworks/current\"",
 				);
 				INFOPLIST_FILE = iosApp/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -420,40 +599,37 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.stationly.mobile;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX)";
 				SDKROOT = iphoneos;
-				STATIONLY_ENVIRONMENT = staging;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Debug Staging";
 		};
 		86FE6E6113093C1275D9B15E /* Release Staging */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = production;
 				CODE_SIGN_ENTITLEMENTS = StationlyWidget/StationlyWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				INFOPLIST_FILE = StationlyWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.stationly.mobile.StationlyWidget;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).StationlyWidget";
 				SDKROOT = iphoneos;
-				STATIONLY_ENVIRONMENT = staging;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Release Staging";
 		};
 		889C939ABFD256B1A67F1C5C /* Release Staging */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C357B6723C45127EC27E81E4 /* Staging.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -502,6 +678,7 @@
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
+				STATIONLY_KOTLIN_BUILD = release;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
@@ -511,51 +688,48 @@
 		A6E729A32E20FB90F7F3C38F /* Debug Production */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = development;
 				CODE_SIGN_ENTITLEMENTS = StationlyWidget/StationlyWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				INFOPLIST_FILE = StationlyWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.stationly.mobile.StationlyWidget;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).StationlyWidget";
 				SDKROOT = iphoneos;
-				STATIONLY_ENVIRONMENT = production;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Debug Production";
 		};
 		B173C12BF3E6DE291E250DBC /* Debug Staging */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = development;
 				CODE_SIGN_ENTITLEMENTS = StationlyWidget/StationlyWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				INFOPLIST_FILE = StationlyWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.stationly.mobile.StationlyWidget;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).StationlyWidget";
 				SDKROOT = iphoneos;
-				STATIONLY_ENVIRONMENT = staging;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Debug Staging";
 		};
 		DB7C1AD8F10F4B066291702E /* Debug Production */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E4A404729694F80C34072DBE /* Production.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -620,15 +794,15 @@
 		E073F9AF736D8F40F1BA5AF0 /* Release Staging */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				APS_ENVIRONMENT = production;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "$(STATIONLY_APPICON_NAME)";
 				CODE_SIGN_ENTITLEMENTS = iosApp/iosApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
-					"\"../composeApp/build/XCFrameworks/debug\"",
+					"\"../composeApp/build/XCFrameworks/current\"",
 				);
 				INFOPLIST_FILE = iosApp/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -636,40 +810,37 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.stationly.mobile;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX)";
 				SDKROOT = iphoneos;
-				STATIONLY_ENVIRONMENT = staging;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Release Staging";
 		};
 		F3BB44D9B810BE436CE70F01 /* Release Production */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = production;
 				CODE_SIGN_ENTITLEMENTS = StationlyWidget/StationlyWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6D3CXG8U25;
+				DEVELOPMENT_TEAM = 7T7D5LLYSL;
 				INFOPLIST_FILE = StationlyWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.stationly.mobile.StationlyWidget;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(STATIONLY_BUNDLE_BASE)$(STATIONLY_BUNDLE_SUFFIX).StationlyWidget";
 				SDKROOT = iphoneos;
-				STATIONLY_ENVIRONMENT = production;
 				SWIFT_VERSION = 5.9;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = "Release Production";
 		};
 		F9FA6AD3D94F490B060B02FF /* Debug Staging */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C357B6723C45127EC27E81E4 /* Staging.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -774,8 +945,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
 			requirement = {
-				kind = exactVersion;
-				version = 10.28.1;
+				kind = upToNextMajorVersion;
+				minimumVersion = 11.0.0;
 			};
 		};
 		DF1BCD5B98717A06C1B5AE17 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
@@ -793,11 +964,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 7C4F1707FE80007C7DCEAE3C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseAuth;
-		};
-		AC813CE66F97994D9BE8A812 /* FirebaseMessaging */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 7C4F1707FE80007C7DCEAE3C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseMessaging;
 		};
 		B6E18E1D8AEE3BF1FDA1E5E9 /* GoogleSignIn */ = {
 			isa = XCSwiftPackageProductDependency;
