@@ -39,6 +39,12 @@ kotlin {
             dependencies {
                 implementation(kotlin("test"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+                // Lets the 401 policy in NetworkModule be driven against scripted
+                // responses. That path decides whether a user stays signed in and
+                // is otherwise UNTESTABLE: `account_gone` needs a deleted account,
+                // and the retry needs a server that 401s a freshly minted token,
+                // neither of which can be arranged against the real backend.
+                implementation("io.ktor:ktor-client-mock:3.0.0-rc-1")
             }
         }
 
@@ -60,6 +66,7 @@ kotlin {
             dependsOn(commonMain)
             dependencies {
                 implementation("io.ktor:ktor-client-darwin:3.0.0-rc-1")
+                implementation("io.ktor:ktor-client-websockets:3.0.0-rc-1")
                 implementation("app.cash.sqldelight:native-driver:2.0.2")
             }
         }
@@ -100,13 +107,39 @@ sqldelight {
     databases {
         create("StationlyDatabase") {
             packageName.set("com.stationly.db")
-            // Schema lives in commonMain/sqldelight/.../StationlyDatabase.sq.
-            // No `migrations/` directory yet — the app hasn't shipped, so
-            // every install starts fresh on the current schema. When we
-            // DO ship and later evolve the schema, add `N.sqm` files in a
-            // `migrations/` directory next to the `.sq` file; SQLDelight
-            // infers the current schema version from the migration count
-            // (e.g. one migration → version 2).
+            // Schema lives in commonMain/sqldelight/.../StationlyDatabase.sq,
+            // migrations alongside it in `migrations/N.sqm`. SQLDelight infers
+            // the current version from the migration COUNT — one migration
+            // means version 2 — so a new `.sqm` is what bumps the database.
+            //
+            // Every change from here needs one. `Schema.create` runs only on an
+            // empty database, so a change made to the `.sq` alone reaches
+            // fresh installs and NOTHING else; a new table then fails with
+            // "no such table" on precisely the devices that have been using the
+            // app longest. Adding a column with a DEFAULT happens to survive
+            // that (old rows read the default), which is why the omission went
+            // unnoticed for several schema changes.
+
+            // ⚠️ `verifyMigrations` is NOT enabled, and turning it on is not a
+            // one-liner — it was tried and reverted here, so the next person
+            // does not repeat it.
+            //
+            // The gap is real: `1.sqm` duplicates its `CREATE TABLE` from
+            // `StationlyDatabase.sq` by hand, nothing compares the two, and the
+            // drift would surface only as a runtime failure on UPGRADED installs
+            // — never on the fresh ones a developer tests with.
+            //
+            // `verifyMigrations.set(true)` makes `:core:build` FAIL with
+            // "Verifying a migration requires a database file to be present",
+            // and the `generate…Schema` task the error points at is not
+            // registered by SQLDelight 2.0.2 in this configuration. Closing it
+            // properly means adding a recorded schema baseline
+            // (`sqldelight/databases/<version>.db`) and checking it in, which is
+            // its own change with its own verification — not something to
+            // smuggle in alongside unrelated work.
+            //
+            // Until then the `.sqm` and the `.sq` are kept identical BY HAND.
+            // Change one, change the other, in the same commit.
         }
     }
 }

@@ -2,25 +2,43 @@ package com.stationly.app.ui.selection
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.stationly.app.sync.UserStateSync
+import com.stationly.core.repository.UserSettings
+import com.stationly.core.activity.ActivityEvents
+import com.stationly.core.activity.ActivityLog
+import com.stationly.core.model.FilterMode
 import com.stationly.core.model.UserSelection
+import com.stationly.core.util.BoardFilterResolver
+import com.stationly.core.util.LineNameStore
+import com.stationly.core.util.RouteGraph
+import com.stationly.core.model.sdui.SduiRouteStop
 import com.stationly.core.model.sdui.SduiAppComponent
 import com.stationly.core.model.sdui.SduiAppScreen
 import com.stationly.core.model.sdui.SduiDropdownOption
-import com.stationly.core.model.sdui.SubscribedStation
 import com.stationly.core.config.AppConfig
+import com.stationly.core.config.BoardPolicyStore
+import com.stationly.core.config.BoardQuota
 import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import com.stationly.app.platform.performHaptic
+import com.stationly.app.platform.HapticType
 
 class SelectionViewModel(
     private val locationProvider: LocationProvider = platformLocationProvider()
@@ -46,6 +64,22 @@ class SelectionViewModel(
 
     private val jsonFormat = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
+    companion object {
+        // A `MAX_ROWS_PER_STATION = 8` const used to live here, capping
+        // (line, direction) rows on one station card. It is gone, and nothing
+        // replaced it: a line runs inbound and outbound and nothing else, so
+        // `BoardPolicy.maxLinesPerStation` already bounds a card at twice
+        // itself. A second ceiling counted in rows could only ever fire first,
+        // refusing three lines with both ways ticked — a board the line limit
+        // calls legal.
+
+        /** Prefix for the per-line direction-fetch failure keys in `failedFetches`. */
+        private const val DIRECTION_FAIL_PREFIX = "direction_"
+
+        /** Filters are per (line, direction) — the two directions of a line are separate journeys. */
+        fun boardFilterKey(lineId: String, directionId: String) = "$lineId|$directionId"
+    }
+
     private val _uiState = MutableStateFlow(SelectionUiState())
     val uiState: StateFlow<SelectionUiState> = _uiState.asStateFlow()
 
@@ -61,8 +95,141 @@ class SelectionViewModel(
     private val _modes = MutableStateFlow<List<SduiDropdownOption>>(emptyList())
     val modes: StateFlow<List<SduiDropdownOption>> = _modes.asStateFlow()
 
+    /**
+     * The lines checked on the line step, in the order they were checked, each
+     * mapped to the SET of directions checked for that line (empty until the
+     * user picks at least one).
+     *
+     * Replaces the single `selections["line"]` / `selections["direction"]` pair.
+     * Direction cannot live in the flat selection map any more because it is a
+     * property OF a line, not of the station: Circle runs inner/outer rail while
+     * Jubilee runs north/south, so two lines checked at the same station have
+     * disjoint direction vocabularies and each needs its own answer. It is a
+     * SET rather than a single value because both directions of one line are a
+     * legitimate choice — "show me trains each way at this platform" — and each
+     * one becomes its own board section.
+     *
+     * Insertion-ordered (`toMutableMap` on a LinkedHashMap preserves both
+     * insertion order and the position of updated keys), which is what makes the
+     * saved boards appear in the order the user picked them.
+     */
+    private val _linePicks = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+    val linePicks: StateFlow<Map<String, Set<String>>> = _linePicks.asStateFlow()
+
+    /** Directions available per checked line, keyed by line id. */
+    private val _directionsByLine = MutableStateFlow<Map<String, List<SduiDropdownOption>>>(emptyMap())
+    val directionsByLine: StateFlow<Map<String, List<SduiDropdownOption>>> = _directionsByLine.asStateFlow()
+
+    /** Line ids whose direction list is currently in flight. */
+    private val _loadingDirections = MutableStateFlow<Set<String>>(emptySet())
+    val loadingDirections: StateFlow<Set<String>> = _loadingDirections.asStateFlow()
+
+    /**
+     * Per-board departure filter, keyed by [boardFilterKey].
+     *
+     * Keyed on (line, direction) rather than line, because the two directions of
+     * one line are separate boards with separate journeys — "via Green Park"
+     * southbound says nothing about what you want northbound.
+     *
+     * Holds the user's INTENT only. The expensive part — turning "via Green
+     * Park" into the set of destination ids that pass through it — happens once
+     * in [saveSelection] via [BoardFilterResolver], never while the sheet is open.
+     */
+    private val _boardFilters = MutableStateFlow<Map<String, BoardFilter>>(emptyMap())
+    val boardFilters: StateFlow<Map<String, BoardFilter>> = _boardFilters.asStateFlow()
+
+    /**
+     * Built route graphs, keyed by [boardFilterKey].
+     *
+     * Building one is not free — it topologically sorts the stops, cuts them into
+     * segments and packs them into rows — and [toggleFilterVia] needs one on
+     * EVERY tap of a station. Rebuilding it per tap did that whole pipeline on
+     * the main thread and threw the result away immediately.
+     *
+     * Cleared whenever a line's directions are replaced, which is the only thing
+     * that can change the answer.
+     */
+    private val graphCache = mutableMapOf<String, RouteGraph>()
+
+    private fun graphFor(lineId: String, directionId: String): RouteGraph? {
+        val key = boardFilterKey(lineId, directionId)
+        graphCache[key]?.let { return it }
+        val option = _directionsByLine.value[lineId]?.find { it.id == directionId } ?: return null
+        return RouteGraph.from(option).also { graphCache[key] = it }
+    }
+
+    /** Drop cached graphs for one line — its route data has been replaced. */
+    private fun invalidateGraphs(lineId: String) {
+        graphCache.keys.removeAll { it.startsWith("$lineId|") }
+    }
+
+    /**
+     * The one line whose directions are currently expanded, or null for none.
+     *
+     * An accordion rather than "every ticked line stays open": with four lines
+     * ticked, four expanded direction blocks push the list far past a phone
+     * screen and the user loses track of what they have already answered. Only
+     * the line being worked on is open; the rest collapse to a summary of their
+     * picks and reopen on tap.
+     *
+     * Kept separate from [_linePicks] so collapsing NEVER touches the selection —
+     * a line stays fully chosen while closed, and reopening restores exactly the
+     * state it had.
+     */
+    private val _expandedLine = MutableStateFlow<String?>(null)
+    val expandedLine: StateFlow<String?> = _expandedLine.asStateFlow()
+
+    /**
+     * Open a line's directions, closing whichever was open.
+     *
+     * Tapping the already-open line collapses it, so the header is its own
+     * toggle and a finished line can be put away without ticking anything.
+     */
+    fun toggleExpandedLine(lineId: String) {
+        performHaptic(HapticType.TAP)
+        _expandedLine.value = if (_expandedLine.value == lineId) null else lineId
+    }
+
+    /**
+     * What the user ALREADY had saved for the station currently being edited,
+     * in the same shape as [_linePicks]. Seeded by [prefillPicksForStation] and
+     * never mutated by ticking.
+     *
+     * Two jobs: it lets the UI mark a row as already on the board, and it is the
+     * baseline [saveSelection] diffs against so untouched boards are left
+     * completely alone instead of being deleted and re-inserted (which would
+     * reorder them and steal the widget's primary slot).
+     */
+    private val _existingPicks = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+    val existingPicks: StateFlow<Map<String, Set<String>>> = _existingPicks.asStateFlow()
+
+    /** Line ids whose direction fetch failed, unwrapped from the `direction_<id>` fail keys. */
+    val failedDirections: StateFlow<Set<String>> = _uiState
+        .map { st ->
+            st.failedFetches
+                .filter { it.startsWith(DIRECTION_FAIL_PREFIX) }
+                .mapTo(mutableSetOf()) { it.removePrefix(DIRECTION_FAIL_PREFIX) }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    /** True once at least one line is checked AND every checked line has >=1 direction. */
+    val isSelectionComplete: StateFlow<Boolean> = _linePicks
+        .map { picks -> picks.isNotEmpty() && picks.values.all { it.isNotEmpty() } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /**
+     * Completion of the repository's initial load from SQL.
+     *
+     * Every path that diffs against existing boards has to await this. The
+     * prefill and the save both read `selectionRepository.selections`, which is
+     * an in-memory mirror that is EMPTY until `initialize()` finishes — race it
+     * and the line step opens blank at a station that has boards, then the save
+     * diffs against an empty baseline and re-adds rows that already exist.
+     */
+    private var repoReady: Job? = null
+
     init {
-        viewModelScope.launch {
+        repoReady = viewModelScope.launch {
             selectionRepository.initialize()
         }
         loadCachedLayout()
@@ -101,6 +268,87 @@ class SelectionViewModel(
             try {
                 storageManager.saveString("recent_stations", jsonFormat.encodeToString(updated))
             } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Open the flow already on a station, at the LINE step — "Edit station" from
+     * the home screen.
+     *
+     * Drives the same [onDropdownSelected] path a tapping user would, rather
+     * than writing `_selections` directly: that call is what fetches the line
+     * list and what runs [prefillPicksForStation], so a shortcut around it lands
+     * on an empty line step with none of the station's saved boards ticked.
+     *
+     * [stationName] is carried because the later steps read the station's label
+     * out of `dropdownData["station"]` ("Lines from Oxford Circus"), and that
+     * list is the NEARBY-stations result — which need not contain a station the
+     * user saved somewhere else, or anything at all before location resolves. A
+     * synthetic option is seeded so the copy reads correctly either way; a real
+     * fetch overwrites it.
+     *
+     * Waits for the layout because [onDropdownSelected] resolves its cascade
+     * against `layout.components`, and with no layout there is nothing to
+     * cascade into.
+     */
+    /**
+     * The station [openForStation] was entered on, kept so a later refresh of the
+     * station list cannot lose it.
+     *
+     * `fetchNearbyStations` and `searchStations` REPLACE `dropdownData["station"]`
+     * wholesale, and neither is guaranteed to contain a station the user saved
+     * somewhere else. Losing it is not cosmetic: `saveSelection` reads the
+     * station's display name out of that same list and falls back to the naptan,
+     * so adding a line while editing such a station would have persisted a board
+     * titled "940GZZLUKSX".
+     */
+    private var editStationOption: SduiDropdownOption? = null
+
+    /** Re-inserts [editStationOption] into a freshly fetched station list. */
+    private fun withEditStation(options: List<SduiDropdownOption>): List<SduiDropdownOption> {
+        val pinned = editStationOption ?: return options
+        return if (options.any { it.id == pinned.id }) options else listOf(pinned) + options
+    }
+
+    fun openForStation(
+        mode: String,
+        stationId: String,
+        stationName: String,
+        /**
+         * A line to open the picker already expanded on.
+         *
+         * Set when the user came from ONE board's row on the station settings
+         * screen, so they land on the line they tapped instead of a collapsed
+         * list they have to find it in again. Null from the generic "Add or edit
+         * lines" entry, which is about the station rather than one line.
+         */
+        focusLine: String? = null,
+    ) {
+        viewModelScope.launch {
+            // The layout arrives from cache within a frame or two, or from the
+            // network. Bounded so a dead backend leaves the user on the mode
+            // step — the normal flow — rather than on a spinner.
+            val layout = withTimeoutOrNull(5_000) {
+                _uiState.first { it.layout != null }.layout
+            } ?: return@launch
+
+            if (layout.components.none { it is SduiAppComponent.Dropdown && it.id == "station" }) return@launch
+
+            editStationOption = SduiDropdownOption(id = stationId, label = stationName)
+
+            onDropdownSelected("mode", mode)
+
+            val seeded = _dropdownData.value.toMutableMap()
+            seeded["station"] = withEditStation(seeded["station"] ?: emptyList())
+            _dropdownData.value = seeded
+
+            onDropdownSelected("station", stationId)
+
+            // AFTER the station lands. `onDropdownSelected("station", …)` runs
+            // `clearLinePicks()`, which sets `_expandedLine` to null so the
+            // previous station's open line cannot survive into this one —
+            // setting the focus first would be wiped by it.
+            focusLine?.let { line -> _expandedLine.value = line }
         }
     }
 
@@ -166,6 +414,18 @@ class SelectionViewModel(
                 _uiState.value = _uiState.value.copy(
                     failedFetches = _uiState.value.failedFetches - "mode"
                 )
+                // Mirror Android SelectionViewModel: persist the mode roundel
+                // icons + tints into the App-Group cache so the widget and the
+                // board header render the real backend roundels offline.
+                val iconEntries = modesResult.map {
+                    com.stationly.app.platform.ModeIconEntry(it.id, it.iconUrl, it.tintHex)
+                }
+                val iconVersion = modesResult.firstOrNull { !it.iconVersion.isNullOrBlank() }?.iconVersion
+                if (iconEntries.isNotEmpty()) {
+                    viewModelScope.launch {
+                        com.stationly.app.platform.ModeIconStore.sync(iconEntries, iconVersion)
+                    }
+                }
             } catch (_: Exception) {
                 _uiState.value = _uiState.value.copy(
                     failedFetches = _uiState.value.failedFetches + "mode"
@@ -194,7 +454,7 @@ class SelectionViewModel(
                 val nearbyStations = sduiService.getNearbyStations(lat, lon, modeId)
                 if (nearbyStations.isNotEmpty()) {
                     val updatedData = _dropdownData.value.toMutableMap()
-                    updatedData["station"] = nearbyStations
+                    updatedData["station"] = withEditStation(nearbyStations)
                     _dropdownData.value = updatedData
                     _uiState.value = _uiState.value.copy(
                         isLocating = false, isGpsUnavailable = false,
@@ -228,7 +488,7 @@ class SelectionViewModel(
                     "/stations/search?searchKey=${query.trim()}&mode=$mode$locationSuffix"
                 )
                 val updatedData = _dropdownData.value.toMutableMap()
-                updatedData["station"] = results
+                updatedData["station"] = withEditStation(results)
                 _dropdownData.value = updatedData
                 _uiState.value = _uiState.value.copy(
                     isSearchEmpty = results.isEmpty(), isGpsUnavailable = false
@@ -238,28 +498,42 @@ class SelectionViewModel(
     }
 
     fun onDropdownSelected(componentId: String, value: String) {
-        if (value.isBlank()) { removeSelection(componentId); return }
+        if (value.isBlank()) { performHaptic(HapticType.TAP); removeSelection(componentId); return }
+
+        // BEFORE the haptic and before ANY state is touched. The `when` below
+        // calls clearLinePicks(), so a refusal that ran after it would wipe the
+        // lines the user had already chosen and only then tell them no. The
+        // station step is also the last point where refusing is free — past it
+        // they pick lines and directions, and a refusal at save time throws all
+        // of that away.
+        if (componentId == "station" && !BoardQuota.canAddStation(heldStationIds(), value)) {
+            performHaptic(HapticType.ERROR)
+            _uiState.value = _uiState.value.copy(showStationLimitDialog = true)
+            return
+        }
+        performHaptic(HapticType.TAP)
 
         val newSelections = _selections.value.toMutableMap()
         val newDropdownData = _dropdownData.value.toMutableMap()
 
-        // Clear downstream state when a parent changes
+        // Clear downstream state when a parent changes. Line/direction now live
+        // in _linePicks rather than this map, so changing mode or station has to
+        // drop those too — otherwise the Piccadilly tick from the previous
+        // station would survive into the new one.
         when (componentId) {
             "mode" -> {
                 listOf("station", "line", "direction", "lat", "lon").forEach {
                     newSelections.remove(it)
                     newDropdownData.remove(it)
                 }
+                clearLinePicks()
             }
             "station" -> {
                 listOf("line", "direction").forEach {
                     newSelections.remove(it)
                     newDropdownData.remove(it)
                 }
-            }
-            "line" -> {
-                newSelections.remove("direction")
-                newDropdownData.remove("direction")
+                clearLinePicks()
             }
         }
 
@@ -281,10 +555,13 @@ class SelectionViewModel(
             }
         }
 
-        // Station selected → fetch lines
+        // Station selected → fetch lines, and re-open whatever is already on
+        // this station's card so the line step reads as "edit this board"
+        // rather than "start again".
         if (componentId == "station") {
             components.find { it is SduiAppComponent.Dropdown && it.id == "line" }
                 ?.let { fetchDropdownData(it as SduiAppComponent.Dropdown, newSelections) }
+            prefillPicksForStation(value)
         }
 
         // Cascading: fetch children that depend on this selection
@@ -293,6 +570,533 @@ class SelectionViewModel(
                 fetchDropdownData(comp, newSelections)
             }
         }
+    }
+
+    /**
+     * Re-open the boards already saved for [stationId] as ticked picks.
+     *
+     * Without this the line step opens blank even when the station already has a
+     * card, which both misrepresents the board and makes a returning user
+     * re-tick lines they never removed — and re-ticking used to delete and
+     * re-insert the row, silently reordering the card.
+     *
+     * The saved rows only carry direction IDS, so each line still needs its
+     * option list fetched for the cards to render labels; [fetchDirectionsFor]
+     * is cheap here because the 24-hour dropdown cache is almost always warm
+     * from when the board was first created.
+     */
+    private fun prefillPicksForStation(stationId: String) {
+        viewModelScope.launch {
+            repoReady?.join()
+            val saved = selectionRepository.selections.value.filter { it.groupingId == stationId }
+            if (saved.isEmpty()) {
+                _existingPicks.value = emptyMap()
+                return@launch
+            }
+            val picks = LinkedHashMap<String, Set<String>>()
+            val filters = LinkedHashMap<String, BoardFilter>()
+            saved.forEach { sel ->
+                picks[sel.line] = (picks[sel.line] ?: emptySet()) + sel.direction
+                // Restore the INTENT, not the resolved allow-list — reopening the
+                // sheet must show "via Green Park", not the 35 ids that produced.
+                // Re-saving then re-resolves against current route data, which is
+                // also how a stale allow-list gets refreshed.
+                if (sel.filterMode != FilterMode.ALL) {
+                    filters[boardFilterKey(sel.line, sel.direction)] = BoardFilter(
+                        mode = sel.filterMode,
+                        destinationIds = if (sel.filterMode == FilterMode.DESTINATIONS)
+                            sel.destinationIds.toSet() else emptySet(),
+                        viaStops = sel.viaStationIds.mapIndexed { i, id ->
+                            SduiRouteStop(id, sel.viaStationNames.getOrElse(i) { id })
+                        },
+                        patterns = sel.patternIds.mapIndexed { i, id ->
+                            BoardFilter.PatternPick(id, sel.patternNames.getOrElse(i) { id })
+                        },
+                    )
+                }
+            }
+            _existingPicks.value = picks
+            _linePicks.value = picks
+            _boardFilters.value = filters
+            picks.keys.forEach { line ->
+                if (_directionsByLine.value[line] == null) fetchDirectionsFor(line)
+            }
+        }
+    }
+
+    /**
+     * Check or uncheck a line on the multi-line step.
+     *
+     * Checking kicks off that line's direction fetch immediately, so the inline
+     * direction control is populated by the time the row finishes expanding.
+     */
+    fun toggleLine(lineId: String) {
+        val current = _linePicks.value
+        // Only ADDING spends a slot. Unticking at the cap has to stay free, or a
+        // user who filled the station has no way back out of it.
+        if (lineId !in current && !BoardQuota.canAddLine(current.size)) {
+            refuseLine()
+            return
+        }
+        performHaptic(HapticType.TAP)
+        // Ticking a line makes it the one being worked on; unticking closes it.
+        _expandedLine.value = if (lineId in current) null else lineId
+        if (lineId in current) {
+            _linePicks.value = current - lineId
+            // Keep the fetched directions cached: re-checking the same line is
+            // common (mis-tap, changed mind) and should not re-hit the network.
+        } else {
+            _linePicks.value = current + (lineId to emptySet())
+            val known = _directionsByLine.value[lineId]
+            // Auto-tick a line that only runs one way, so a non-choice never
+            // costs a tap. This has to live here rather than only in the fetch:
+            // on a cache hit (untick then re-tick) no fetch runs, and the line
+            // would sit expanded with an unticked lone card holding the CTA
+            // disabled.
+            if (known == null) fetchDirectionsFor(lineId) else autoSelectSoleDirection(lineId, known)
+        }
+    }
+
+    /**
+     * Check or uncheck ONE direction of an already-checked line. Both
+     * directions may be held at once; each becomes its own board section.
+     *
+     * Unchecking the last remaining direction leaves the line checked with an
+     * empty set rather than silently unchecking the line — the CTA stays
+     * disabled and the user is shown an incomplete line instead of having their
+     * line selection disappear from under them.
+     */
+    fun toggleDirection(lineId: String, directionId: String) {
+        val current = _linePicks.value[lineId] ?: return
+        val adding = directionId !in current
+        performHaptic(HapticType.TAP)
+        val updated = if (adding) current + directionId else current - directionId
+        _linePicks.value = _linePicks.value.toMutableMap().also { it[lineId] = updated }
+    }
+
+    /**
+     * Tick every direction of one line — the "both ways" shortcut, which is the
+     * single most common multi-pick ("show me trains each way at my platform")
+     * and otherwise costs one tap per direction.
+     *
+     * Toggles off if the line is already fully picked.
+     */
+    fun toggleAllDirections(lineId: String) {
+        val options = _directionsByLine.value[lineId] ?: return
+        val current = _linePicks.value[lineId] ?: return
+        val allIds = options.mapTo(LinkedHashSet()) { it.id }
+        val next = if (current.containsAll(allIds)) emptySet() else allIds
+        performHaptic(HapticType.TAP)
+        _linePicks.value = _linePicks.value.toMutableMap().also { it[lineId] = next }
+    }
+
+    /**
+     * Tick every line serving the station. Directions still have to be chosen
+     * per line — this only saves the tap-per-line, which at an interchange like
+     * King's Cross is the difference between eight taps and one.
+     *
+     * Toggles off if every line is already checked.
+     */
+    fun toggleAllLines(lines: List<SduiDropdownOption>) {
+        if (lines.all { it.id in _linePicks.value }) {
+            performHaptic(HapticType.TAP)
+            _linePicks.value = emptyMap()
+            return
+        }
+        val picks = LinkedHashMap(_linePicks.value)
+        // Fills UP TO the cap rather than refusing the whole gesture. At a
+        // six-line interchange "select all" that did nothing because six is more
+        // than four would read as a broken button; four lines plus the modal
+        // saying why the other two are missing is the honest answer.
+        var refused = false
+        val added = mutableListOf<String>()
+        for (line in lines) {
+            if (line.id in picks) continue
+            if (!BoardQuota.canAddLine(picks.size)) { refused = true; continue }
+            picks[line.id] = emptySet()
+            added += line.id
+        }
+        if (refused) refuseLine() else performHaptic(HapticType.TAP)
+
+        // COMMIT BEFORE RESOLVING. autoSelectSoleDirection routes through
+        // toggleDirection, which reads `_linePicks.value[lineId]` — while
+        // `picks` was still a local copy that read null and the auto-tick
+        // silently did nothing, so a one-way line ticked by "Select all" was
+        // left incomplete and the CTA stayed disabled.
+        _linePicks.value = picks
+        added.forEach { id ->
+            val known = _directionsByLine.value[id]
+            if (known == null) fetchDirectionsFor(id) else autoSelectSoleDirection(id, known)
+        }
+
+        // Read back off the state, not off `picks` — the auto-tick above may
+        // have completed some of these lines since it was built.
+        val settled = _linePicks.value
+        // Open the first line that still needs a direction, so "select all" ends
+        // somewhere actionable instead of on a list of collapsed, incomplete rows.
+        _expandedLine.value = settled.entries.firstOrNull { it.value.isEmpty() }?.key
+            ?: settled.keys.firstOrNull()
+    }
+
+    private fun autoSelectSoleDirection(lineId: String, options: List<SduiDropdownOption>) {
+        if (options.size == 1 && _linePicks.value[lineId]?.isEmpty() == true) {
+            toggleDirection(lineId, options[0].id)
+        }
+    }
+
+    /**
+     * The hubs the user already owns a card for.
+     *
+     * Read off the repository rather than the summary's collected list because
+     * this screen has no view of that, and empty is the correct reading before
+     * [repoReady] completes: a user with no boards loaded yet cannot be over a
+     * quota, and the save path re-checks against a settled repository anyway.
+     */
+    private fun heldStationIds(): List<String> =
+        selectionRepository.selections.value.map { it.groupingId }
+
+    /** One refusal of a line tap: the error haptic and the modal. */
+    private fun refuseLine() {
+        performHaptic(HapticType.ERROR)
+        _uiState.value = _uiState.value.copy(showLineLimitDialog = true)
+    }
+
+    fun dismissStationLimitDialog() {
+        _uiState.value = _uiState.value.copy(showStationLimitDialog = false)
+    }
+
+    fun dismissLineLimitDialog() {
+        _uiState.value = _uiState.value.copy(showLineLimitDialog = false)
+    }
+
+    /**
+     * Fetch the direction list for one specific line.
+     *
+     * The SDUI `direction` dropdown's `dataSourceUrl` is templated on `{line}`
+     * (plus `{mode}`/`{station}`), and the shared [fetchDropdownData] resolves
+     * those from the flat selection map and files the result under the component
+     * id. Neither works here: several lines are live at once, so the line id has
+     * to be injected explicitly and the result filed per line instead of
+     * clobbering a single "direction" slot.
+     */
+    private fun fetchDirectionsFor(lineId: String) {
+        val dropdown = _uiState.value.layout?.components
+            ?.filterIsInstance<SduiAppComponent.Dropdown>()
+            ?.find { it.id == "direction" } ?: return
+        val failKey = "$DIRECTION_FAIL_PREFIX$lineId"
+
+        viewModelScope.launch {
+            _loadingDirections.value = _loadingDirections.value + lineId
+            try {
+                var finalUrl = dropdown.dataSourceUrl
+                val deps = _selections.value + ("line" to lineId)
+                deps.forEach { (key, value) -> finalUrl = finalUrl.replace("{$key}", value) }
+                if (finalUrl.contains("{")) return@launch // Unresolved params
+
+                // Same 24-hour cache contract as fetchDropdownData — the cache
+                // key is the resolved URL, so it is already per-line.
+                val cacheKey = "cached_dropdown_$finalUrl"
+                val tsKey = "${cacheKey}_ts"
+                val cachedJson = storageManager.loadString(cacheKey)
+                val cachedTs = storageManager.loadString(tsKey)?.toLongOrNull() ?: 0L
+                val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
+                if (cachedJson != null && isDropdownCacheFresh(cachedTs, now)) {
+                    try {
+                        val cached = jsonFormat.decodeFromString<List<SduiDropdownOption>>(cachedJson)
+                        _directionsByLine.value = _directionsByLine.value + (lineId to cached)
+                        invalidateGraphs(lineId)
+                    } catch (_: Exception) {}
+                }
+
+                val options = sduiService.getDropdownData(finalUrl)
+                storageManager.saveString(cacheKey, jsonFormat.encodeToString(options))
+                storageManager.saveString(tsKey, now.toString())
+
+                _directionsByLine.value = _directionsByLine.value + (lineId to options)
+                invalidateGraphs(lineId)
+                _uiState.value = _uiState.value.copy(
+                    failedFetches = _uiState.value.failedFetches - failKey
+                )
+
+                // Auto-skip a single-option direction step, same courtesy the
+                // single-line flow gave. No delay here: the row is expanding
+                // anyway, so the pre-filled choice reads as instant rather than
+                // as something that moved under the user's finger.
+                autoSelectSoleDirection(lineId, options)
+            } catch (_: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    failedFetches = _uiState.value.failedFetches + failKey
+                )
+            } finally {
+                _loadingDirections.value = _loadingDirections.value - lineId
+            }
+        }
+    }
+
+    /* ── Per-board departure filters ─────────────────────────────────────── */
+
+    /** Switch a board between "all trains", a destination list, and a via stop. */
+    fun setFilterMode(lineId: String, directionId: String, mode: FilterMode) {
+        performHaptic(HapticType.TAP)
+        updateFilter(lineId, directionId) { current ->
+            when (mode) {
+                // Selecting a mode does NOT carry the other mode's picks over —
+                // they answer different questions and silently reinterpreting
+                // "Heathrow" as "via Heathrow" would change which trains show.
+                FilterMode.ALL -> BoardFilter()
+                FilterMode.DESTINATIONS -> BoardFilter(mode = mode, destinationIds = current.destinationIds)
+                // BOTH kinds of VIA pick survive. Stops and whole services are
+                // two ways of answering the same question, and this rebuilds the
+                // filter from scratch — omitting `patterns` silently threw a
+                // branch selection away the next time the user touched the mode
+                // row, with nothing on screen to say it had gone.
+                FilterMode.VIA -> BoardFilter(
+                    mode = mode,
+                    viaStops = current.viaStops,
+                    patterns = current.patterns,
+                )
+            }
+        }
+    }
+
+    fun toggleFilterDestination(lineId: String, directionId: String, destId: String) {
+        performHaptic(HapticType.TAP)
+        updateFilter(lineId, directionId) { current ->
+            val next = if (destId in current.destinationIds) current.destinationIds - destId
+                       else current.destinationIds + destId
+            current.copy(mode = FilterMode.DESTINATIONS, destinationIds = next)
+        }
+    }
+
+    /**
+     * Add or remove ONE stop from the via set.
+     *
+     * Multi-select ACROSS branches, single-select WITHIN one. Picking two stops
+     * on the same branch is meaningless — on A→B→C→D, choosing B and then C can
+     * only ever mean "trains reaching C", since anything reaching C already
+     * passed B. So a new pick REPLACES any existing pick that shares its branch,
+     * and only genuinely separate branches accumulate.
+     *
+     * Two stops share a branch exactly when one's reachable-terminus set
+     * contains the other's: those sets nest along a path and are disjoint across
+     * a split, so containment is the test.
+     *
+     * Removing the last stop drops back to ALL rather than leaving an
+     * active-but-empty filter that would hide everything.
+     */
+    fun toggleFilterVia(lineId: String, directionId: String, stopId: String, stopName: String) {
+        performHaptic(HapticType.TAP)
+        val tree = graphFor(lineId, directionId)
+
+        updateFilter(lineId, directionId) { current ->
+            if (stopId in current.viaStopIds) {
+                // Stay in VIA even when the last stop goes. Dropping to ALL here
+                // collapsed the whole "Going through" section on an unselect —
+                // an unselect is just an unselect. `isActive` is already false
+                // for an empty set, so nothing is filtered either way.
+                current.copy(mode = FilterMode.VIA, viaStops = current.viaStops.filterNot { it.id == stopId })
+            } else {
+                val incoming = tree?.patternsFrom(stopId).orEmpty()
+                val kept = current.viaStops.filterNot { existing ->
+                    val other = tree?.patternsFrom(existing.id).orEmpty()
+                    incoming.isNotEmpty() && other.isNotEmpty() &&
+                        (incoming.containsAll(other) || other.containsAll(incoming))
+                }
+                current.copy(
+                    mode = FilterMode.VIA,
+                    viaStops = kept + SduiRouteStop(stopId, stopName),
+                )
+            }
+        }
+    }
+
+    /**
+     * Take or drop a WHOLE service from the map's terminus chip.
+     *
+     * Separate from [toggleFilterVia] on purpose. A branch used to be expressed
+     * as "via the first stop nothing else reaches", which is exact but put a
+     * tick on a station in the middle of the branch — feedback for a choice the
+     * user never made. A pattern id says what the chip says.
+     */
+    fun toggleFilterBranch(
+        lineId: String,
+        directionId: String,
+        /** Every service the chip stands for: (id, label). */
+        picks: List<Pair<String, String>>,
+    ) {
+        if (picks.isEmpty()) return
+        performHaptic(HapticType.TAP)
+        val ids = picks.map { it.first }.toSet()
+        updateFilter(lineId, directionId) { current ->
+            // All-or-nothing on the whole chip. A tail past a merge names several
+            // services, and leaving some of them on would fill nothing and show
+            // half the trains.
+            val allTaken = ids.all { id -> current.patterns.any { it.id == id } }
+            current.copy(
+                mode = FilterMode.VIA,
+                patterns = if (allTaken) current.patterns.filterNot { it.id in ids }
+                           else current.patterns.filterNot { it.id in ids } +
+                                picks.map { BoardFilter.PatternPick(it.first, it.second) },
+            )
+        }
+    }
+
+    fun clearFilter(lineId: String, directionId: String) {
+        performHaptic(HapticType.TAP)
+        updateFilter(lineId, directionId) { BoardFilter() }
+    }
+
+    /**
+     * Build a [UserSelection], resolving its filter intent into the stored
+     * allow-list. This is the ONLY place resolution happens — once per board per
+     * save, never on a render or ingest path.
+     */
+    private suspend fun buildSelection(
+        mode: String,
+        stationId: String,
+        stationName: String,
+        line: String,
+        direction: String,
+        /**
+         * The row this board ALREADY has, for a board being re-saved rather
+         * than added. Null for a genuinely new board.
+         *
+         * Two jobs, and both of them are correctness rather than economy.
+         *
+         * Its `station` skips the pole resolve: `updateSelectionInPlace` matches
+         * on `station`, so if a re-resolve returned anything different — a
+         * genuine route change, or the hub fallback after a network failure —
+         * the match would miss and the user's filter edit would be silently
+         * discarded. It also saves one network round trip per untouched board.
+         *
+         * And its route TEXT is what the three `direction*` fields below fall
+         * back to. See them for what happens without it.
+         */
+        existing: UserSelection? = null,
+    ): UserSelection {
+        val knownStation = existing?.station
+        // Resolve the exact stop this (line, direction) departs from.
+        //
+        // Re-enabled after being disabled for multi-line tube: it used to be the
+        // ONLY station id we stored, so a line-specific child id split one
+        // station into several identically-named cards. Now the resolved id is
+        // the FETCH key and `parentStationId` is the GROUP key, so resolving is
+        // safe — and necessary. On bus the two directions of a route sit on
+        // different poles with different naptans (Smithwood Close: 39 inbound
+        // 490008805N, outbound 490012211N), so storing the picked hub for both
+        // served inbound departures on the outbound board.
+        //
+        // Best-effort: if resolve fails we fall back to the hub, which is what
+        // shipped before, rather than blocking the save.
+        val resolvedStation = knownStation ?: try {
+            sduiService.resolveStation(stationId, mode, line, direction)
+                .takeIf { it.isNotBlank() } ?: stationId
+        } catch (_: Exception) {
+            stationId
+        }
+        val filter = _boardFilters.value[boardFilterKey(line, direction)] ?: BoardFilter()
+        val dirOption = _directionsByLine.value[line]?.find { it.id == direction }
+
+        val resolution = if (filter.isActive && dirOption != null) {
+            BoardFilterResolver.resolve(
+                mode = filter.mode,
+                direction = dirOption,
+                chosenDestinationIds = filter.destinationIds,
+                viaStopIds = filter.viaStopIds,
+                chosenPatternIds = filter.patternIds,
+            )
+        } else BoardFilterResolver.EMPTY
+
+        // A filter that resolves to NOTHING is stored as no filter at all.
+        // That happens when the route payload predates `upcomingStops` (a cached
+        // 24h response, or an older backend), and an empty allow-list would mean
+        // "hide everything" if it were taken literally. Degrading to ALL keeps
+        // the board honest — it shows every train rather than none — and the
+        // intent is simply not persisted, so nothing claims to be filtered when
+        // it isn't.
+        val effective = if (resolution.isEmpty) FilterMode.ALL else filter.mode
+
+        return UserSelection(
+            mode = mode,
+            line = line,
+            station = resolvedStation,
+            parentStationId = stationId,
+            stationName = stationName,
+            direction = direction,
+            destinations = resolution.destinationNames,
+            destinationIds = resolution.destinationIds,
+            filterMode = effective,
+            viaStationIds = if (effective == FilterMode.VIA) filter.viaStopIds.toList() else emptyList(),
+            viaStationNames = if (effective == FilterMode.VIA) filter.viaStopNames else emptyList(),
+            // Part of the RESOLUTION, so it is taken from the resolver rather
+            // than the intent, and it applies to every filter kind — a
+            // destination pick narrows to specific patterns just as a via pick
+            // does. Empty whenever the route data carries no branch labels.
+            viaKeys = resolution.viaKeys,
+            patternIds = if (effective == FilterMode.VIA) filter.patterns.map { it.id } else emptyList(),
+            patternNames = if (effective == FilterMode.VIA) filter.patternNames else emptyList(),
+            // Display facts about the DIRECTION, kept whatever the filter is.
+            //
+            // The picker knew both and threw them away, which left the settings
+            // screen showing TfL's raw "inbound" and the words "All
+            // destinations" for a board it could have described exactly. Neither
+            // is derivable from the saved row: `directionName` is the backend's
+            // own compass mapping, and the destination chips are route data.
+            //
+            // ⚠️ The previous row's answer is KEPT when there is no new one.
+            //
+            // `dirOption` is null whenever this line's direction list is not
+            // loaded — an edit save on a line the user never opened, or any save
+            // at all made while the directions fetch was failing offline. Read
+            // straight from it, that wrote three blanks OVER text a previous
+            // save had resolved, and the settings screen dropped back to TfL's
+            // raw "Inbound" for a board it had been naming properly. It did
+            // not even self-heal on the way back: the backfill runs from the
+            // settings screen's `init`, and returning from the picker is an
+            // ON_RESUME, so the row stayed wrong until the screen was left and
+            // re-entered.
+            //
+            // Blank is only ever written for a board that has nothing stored
+            // yet, which is exactly the case the backfill exists for.
+            directionName = dirOption?.directionName ?: existing?.directionName.orEmpty(),
+            directionDestinations = dirOption?.destinations?.map { it.label }
+                ?: existing?.directionDestinations.orEmpty(),
+            directionTowards = dirOption?.towards ?: existing?.directionTowards.orEmpty(),
+            routeResolvedAt = if (resolution.isEmpty) 0L
+                              else kotlinx.datetime.Clock.System.now().toEpochMilliseconds(),
+        )
+    }
+
+    private inline fun updateFilter(
+        lineId: String,
+        directionId: String,
+        transform: (BoardFilter) -> BoardFilter,
+    ) {
+        val key = boardFilterKey(lineId, directionId)
+        val current = _boardFilters.value[key] ?: BoardFilter()
+        _boardFilters.value = _boardFilters.value.toMutableMap().also { it[key] = transform(current) }
+    }
+
+    fun retryDirections(lineId: String) {
+        _uiState.value = _uiState.value.copy(
+            failedFetches = _uiState.value.failedFetches - "$DIRECTION_FAIL_PREFIX$lineId"
+        )
+        fetchDirectionsFor(lineId)
+    }
+
+    private fun clearLinePicks() {
+        _linePicks.value = emptyMap()
+        _existingPicks.value = emptyMap()
+        // Otherwise the previous station's line id stays "open" and the first
+        // line of the new station silently renders collapsed.
+        _expandedLine.value = null
+        _boardFilters.value = emptyMap()
+        _directionsByLine.value = emptyMap()
+        _loadingDirections.value = emptySet()
+        _uiState.value = _uiState.value.copy(
+            failedFetches = _uiState.value.failedFetches
+                .filterNot { it.startsWith(DIRECTION_FAIL_PREFIX) }.toSet()
+        )
     }
 
     fun removeSelection(componentId: String) {
@@ -310,12 +1114,16 @@ class SelectionViewModel(
     }
 
     fun popLastSelection() {
+        performHaptic(HapticType.TAP)
         val sel = _selections.value
         when {
-            "direction" in sel -> removeSelection("direction")
-            "line"      in sel -> removeSelection("line")
-            "station"   in sel -> removeSelection("station")
-            "mode"      in sel -> clearSelections()
+            // Back on the line step returns to the station list in ONE press.
+            // It used to peel off one checked line per press, so a user who had
+            // ticked six lines pressed back six times while the header never
+            // changed — and unticking a single mis-tap is what the checkboxes
+            // are already for.
+            "station" in sel -> { clearLinePicks(); removeSelection("station") }
+            "mode"    in sel -> clearSelections()
         }
     }
 
@@ -323,12 +1131,21 @@ class SelectionViewModel(
         val state = _uiState.value
         val selMap = _selections.value
         val mode      = selMap["mode"]
-        val line      = selMap["line"]
-        val direction = selMap["direction"]
         val stationId = selMap["station"]
+        val picks     = _linePicks.value
 
-        if (mode == null || line == null || direction == null || stationId == null) {
-            _uiState.value = state.copy(error = "Please complete all selections")
+        if (mode == null || stationId == null || picks.isEmpty() || picks.values.any { it.isEmpty() }) {
+            // Unticking everything at a station the user already tracks is a
+            // "delete this card" intent, but deleting from a save button is too
+            // easy to do by accident — point them at the card's own delete
+            // instead of showing the generic incomplete-selection message.
+            val emptiedExisting = picks.isEmpty() && _existingPicks.value.isNotEmpty()
+            _uiState.value = state.copy(
+                error = if (emptiedExisting)
+                    "Keep at least one line, or remove this station from the home screen."
+                else "Please complete all selections"
+            )
+            performHaptic(HapticType.ERROR)
             return
         }
 
@@ -337,23 +1154,247 @@ class SelectionViewModel(
         viewModelScope.launch {
             _uiState.value = state.copy(isLoading = true, isSaving = true)
             try {
-                val resolvedId = sduiService.resolveStation(stationId, mode, line, direction)
-                val userSelection = UserSelection(
-                    mode = mode, line = line,
-                    station = resolvedId, stationName = stationName,
-                    direction = direction, destinations = emptyList(), destinationIds = emptyList()
+                repoReady?.join()
+                // The backstop. The station step already refused an over-quota
+                // pick, but it had to answer before the repository had finished
+                // loading; this is the same question asked once the answer is
+                // settled, and it is the last one before rows reach SQL.
+                if (!BoardQuota.canAddStation(heldStationIds(), stationId)) {
+                    performHaptic(HapticType.ERROR)
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        isSaving = false,
+                        showStationLimitDialog = true,
+                    )
+                    return@launch
+                }
+                // One board per (line, direction). A line with both directions
+                // checked yields two boards, which is exactly how they render:
+                // two stacked sections under the same station card.
+                //
+                // `buildSelection` DOES call `sduiService.resolveStation` — see
+                // the two-id model there. Resolve was disabled for a while
+                // during the multi-line tube work because `station` was then the
+                // only id we stored, so a line-specific child naptan split one
+                // station into several identically-named cards. That is fixed by
+                // storing BOTH: `station` is the fetch key (the resolved pole)
+                // and `parentStationId` is the group key (the hub the user
+                // picked), so resolving is now both safe and necessary — on bus
+                // the two directions of a route sit on different poles.
+                //
+                // ── Diff against what the station already had ──
+                //
+                // The line step opens PREFILLED with this station's saved boards
+                // ([prefillPicksForStation]), so `picks` is the desired END
+                // STATE, not a list of additions. Diffing is what lets an
+                // untouched board be left completely alone: the previous version
+                // deleted and re-inserted every picked row, and since
+                // `SelectionRepository.saveSelection` inserts at index 0 that
+                // silently reordered the card and handed the widget's primary
+                // slot to whichever row happened to be written last.
+                val desiredOrdered = picks.flatMap { (line, dirs) -> dirs.map { line to it } }
+                val baseline = _existingPicks.value
+                    .flatMap { (line, dirs) -> dirs.map { line to it } }.toSet()
+                val addedRows = desiredOrdered.filter { it !in baseline }
+                val removedRows = baseline - desiredOrdered.toSet()
+
+                // ── Removals: lines the user unticked ──
+                //
+                // Sequential, with `remaining` re-read from the repository on
+                // every pass rather than computed once up front. discardStation
+                // only unsubscribes topics no survivor still needs, so a stale
+                // survivor list would either leak a subscription or silence a
+                // board the user is keeping.
+                for ((line, direction) in removedRows) {
+                    // Match on the GROUPING id: `station` is now a resolved pole
+                    // that the pick list has no knowledge of.
+                    val victim = selectionRepository.selections.value.find {
+                        it.groupingId == stationId && it.line == line && it.direction == direction
+                    } ?: continue
+                    val remaining = selectionRepository.selections.value.filterNot {
+                        it.station == victim.station &&
+                            it.line == victim.line &&
+                            it.direction == victim.direction
+                    }
+                    stationLifecycleUseCase.discardStation(
+                        victim, clearSelectionInRepo = true, remaining = remaining
+                    )
+                }
+
+                // Belt and braces: never re-add a row the repository already
+                // holds. The diff above should already guarantee this, but the
+                // baseline comes from UI state — if it were ever stale, an
+                // "addition" that already exists would be inserted a SECOND time
+                // (persistAndFetch saves with no `oldSelection` to replace), and
+                // a duplicated board is very hard to unpick from the card.
+                val alreadyHeld = selectionRepository.selections.value
+                    .filter { it.groupingId == stationId }
+                    .mapTo(mutableSetOf()) { it.line to it.direction }
+                val newSelections = addedRows
+                    .filterNot { it in alreadyHeld }
+                    .map { (line, direction) -> buildSelection(mode, stationId, stationName, line, direction) }
+
+                // Persisted in reverse because `SelectionRepository.saveSelection`
+                // inserts at index 0 — walking the additions backwards leaves
+                // them in the order the user checked the lines.
+                //
+                // `persistAndFetch` (rather than the composed `setupStation`) so
+                // the backend sync below sees the finished list before we start
+                // subscribing.
+                for (sel in newSelections.reversed()) {
+                    stationLifecycleUseCase.persistAndFetch(sel)
+                }
+
+                // ── Filter-only edits to boards the user KEPT ──
+                //
+                // These rows are unchanged as far as the add/remove diff is
+                // concerned, so nothing above touches them — but changing a
+                // filter and pressing save has to take effect. Updated in place
+                // so the card keeps its order and its primary board, and the
+                // already-downloaded departures are re-evaluated immediately
+                // rather than staying wrong until the next stream frame.
+                val unchangedRows = desiredOrdered.filter { it in baseline }
+                for ((line, direction) in unchangedRows) {
+                    val existing = selectionRepository.selections.value.find {
+                        it.groupingId == stationId && it.line == line && it.direction == direction
+                    } ?: continue
+                    val rebuilt = buildSelection(
+                        mode, stationId, stationName, line, direction,
+                        existing = existing,
+                    )
+                    if (rebuilt.filterMode == existing.filterMode &&
+                        rebuilt.destinationIds == existing.destinationIds &&
+                        rebuilt.viaStationIds == existing.viaStationIds
+                    ) continue
+
+                    selectionRepository.updateSelectionInPlace(rebuilt)
+                    Platform.sqlStorage.reapplyFilter(
+                        rebuilt.station, line, direction, rebuilt.destinationIds.toSet()
+                    )
+                }
+
+                // ── Tell the BACKEND about the boards ──
+                //
+                // Without this the station never lands in Firestore
+                // `metadata/subscribed_stations`, which is the exact list the
+                // Syncer polls — so TfL is never polled for it and NO live
+                // message is ever published for it. The client-side topic
+                // subscription still succeeds, which is what makes the failure
+                // so quiet: the device listens to a topic nobody publishes to.
+                // It also breaks board-restore-on-login, because the backend has
+                // nothing saved to hand back. Symptom: "Subscribed stations (0)"
+                // in admin while the board works fine locally.
+                //
+                // Writes the v2 `boards` list, NOT the legacy `stations` array
+                // this used to post to. Both platforms writing that one array is
+                // what made it lossy: Android calls `cleanupAll()` before saving,
+                // so the "full list" it posts is always a single board, and a
+                // full-replace endpoint then deleted every board added here.
+                //
+                // `boardsChanged()` reads the selections itself, at push time —
+                // so a partial list cannot be posted by accident (the mistake
+                // this call site made twice), and a burst of saves collapses
+                // into one request instead of sending each intermediate list.
+                //
+                // Best-effort and debounced: the board must still appear if the
+                // network is down, and the next change re-sends everything
+                // because the payload is a full replacement rather than a delta.
+                // A station whose last row was unticked is no longer a board,
+                // so its configuration must go with it — otherwise re-adding
+                // the station silently restores the arrangement of the one the
+                // user removed, and the orphan row keeps a `position` that
+                // reorders the boards still on the home screen.
+                if (selectionRepository.selections.value.none { it.groupingId == stationId }) {
+                    UserSettings.forget(stationId)
+                }
+                // This screen SAVES, but unticking every row is a delete — and
+                // unticking the last row of the only station empties the account.
+                // The server refuses to store an empty board list unless the
+                // client says the user is what emptied it.
+                UserStateSync.boardsChanged(
+                    emptiedByUser = selectionRepository.selections.value.isEmpty(),
                 )
-                stationLifecycleUseCase.cleanupAll()
-                stationLifecycleUseCase.setupStation(userSelection, isFirstTime = true)
+                newSelections.forEach { sel ->
+                    ActivityLog.record(
+                        ActivityEvents.BOARD_ADDED,
+                        mapOf(
+                            "station" to sel.station,
+                            "line" to sel.line,
+                            "mode" to sel.mode,
+                            "direction" to sel.direction,
+                        ),
+                    )
+                    if (!sel.isUnfiltered) {
+                        ActivityLog.record(
+                            ActivityEvents.BOARD_FILTERED,
+                            mapOf(
+                                "station" to sel.station,
+                                "filter" to sel.filterMode.name,
+                                "count" to sel.destinationIds.size.toString(),
+                            ),
+                        )
+                    }
+                }
+
+                // Subscribe the DISTINCT poles once, not once per board.
+                //
+                // Several routes commonly share a pole — at Smithwood Close both
+                // 39 inbound and 639 inbound resolve to 490008805N — so a topic
+                // per board would re-subscribe the same topic repeatedly and, on
+                // FCM, wake us once per board for a single message.
+                val newTopics = newSelections.flatMap {
+                    listOf("Station_${it.station}", "LineStatus_${it.mode}_${it.line}")
+                }.distinct()
+                if (newTopics.isNotEmpty()) {
+                    try {
+                        Platform.notificationManager.subscribeToTopics(newTopics)
+                    } catch (_: Exception) {
+                        // Best-effort; completeSetupAsync re-subscribes below.
+                    }
+                }
+                for (sel in newSelections.reversed()) {
+                    stationLifecycleUseCase.completeSetupAsync(sel, subscribeTopics = false)
+                }
+
+                // completeSetupAsync also writes the widget payload, so finish on
+                // the list's ACTUAL primary. Ending on the last-written row would
+                // mean that merely adding a line to an existing station silently
+                // repointed the widget at the new line instead of leaving it on
+                // the board sitting at the top of the card.
+                selectionRepository.selections.value.firstOrNull()?.let {
+                    stationLifecycleUseCase.completeSetupAsync(it)
+                }
+
+                // The picks just became the saved state — re-baseline so a
+                // second save in the same session diffs against reality rather
+                // than re-adding everything.
+                _existingPicks.value = picks
                 _uiState.value = state.copy(isLoading = false, isSaving = false, showSuccessDialog = true)
+                performHaptic(HapticType.SUCCESS)
             } catch (e: Exception) {
                 _uiState.value = state.copy(
                     isLoading = false, isSaving = false,
                     error = "Failed to save: ${e.message}"
                 )
+                performHaptic(HapticType.ERROR)
             }
         }
     }
+
+    /*
+     * `clearBoardsPreservingIdentity()` used to live here: it wiped every board
+     * on save (because the product was single-board) while carefully avoiding
+     * `StationLifecycleUseCase.cleanupAll()`, whose `storageManager.clearAll()`
+     * is `removePersistentDomainForName(bundleId)` on iOS and takes the whole
+     * NSUserDefaults domain with it — `firebase_user_uid` and
+     * `firebase_auth_token` included, silently breaking every auth-gated call
+     * until AuthBridge re-persisted them.
+     *
+     * Saves are additive now, so nothing needs wiping and the function is gone.
+     * The iOS hazard it documented is NOT gone: never call `cleanupAll()` (or
+     * `storageManager.clearAll()`) from a board-editing path. LoginViewModel
+     * carries the same warning for the same reason.
+     */
 
     fun onActionTriggered(action: String) {
         if (action == "SAVE_SELECTION_ACTION") saveSelection()
@@ -366,8 +1407,10 @@ class SelectionViewModel(
     fun dismissSuccessDialog() = dismissSuccess()
 
     fun clearSelections() {
+        editStationOption = null
         _selections.value = emptyMap()
         _dropdownData.value = emptyMap()
+        clearLinePicks()
         _uiState.value = _uiState.value.copy(
             error = null, failedFetches = emptySet(),
             isGpsUnavailable = false, isSearchEmpty = false
@@ -392,6 +1435,31 @@ class SelectionViewModel(
         fetchDropdownData(component, _selections.value)
     }
 
+    /**
+     * Keep the backend's short line names from a line-dropdown payload.
+     *
+     * This screen is the ONLY place they arrive: the lines endpoint is what
+     * carries `shortName`, and the board that needs it fetches departures and
+     * nothing else. Learning them here is also the right moment — the user is
+     * choosing the very lines whose labels this will shorten.
+     *
+     * Guarded on the dropdown id so a station or direction payload cannot write
+     * naptans and compass points into a map of line names.
+     *
+     * Deliberately NOT awaited into the render path and deliberately not able to
+     * fail it: [LineNameStore.remember] swallows its own write errors, and a
+     * store that stays empty simply leaves [LineShortNames] on its local table.
+     */
+    private suspend fun rememberLineShortNames(
+        dropdownId: String,
+        options: List<SduiDropdownOption>,
+    ) {
+        if (dropdownId != "line") return
+        LineNameStore.remember(
+            options.mapNotNull { opt -> opt.shortName?.let { opt.id to it } }.toMap()
+        )
+    }
+
     private fun fetchDropdownData(
         dropdown: SduiAppComponent.Dropdown,
         selectionsMap: Map<String, String>? = null
@@ -411,21 +1479,28 @@ class SelectionViewModel(
                 val cachedTsStr = storageManager.loadString(tsKey)
                 val cachedTs = cachedTsStr?.toLongOrNull() ?: 0L
                 val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
-                val cacheAgeMs = now - cachedTs
-                val cacheValid = cachedJson != null && cacheAgeMs < 24 * 60 * 60 * 1000L
+                val cacheValid = cachedJson != null && isDropdownCacheFresh(cachedTs, now)
 
-                if (cacheValid && cachedJson != null) {
+                if (cacheValid) {
                     try {
                         val cached = jsonFormat.decodeFromString<List<SduiDropdownOption>>(cachedJson)
                         val cur = _dropdownData.value.toMutableMap()
                         cur[dropdown.id] = cached
                         _dropdownData.value = cur
+                        // Also from the CACHE, not just the live fetch below.
+                        // The fetch is what normally teaches the store, but it
+                        // is the one part of this that can fail — and an offline
+                        // launch is exactly when falling back to compiled-in
+                        // names is most visible. The cached payload already
+                        // holds the answer; reading it costs nothing.
+                        rememberLineShortNames(dropdown.id, cached)
                     } catch (_: Exception) {}
                 }
 
                 val options = sduiService.getDropdownData(finalUrl)
                 storageManager.saveString(cacheKey, jsonFormat.encodeToString(options))
                 storageManager.saveString(tsKey, now.toString())
+                rememberLineShortNames(dropdown.id, options)
 
                 val cur = _dropdownData.value.toMutableMap()
                 cur[dropdown.id] = options
@@ -456,4 +1531,7 @@ class SelectionViewModel(
             if (_uiState.value.isBackendOffline) retryLoad()
         }
     }
+
+    private fun isDropdownCacheFresh(cachedTs: Long, now: Long): Boolean =
+        now - cachedTs < BoardPolicyStore.current.dropdownCacheTtlMs
 }

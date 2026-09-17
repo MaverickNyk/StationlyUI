@@ -67,6 +67,15 @@ captures/
 # Secrets
 *.keystore
 *.jks
+# iOS per-environment secrets (the production backend API key). The committed
+# template is iosApp/Config/Secrets.example.xcconfig; Base.xcconfig includes
+# the real file optionally, so its absence is not a build error.
+iosApp/Config/Secrets.xcconfig
+# Per-developer opt-in for `Debug Production` builds (see the "Guard Accidental
+# Production Build" phase in iosApp/project.yml). MUST stay ignored: committing
+# it would silently disable the guard for everyone, which is the whole failure
+# it exists to prevent.
+iosApp/Config/.allow-debug-production
 
 # Exceptions
 !README.md

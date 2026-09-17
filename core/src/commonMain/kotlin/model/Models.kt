@@ -77,12 +77,193 @@ data class LineRouteResponse(
 data class UserSelection(
     val mode: String,
     val line: String,
+    /**
+     * The naptan we FETCH departures from — the resolved stop for this exact
+     * (line, direction), not necessarily the one the user tapped.
+     *
+     * On tube these usually coincide. On bus they frequently do not: every pole
+     * has its own naptan, so Smithwood Close resolves route 39 inbound to
+     * 490008805N but outbound to 490012211N. Storing the picked hub for both
+     * would silently serve inbound departures on the outbound board.
+     */
     val station: String,
+    /**
+     * The hub the user actually picked, and the key cards are GROUPED by.
+     *
+     * Separate from [station] so several poles can render as one departure
+     * board. Without it, resolving per line/direction would split one bus stop
+     * into a card per pole, all with the same name.
+     *
+     * Defaults to blank, meaning "same as [station]" — see [groupingId].
+     */
+    val parentStationId: String = "",
     val stationName: String,
     val direction: String,
-    val destinations: List<String>, // Keep names for display
-    val destinationIds: List<String> // Add IDs for accurate matching
-)
+    /**
+     * Display names of the allowed destinations, for the card subtitle.
+     * Index-aligned with [destinationIds] where both are populated.
+     */
+    val destinations: List<String>,
+    /**
+     * RESOLVED allow-list: the naptan ids a departure's `destId` must be one of
+     * for it to appear on this board. Empty means no filtering.
+     *
+     * The resolution differs per [filterMode] but the runtime check does not,
+     * which is the point — any filter we invent later compiles down to this one
+     * list and costs the render path nothing:
+     *  - [FilterMode.DESTINATIONS] → exactly the termini the user ticked.
+     *  - [FilterMode.VIA] → the via station plus EVERY stop beyond it, on every
+     *    branch that reaches it. Storing the downstream closure rather than the
+     *    termini is what makes a short-terminating service match: a Piccadilly
+     *    train showing "Northfields" genuinely does call at Green Park, and a
+     *    termini-only list would wrongly hide it.
+     */
+    val destinationIds: List<String>,
+    /** Which kind of filter produced [destinationIds]. */
+    val filterMode: FilterMode = FilterMode.ALL,
+    /**
+     * The stops the user asked to travel through, kept alongside the resolution
+     * they produced. Needed because a resolved id list goes stale — engineering
+     * works and branch closures change which services reach a stop — so the
+     * intent has to survive to be re-resolved without asking the user again.
+     *
+     * A LIST because a junction line gives a genuine multi-choice: picking both
+     * the Heathrow and Uxbridge branches at Acton Town is two downstream sets
+     * unioned, not one. Empty unless [filterMode] is [FilterMode.VIA].
+     * Index-aligned with [viaStationNames].
+     */
+    val viaStationIds: List<String> = emptyList(),
+    val viaStationNames: List<String> = emptyList(),
+    /**
+     * Branch tokens the departure's own `viaKey` must be one of, resolved
+     * alongside [destinationIds].
+     *
+     * Empty means "do not narrow by branch", which is the answer for every line
+     * that never rejoins and for the Metropolitan, where TfL publishes no
+     * discriminator at all. Defaulted so nothing that constructs a selection
+     * without it — the Android app included — changes behaviour.
+     */
+    val viaKeys: List<String> = emptyList(),
+    /**
+     * Whole services the user took, by pattern id ("940GZZLUMDN:bank").
+     *
+     * The INTENT behind a terminus chip, kept beside [viaStationIds] because the
+     * two are different questions: a pattern says where a train goes, a via stop
+     * says where it passes. Storing a branch as a stop id is what made tapping
+     * "All Morden via Bank trains" tick a station in the middle of the branch.
+     */
+    val patternIds: List<String> = emptyList(),
+    /**
+     * Display names for [patternIds], index-aligned, exactly as
+     * [viaStationNames] is for [viaStationIds].
+     *
+     * Stored rather than re-derived because a pattern id ("940GZZLUMDN:bank") is
+     * unreadable, and the board's own card has to name the filter without
+     * re-fetching route data to do it.
+     */
+    val patternNames: List<String> = emptyList(),
+    /**
+     * What the LINE PICKER called this direction — "Southbound", "Clockwise",
+     * "Towards" on a bus. Blank on a board saved before this was stored.
+     *
+     * The backend computes it (`getCompassDirection` in `lineController.ts`) and
+     * serves it as `SduiDropdownOption.directionName`, which is the string the
+     * user actually chose from. Storing it is what lets the settings screen name
+     * a board in the same words the picker used, instead of showing TfL's raw
+     * `inbound`/`outbound` — an operational fact about the network that means
+     * nothing to a passenger.
+     *
+     * The server's answer, kept verbatim. [BoardLabels.compassFallback] exists
+     * for rows saved before this field and must never override a stored value.
+     */
+    val directionName: String = "",
+    /**
+     * Every destination this DIRECTION serves, filtered or not — the same chips
+     * the picker offered under it.
+     *
+     * Distinct from [destinations], which is the resolved ALLOW-LIST and is
+     * empty on an unfiltered board. This one is what the direction can reach, so
+     * a board the user never narrowed can still say where its trains go instead
+     * of the empty-sounding "All destinations".
+     *
+     * Route data, so it cannot be derived locally: it is stored at save time and
+     * backfilled by `StationSettingsViewModel` for rows that predate it.
+     */
+    val directionDestinations: List<String> = emptyList(),
+    /**
+     * Where this direction heads, as the picker put it — "Putney Bridge".
+     *
+     * The answer for anything with no compass bearing, which is every bus: TfL
+     * publishes no direction for a route, the backend returns the literal
+     * "Towards" as [directionName], and "Inbound" is not something a passenger
+     * standing at a stop can act on. The picker's own headline is "Towards
+     * Putney Bridge"; this is the second half of it.
+     *
+     * Blank on a board saved before it was stored, and on the rare direction TfL
+     * gives no towards for at all.
+     */
+    val directionTowards: String = "",
+    /** When [destinationIds] was last resolved from route data, epoch millis. */
+    val routeResolvedAt: Long = 0L,
+) {
+    /** True when this board shows every departure in its direction. */
+    val isUnfiltered: Boolean
+        get() = filterMode == FilterMode.ALL || destinationIds.isEmpty()
+
+    /**
+     * What this board's CARD is keyed on. Falls back to [station] for rows saved
+     * before hubs existed, so old data groups exactly as it always did.
+     */
+    val groupingId: String
+        get() = parentStationId.ifBlank { station }
+
+    /**
+     * Identity of ONE board — the (station, line, direction) triple that every
+     * per-board map, list key and in-flight flag is keyed on.
+     *
+     * Defined here, once, because it is a property of the selection rather than
+     * of any screen. It was previously rebuilt by hand at three call sites (the
+     * home ViewModel's state maps, the card's Compose item key, and the section
+     * model), which agreed only by coincidence: nothing connected them, and the
+     * consequence of drifting is silent — two boards collapse onto one key and
+     * the second one written erases the first's departures.
+     *
+     * Distinct from [groupingId], which keys the CARD: many boards share a card.
+     */
+    val boardKey: String
+        get() = "${station}_${line}_$direction"
+}
+
+/**
+ * How a board's departure list is narrowed.
+ *
+ * Serialized by [name], so entries may be added but never renamed. Unknown
+ * values decode to [ALL] — an unrecognised filter must show everything rather
+ * than hide trains the user needed.
+ */
+@Serializable
+enum class FilterMode {
+    /** No filtering — every departure in this direction. */
+    ALL,
+
+    /**
+     * Only trains terminating at the chosen destinations. Deliberately EXACT:
+     * a user who asks for Heathrow trains does not want one that turns short at
+     * Northfields, even though it heads the same way.
+     */
+    DESTINATIONS,
+
+    /**
+     * Only trains that call at the chosen station — including services that
+     * terminate short of a branch end, as long as they still reach it.
+     */
+    VIA;
+
+    companion object {
+        fun fromStorage(raw: String?): FilterMode =
+            entries.firstOrNull { it.name == raw } ?: ALL
+    }
+}
 
 /**
  * Line status information
@@ -100,14 +281,38 @@ data class LineStatus(
 
 /**
  * FCM payload for real-time predictions
- * Mirrors the MindTheTimeAndroid FcmPayload data class
+ * Mirrors the MindTheTimeAndroid PredictionsPayload data class
  */
 @Serializable
-data class FcmPayload(
-    val lines: Map<String, LineData>,
+data class PredictionsPayload(
+    val lines: Map<String, LineData> = emptyMap(),
     val id: String,
-    val name: String,
-    val lut: String // Last update time
+    /**
+     * Station name, DEFAULTED because the backend sends `null` for it.
+     *
+     * ## Why a default and not a nullable type
+     * Both JSON configs (`NetworkModule.json` and `LiveStreamManager.json`)
+     * already set `coerceInputValues = true`, which turns an explicit `null`
+     * into the property's DEFAULT — but only for a property that has one. With
+     * no default there was nothing to coerce to, so the whole payload was
+     * rejected: `Expected string value for a non-null key 'name', got null
+     * literal`.
+     *
+     * ## What that cost, because it was not a cosmetic failure
+     * Observed on device for All Saints DLR (`940GZZDLALL`), whose frames carry
+     * `{"lines":{}, "name":null}` when it has nothing to report. Every frame for
+     * it failed to decode, so `LiveStreamManager.ensureStation` never resolved
+     * its awaiter and burned the full six-second `ENSURE_TIMEOUT_MS` — and
+     * because REST deserialises the SAME model, the hedge could not rescue it
+     * either. One station in this state added six seconds to every
+     * pull-to-refresh, since the spinner waits for the slowest stop.
+     *
+     * The name is only ever used for display and the board already has one from
+     * the user's own selection, so an empty string here loses nothing.
+     */
+    val name: String = "",
+    /** Last update time. Defaulted for the same reason as [name]. */
+    val lut: String = ""
 )
 
 /**
@@ -117,8 +322,10 @@ data class FcmPayload(
 @Serializable
 data class LineData(
     val id: String,
-    val name: String,
-    val dirs: Map<String, DirectionPredictions>
+    /** Defaulted for the same reason as [PredictionsPayload.name] — a null here would
+     *  reject the whole payload, and one unnamed line must not blank a board. */
+    val name: String = "",
+    val dirs: Map<String, DirectionPredictions> = emptyMap()
 )
 
 /**
@@ -140,7 +347,22 @@ data class PredictionItem(
     val displayName: String = "",
     val platform: String = "",
     val eta: String = "",
-    val stopLetter: String? = null
+    val stopLetter: String? = null,
+    /**
+     * Which BRANCH this service takes, when TfL labels one — "Morden via Bank"
+     * arrives here as `bank`.
+     *
+     * [destId] answers "where does it end", and on a line that splits and
+     * rejoins that is not the same question as "does it pass my stop": the two
+     * Northern line routes to Morden report the same naptan and share every stop
+     * from Kennington south. This is the only field that separates them.
+     *
+     * Null on every unbranched service, on anything TfL leaves unlabelled, and
+     * on any payload from a backend that predates the field. All three mean
+     * "cannot narrow", and the filter must FAIL OPEN on them — showing an extra
+     * train costs a glance, hiding the needed one costs the journey.
+     */
+    val viaKey: String? = null,
 )
 
 /**
@@ -153,7 +375,14 @@ data class WidgetState(
     val lineName: String,
     val predictions: List<PredictionDisplay>,
     val status: String?,
-    val lastUpdated: Long // Unix timestamp
+    val lastUpdated: Long, // Unix timestamp
+    // Selection direction (e.g. "eastbound"). Optional + defaulted so every
+    // existing call site (Android included) is unchanged; the iOS widget uses it
+    // to render the "Line: Platform N (Direction)" header like Android's board.
+    val direction: String = "",
+    // Transport mode (e.g. "tube"). Same optional+defaulted pattern; the iOS
+    // widget tints the header roundel per mode like Android's mode_icon.
+    val mode: String = ""
 )
 
 /**
@@ -168,6 +397,35 @@ data class PredictionDisplay(
     val isDue: Boolean,
     val stopLetter: String? = null,
     /**
+     * Naptan id of the train's destination, straight from [PredictionItem.destId].
+     *
+     * Carried because destination FILTERS match on id, never on display text:
+     * the route sequence calls a stop "Hammersmith (Dist&Picc Line)" where a
+     * prediction says "Hammersmith", so name comparison silently fails on
+     * exactly the short-terminating services a "via" filter exists to catch.
+     *
+     * Defaulted to empty so every existing construction site is unchanged, and
+     * so a payload without it degrades to "unmatched" — which the filter treats
+     * as SHOW, never hide.
+     */
+    val destId: String = "",
+    /**
+     * Branch token from [PredictionItem.viaKey], carried through so the ingest
+     * filter can ask "which way does this one go" alongside "where does it end".
+     * Null means unlabelled, which the filter reads as "show it".
+     */
+    val viaKey: String? = null,
+    /**
+     * Whether this departure passes the board's destination/via filter.
+     *
+     * Computed ONCE at ingest against the selection's resolved allow-list and
+     * then persisted, because the board re-reads these rows on every
+     * recomposition and every one-second tick of the live countdown — the
+     * filter must never be re-evaluated per render. `true` when the board has
+     * no filter, so unfiltered boards behave exactly as before.
+     */
+    val matchesFilter: Boolean = true,
+    /**
      * Absolute arrival time as epoch millis. Lets the UI tick the
      * minutes-remaining label locally between FCM pushes — at 12:25 with
      * targetEpochMs=12:30 the row reads "5 min", at 12:26 it ticks to
@@ -177,6 +435,31 @@ data class PredictionDisplay(
      * dropping the row.
      */
     val targetEpochMs: Long? = null,
+    /**
+     * Which line this departure belongs to, ALREADY in short display form
+     * ("Cir.", "H&C") — see [com.stationly.core.util.LineShortNames.shortName].
+     *
+     * ## Why a resolved label and not the canonical id
+     * The only consumer is the iOS widget's wire format, and the widget
+     * extension is a separate process with no line vocabulary at all. Writing
+     * the id would force a second naming map into Swift, which this project has
+     * already had and deleted once: it disagreed with the app's own settings
+     * screen on the same station, and `LineShortNames` is documented as a
+     * stopgap the backend is expected to take over — at which point one copy
+     * would have been updated and one forgotten. Resolving here keeps exactly
+     * one map.
+     *
+     * ## Why it lives on the prediction at all
+     * A widget board is MERGED across every line the user tracks at a station,
+     * so once the rows are in one list there is nothing else left to say which
+     * line a row came from. The app's own board keeps that association in
+     * `MultiLineBoardProcessor.Feed` and never needs this field.
+     *
+     * Empty on every non-widget path, which is every Android path — the board,
+     * the dream and the app's own rendering all resolve the line from the feed
+     * they queried. Defaulted so no existing construction site changes.
+     */
+    val lineShort: String = "",
 )
 
 /**

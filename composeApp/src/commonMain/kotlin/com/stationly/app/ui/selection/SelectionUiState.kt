@@ -14,6 +14,8 @@ data class SelectionUiState(
     val isSaving: Boolean = false,
     val isSearchEmpty: Boolean = false,
     val failedFetches: Set<String> = emptySet(),
+    val showStationLimitDialog: Boolean = false,
+    val showLineLimitDialog: Boolean = false,
     val userLat: Double? = null,
     val userLon: Double? = null
 )
