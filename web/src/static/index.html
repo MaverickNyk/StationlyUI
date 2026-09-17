@@ -14,6 +14,9 @@
     <!-- Google Search Console: paste your verification token below (Settings > Ownership verification > HTML tag) -->
     <!-- <meta name="google-site-verification" content="REPLACE_WITH_YOUR_TOKEN"> -->
 
+    <!-- Apple Smart App Banner for iOS Safari -->
+    <meta name="apple-itunes-app" content="app-id=6799715716">
+
     <!-- Geo targeting: London, UK -->
     <meta name="geo.region" content="GB-LND">
     <meta name="geo.placename" content="London">
@@ -77,6 +80,18 @@
           "operatingSystem": "iOS, Android",
           "description": "Live London departure boards on your home screen and lock screen. Real-time TfL Tube, Overground, Elizabeth line, DLR, train and bus times across 270+ stations and 20,000+ bus stops, plus a full-screen departure board for charging and docked devices.",
           "url": "https://stationly.co.uk/",
+          "downloadUrl": [
+            "https://apps.apple.com/app/id6799715716",
+            "https://play.google.com/store/apps/details?id=com.stationly.mobile"
+          ],
+          "installUrl": [
+            "https://apps.apple.com/app/id6799715716",
+            "https://play.google.com/store/apps/details?id=com.stationly.mobile"
+          ],
+          "sameAs": [
+            "https://apps.apple.com/app/id6799715716",
+            "https://play.google.com/store/apps/details?id=com.stationly.mobile"
+          ],
           "image": "https://stationly.co.uk/og-image.png",
           "publisher": { "@id": "https://stationly.co.uk/#organization" },
           "areaServed": { "@type": "City", "name": "London" },
@@ -94,8 +109,8 @@
               "acceptedAnswer": { "@type": "Answer", "text": "Yes. On Android, Stationly offers a full-screen screen saver that turns on when your phone is docked or charging, so any old device becomes a real-time departure board on your desk or by the door." } },
             { "@type": "Question", "name": "How accurate is the departure data?",
               "acceptedAnswer": { "@type": "Answer", "text": "Stationly pulls data directly from TfL Open Data, the same source used by official TfL apps and journey planners. Every board shows exactly when the data was last refreshed." } },
-            { "@type": "Question", "name": "Which platforms will Stationly be on?",
-              "acceptedAnswer": { "@type": "Answer", "text": "Stationly is available now on Android, with the iOS version coming soon-ish. iOS users can join the waitlist to be notified the moment it goes live." } }
+            { "@type": "Question", "name": "Which platforms does Stationly support?",
+              "acceptedAnswer": { "@type": "Answer", "text": "Stationly is available for free on both iOS (iPhone) and Android. You can download it directly from the Apple App Store and Google Play Store." } }
           ]
         }
       ]
@@ -146,22 +161,22 @@
                             <h1 class="gradient-text">The only departure<br>board you need.</h1>
                             <p class="hero-subtitle">Live TfL departures on your home screen. Just glance at your phone. No tapping, no unlocking, no apps to open.</p>
                             <div class="store-badges">
-                                <a href="/mobile/app/android" class="store-badge" target="_blank" rel="noopener noreferrer">
+                                <a href="/mobile/app/ios/" class="store-badge" target="_blank" rel="noopener noreferrer" aria-label="Download Stationly on the Apple App Store">
+                                    <svg class="store-badge-icon" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+                                    </svg>
+                                    <div class="store-badge-text">
+                                        <span class="store-badge-label">Download on the</span>
+                                        <span class="store-badge-name">App Store</span>
+                                    </div>
+                                </a>
+                                <a href="/mobile/app/android/" class="store-badge" target="_blank" rel="noopener noreferrer" aria-label="Download Stationly on Google Play">
                                     <svg class="store-badge-icon" viewBox="0 0 24 24" fill="currentColor">
                                         <path d="M3.18 23.76c.37.2.8.22 1.2.06l11.4-6.58-2.5-2.5-10.1 9.02zM.5 1.5C.19 1.88 0 2.42 0 3.1v17.8c0 .68.19 1.22.5 1.6l.08.08 9.97-9.97v-.24L.58 1.42.5 1.5zM20.3 10.37l-2.65-1.53-2.8 2.8 2.8 2.8 2.67-1.54c.76-.44.76-1.09-.02-1.53zM4.38.18L15.78 6.76l-2.5 2.5L3.18.24C3.58.08 4.01.1 4.38.18z"/>
                                     </svg>
                                     <div class="store-badge-text">
                                         <span class="store-badge-label">GET IT ON</span>
                                         <span class="store-badge-name">Google Play</span>
-                                    </div>
-                                </a>
-                                <a href="#" class="store-badge" onclick="openWaitlist(event, 'App Store')">
-                                    <svg class="store-badge-icon" viewBox="0 0 24 24" fill="currentColor">
-                                        <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
-                                    </svg>
-                                    <div class="store-badge-text">
-                                        <span class="store-badge-label">Coming Soon</span>
-                                        <span class="store-badge-name">App Store</span>
                                     </div>
                                 </a>
                             </div>
@@ -380,22 +395,9 @@
                 </div>
             </section>
 
-            <!-- ── Notify CTA ── -->
-            <section class="section notify-section">
-                <div class="container">
-                    <div class="notify-inner reveal">
-                        <div class="notify-glow"></div>
-                        <div class="notify-label" style="color: var(--green);">Android: Live · iOS: Coming Soon</div>
-                        <h2>Be the first on iOS.</h2>
-                        <p>Stationly is live on Android! iOS is coming soon. Drop your email to get notified the moment it launches.</p>
-                        <form class="notify-form" id="notify-form">
-                            <input type="email" placeholder="your@email.com" class="notify-input" required>
-                            <button type="submit" class="notify-btn">Join iOS Waitlist</button>
-                        </form>
-                        <p class="notify-fine" id="notify-success" style="display:none; color: var(--green);">You're on the list. We'll let you know the moment iOS launches!</p>
-                    </div>
-                </div>
-            </section>
+
+
+
 
         </div>
         <!-- /home -->
@@ -554,11 +556,11 @@
                         </div>
                         <div class="faq-item">
                             <button class="faq-question" onclick="toggleFaq(this)" aria-expanded="false">
-                                <span>Which platforms will Stationly be on?</span>
+                                <span>Which platforms does Stationly support?</span>
                                 <span class="faq-chevron">+</span>
                             </button>
                             <div class="faq-answer">
-                                <p>Stationly is available now on Android, with the iOS version coming soon-ish. iOS users can join the waitlist to be notified the moment it goes live.</p>
+                                <p>Stationly is available on both iOS (iPhone) and Android. You can download it for free from the Apple App Store and Google Play Store.</p>
                             </div>
                         </div>
                         <div class="faq-item">
@@ -590,8 +592,9 @@
                 </div>
                 <div class="footer-links">
                     <a href="#" onclick="switchTab('support')">Contact Us</a>
-                    <a href="/privacy">Privacy Policy</a>
-                    <a href="/terms">Terms of Service</a>
+                    <a href="/privacy/">Privacy Policy</a>
+                    <a href="/terms/">Terms of Service</a>
+                    <a href="#" onclick="manageCookies(event)">Cookie Settings</a>
                 </div>
             </div>
             <div style="margin-top: 1.75rem; text-align: center; opacity: 0.3; font-size: 0.82rem;">
@@ -599,30 +602,6 @@
             </div>
         </div>
     </footer>
-
-    <!-- ══════════════════════════════════════
-         WAITLIST MODAL
-    ══════════════════════════════════════ -->
-    <div class="wl-overlay" id="waitlist-modal" hidden>
-        <div class="wl-dialog" role="dialog" aria-modal="true" aria-labelledby="wl-title" aria-describedby="wl-desc">
-            <button class="wl-close" type="button" aria-label="Close" onclick="closeWaitlist()">&times;</button>
-            <div class="wl-badge"><span class="launch-dot"></span><span id="wl-store-label">iOS · Coming Soon</span></div>
-            <h2 class="wl-title" id="wl-title">Be first on board.</h2>
-            <p class="wl-desc" id="wl-desc">iOS is coming soon. Leave your email and we'll let you know the moment it goes live.</p>
-            <form class="wl-form" id="waitlist-form" novalidate>
-                <label class="wl-label" for="wl-email">Email address</label>
-                <input class="wl-input" id="wl-email" type="email" name="email" placeholder="you@email.com" autocomplete="email" required>
-                <p class="wl-error" id="wl-error" role="alert" hidden></p>
-                <button class="wl-submit" type="submit">Notify me</button>
-            </form>
-            <div class="wl-success" id="wl-success" hidden>
-                <div class="wl-success-check" aria-hidden="true">✓</div>
-                <h3>You're on the list.</h3>
-                <p>We'll email you the moment Stationly is ready to download.</p>
-                <button class="wl-submit wl-submit-ghost" type="button" onclick="closeWaitlist()">Done</button>
-            </div>
-        </div>
-    </div>
 
     <!-- Cookie consent (UK PECR / UK GDPR) is injected by the shared /js/cookie-consent.js?v=1 on every page -->
 
@@ -711,146 +690,6 @@
                 if (hdr) hdr.style.top = '0';
             });
         }
-
-        // Shared email format check
-        function isValidEmail(email) {
-            return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-        }
-
-        // Shared waitlist join - posts to backend, returns { ok, error }
-        async function joinWaitlist(email) {
-            try {
-                var res = await fetch(API_BASE + '/api/v1/waitlist/join', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email: email })
-                });
-                return { ok: res.ok, error: res.ok ? null : 'server' };
-            } catch (err) {
-                return { ok: false, error: 'network' };
-            }
-        }
-
-        // Inline notify form (secondary path at page bottom)
-        document.getElementById('notify-form').addEventListener('submit', async function (e) {
-            e.preventDefault();
-            var emailInput = this.querySelector('input[type="email"]');
-            var btn = this.querySelector('button[type="submit"]');
-            var email = emailInput ? emailInput.value.trim() : '';
-            if (!email || !isValidEmail(email)) { emailInput.reportValidity(); return; }
-            btn.disabled = true;
-            btn.textContent = 'Saving…';
-            var r = await joinWaitlist(email);
-            if (r.ok) {
-                this.style.display = 'none';
-                document.getElementById('notify-success').style.display = 'block';
-            } else {
-                btn.disabled = false;
-                btn.textContent = 'Notify Me';
-                alert(r.error === 'network' ? 'Could not connect. Please try again.' : 'Something went wrong. Please try again.');
-            }
-        });
-
-        // ── Waitlist modal (opened from the store badges) ──
-        var wlModal = document.getElementById('waitlist-modal');
-        var wlLastFocus = null;
-
-        function openWaitlist(e, store) {
-            if (e && e.preventDefault) e.preventDefault();
-            wlLastFocus = document.activeElement;
-            // Tailor copy to the store the user tapped
-            var label = document.getElementById('wl-store-label');
-            var name = document.getElementById('wl-store-name');
-            var desc = document.getElementById('wl-desc');
-            if (store === 'App Store') {
-                label.textContent = 'iOS · Coming Soon';
-                if (name) name.textContent = 'the App Store';
-                if (desc) desc.innerHTML = 'iOS is coming soon. Leave your email and we\'ll let you know the moment it goes live.';
-            } else {
-                label.textContent = 'iOS · Coming Soon';
-                if (name) name.textContent = 'the App Store';
-                if (desc) desc.innerHTML = 'iOS is coming soon. Leave your email and we\'ll let you know the moment it goes live.';
-            }
-            // Reset to a clean form state every time it opens
-            var form = document.getElementById('waitlist-form');
-            form.style.display = '';
-            form.reset();
-            var emailInput = document.getElementById('wl-email');
-            emailInput.value = '';
-            var submitBtn = form.querySelector('button[type="submit"]');
-            submitBtn.disabled = false;
-            submitBtn.textContent = 'Notify me';
-            document.getElementById('wl-success').setAttribute('hidden', '');
-            var err = document.getElementById('wl-error');
-            err.setAttribute('hidden', ''); err.textContent = '';
-            wlModal.removeAttribute('hidden');
-            requestAnimationFrame(function () {
-                wlModal.classList.add('open');
-                document.getElementById('wl-email').focus();
-            });
-            document.body.style.overflow = 'hidden';
-        }
-
-        function closeWaitlist() {
-            wlModal.classList.remove('open');
-            document.body.style.overflow = '';
-            var done = false;
-            var finish = function () {
-                if (done) return;
-                done = true;
-                wlModal.setAttribute('hidden', '');
-                wlModal.removeEventListener('transitionend', onEnd);
-            };
-            var onEnd = function (e) { if (e.target === wlModal) finish(); };
-            wlModal.addEventListener('transitionend', onEnd);
-            setTimeout(finish, 400); // fallback if transitionend never fires
-            if (wlLastFocus && wlLastFocus.focus) wlLastFocus.focus();
-        }
-
-        function modalIsOpen() { return !wlModal.hasAttribute('hidden'); }
-
-        // Close on backdrop click; Escape closes; Tab is trapped inside the dialog
-        wlModal.addEventListener('click', function (e) { if (e.target === wlModal) closeWaitlist(); });
-        document.addEventListener('keydown', function (e) {
-            if (!modalIsOpen()) return;
-            if (e.key === 'Escape') { closeWaitlist(); return; }
-            if (e.key !== 'Tab') return;
-            var focusables = wlModal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
-            var visible = Array.prototype.filter.call(focusables, function (el) { return el.offsetParent !== null && !el.disabled; });
-            if (!visible.length) return;
-            var first = visible[0], last = visible[visible.length - 1];
-            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-        });
-
-        document.getElementById('waitlist-form').addEventListener('submit', async function (e) {
-            e.preventDefault();
-            var input = document.getElementById('wl-email');
-            var err = document.getElementById('wl-error');
-            var btn = this.querySelector('button[type="submit"]');
-            var email = input.value.trim();
-            if (!email || !isValidEmail(email)) {
-                err.textContent = 'Please enter a valid email address.';
-                err.removeAttribute('hidden');
-                input.focus();
-                return;
-            }
-            err.setAttribute('hidden', '');
-            btn.disabled = true;
-            btn.textContent = 'Saving…';
-            var r = await joinWaitlist(email);
-            btn.disabled = false;
-            btn.textContent = 'Notify me';
-            if (r.ok) {
-                this.style.display = 'none';
-                document.getElementById('wl-success').removeAttribute('hidden');
-            } else {
-                err.textContent = r.error === 'network'
-                    ? 'Could not connect. Please check your connection and try again.'
-                    : 'Something went wrong. Please try again.';
-                err.removeAttribute('hidden');
-            }
-        });
 
         // Cookie consent is handled by the shared /js/cookie-consent.js?v=1 (loaded on every page).
 
