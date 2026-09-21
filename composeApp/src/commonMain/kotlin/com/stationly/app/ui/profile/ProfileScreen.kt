@@ -80,12 +80,10 @@ private val DangerRed @Composable get() = LocalThemeTokens.current.error
 private const val STATIONLY_WEB_URL = "https://stationly.co.uk"
 
 /**
- * Where "Rate Stationly" goes on iOS. Becomes a real listing once the app
- * ships; until then it is a harmless 404 rather than a link that cannot open
- * at all. Swap in the `itms-apps://…?action=write-review` deep link (which
- * opens the review sheet directly) once the App Store ID exists.
+ * Where "Rate Stationly" goes on iOS. Uses the `itms-apps://` deep link which
+ * directly opens the review sheet in the App Store app.
  */
-private const val APP_STORE_URL = "https://apps.apple.com/app/stationly"
+private const val APP_STORE_URL = "itms-apps://apps.apple.com/app/id6799715716?action=write-review"
 
 private val ProfileAboutFallback: List<SduiAppComponent> = listOf(
     SduiAppComponent.Card(
@@ -549,7 +547,15 @@ private fun AboutSection(section: SduiAppComponent.Section) {
     Surface(color = Surface1, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, White08)) {
         Column(Modifier.fillMaxWidth()) {
             links.forEachIndexed { i, link ->
-                LinkRowItem(link) { openUrl(link.url, link.title) }
+                // The backend SDUI layout sends Android's `market://details?id=...` URL.
+                // On iOS, rewrite it to the App Store review deep link so tapping
+                // "Rate Stationly" opens the App Store rather than failing silently.
+                val targetUrl = if (link.url.startsWith("market://", ignoreCase = true) || link.id == "rate") {
+                    APP_STORE_URL
+                } else {
+                    link.url
+                }
+                LinkRowItem(link) { openUrl(targetUrl, link.title) }
                 if (i < links.lastIndex) HorizontalDivider(color = White08, modifier = Modifier.padding(horizontal = 16.dp))
             }
         }

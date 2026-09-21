@@ -43,13 +43,23 @@ import androidx.lifecycle.viewmodel.compose.viewModel
  */
 private data class BrowserLink(val url: String, val title: String?)
 
-private fun isWebUrl(url: String): Boolean =
+private fun isWebUrl(url: String): Boolean {
+    // App Store links must never open in WKWebView — they cannot install or rate
+    // from an embedded webview and must be handed to the system to open the App Store app.
+    if (url.contains("apps.apple.com", ignoreCase = true) ||
+        url.startsWith("itms-apps://", ignoreCase = true) ||
+        url.startsWith("itms://", ignoreCase = true)
+    ) {
+        return false
+    }
+
     // Matched on the PREFIX rather than `substringBefore(':')`: that returns
     // the whole string when there is no colon at all, so a bare "tfl.gov.uk"
     // was classed as a non-web scheme and handed to the system, which cannot
     // open it either.
-    url.startsWith("http://", ignoreCase = true) ||
+    return url.startsWith("http://", ignoreCase = true) ||
         url.startsWith("https://", ignoreCase = true)
+}
 
 @Composable
 fun App(
