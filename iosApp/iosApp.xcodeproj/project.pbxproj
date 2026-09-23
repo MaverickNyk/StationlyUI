@@ -41,6 +41,7 @@
 		C654091523394E0AFE6EA794 /* PushTraceSwift.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECA4FAF25F90834251640413 /* PushTraceSwift.swift */; };
 		CB006310D02489A5D2220318 /* WidgetTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FD2D2AA7865370F9D9B2E85 /* WidgetTheme.swift */; };
 		CFE992350AE1D45C71A414A2 /* StationConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75982716E6D0AEC8FEED4D33 /* StationConfiguration.swift */; };
+		D4EF14070E1BB23B1DAAFBCB /* StoreKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC688A47713DC269281F526D /* StoreKitManager.swift */; };
 		EE0B2E5554D43A66C83DA33C /* AppGroupKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7171BEFAE1F981889803668C /* AppGroupKeys.swift */; };
 		EEAED07AD42E134D78BBE3AD /* AppGroupID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96749FEEFB87671930DBEF31 /* AppGroupID.swift */; };
 		FDE52B8D57A097A60A4CF366 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B6C1F485E0CF8BB70C9DDD2 /* AppDelegate.swift */; };
@@ -117,6 +118,7 @@
 		E4A404729694F80C34072DBE /* Production.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Production.xcconfig; sourceTree = "<group>"; };
 		E57D3E21FAEDF7ED0B74AE07 /* HomeStateProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeStateProbe.swift; sourceTree = "<group>"; };
 		E6E60D8AB263A747C2061338 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		EC688A47713DC269281F526D /* StoreKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitManager.swift; sourceTree = "<group>"; };
 		ECA4FAF25F90834251640413 /* PushTraceSwift.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushTraceSwift.swift; sourceTree = "<group>"; };
 		EE7E10119EC01AC8676B703D /* StationlyWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = StationlyWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F543015C899423D4B01CEB2E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -156,6 +158,7 @@
 				668CECA83ACC03A83C85A623 /* iOSApp.swift */,
 				C6D2DD7FE2E0BF5DB2A96B4B /* PrivacyInfo.xcprivacy */,
 				ECA4FAF25F90834251640413 /* PushTraceSwift.swift */,
+				EC688A47713DC269281F526D /* StoreKitManager.swift */,
 			);
 			path = iosApp;
 			sourceTree = "<group>";
@@ -433,6 +436,7 @@
 				B431C9F829F237B6A780A8FC /* DevicePushCoordinator.swift in Sources */,
 				BAE7B40F755CB01E45657AA8 /* HomeStateProbe.swift in Sources */,
 				C654091523394E0AFE6EA794 /* PushTraceSwift.swift in Sources */,
+				D4EF14070E1BB23B1DAAFBCB /* StoreKitManager.swift in Sources */,
 				307C2654CD5972A25FB7FD87 /* iOSApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

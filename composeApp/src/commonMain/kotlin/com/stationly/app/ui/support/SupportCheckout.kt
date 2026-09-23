@@ -46,6 +46,12 @@ expect fun openCheckout(url: String)
 expect fun dismissCheckout()
 
 /**
+ * Attempt a native platform in-app purchase (e.g. StoreKit 2 on iOS).
+ * Returns true if the native sheet was launched, or false to fall back to web checkout.
+ */
+expect fun startNativePurchase(productId: String, amountMinor: Int, tierId: String): Boolean
+
+/**
  * Fill a checkout template with the signed-in account id.
  *
  * Returns null — meaning "do not open anything" — when there is no uid or no

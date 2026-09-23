@@ -49,8 +49,8 @@ STATIONLY_BUNDLE_BASE = com.stationly.mobile
 // bump. `scripts/ios-testflight.sh` takes it as an argument and passes it on
 // the xcodebuild command line (which overrides this), so the committed value
 // here is only the floor for local builds.
-MARKETING_VERSION = 1.0
-CURRENT_PROJECT_VERSION = 4
+MARKETING_VERSION = 1.1
+CURRENT_PROJECT_VERSION = 3
 
 // Which Kotlin XCFramework the Xcode targets link against — see the
 // "Select Kotlin XCFramework" build phase in project.yml. `debug` for local

@@ -23,3 +23,5 @@ actual fun openCheckout(url: String) {
 actual fun dismissCheckout() {
     // Nothing is ever presented — see the note on `openCheckout`.
 }
+
+actual fun startNativePurchase(productId: String, amountMinor: Int, tierId: String): Boolean = false

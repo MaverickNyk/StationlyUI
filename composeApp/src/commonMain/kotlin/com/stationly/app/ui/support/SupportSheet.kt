@@ -219,8 +219,10 @@ fun SupportSheet(
             //
             // Cost is a handful of extra Text layouts on one sheet. The old
             // Crossfade laid out one at a time, which is why the height moved.
-            val hints = remember(config, customHint) {
-                config.tiers.map { it.id to it.hint } + (CUSTOM_HINT_ID to customHint)
+            val showCustomAmount = config.customAmount.enabled && config.cta.urlOneoff.isNotBlank()
+
+            val hints = remember(config, customHint, showCustomAmount) {
+                config.tiers.map { it.id to it.hint } + if (showCustomAmount) listOf(CUSTOM_HINT_ID to customHint) else emptyList()
             }
             val activeHintId = if (custom || selected == null) CUSTOM_HINT_ID else selected!!.id
 
@@ -249,7 +251,7 @@ fun SupportSheet(
                 }
             }
 
-            if (config.customAmount.enabled && config.cta.urlOneoff.isNotBlank()) {
+            if (showCustomAmount) {
                 Spacer(Modifier.height(12.dp))
                 Surface(
                     color = if (custom) t.primary.copy(alpha = 0.12f) else t.card,
@@ -286,7 +288,8 @@ fun SupportSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .pressScale(onClick = {
-                        val opened = onPay(if (custom) null else selected)
+                        val tierToPay = if (custom) null else (selected ?: config.defaultTier)
+                        val opened = onPay(tierToPay)
                         failed = !opened
                     }),
             ) {

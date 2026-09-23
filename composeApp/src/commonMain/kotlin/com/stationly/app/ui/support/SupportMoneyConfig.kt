@@ -52,7 +52,7 @@ data class SupportMoneyConfig(
 
     /** True when there is something the user can actually pay through. */
     val isPayable: Boolean
-        get() = enabled && (tiers.any { it.checkoutUrl.isNotBlank() } || cta.urlOneoff.isNotBlank())
+        get() = enabled && (tiers.any { it.checkoutUrl.isNotBlank() || it.appleProductId.isNotBlank() } || cta.urlOneoff.isNotBlank())
 }
 
 @Serializable
@@ -82,6 +82,11 @@ data class SupportTier(
      * operator creates the link, in which case [SupportCta.urlOneoff] stands in.
      */
     val url: String = "",
+    /**
+     * Apple In-App Purchase consumable product ID (e.g. `uk.co.stationly.support.t4`).
+     * When present, iOS presents the native StoreKit 2 sheet instead of Safari.
+     */
+    @SerialName("apple_product_id") val appleProductId: String = "",
 ) {
     /** Non-blank checkout URL for this tier, or "" if it has none of its own. */
     val checkoutUrl: String get() = url.trim()
