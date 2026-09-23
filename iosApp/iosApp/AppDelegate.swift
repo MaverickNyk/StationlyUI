@@ -107,6 +107,20 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         // Wire KMP ↔ Swift auth command protocol
         AuthBridge.shared.wireToKMP()
 
+        // Wire StoreKit 2 In-App Purchase bridge to KMP
+        StoreKitBridge.shared.handler = { productId, amountMinor, tierId in
+            Task { @MainActor in
+                await StoreKitManager.shared.purchase(
+                    productId: productId,
+                    amountMinor: amountMinor.intValue,
+                    tierId: tierId
+                )
+            }
+        }
+        Task { @MainActor in
+            await StoreKitManager.shared.preloadProducts()
+        }
+
         // ── Tell KMP how to get a bearer token, before anything asks ──
         //
         // The shared network layer resolves the token per request through this

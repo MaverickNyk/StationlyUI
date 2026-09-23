@@ -419,6 +419,12 @@ class SupportViewModel(
      * credit).
      */
     fun payTier(tier: SupportTier?): Boolean {
+        if (tier != null && tier.appleProductId.isNotBlank()) {
+            if (startNativePurchase(tier.appleProductId, tier.amountMinor, tier.id)) {
+                performHaptic(HapticType.TAP)
+                return true
+            }
+        }
         val cfg = _uiState.value.config
         val template = tier?.checkoutUrl?.takeIf { it.isNotBlank() } ?: cfg.cta.urlOneoff
         val url = checkoutUrlFor(template, uidProvider()) ?: return false

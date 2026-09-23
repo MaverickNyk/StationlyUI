@@ -673,6 +673,7 @@ schemes:
         StationlyWidget: all
     run:
       config: Debug Production
+      storeKitConfiguration: Config/StationlySupport.storekit
     test:
       config: Debug Production
     profile:
@@ -688,6 +689,7 @@ schemes:
         StationlyWidget: all
     run:
       config: Debug Staging
+      storeKitConfiguration: Config/StationlySupport-Staging.storekit
     test:
       config: Debug Staging
     profile:

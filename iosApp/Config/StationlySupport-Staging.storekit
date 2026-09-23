@@ -1,0 +1,82 @@
+{
+  "appPolicies" : {
+    "eula" : "",
+    "policies" : [ ]
+  },
+  "identifier" : "StationlySupportStaging",
+  "nonRenewingSubscriptions" : [ ],
+  "products" : [
+    {
+      "displayPrice" : "4.00",
+      "familyShareable" : false,
+      "internalID" : "E0E84211",
+      "localizations" : [
+        {
+          "description" : "Voluntary support to keep Stationly running and ad-free. Grants a 30-day Supporter badge.",
+          "displayName" : "Supporter — 1 Day Live",
+          "locale" : "en_GB"
+        }
+      ],
+      "productID" : "uk.co.stationly.support.staging.t4",
+      "referenceName" : "Supporter Tier 1",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "8.00",
+      "familyShareable" : false,
+      "internalID" : "E0E84212",
+      "localizations" : [
+        {
+          "description" : "Voluntary support to keep Stationly running and ad-free. Grants a 30-day Supporter badge.",
+          "displayName" : "Supporter — 3 Days Live",
+          "locale" : "en_GB"
+        }
+      ],
+      "productID" : "uk.co.stationly.support.staging.t8",
+      "referenceName" : "Supporter Tier 2",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "12.00",
+      "familyShareable" : false,
+      "internalID" : "E0E84213",
+      "localizations" : [
+        {
+          "description" : "Voluntary support to keep Stationly running and ad-free. Grants a 30-day Supporter badge.",
+          "displayName" : "Supporter — 1 Week Live",
+          "locale" : "en_GB"
+        }
+      ],
+      "productID" : "uk.co.stationly.support.staging.t12",
+      "referenceName" : "Supporter Tier 3",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "25.00",
+      "familyShareable" : false,
+      "internalID" : "E0E84214",
+      "localizations" : [
+        {
+          "description" : "Generous support to keep Stationly running and ad-free. Grants a 30-day Supporter badge.",
+          "displayName" : "Supporter — Generous",
+          "locale" : "en_GB"
+        }
+      ],
+      "productID" : "uk.co.stationly.support.staging.t25",
+      "referenceName" : "Supporter Tier 4",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_billingIssuesEnabled" : false,
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_GB",
+    "_storefront" : "GBR",
+    "_storeKitErrors" : [ ]
+  },
+  "subscriptionGroups" : [ ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}
