@@ -16,12 +16,8 @@ window.switchTab = function (tabId) {
     if (targetTab) targetTab.classList.add('active');
 
     document.querySelectorAll('.nav-btn').forEach(btn => {
-        btn.classList.remove('active');
+        btn.classList.toggle('active', btn.dataset.tab === tabId);
     });
-
-    Array.from(document.querySelectorAll('.nav-btn'))
-        .filter(b => b.textContent.toLowerCase().includes(tabId))
-        .forEach(b => b.classList.add('active'));
 
     window.scrollTo(0, 0);
 

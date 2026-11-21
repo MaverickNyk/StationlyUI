@@ -1,0 +1,539 @@
+/* ═══════════════════════════════════════════════════════════════
+   Support Stationly page (/support/)
+   Everything here is scoped under .sp-* so nothing can collide with
+   the Help & FAQ tab on the home page (which owns .support-hero).
+
+   No layout shift on selection: the hint box is sized by its longest
+   hint (all four share one grid cell), and the CTA pins its label left
+   and the amount right, so a wider amount never slides the label.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+    --board-amber: #FFC819;
+    --board-bg: #05080F;
+    --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+/* ── Hero ── */
+.sp-hero {
+    position: relative;
+    overflow: hidden;
+    padding: 120px 0 4rem;
+    min-height: calc(100vh - 140px);
+    display: flex;
+    align-items: center;
+}
+.sp-hero > .container { width: 100%; }
+.sp-hero .hero-grid-pattern { -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 30%, transparent 75%); mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 30%, transparent 75%); }
+.sp-hero-glow {
+    position: absolute;
+    width: 720px;
+    height: 520px;
+    top: -140px;
+    right: -120px;
+    background: radial-gradient(circle, rgba(245, 166, 35, 0.16) 0%, transparent 65%);
+    filter: blur(40px);
+    pointer-events: none;
+}
+.sp-hero-glow-red {
+    top: auto;
+    right: auto;
+    bottom: -220px;
+    left: -200px;
+    background: radial-gradient(circle, rgba(221, 44, 51, 0.14) 0%, transparent 65%);
+}
+.sp-hero-inner {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 1fr minmax(0, 480px);
+    gap: 4.5rem;
+    align-items: center;
+}
+.sp-hero-text { min-width: 0; }
+.sp-hero-text h1 { margin-bottom: 1.25rem; }
+.sp-lede {
+    font-size: 1.15rem;
+    max-width: 30rem;
+    margin-bottom: 2rem;
+}
+
+/* Staggered entrance */
+.sp-enter {
+    opacity: 0;
+    animation: spEnter 0.7s var(--ease-out) forwards;
+    animation-delay: calc(var(--i, 0) * 80ms + 60ms);
+}
+@keyframes spEnter {
+    from { opacity: 0; transform: translateY(14px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Mini departure board (the promise) ── */
+.sp-board {
+    max-width: 30rem;
+    background: var(--board-bg);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.sp-board-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+.sp-board-live {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--green);
+}
+.sp-board-live::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.15);
+}
+.sp-board-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    font-family: var(--mono);
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--board-amber);
+    text-shadow: 0 0 12px rgba(255, 200, 25, 0.35);
+}
+.sp-board-row + .sp-board-row { border-top: 1px dashed rgba(255, 200, 25, 0.1); }
+.sp-board-row .sp-leader {
+    flex: 1;
+    border-bottom: 2px dotted rgba(255, 200, 25, 0.22);
+    transform: translateY(-4px);
+}
+.sp-board-row .sp-r { color: #FFE27A; }
+.sp-flap { display: inline-block; white-space: pre; }
+
+/* ── The contribution card ── */
+.sp-card {
+    position: relative;
+    background: linear-gradient(180deg, rgba(20, 28, 48, 0.82), rgba(12, 18, 33, 0.9));
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 22px;
+    padding: 1.6rem;
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    box-shadow: 0 30px 70px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+.sp-card::before {
+    /* thin amber edge at the top, like the red stripe on the site header */
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: 24px;
+    right: 24px;
+    height: 2px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, transparent, var(--amber), transparent);
+    opacity: 0.8;
+}
+.sp-card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+.sp-card-title {
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: var(--text-main);
+    letter-spacing: -0.01em;
+    margin: 0;
+}
+.sp-card-meta {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+/* Tier rows, styled like departure rows with a line-colour bar */
+.sp-tiers {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.sp-tier {
+    position: relative;
+    display: grid;
+    grid-template-columns: 4.25rem 1fr auto;
+    align-items: center;
+    gap: 0.9rem;
+    width: 100%;
+    padding: 0.9rem 1rem 0.9rem 1.15rem;
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 14px;
+    color: var(--text-main);
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+        background 0.25s var(--ease-out),
+        border-color 0.25s var(--ease-out),
+        transform 0.16s var(--ease-out);
+}
+.sp-tier::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 10px;
+    bottom: 10px;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: var(--amber);
+    transform: scaleY(0);
+    transition: transform 0.35s var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+    .sp-tier:hover {
+        background: rgba(255, 255, 255, 0.05);
+        border-color: rgba(255, 255, 255, 0.14);
+    }
+}
+.sp-tier:active { transform: scale(0.985); }
+.sp-tier:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+.sp-tier[aria-checked="true"] {
+    background: linear-gradient(90deg, rgba(245, 166, 35, 0.13), rgba(245, 166, 35, 0.04));
+    border-color: rgba(245, 166, 35, 0.45);
+}
+.sp-tier[aria-checked="true"]::before { transform: scaleY(1); }
+
+.sp-tier-amount {
+    font-family: var(--mono);
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-main);
+    transition: color 0.25s var(--ease-out), text-shadow 0.25s var(--ease-out);
+}
+.sp-tier-amount.is-word { font-family: inherit; font-size: 0.95rem; font-weight: 800; letter-spacing: 0; }
+.sp-tier[aria-checked="true"] .sp-tier-amount {
+    color: var(--board-amber);
+    text-shadow: 0 0 14px rgba(255, 200, 25, 0.35);
+}
+.sp-tier-label {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    transition: color 0.25s var(--ease-out);
+}
+.sp-tier[aria-checked="true"] .sp-tier-label { color: var(--text-main); }
+
+.sp-radio {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255, 255, 255, 0.22);
+    display: grid;
+    place-items: center;
+    transition: border-color 0.25s var(--ease-out), background 0.25s var(--ease-out);
+}
+.sp-radio svg {
+    width: 12px;
+    height: 12px;
+    stroke: #080D1A;
+    stroke-width: 3.2;
+    fill: none;
+    stroke-dasharray: 20;
+    stroke-dashoffset: 20;
+    transition: stroke-dashoffset 0.3s var(--ease-out) 0.05s;
+}
+.sp-tier[aria-checked="true"] .sp-radio {
+    border-color: var(--amber);
+    background: var(--amber);
+}
+.sp-tier[aria-checked="true"] .sp-radio svg { stroke-dashoffset: 0; }
+
+/* `hidden` must win over the display rules above (flex/grid). */
+.sp-card [hidden] { display: none !important; }
+
+/* Placeholders while the backend config loads: same box as a real row. */
+.sp-tier-skeleton {
+    height: 3.65rem;
+    cursor: default;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.02) 30%, rgba(255, 255, 255, 0.05) 50%, rgba(255, 255, 255, 0.02) 70%) 0 0 / 300% 100%;
+    animation: spShimmer 1.4s linear infinite;
+}
+@keyframes spShimmer { to { background-position: -150% 0; } }
+
+/* Story line that changes with the selection. Every hint lives in the
+   same grid cell; only the selected one is visible. */
+.sp-hint {
+    display: grid;
+    margin: 1rem 0 1.25rem;
+    padding: 0.8rem 1rem;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px dashed rgba(255, 255, 255, 0.08);
+    font-size: 0.88rem;
+    line-height: 1.55;
+    color: var(--text-muted);
+}
+.sp-hint:empty { min-height: calc(0.88rem * 1.55 * 2 + 1.6rem + 2px); }
+.sp-hint-text {
+    grid-area: 1 / 1;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(4px);
+    transition: opacity 0.2s var(--ease-out), transform 0.2s var(--ease-out), visibility 0s linear 0.2s;
+}
+.sp-hint-text.is-shown {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    transition: opacity 0.25s var(--ease-out) 0.08s, transform 0.25s var(--ease-out) 0.08s, visibility 0s;
+}
+
+/* CTA: label pinned left, amount + arrow pinned right */
+.sp-cta {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 1.05rem 1.35rem;
+    background: var(--amber);
+    color: #080D1A;
+    border-radius: 14px;
+    font-size: 1.02rem;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    text-decoration: none;
+    overflow: hidden;
+    box-shadow: 0 10px 28px rgba(245, 166, 35, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    transition: transform 0.16s var(--ease-out), box-shadow 0.25s var(--ease-out), background 0.2s ease;
+}
+.sp-cta-end {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.sp-cta::after {
+    /* one slow sheen on hover, not a loop */
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -60%;
+    width: 40%;
+    background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+    transform: skewX(-18deg);
+    transition: left 0s;
+}
+@media (hover: hover) and (pointer: fine) {
+    .sp-cta:hover {
+        background: #FFB534;
+        box-shadow: 0 14px 34px rgba(245, 166, 35, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    }
+    .sp-cta:hover::after { left: 130%; transition: left 0.75s var(--ease-out); }
+    .sp-cta:hover .sp-cta-arrow { transform: translateX(3px); }
+}
+.sp-cta:active { transform: scale(0.98); }
+.sp-cta:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+.sp-cta.is-closed {
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-muted);
+    box-shadow: none;
+    cursor: default;
+    pointer-events: none;
+}
+.sp-cta-arrow { transition: transform 0.25s var(--ease-out); flex-shrink: 0; }
+
+/* Rolling amount inside the CTA */
+.sp-roll {
+    position: relative;
+    display: inline-flex;
+    justify-content: flex-end;
+    height: 1.3em;
+    overflow: hidden;
+    vertical-align: bottom;
+    font-variant-numeric: tabular-nums;
+}
+.sp-roll-item {
+    display: block;
+    line-height: 1.3em;
+    white-space: nowrap;
+}
+.sp-roll .sp-roll-item.is-leaving {
+    position: absolute;
+    right: 0;
+    animation: spRollOut 0.32s var(--ease-out) forwards;
+}
+.sp-roll-item.is-entering { animation: spRollIn 0.38s var(--ease-out) both; }
+@keyframes spRollOut { to { transform: translateY(-110%); opacity: 0; } }
+@keyframes spRollIn  { from { transform: translateY(110%); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.sp-trust {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem 1rem;
+    margin-top: 1rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+.sp-trust span { display: inline-flex; align-items: center; gap: 0.4rem; }
+.sp-trust svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; opacity: 0.8; }
+
+/* ── Thank-you moment after Stripe returns the reader ── */
+.thx-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99998;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(4, 8, 16, 0.78);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    opacity: 0;
+    transition: opacity 0.3s var(--ease-out);
+}
+.thx-overlay.is-open { opacity: 1; }
+.thx-card {
+    position: relative;
+    width: 100%;
+    max-width: 420px;
+    padding: 2.5rem 2rem 2rem;
+    border-radius: 24px;
+    text-align: center;
+    background: linear-gradient(180deg, #141C30, #0C1221);
+    border: 1px solid rgba(245, 166, 35, 0.3);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), 0 0 60px rgba(245, 166, 35, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+    transform: translateY(16px) scale(0.94);
+    transition: transform 0.5s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+.thx-overlay.is-open .thx-card { transform: none; }
+.thx-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+.thx-close:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.thx-close:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.thx-heart {
+    position: relative;
+    width: 84px;
+    height: 84px;
+    margin: 0 auto 1.4rem;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(245, 166, 35, 0.2), rgba(245, 166, 35, 0.05) 70%);
+}
+.thx-heart::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 1.5px solid rgba(245, 166, 35, 0.5);
+    animation: thxRing 1.6s var(--ease-out) 0.5s both;
+}
+.thx-heart svg { width: 40px; height: 40px; overflow: visible; }
+.thx-heart path {
+    fill: var(--amber);
+    fill-opacity: 0;
+    stroke: var(--amber);
+    stroke-width: 1.6;
+    stroke-linejoin: round;
+    stroke-dasharray: 60;
+    stroke-dashoffset: 60;
+    transform-origin: 50% 55%;
+    animation:
+        thxDraw 0.7s var(--ease-out) 0.25s forwards,
+        thxFill 0.35s ease-out 0.85s forwards,
+        heartBeat 0.9s var(--ease-out) 1.05s;
+}
+@keyframes thxDraw { to { stroke-dashoffset: 0; } }
+@keyframes thxFill { to { fill-opacity: 1; } }
+@keyframes thxRing {
+    from { transform: scale(0.8); opacity: 0.9; }
+    to   { transform: scale(1.6); opacity: 0; }
+}
+.thx-card h2 {
+    font-size: 1.9rem;
+    margin-bottom: 0.75rem;
+}
+.thx-card p {
+    font-size: 0.95rem;
+    line-height: 1.65;
+    margin-bottom: 1.75rem;
+}
+.thx-done {
+    width: 100%;
+    padding: 0.9rem 1.5rem;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-main);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+.thx-done:hover { background: rgba(255, 255, 255, 0.09); border-color: rgba(255, 255, 255, 0.2); }
+.thx-done:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+/* ── Responsive ── */
+@media (max-width: 960px) {
+    .sp-hero-inner { grid-template-columns: minmax(0, 1fr); gap: 3rem; }
+    .sp-hero-text { text-align: center; }
+    .sp-lede, .sp-board { margin-left: auto; margin-right: auto; }
+    .sp-card { max-width: 520px; margin: 0 auto; width: 100%; }
+}
+@media (max-width: 480px) {
+    .sp-hero { padding: 112px 0 3.5rem; }
+    .sp-card { padding: 1.15rem; border-radius: 18px; }
+    .sp-tier { grid-template-columns: 3.6rem 1fr auto; padding: 0.8rem 0.85rem 0.8rem 1rem; gap: 0.6rem; }
+    .sp-tier-amount { font-size: 1.15rem; }
+    .sp-card-head { flex-direction: column; gap: 0.15rem; }
+    .sp-board-row { font-size: 0.82rem; letter-spacing: 0.04em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sp-enter { opacity: 1; animation: none; }
+}
