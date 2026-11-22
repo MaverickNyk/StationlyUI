@@ -78,6 +78,8 @@ kotlin {
                 // use it are shared composables and the expect/actual seam has
                 // to resolve inside this module.
                 implementation("com.google.android.play:app-update-ktx:2.1.0")
+                // Play Billing for the support tiers (ui/support/PlayBilling.kt).
+                implementation("com.android.billingclient:billing-ktx:7.1.1")
             }
         }
 

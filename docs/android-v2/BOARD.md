@@ -9,7 +9,13 @@
 ```
 SPRINT:            5-6 — release surfaces + rollout (sprints 1-4 complete)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S021 (2026-11-21/22) — AV2-10.7 to 10.11. The Android 17
+LAST SESSION:      S022 (2026-11-22) — AV2-7.4 support through Play
+                   Billing (D11 answers Q1). Built and tested, still OFF:
+                   it goes live when the owner creates the Play products and
+                   sets SUPPORT_MONEY_ANDROID_ENABLED. Known iOS
+                   verify issues found on the way are DOCUMENTED, not fixed
+                   (owner's call): EPIC-07 AV2-7.4.
+                   S021 (2026-11-21/22) — AV2-10.7 to 10.11. The Android 17
                    widget made to behave like iOS's: rows that vanished on a
                    Xiaomi, system corners, updates that never reached placed
                    widgets, bigger tap areas at the original row size, no gear
@@ -122,6 +128,7 @@ NEXT UP:           (1) AV2-10.11's remainder: LARGE's split layout and the
 | Story | Epic | Title | Waiting on |
 |---|---|---|---|
 | AV2-8.3 | 08 | Ship | AV2-8.2 sign-off, Play Console |
+| AV2-7.4 (device test) | 07 | Support through Play Billing: a real purchase on device | Owner: Play products, license tester, Play access for the backend's service account, internal-track build |
 
 ### 🅡 Ready — take the top one
 
@@ -202,7 +209,7 @@ Do not block on these unless a story names one as a dependency. Log and continue
 
 | # | Question | Raised | Blocks | Status |
 |---|---|---|---|---|
-| Q1 | Play policy route for tips — Play Billing, or a charity/non-profit exemption for external checkout? | S000 | AV2-7.3 scope only (the surface ships off either way) | OPEN |
+| Q1 | Play policy route for tips — Play Billing, or a charity/non-profit exemption for external checkout? | S000 | AV2-7.3 scope only (the surface ships off either way) | ANSWERED S022: Play Billing (D11), built as AV2-7.4 |
 | Q2 | At what remaining-v1-install count do we drop the `stations` dual-write? | S000 | AV2-8.3 | OPEN |
 | Q5 | 🔴 **NO LONGER ABOUT TESTFLIGHT. Verified S016.** `origin/master` has **no `.sqm` files at all**, so the iOS build that shipped to the App Store stamps its databases `version 1` — while its `.sq` already holds the full current schema (19-column `UserSelectionEntity`, `ActivityEventEntity`, both new primary keys). The first iOS release cut from this branch therefore runs `1.sqm` on **every App Store user**, hits its deliberate `CREATE TABLE ActivityEventEntity` guard, fails, and rolls back — which is "safe" in the sense that no data is lost and fatal in the sense that the database will not open. The documented recovery is delete-and-reinstall, and that is not something an App Store user can be asked to do. Boards do come back from the cloud on sign-in, so the damage is recoverable, not silent. **Options, in rough order of preference:** (a) an iOS-side pre-migration fixup that re-stamps a version-1 database whose shape is already current to version 2 and lets `2.sqm` run normally — the two shapes ARE distinguishable, `ActivityEventEntity` exists in one and not the other; (b) merge the schema to master in an iOS release that ships nothing else, so the blast radius is one version; (c) accept it and tell people. **This is not caused by Q7's `2.sqm`** — it has been true since AV2-2.1 added `1.sqm` — but adding a second migration is what made it worth re-checking who the population actually is. | S004 | **any iOS release from this branch** | ⏸ PARKED S020 — merge-time only. Owner is Android-only for now; this cannot reach the Android release. Resolve before merging to master. |
 | Q4 | Add `GOOGLE_SERVICES_STAGING_B64` as a repo secret so CI can compile and test `:android:app`? The file is gitignored, so CI skips those steps today and says so with a warning annotation. | S001 | `:android:app` coverage in CI | OPEN |

@@ -233,3 +233,28 @@ version.
 on long-press (not yet checked on Samsung or Xiaomi), or Play Console shows the
 Android 8 to 11 share is negligible, in which case the gear can go everywhere.
 
+
+## D11 — Android takes support through Google Play Billing, never Stripe
+**2026-11-22 · S022, owner decision (answers Q1)**
+
+Android support uses Play Billing one-time products (`uk.co.stationly.support.t4`
+/ `t8` / `t12` / `t25`), the same shape as iOS's StoreKit route. The website keeps
+Stripe. Three payment sources, one ledger: every one lands in the same
+append-only `supportMoney` array (`apple_` / `google_` / Stripe ids), and the
+server derives the badge from it, so the client logic is shared and only the
+purchase connector is per platform.
+
+**Why.** Play's payments policy treats a tip to the developer as a digital
+purchase, which must use Play Billing; the external-checkout exemption is for
+registered charities, which Stationly is not. Supersedes D4's "stays stubbed".
+
+**How it is enforced, not just intended.** The backend sends a store app only
+its own store's product ids and NO Stripe links (`SupportMoneyConfigService`,
+`isStoreApp`), and `openCheckout` is a no-op on Android. A purchase is consumed
+by the BACKEND after it is recorded, never by the device, so a crash between
+Play's sheet and our server leaves it unconsumed for the next launch to resend.
+Each purchase carries `sha256(uid)` as Play's obfuscated account id and the
+server refuses a token whose binding does not match the bearer.
+
+**Revisit if.** Google opens an external-offers route in the UK that is cheaper
+than Play's 15% and does not need a separate programme enrolment.

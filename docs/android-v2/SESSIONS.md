@@ -18,6 +18,33 @@ Template:
 
 ---
 
+## S022 — 2026-11-22 — AV2-7.4 · **support through Google Play Billing**
+
+**Outcome:** DONE to Review, except the on-device purchase (task e), which waits
+on the owner's Play Console setup. Ships OFF: nothing changes for users until
+`SUPPORT_MONEY_ANDROID_ENABLED` is set.
+**Gate:** GREEN: core, migrations, composeApp, `:android:app:testStagingDebugUnitTest`
+(118), both compiles, plus `:composeApp:compileKotlinIosSimulatorArm64` because
+commonMain and iosMain changed. Backend 240/240 on `dev_android_support_iap`.
+**Commits:** (uncommitted at close-out)
+**Did:** Play Billing connector, per-platform product ids, the backend verify
+endpoint, and per-platform config so no store app ever gets a Stripe link.
+**Learned:** three things about the iOS verify path (app-key-only route that
+trusts a body uid and records an unverified JWS; a wrong `appAppleId`, harmless
+for transactions; a price-unit question). Fixed, then REVERTED at the owner's
+request: iOS works and stays untouched. Documented in EPIC-07 AV2-7.4.
+Also `isPayable` only looked at Apple ids, so Android was "payable" only because
+the backend happened to send it App Store ids.
+**Review:** Play's answers moved from toasts to the sheet (`StoreNotice`);
+billing split into three files; pure, tested answer mapping. Live-client impact
+diffed against `main`: none (SUPPORT_CONTRIBUTIONS.md §8.10). Master reference
+doc gained §8 for Android.
+**Next agent needs to know:** Play Billing cannot be exercised from an
+`installStagingDebug` APK. It needs a Play internal-track install and a license
+tester. Staging and production Android share one package and one product list.
+
+---
+
 ## S021 — 2026-11-21/22 — AV2-10.7 to 10.11 · **the Android 17 widget, made to behave like iOS's**
 
 **Outcome:** DONE. AV2-10.7 to 10.10 to Review; AV2-10.11 PARTIAL (LARGE's

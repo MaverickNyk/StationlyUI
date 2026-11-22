@@ -51,14 +51,17 @@ data class SupportMoneyConfig(
         get() = tiers.firstOrNull { it.id == defaultTierId } ?: tiers.firstOrNull()
 
     /**
-     * True when the DOCUMENT describes something payable.
+     * True when the DOCUMENT describes something payable on THIS platform: a
+     * product in this platform's store ([nativeProductId]), or a web checkout
+     * link. An App Store id does not make a card payable on Android, nor a Play
+     * id on iOS.
      *
      * About the config and nothing else, which is why [isOfferable] exists
      * beside it: this one is what the operator turned on, that one is whether
      * this device can honour it.
      */
     val isPayable: Boolean
-        get() = enabled && (tiers.any { it.checkoutUrl.isNotBlank() || it.appleProductId.isNotBlank() } || cta.urlOneoff.isNotBlank())
+        get() = enabled && (tiers.any { it.checkoutUrl.isNotBlank() || nativeProductId(it).isNotBlank() } || cta.urlOneoff.isNotBlank())
 
     /**
      * [isPayable], and this platform can actually complete a checkout.
@@ -105,6 +108,11 @@ data class SupportTier(
      * When present, iOS presents the native StoreKit 2 sheet instead of Safari.
      */
     @SerialName("apple_product_id") val appleProductId: String = "",
+    /**
+     * Google Play one-time product ID (e.g. `uk.co.stationly.support.t4`).
+     * When present, Android presents the Play Billing sheet.
+     */
+    @SerialName("google_product_id") val googleProductId: String = "",
 ) {
     /** Non-blank checkout URL for this tier, or "" if it has none of its own. */
     val checkoutUrl: String get() = url.trim()

@@ -262,6 +262,7 @@ fun App(
                         contributionCount = support.contributionCount,
                         onPay = { tier -> supportViewModel.payTier(tier) },
                         onDismiss = { supportViewModel.closeSheet() },
+                        storeNotice = support.storeNotice,
                     )
                 }
 

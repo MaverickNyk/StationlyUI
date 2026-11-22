@@ -75,6 +75,8 @@ fun SupportSheet(
     contributionCount: Int,
     onPay: (SupportTier?) -> Boolean,
     onDismiss: () -> Unit,
+    /** The store's answer to the last payment, if it did not end in one. See [StoreNotice]. */
+    storeNotice: StoreNotice? = null,
 ) {
     val t = LocalThemeTokens.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -310,17 +312,22 @@ fun SupportSheet(
             // the app") directly under the button, so a sentence about plumbing
             // was the last thing read before the tap. It earns its space when a
             // checkout actually fails to open, and not otherwise.
-            val footer = if (failed) {
-                strings["support_money.sheet.error"]
-                    ?: "Couldn't open checkout. Make sure you're signed in and try again."
-            } else {
-                config.cta.note
+            //
+            // Three things can fill it, most urgent first: this tap opened
+            // nothing; the store answered the last payment with something other
+            // than a payment (asynchronously, so after `failed` was decided);
+            // or the operator's note.
+            val (footer, isError) = when {
+                failed -> (strings["support_money.sheet.error"]
+                    ?: "Couldn't open checkout. Make sure you're signed in and try again.") to true
+                storeNotice != null -> storeNotice.text(strings) to storeNotice.isError
+                else -> config.cta.note to false
             }
             if (footer.isNotBlank()) {
                 Spacer(Modifier.height(10.dp))
                 Text(
                     footer,
-                    color = if (failed) t.error else t.textSubtle,
+                    color = if (isError) t.error else t.textSubtle,
                     fontSize = 11.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(),

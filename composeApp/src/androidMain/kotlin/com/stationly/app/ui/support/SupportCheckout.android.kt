@@ -1,45 +1,39 @@
 package com.stationly.app.ui.support
 
 /**
- * Not wired on Android — and after the cutover, that needs a stronger guard than
- * a comment.
+ * Android takes a contribution through Google Play Billing ([PlayBilling]),
+ * never a web checkout. See [checkoutSupported] in `commonMain`.
  *
- * ## What this file used to say, and why it stopped being true
- * It said `composeApp`'s Android target existed only so the shared UI kept
- * compiling, that the shipping app was `:android:app` with its own screens, and
- * that no support surface could reach this because "an Android build has neither
- * `enabled` nor a checkout URL". AV2-3.5 ended all three: these composables ARE
- * the Android app, and `enabled` comes from the backend, not the build. One
- * config change — no release, both platforms at once — and Android users would
- * have had the banner, the sheet and the tier ladder, every one of them ending
- * at the empty function below.
+ * ## Why Play Billing (Q1, answered)
+ * Google Play's payments policy treats a tip to the developer as a digital
+ * purchase, which must go through Play's own billing; the exemption for external
+ * checkout covers registered charities only, and Stationly is not one. So this
+ * mirrors iOS's StoreKit route rather than the website's Stripe one.
  *
- * ## The position now
- * D4 says the money surface ships **built and off** on Android, and Q1 has not
- * decided the Play policy route (Play Billing, or a charity exemption for
- * external checkout). Until it does, [checkoutSupported] is false and every
- * surface gates on it, so "off" is a property of the platform rather than of a
- * document somebody might edit.
- *
- * When Q1 is answered, the whole change is here: `CustomTabsIntent` over the
- * host Activity for an external route, or Play Billing for the other — and one
- * boolean.
+ * ## Still "built and off" until the backend says otherwise
+ * This is `true` so the platform CAN take a payment. Whether it is OFFERED is
+ * `SupportMoneyConfig.enabled`, which the backend serves from
+ * `SUPPORT_MONEY_ANDROID_ENABLED`, off until the Play products exist. Both have
+ * to agree before an Android user sees a tier ladder.
  */
-actual val checkoutSupported: Boolean = false
+actual val checkoutSupported: Boolean = true
 
 /**
- * A no-op rather than a throw.
- *
- * Unreachable while [checkoutSupported] is false, and this is the wrong place to
- * discover that something got past the gate: it is a money path, and a crash
- * there is worse than silence for a user who has just decided to give something.
+ * A no-op, deliberately. Android never opens a web checkout (see the class note
+ * on [PlayBilling]); the backend sends Android no Stripe links, and this is the
+ * second guard behind that.
  */
 actual fun openCheckout(url: String) {
-    // Intentionally empty — see the KDoc.
+    // Intentionally empty.
 }
 
 actual fun dismissCheckout() {
-    // Nothing is ever presented — see the note on `openCheckout`.
+    // Nothing is ever presented; Play's sheet dismisses itself.
 }
 
-actual fun startNativePurchase(productId: String, amountMinor: Int, tierId: String): Boolean = false
+actual fun startNativePurchase(productId: String, amountMinor: Int, tierId: String): Boolean =
+    PlayBilling.purchase(productId, amountMinor, tierId)
+
+actual fun nativeProductId(tier: SupportTier): String = tier.googleProductId
+
+actual fun resumeNativePurchases() = PlayBilling.resume()

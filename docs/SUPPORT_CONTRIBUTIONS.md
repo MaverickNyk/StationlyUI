@@ -8,10 +8,21 @@
 
 Every planned premium feature across Stationly is now **free forever** (no paywalls, no ads, no locked stations). Ongoing operational costs (TfL live data feeds, Firestore, push notifications, hosting) are funded through **voluntary developer contributions**:
 
-| Lane | Mechanism | Platform Cut | User Impact |
-|---|---|---|---|
-| **One-off Contribution** (*Active*) | Stripe Hosted Payment Links via Safari / Web | **0%** (Apple Guideline 3.2.1 allows developer support outside StoreKit) | Grants an account-level **Supporter badge** for 30 days. Nothing functional is gated. |
-| **Supporter IAP** (*Phase 2, Deferred*) | StoreKit 2 / Google Play Billing | 15% (Small Business Program) | Optional cosmetic extras & continuous badge. |
+> **Current routes (2026-11-22).** Three payment sources, one ledger. Each
+> store app takes tips only through its own store, as both stores require; the
+> website keeps Stripe. Every route writes to the same `users/{uid}.supportMoney`
+> array, and the server derives the Supporter badge from it.
+
+| Surface | Route | Ledger id | Store cut | Status |
+|---|---|---|---|---|
+| **iOS app** | StoreKit 2 consumables (`uk.co.stationly.support.t4/t8/t12/t25`) | `apple_<transactionId>` | 15% | Live |
+| **Android app** | Google Play Billing one-time products (same ids) | `google_<orderId>` | 15% | Built, OFF until Play setup (§8) |
+| **Website** `/support/` | Stripe Payment Links | Stripe Checkout Session id | 0% | Live |
+
+A contribution grants an account-level **Supporter badge** for 30 days. Nothing
+functional is gated, on any route. (Sections 2 to 7 describe the Stripe era in
+which this document began; where they disagree with the table above, the table
+is current.)
 
 ### Invariant Rules
 1. **Never a Paywall:** Nothing already free ever moves behind a paywall.
@@ -129,7 +140,7 @@ export interface SupportMoneyStatusView {
 - **`SupportSheet.kt`**: Compose bottom sheet displaying the £4 / £8 / £12 / custom amount ladder with real-time story hints.
 - **`SupportThanksOverlay.kt`**: Full-screen celebration overlay rendering physics-driven multi-colored confetti cannons and synchronized haptics.
 - **`SupportProfileCard.kt` & `SupporterAvatarBadge`**: Profile and top-bar avatar badges with background-matched cut-out rings.
-- **`SupportCheckout.kt` / `SupportCheckout.ios.kt`**: Opens checkouts in `SFSafariViewController` (enabling Apple Pay) and handles automated dismissal on return.
+- **`SupportCheckout.kt`**: the per-platform payment seam. `startNativePurchase` (StoreKit on iOS, Play Billing on Android), `nativeProductId`, `resumeNativePurchases`, and the dormant web-checkout path the store apps no longer use (see §8).
 
 ### 4.2 Nag Policy & Display Logic
 - **Contextual Home Banner:** Appears only after a new board is added, provided `boards_count >= min_boards` (default 2) and `active_days >= min_days` (default 3).
@@ -218,3 +229,116 @@ export interface SupportMoneyStatusView {
   - Confetti burst & haptics fire.
   - Firestore updates transaction ledger.
   - Supporter avatar badge renders on Home and Profile screens.
+
+---
+
+## 8. Android: Google Play Billing (AV2-7.4, decision D11)
+
+### 8.1 Why Play Billing
+Google Play treats a tip to the developer as a digital purchase, which must use
+Play Billing; the external-checkout exemption covers registered charities only.
+So Android mirrors iOS's StoreKit route, not the website's Stripe one. The
+backend enforces it: store apps are served only their own store's product ids
+and no Stripe links (`SupportMoneyConfigService.getSupportMoneyConfig`,
+`isStoreApp`).
+
+### 8.2 The life of one purchase
+```text
+ Sheet "Pay £8"
+   └─ SupportViewModel.payTier ─ startNativePurchase(google_product_id)
+        └─ PlayBilling.purchase ─ Play sheet, bound to sha256(uid)
+             ├─ PURCHASED ─ thank-you now (SupportReturn, local, cosmetic)
+             │     └─ POST /api/v1/support-money/verify-play  (Firebase bearer)
+             │          └─ GooglePlayIAPService
+             │               1. Google: purchases.products.get (real? completed?)
+             │               2. obfuscatedExternalAccountId == sha256(bearer uid)
+             │               3. ledger += google_<orderId> at OUR tier price
+             │               4. Google: consume (server-side, after recording)
+             ├─ PENDING / failure ─ StoreNotice shown under the Pay button
+             └─ app dies before step 4 ─ purchase stays unconsumed
+                   └─ next launch: PlayBilling.resume sends it again (idempotent)
+```
+
+### 8.3 Files
+| Repo | File | Role |
+|---|---|---|
+| StationlyUI | `composeApp/src/androidMain/.../support/PlayBilling.kt` | The purchase flow: launch, results, resume |
+| StationlyUI | `.../support/PlayBillingConnection.kt` | One BillingClient, reconnected on demand |
+| StationlyUI | `.../support/PlayAccount.kt` | Account binding `sha256(uid)` and the device-side session id |
+| StationlyUI | `.../support/SupportCheckout.android.kt` | `checkoutSupported = true`, the actuals |
+| StationlyUI | `commonMain/.../support/SupportSignals.kt` | `StoreNotice` / `StoreNotices`: the store's answers, shown in the sheet |
+| StationlyUI | `core/.../service/SduiApiService.kt` | `verifyPlayPurchase`, `PlayVerifyOutcome.from` |
+| backend | `src/services/googlePlayIAPService.ts` | Verify, bind, record, consume |
+| backend | `src/controllers/supportMoneyController.ts` | `verifyPlay` route handler |
+| backend | `src/routes/apiRoutes.ts` | `POST /support-money/verify-play`, bearer + strict rate limit |
+
+### 8.4 Guarantees
+- **Never consumed before it is recorded.** Only the server consumes. A crash,
+  timeout or server error leaves the purchase for the next launch.
+- **Never credited to the wrong account.** The account binding is checked
+  server-side, and the client skips purchases bound to a different account.
+- **Never credited at a client-chosen price.** The amount is the served tier's
+  `amount_minor` for that product id.
+- **Never refused for our own fault.** A 401/403 from Google (our credentials)
+  or any 5xx is "retry later", never "rejected"; a rejected purchase is
+  refunded by Google after three days, so the distinction is a user's money.
+- **One thank-you per purchase.** A retry of an already-credited purchase
+  returns `recorded: false`, and the app does not celebrate it again.
+
+### 8.5 Configuration
+| Setting | Default | Notes |
+|---|---|---|
+| `SUPPORT_MONEY_ANDROID_ENABLED` | `false` | The switch. Listed in `.env.remote`, so a deploy can set it per environment. |
+| `GOOGLE_PLAY_KEY_PATH` | Firebase Admin key | Service account with Play Console access. |
+| `GOOGLE_PLAY_PACKAGE_NAME` | `com.stationly.mobile` | Staging and prod share it, so they share one product list. |
+| `SUPPORT_MONEY_GOOGLE_PRODUCT_T4/_T8/_T12/_T25` | `uk.co.stationly.support.<tier>` | Per-tier override. |
+| home-config `support_money.store.*` | served | The four `StoreNotice` wordings. |
+
+### 8.6 Go-live checklist
+1. Upload one build with the billing library (it adds the `BILLING` permission)
+   to the Internal testing track. Play does not unlock product creation before.
+2. Create the four one-time products at £4 / £8 / £12 / £25 and activate them.
+   Prices must match the tiers: the server credits the tier price.
+3. License testing: add the testers' Google accounts.
+4. In BOTH Cloud projects (`mindthetimefcm` staging, `stationly-prod`), enable
+   the **Google Play Android Developer API**, and invite each project's
+   `firebase-adminsdk-fbsvc@…` account in Play Console with "View financial
+   data" and "Manage orders and subscriptions".
+5. Staging: `SUPPORT_MONEY_ANDROID_ENABLED=true`, buy as a tester, check the
+   badge and the `google_` ledger row. Then production.
+
+### 8.7 Verified so far (staging, 2026-11-22, Pixel 10 Pro Fold)
+Config per platform correct; verify route refuses without a bearer; the
+launch-time resume connects and finds nothing; sheet from Profile and home;
+every tier reaches Play and shows the "unavailable" notice (no products yet);
+no browser ever opens; no crash. Google's API answered 403 "API not enabled" for
+the staging project, which is checklist step 4.
+
+### 8.8 Tests
+- backend `src/tests/run.ts`: per-platform config, account binding vector,
+  completed / pending / cancelled / unknown / foreign / duplicate / deleted
+  account, oversized token, notice copy served.
+- `PlayBillingTest` (androidUnitTest): binding vector (same as the backend's),
+  64-char limit, session id, Android payability.
+- `PlayVerifyOutcomeTest` (core): every HTTP answer maps to the right outcome.
+- `StoreNoticeTest` (commonTest): served copy wins, fallbacks follow the voice
+  rules.
+
+### 8.9 Known iOS issues (documented, deliberately not fixed)
+See `docs/android-v2/epics/EPIC-07-release-surfaces.md`, AV2-7.4. The owner's
+call: iOS works, and its payment code stays exactly as it is until revisited.
+
+
+### 8.10 Impact on live clients (checked 2026-11-22)
+Every response a live client reads (support card, home-config strings, About
+layout) was generated from `main` and from this change for each client type and
+diffed:
+
+| Client | Difference | Effect |
+|---|---|---|
+| iOS 1.1 (`X-Stationly-Client: ios`) | each tier gains `"google_product_id": ""`; four new `support_money.store.*` strings | None: its parser ignores unknown fields (`ignoreUnknownKeys`) and keys. Apple ids, prices, links and flags identical. |
+| Android v1 (no client header, so `unknown`) | each tier gains a Google id beside the Apple id; the four strings | None: v1 has no support code. Its Stripe links and flags are unchanged. |
+| `android` (v2 builds only) | Stripe fields blank, custom amount off, Google ids instead of Apple | Off in production (`SUPPORT_MONEY_ANDROID_ENABLED` unset). |
+| Everyone, About | "DLR, and Overground — all" becomes "DLR and Overground, all" | Text only (house copy rule: no dashes). |
+
+The iOS `verify-iap` route and `appleIAPService.ts` are unchanged.

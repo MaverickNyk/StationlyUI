@@ -37,3 +37,8 @@ object StoreKitBridge {
 actual fun startNativePurchase(productId: String, amountMinor: Int, tierId: String): Boolean {
     return StoreKitBridge.purchase(productId, amountMinor, tierId)
 }
+
+actual fun nativeProductId(tier: SupportTier): String = tier.appleProductId
+
+/** No-op: StoreKit's `Transaction.updates` listener in Swift already does this. */
+actual fun resumeNativePurchases() {}

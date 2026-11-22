@@ -190,6 +190,13 @@ interface SduiApiService {
      * Both calls are idempotent; the client invokes register on cold
      * launch + on token rotation, and unregister on logout.
      */
+    /**
+     * Ask the backend to verify a Google Play purchase with Google, credit it to
+     * the signed-in account, and consume it. See [PlayVerifyOutcome] for why the
+     * answer has three shapes rather than two.
+     */
+    suspend fun verifyPlayPurchase(productId: String, purchaseToken: String): PlayVerifyOutcome
+
     suspend fun registerFcmToken(token: String, platform: String = "android", appVersion: String? = null): Boolean
     suspend fun unregisterFcmToken(token: String): Boolean
 }
@@ -414,6 +421,22 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
         return response.status == HttpStatusCode.OK
     }
 
+    override suspend fun verifyPlayPurchase(productId: String, purchaseToken: String): PlayVerifyOutcome {
+        val response = try {
+            client.post("$baseUrl/support-money/verify-play") {
+                contentType(ContentType.Application.Json)
+                setBody(PlayVerifyRequest(productId, purchaseToken))
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Offline, DNS, timeout: no answer about the purchase at all.
+            return PlayVerifyOutcome.RetryLater
+        }
+        val body = runCatching { response.body<PlayVerifyResponse>() }.getOrNull()
+        return PlayVerifyOutcome.from(response.status.value, body)
+    }
+
     override suspend fun registerFcmToken(token: String, platform: String, appVersion: String?): Boolean {
         @kotlinx.serialization.Serializable
         data class RegisterFcmTokenRequest(val token: String, val platform: String, val appVersion: String?)
@@ -437,4 +460,53 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
 
 object SduiApiServiceFactory {
     fun create(): SduiApiService = NetworkModule.sduiApi
+}
+
+@kotlinx.serialization.Serializable
+private data class PlayVerifyRequest(val productId: String, val purchaseToken: String)
+
+/** The backend's answer from `POST /support-money/verify-play`. */
+@kotlinx.serialization.Serializable
+data class PlayVerifyResponse(
+    val ok: Boolean = false,
+    /** True only the first time the purchase is credited; false on a retry. */
+    val recorded: Boolean = false,
+    /** Why it was refused, on a 400. `purchase_pending` is "not yet", not "no". */
+    val reason: String? = null,
+)
+
+/**
+ * What the backend said about one Play purchase.
+ *
+ * Three shapes because the client does three different things with them:
+ * - [Credited]: recorded and consumed. Done.
+ * - [Rejected]: the server looked and said no (another account's token, an
+ *   unknown product). Retrying cannot change that.
+ * - [RetryLater]: no answer, or "pending". The purchase stays on the device
+ *   unconsumed and is sent again on the next launch, which is what lets a
+ *   payment survive the app dying between Play's sheet and our server.
+ */
+sealed interface PlayVerifyOutcome {
+    /** [newlyRecorded] is false on a retry of a purchase already credited: no second thank-you. */
+    data class Credited(val newlyRecorded: Boolean) : PlayVerifyOutcome
+    data class Rejected(val reason: String) : PlayVerifyOutcome
+    data object RetryLater : PlayVerifyOutcome
+
+    companion object {
+        /**
+         * Reads an HTTP answer. Pure, so the mapping is tested without a server.
+         *
+         * Only a 200 with `ok` credits, and only a 400 refuses; a 401 (token
+         * expired), a 5xx (Google unreachable, or not set up yet) or an
+         * unreadable body is a question to ask again, never a "no", because a
+         * "no" lets Google refund a payment that should have been credited.
+         */
+        fun from(httpStatus: Int, body: PlayVerifyResponse?): PlayVerifyOutcome = when {
+            httpStatus == 200 && body?.ok == true -> Credited(newlyRecorded = body.recorded)
+            httpStatus == 400 && body != null && body.reason != PENDING -> Rejected(body.reason ?: "rejected")
+            else -> RetryLater
+        }
+
+        private const val PENDING = "purchase_pending"
+    }
 }

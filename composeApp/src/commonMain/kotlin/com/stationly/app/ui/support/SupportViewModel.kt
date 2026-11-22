@@ -58,6 +58,8 @@ data class SupportUiState(
     val sheetVisible: Boolean = false,
     /** A thank-you is playing; the amount it is celebrating (0 = no figure). */
     val thanksAmountMinor: Int? = null,
+    /** What the store last said about a payment started from the sheet. See [StoreNotice]. */
+    val storeNotice: StoreNotice? = null,
 ) {
     /** Show the Supporter mark? See [isSupporterAt] for the rule and why. */
     val isSupporter: Boolean get() = isSupporterAt(nowMs())
@@ -168,6 +170,12 @@ class SupportViewModel(
 
     init {
         syncAccount()
+        // The store answers from platform code, after payTier has returned.
+        viewModelScope.launch {
+            StoreNotices.notice.collect { notice ->
+                _uiState.value = _uiState.value.copy(storeNotice = notice)
+            }
+        }
     }
 
     /**
@@ -314,6 +322,10 @@ class SupportViewModel(
         val parsed = SupportMoneyConfigDefaults.parse(homeConfig)
         if (parsed == _uiState.value.config && homeConfig == _uiState.value.strings) return
         _uiState.value = _uiState.value.copy(config = parsed, strings = homeConfig)
+        // Support is live for this platform: pick up any purchase a previous
+        // run paid for but never got credited. Here because this is the first
+        // point the app knows payments are on at all.
+        if (parsed.isOfferable) resumeNativePurchases()
         // A board added before the card landed is still waiting to be judged.
         evaluateBanner()
     }
@@ -400,11 +412,13 @@ class SupportViewModel(
     // ── The sheet ─────────────────────────────────────────────────────────
 
     fun openSheet() {
+        StoreNotices.clear()
         performHaptic(HapticType.TAP)
         _uiState.value = _uiState.value.copy(sheetVisible = true, bannerVisible = false)
     }
 
     fun closeSheet() {
+        StoreNotices.clear()
         _uiState.value = _uiState.value.copy(sheetVisible = false)
     }
 
@@ -419,12 +433,18 @@ class SupportViewModel(
      * credit).
      */
     fun payTier(tier: SupportTier?): Boolean {
-        if (tier != null && tier.appleProductId.isNotBlank()) {
-            if (startNativePurchase(tier.appleProductId, tier.amountMinor, tier.id)) {
+        // A new attempt: whatever the store said about the last one is over.
+        StoreNotices.clear()
+        val productId = tier?.let(::nativeProductId).orEmpty()
+        if (tier != null && productId.isNotBlank()) {
+            if (startNativePurchase(productId, tier.amountMinor, tier.id)) {
                 performHaptic(HapticType.TAP)
                 return true
             }
         }
+        // Falls through to a web checkout. The backend sends the store apps no
+        // Stripe link at all, so on iOS and Android this ends in `return false`
+        // (the sheet says it could not open) rather than in a browser.
         val cfg = _uiState.value.config
         val template = tier?.checkoutUrl?.takeIf { it.isNotBlank() } ?: cfg.cta.urlOneoff
         val url = checkoutUrlFor(template, uidProvider()) ?: return false

@@ -261,3 +261,70 @@ When Q1 resolves, the whole Android change is in
 over the host Activity for an external route, or Play Billing for the other, plus
 `checkoutSupported = true`. Nothing else has to move, and no surface has to be
 found again.
+
+## AV2-7.4 — Support through Google Play Billing · `M` · Review (S022)
+
+**Depends on:** AV2-7.3 **Reads:** [`DECISIONS.md`](../DECISIONS.md) D11
+
+Q1 answered: Play Billing. Turn the built-and-off support surface into a working
+one on Android without opening any route to a web checkout.
+
+### Tasks
+- [x] **a.** `PlayBilling.kt` (androidMain): connect, query the tier's product,
+      launch Play's sheet bound to `sha256(uid)`, thank-you on PURCHASED, send
+      the token to the backend, resend unconsumed purchases on launch.
+- [x] **b.** `checkoutSupported = true`; `nativeProductId(tier)` per platform;
+      `isPayable` reads the platform's own product, not the App Store id.
+- [x] **c.** Backend `POST /support-money/verify-play` (bearer required): asks
+      Google, checks package / product / state / account binding, records
+      `google_<orderId>` at OUR price, then consumes.
+- [x] **d.** Backend config: store apps get only their own product ids and no
+      Stripe links; custom amount off for both.
+- [x] **f.** Review pass: Play's answers shown in the sheet's own line
+      (`StoreNotice`, served copy `support_money.store.*`) instead of toasts;
+      `PlayBilling` split into flow / connection / account binding; the
+      server-answer mapping made pure (`PlayVerifyOutcome.from`) and no longer
+      swallowing cancellation; token size cap and a setup hint on Google 401/403.
+      Tests: `PlayBillingTest`, `PlayVerifyOutcomeTest`, `StoreNoticeTest`, and
+      backend binding-vector / token / copy tests.
+- [x] **g.** Live-client impact checked by diffing every served payload against
+      `main` per client type: none for iOS 1.1 or Android v1
+      (`docs/SUPPORT_CONTRIBUTIONS.md` §8.10).
+- [ ] **e.** A real purchase on a device. Needs the owner's Play Console setup
+      (below) and an internal-track build: Play Billing does not sell to a
+      sideloaded APK.
+
+### Owner setup (Play Console), then the switch
+1. Monetise → Products → In-app products: create `uk.co.stationly.support.t4`,
+   `.t8`, `.t12`, `.t25` at GBP 4 / 8 / 12 / 25, and activate them.
+2. Setup → License testing: add the test Google accounts.
+3. Users and permissions: invite the backend's Firebase service-account email
+   with "View financial data" and "Manage orders and subscriptions" (or set
+   `GOOGLE_PLAY_KEY_PATH` to a dedicated key).
+4. Upload a build to the internal testing track and install it from Play.
+5. Set `SUPPORT_MONEY_ANDROID_ENABLED=true` on staging, buy as a license tester,
+   check the badge and the ledger row, then production.
+
+### Known iOS issues: documented, NOT fixed (owner, 2026-11-22)
+Found while building the Google path. The owner's call: the iOS app works, so
+`appleIAPService.ts` and the `verify-iap` route stay exactly as they are on
+`main`. Recorded here so whoever touches iOS payments next sees them first.
+
+1. **`verify-iap` trusts the request more than it should.** The route sits
+   behind the app key only (no `validateUserToken`), and the controller takes
+   `req.body.uid` when there is no verified user. Separately, a JWS that fails
+   Apple's signature check is still decoded and recorded (the
+   `decodeJWSPart` fallback). Together, someone who extracts the app key could
+   post a hand-written payload and credit a supporter badge and a ledger row to
+   any uid they know. No money moves and no account is otherwise touched.
+   The Google route does not have this shape: bearer required, account binding
+   checked, Google asked directly.
+2. **`appAppleId` is 6814210173; the app is 6799715716.** Harmless today:
+   `SignedDataVerifier.verifyAndDecodeTransaction` checks bundle id and
+   environment only, and the app id is used for server notifications, which we
+   do not consume. Sandbox purchases (TestFlight, App Review) fail the
+   production environment check and are recorded through the fallback in (1).
+3. **Amount units.** The code records `Math.round(decoded.price * 100)`.
+   Apple documents the JWS `price` as the price multiplied by 1000. Not yet
+   checked against the ledger: read a few real `apple_` rows before deciding
+   whether anything is wrong, and what the right conversion is.

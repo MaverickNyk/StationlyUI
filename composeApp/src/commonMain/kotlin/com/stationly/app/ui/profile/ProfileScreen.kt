@@ -102,7 +102,7 @@ private val ProfileAboutFallback: List<SduiAppComponent> = listOf(
         // Same copy as the served layout (sduiService `about_info`). The
         // fallback is only ever seen before the first fetch is cached, and a
         // different sentence here is a visible swap when the served one lands.
-        body = "Real-time London transport departures at your fingertips. Track buses, tubes, DLR, and Overground — all from one board.",
+        body = "Real-time London transport departures at your fingertips. Track buses, tubes, DLR and Overground, all from one board.",
         style = "brand"
     ),
     SduiAppComponent.Section(
