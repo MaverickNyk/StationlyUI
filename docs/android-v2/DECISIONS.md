@@ -215,3 +215,21 @@ works is a second implementation with no tests and no readers.
 true of v1's dream, which is why the broadcast existed, and it stopped being true
 the moment the dream ran shared code.
 
+---
+
+## D10 — The widget draws a settings gear only below Android 12
+**2026-11-22 · S021, owner decision**
+
+Android 12+ launchers offer "Settings" in a widget's long-press menu (the
+provider declares `reconfigurable`), and an unbound widget's tap already opens
+configuration. There the gear was a second door to a rare task: it took header
+space and caught taps meant for refresh. On Android 8 to 11 the launcher has no
+reconfigure, so the gear is the only door from the widget and it stays.
+`DepartureWidgetProvider.showsSettingsButton(sdkInt)` is the rule; the widget
+manager and the choose-station screen each say once where Settings lives on that
+version.
+
+**Revisit if.** A major launcher on Android 12+ turns out not to show Settings
+on long-press (not yet checked on Samsung or Xiaomi), or Play Console shows the
+Android 8 to 11 share is negligible, in which case the gear can go everywhere.
+

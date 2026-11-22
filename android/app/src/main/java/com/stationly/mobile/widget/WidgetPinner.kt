@@ -51,6 +51,29 @@ object WidgetPinner {
      */
     private const val PENDING_TTL_MS = 2 * 60_000L
 
+    /** The pin-succeeded callback; carries `EXTRA_APPWIDGET_ID` (see [pin]). */
+    const val ACTION_PINNED = "com.stationly.mobile.ACTION_WIDGET_PINNED"
+
+    /**
+     * Bind a just-pinned widget to the station the user asked for.
+     *
+     * Returns false when there is nothing to do: no id, the widget is already
+     * bound (the configure Activity got there first), or no live pending
+     * station. Same steps as the configure Activity's commit, minus the
+     * Activity result, which a broadcast has no launcher waiting on.
+     */
+    fun bindPinned(context: Context, appWidgetId: Int): Boolean {
+        if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) return false
+        val uid = WidgetBindingStore.currentUid()
+        if (WidgetBindingStore.boundStation(context, appWidgetId, uid) != null) return false
+        val station = claimPending(context) ?: return false
+        WidgetBindingStore.bind(context, appWidgetId, station, uid)
+        WidgetPageStore.reset(context, appWidgetId)
+        WidgetSettings.resetForRebind(context, appWidgetId)
+        WidgetPlacementProbe.observe(context)
+        return true
+    }
+
     /**
      * Whether the launcher will accept a pin request at all.
      *
@@ -83,16 +106,26 @@ object WidgetPinner {
             .putLong(KEY_PENDING_AT, System.currentTimeMillis())
             .apply()
 
-        // A callback so the app knows the pin landed. It carries no widget id —
-        // the platform does not provide one — so it exists to let us drop the
-        // pending value promptly rather than wait out the TTL, and to give the
-        // user a confirmation in the app.
+        // ── The callback is where the binding happens ──────────────────────
+        //
+        // The platform DOES tell us which widget landed: it adds
+        // `EXTRA_APPWIDGET_ID` to this intent when the pin succeeds. It could
+        // not, because this used to be FLAG_IMMUTABLE, and the old comment here
+        // concluded the id was never provided. MUTABLE is what lets the system
+        // fill it in, and it is safe: the intent is explicit, to our own
+        // receiver.
+        //
+        // Binding here rather than in the configure Activity is the fix for
+        // "Add to Home Screen" placing an UNBOUND widget: the Pixel launcher
+        // (Android 17, Pixel 10 Pro Fold, 2026-11-21) does not run the configure
+        // Activity after a pin, so the claim there never happened. That path
+        // stays as the fallback for launchers that do run it; whichever arrives
+        // first claims the pending station and the other finds nothing.
         val callback = PendingIntent.getBroadcast(
             context,
             0,
-            Intent(context, DepartureWidgetProvider::class.java)
-                .setAction(DepartureWidgetProvider.ACTION_UPDATE_WIDGET),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            Intent(context, DepartureWidgetProvider::class.java).setAction(ACTION_PINNED),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
         )
 
         return manager.requestPinAppWidget(

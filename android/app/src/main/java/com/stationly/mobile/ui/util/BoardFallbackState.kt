@@ -291,6 +291,10 @@ fun buildFallbackRowRemoteViews(
     context: Context,
     state: BoardFallbackState,
     strings: Map<String, String>,
+    /** `widget_departure_row_fill` when the message fills a non-scrolling board. */
+    rowLayout: Int = R.layout.widget_departure_row,
+    /** The widget's size-class row type (WidgetSize); null keeps the layout's. */
+    textSizeSp: Float? = null,
 ): List<RemoteViews> {
     val copy = resolveCopy(state, strings)
     val packageName = context.packageName
@@ -302,7 +306,11 @@ fun buildFallbackRowRemoteViews(
     // with a BOLD StyleSpan (RemoteViews can't call setTypeface directly).
     // See applyBoardFallbackToRows for the View path equivalent.
     fun addRow(text: String, bold: Boolean) {
-        val row = RemoteViews(packageName, R.layout.widget_departure_row)
+        val row = RemoteViews(packageName, rowLayout)
+        if (textSizeSp != null) {
+            row.setTextViewTextSize(R.id.destination_text, android.util.TypedValue.COMPLEX_UNIT_SP, textSizeSp)
+            row.setTextViewTextSize(R.id.eta_text, android.util.TypedValue.COMPLEX_UNIT_SP, textSizeSp)
+        }
         val displayText: CharSequence = if (bold && text.isNotEmpty()) {
             SpannableString(text).apply {
                 setSpan(StyleSpan(Typeface.BOLD), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)

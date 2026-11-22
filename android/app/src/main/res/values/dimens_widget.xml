@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The widget's corner radius. Below Android 12 no launcher crops widgets,
+         so this is the board's own corner. From Android 12 it is the SYSTEM
+         radius (values-v31), which the launcher also crops to, so the board
+         follows whatever shape the OS update brings. -->
+    <dimen name="widget_corner_radius">16dp</dimen>
+</resources>

@@ -1,12 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- ── The root: fills its cell, and is the widget's BACKGROUND ──────────────
+
+     `match_parent` height is the Android 17 fix. Every rows container below is
+     0dp + weight 1, which only gets space inside a parent of FIXED height. A
+     launcher that measures the widget "at most" this tall (seen on a Xiaomi
+     after the Android 17 update, 2026-11) let a `wrap_content` root shrink to
+     its fixed parts, so the header, status and clock drew and the departures
+     got zero height.
+
+     `@android:id/background` is how an Android 12+ launcher finds the
+     background to crop to the SYSTEM corner shape, the same radius and
+     smoothing its own widgets use, which follows OS updates by itself. Without
+     it every launcher guessed, and the corners came out cut square on top.
+     `clipToOutline` with the rounded background keeps the corner on launchers
+     that do not crop. Padding is 10dp so the gear and refresh stay clear of a
+     ~28dp system corner (anything nearer than ~0.29 r is cut). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    android:id="@+id/departure_board"
+    android:id="@android:id/background"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:background="@drawable/departure_board_unlit_background"
-    android:orientation="vertical"
-    android:padding="8dp">
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_board_background"
+    android:clipToOutline="true">
+
+    <!-- The board itself. Everything visible lives in here, at its original
+         sizes; the root only stacks it under the tap zones below. -->
+    <LinearLayout
+        android:id="@+id/board_content"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp">
+        <!-- No SIDE padding, on purpose (owner, 2026-11-22): every row's lit
+             background runs to the widget's edges, as the iOS board does ("the
+             dot-matrix board must cover the widget end to end"). The breathing
+             room moved INSIDE the rows: text insets of 12dp below, and the
+             header's controls carry their own margins. -->
 
     <!-- Top Header Row — full-width active background, name centered, buttons right -->
     <FrameLayout
@@ -29,8 +59,8 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:layout_marginStart="68dp"
-            android:layout_marginEnd="68dp"
+            android:layout_marginStart="48dp"
+            android:layout_marginEnd="48dp"
             android:orientation="horizontal"
             android:gravity="center_vertical">
 
@@ -49,39 +79,43 @@
                 android:layout_height="wrap_content"
                 android:maxLines="1"
                 android:ellipsize="end"
-                android:maxEms="18"
                 android:textColor="@color/tfl_amber"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 tools:text="Arsenal Underground Station" />
         </LinearLayout>
 
-        <!-- Buttons pinned to right -->
-        <LinearLayout
+        <!-- ── Settings LEFT, refresh RIGHT, at their ORIGINAL size ──────────
+             The icons keep the 32x26dp boxes the header was built around, so
+             the header row does not grow. What grew is where a tap lands: the
+             transparent zones at the bottom of this file. The two icons sit in
+             opposite corners (the name is centred, so the left was empty) so
+             their zones never touch.
+
+             The spinner shares refresh's fixed box. Letting it fill the header
+             height let its larger intrinsic size push the header taller on
+             every refresh (owner, 2026-11-21). -->
+        <ImageView
+            android:id="@+id/btn_settings"
+            android:layout_width="32dp"
+            android:layout_height="26dp"
+            android:layout_gravity="start|center_vertical"
+            android:layout_marginStart="12dp"
+            android:contentDescription="Widget settings"
+            android:paddingStart="6dp"
+            android:paddingTop="3dp"
+            android:paddingEnd="6dp"
+            android:paddingBottom="3dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_settings" />
+
+        <FrameLayout
             android:id="@+id/header_buttons"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_width="32dp"
+            android:layout_height="26dp"
             android:layout_gravity="end|center_vertical"
-            android:paddingEnd="4dp"
-            android:orientation="horizontal">
+            android:layout_marginEnd="12dp">
 
-            <!-- ── Target grows sideways only ──────────────────────────────
-                 A miss here does not do nothing: it falls through to
-                 `departure_board`, whose click opens the app, so an icon a
-                 fraction too small launches Stationly instead of refreshing.
-
-                 The first attempt at this was a 40dp box, and it broke two
-                 things the owner saw immediately. It was TALLER than the 22dp
-                 roundel beside it, so the whole header row grew; and two 40dp
-                 boxes are 80dp, which overran the 68dp margin the station name
-                 is centred inside, so the name ran under the refresh icon and
-                 the icon appeared to drift towards the middle.
-
-                 So the box is wide and short: 32dp across, which is what fits
-                 (two of them plus the 4dp end padding is the 68dp the title
-                 reserves), and 26dp tall, which is what the roundel already
-                 makes the row. Height is where there was no room; width is
-                 where there was. The glyph is 20dp in both, unchanged. -->
             <ImageView
                 android:id="@+id/btn_refresh"
                 android:layout_width="32dp"
@@ -94,8 +128,6 @@
                 android:scaleType="fitCenter"
                 android:src="@drawable/ic_refresh" />
 
-            <!-- Matches the refresh button it replaces exactly, so the header
-                 does not jump the moment a fetch starts. -->
             <ProgressBar
                 android:id="@+id/progress_refresh"
                 android:layout_width="32dp"
@@ -106,20 +138,8 @@
                 android:paddingBottom="3dp"
                 android:visibility="gone"
                 android:indeterminate="true"
-                android:indeterminateTint="#FFB900" />
-
-            <ImageView
-                android:id="@+id/btn_settings"
-                android:layout_width="32dp"
-                android:layout_height="26dp"
-                android:contentDescription="Settings"
-                android:paddingStart="6dp"
-                android:paddingTop="3dp"
-                android:paddingEnd="6dp"
-                android:paddingBottom="3dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_settings" />
-        </LinearLayout>
+                android:indeterminateDrawable="@drawable/ic_refresh_spinning" />
+        </FrameLayout>
     </FrameLayout>
 
     <!-- Funny Countdown / Message Area -->
@@ -191,8 +211,8 @@
         android:background="@drawable/departure_board_active_row_background"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingStart="2dp"
-        android:paddingEnd="2dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
         android:visibility="gone">
 
         <!-- The arrow's ink lands 4dp in from the board, level with the
@@ -311,7 +331,7 @@
 
          The chevrons are 52dp wide and their INK is 10dp. The glyph did not
          grow; the TARGET did. A miss on a home-screen widget does not do
-         nothing: it falls through to `departure_board`, whose click opens the
+         nothing: it falls through to the board (`@android:id/background`), whose click opens the
          app, so an arrow a fraction too small does the OPPOSITE of what it
          says. The extra width is asymmetric padding pointing INWARD, across the
          bar where there is nothing else to hit, so the ink stays in the board's
@@ -372,8 +392,8 @@
         android:layout_marginTop="4dp"
         android:background="@drawable/departure_board_active_row_background"
         android:orientation="horizontal"
-        android:paddingStart="4dp"
-        android:paddingEnd="4dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
         android:visibility="gone">
 
         <TextView
@@ -416,7 +436,9 @@
     <RelativeLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp">
+        android:layout_marginTop="4dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp">
 
         <!-- Stationly maker mark on the left, vertically centred on the
              footer row alongside the ticking clock + chronometer. Drawn
@@ -432,13 +454,17 @@
             android:src="@drawable/stationly_logo"
             android:contentDescription="Stationly" />
 
+        <!-- 24-hour in BOTH formats, on purpose. The in-app board and the
+             screensaver always print 24-hour, as TfL boards do; following the
+             phone's 12-hour setting made the widget read "09:03:50 PM" beside
+             an app reading "21:03:50" (2026-11-21). -->
         <TextClock
             android:id="@+id/clock"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_centerInParent="true"
             android:background="@drawable/departure_board_active_row_background"
-            android:format12Hour="hh:mm:ss a"
+            android:format12Hour="HH:mm:ss"
             android:format24Hour="HH:mm:ss"
             android:paddingStart="6dp"
             android:paddingEnd="6dp"
@@ -459,4 +485,52 @@
             android:format="%s ago" />
     </RelativeLayout>
 
-</LinearLayout>
+    </LinearLayout>
+
+    <!-- ── Tap zones: bigger targets, same rows ───────────────────────────
+         The owner asked for a bigger TOUCH area, not bigger rows (2026-11-21).
+         A RemoteViews view only receives taps inside its own bounds, so the
+         icons cannot reach further than the row they sit in. These transparent
+         zones sit ON TOP of the board and carry the same PendingIntents as the
+         controls under them, so a thumb that lands near an icon does what the
+         icon says instead of falling through to the board (which opens the app).
+
+         Geometry follows the board's fixed parts: 10dp padding, then the 26dp
+         header, then the 2dp margin and ~20dp pager bar. The header zones reach
+         up into the empty padding; the chevron zones take the bar and a few dp
+         of the row under it. Settings LEFT, refresh RIGHT: their zones never
+         touch, so one cannot be mistaken for the other. The chevron zones are
+         GONE outside step mode, so they never cover a scrolling list. -->
+    <FrameLayout
+        android:id="@+id/zone_settings"
+        android:layout_width="72dp"
+        android:layout_height="38dp"
+        android:layout_gravity="top|start"
+        android:contentDescription="Widget settings" />
+
+    <FrameLayout
+        android:id="@+id/zone_refresh"
+        android:layout_width="72dp"
+        android:layout_height="38dp"
+        android:layout_gravity="top|end"
+        android:contentDescription="Refresh" />
+
+    <FrameLayout
+        android:id="@+id/zone_platform_prev"
+        android:layout_width="80dp"
+        android:layout_height="30dp"
+        android:layout_gravity="top|start"
+        android:layout_marginTop="38dp"
+        android:contentDescription="Previous platform"
+        android:visibility="gone" />
+
+    <FrameLayout
+        android:id="@+id/zone_platform_next"
+        android:layout_width="80dp"
+        android:layout_height="30dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="38dp"
+        android:contentDescription="Next platform"
+        android:visibility="gone" />
+
+</FrameLayout>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The refresh arrow ITSELF turning, while a refresh is in flight.
+
+     Used as the progress view's indeterminate drawable, so the system runs the
+     rotation (a RemoteViews widget cannot animate a view from code). The owner
+     asked for the icon to rotate rather than be swapped for a generic circle
+     (2026-11-21). Same glyph and colour as ic_refresh, so it reads as the button
+     you pressed, working. -->
+<animated-rotate xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_refresh"
+    android:pivotX="50%"
+    android:pivotY="50%" />

@@ -197,12 +197,21 @@ departures" was true either way.
 `renderWidget` resolves this id's binding against the live selections.
 No binding, or a binding whose station is no longer one of the user's
 boards, renders the honest empty state (`isBound = false`) and points
-EVERY tap on it at the configuration screen — see `tapTargetFor`, which
-is one answer shared by the board container's click and the rows
-collection's pending-intent template, because those are two separate
-wirings that have to agree. The empty state says "tap to choose a
-station", so the tap has to land somewhere that can choose one; opening
-the app would be an instruction the app cannot carry out.
+EVERY tap on it at the one destination that can fix it — see
+`tapTargetFor`, which is one answer shared by the board container's
+click and the rows collection's pending-intent template, because those
+are two separate wirings that have to agree.
+
+**Four empty states, each owning its words AND its tap** (AV2-10.7,
+`WidgetEmptyState`): `NEEDS_STATION` and `REMOVED` say "Tap to choose…"
+and open this widget's configuration; `SIGNED_OUT` and `NO_STATIONS` say
+"Tap to sign in" / "Tap to add your first station" and open the APP,
+because the configuration screen can do neither and only shows an "Open
+Stationly" button. Copy comes from the served `widget.state.*` keys (the
+backend sends Android wording to Android: short taps, not iOS's
+"Touch and hold, then tap Edit Widget"), compiled defaults otherwise.
+Board fallbacks (signal lost, late night…) use the SERVED
+`board.fallback.*` strings, same as home and the screensaver.
 It does **not** fall back to the first station.
 Showing somebody a train that is not theirs, at a stop they are not
 standing at, with nothing on screen to say so, is the worst thing a
@@ -314,6 +323,54 @@ helpers, or document why this surface needs to diverge.
   process alive long enough for the SQL read + render.
 
 ## Common gotchas
+
+- **The root view is `@android:id/background`** (`android.R.id.background` in
+  code), not an app id. That id is how an Android 12+ launcher finds the
+  background to crop to the system corner shape. It is also `match_parent`:
+  every rows container is 0dp + weight, so a `wrap_content` root on a launcher
+  that measures "at most" gave the rows zero height (Android 17 customer
+  report, 2026-11). Do not change either.
+- **Rows that never scroll stretch; the list does not.** Stepping pages and
+  fallback messages use `widget_departure_row_fill` (0dp + weight 1) so the
+  board fills the widget like the iOS one. The scrolling `rows_list` keeps
+  `widget_departure_row`: a ListView item cannot take weight.
+- **Rows run edge to edge** (owner, 2026-11-22, as iOS): `board_content` has
+  no side padding; the inset lives inside rows/headers (12dp), the pager (10dp),
+  status (12dp) and footer (10dp). Do not put side padding back on the board.
+- **Type follows the size class** (`WidgetSize`: COMPACT / MEDIUM / LARGE, the
+  iOS families). Medium is the XML defaults. Headers pick a rung of
+  `headerVariants` that fits (`WidgetText`); never let a header wrap.
+- **Tapping a bound widget opens the app on ITS station** via
+  `<scheme>://home?station=<groupingId>` (the iOS widget's link) and
+  `BoardFocus.request` in MainActivity. Keep the PendingIntent per widget id.
+- **No settings gear on Android 12+** (D10, `showsSettingsButton`). Settings is
+  the launcher's long-press menu there; the gear and `zone_settings` are GONE.
+  Android 8 to 11 keep the gear: it is their only door from the widget.
+- **Bigger targets come from TAP ZONES, never bigger rows.** The owner wants
+  the touch area larger and the rows their original size. The root is a
+  FrameLayout: `board_content` underneath, transparent `zone_*` FrameLayouts on
+  top with the same PendingIntents as the icons. Gear LEFT, refresh RIGHT, so
+  their zones never touch. Chevron zones are GONE outside step mode.
+- **Never `match_parent` a view in the header.** The refresh spinner did, and its
+  intrinsic height grew the header on every refresh.
+- **Do not rely on `partiallyUpdateAppWidget`.** The Pixel launcher on Android 17
+  dropped it. The refresh spinner is a full render keyed on `refreshingIds`.
+- **The refresh spinner is the icon turning** (`ic_refresh_spinning`), and a
+  render while the widget is in `refreshingIds` must not consume the REFRESH
+  motion: the roll belongs to the redraw with the new rows. Scroll mode rolls
+  via `applyRefreshSnapshot`, then the list returns.
+- **Scroll mode stretches when nothing would scroll** (`ScrollFit`, decided
+  before the rows are built). Recalibrate its constants at font scale 1.0 if the
+  row or header layouts change height.
+- **A failed refresh is per station** (`RefreshFailures`): retry glyph on that
+  station's widgets only, cleared by the next success. Do not make it global.
+- **A widget broadcast must finish inside ~10s.** Taps are foreground
+  broadcasts; the refresh is capped at `RECEIVER_BUDGET_MS` (8s) or it ANRs.
+- **An app update must re-inflate placed widgets.** Same layout id means a
+  launcher may reapply new actions onto the OLD view tree. `MY_PACKAGE_REPLACED`
+  draws `widget_reinflate` for one frame first. Any layout change relies on it.
+- **"Add to Home Screen" binds in the PROVIDER**, on `WidgetPinner.ACTION_PINNED`.
+  The callback must stay FLAG_MUTABLE or the platform cannot add the widget id.
 
 - **`updateAppWidget` rebuilds the view tree.** Every call applies a
   fresh RemoteViews actions list; the previous state is gone except

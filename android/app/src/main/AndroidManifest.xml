@@ -131,6 +131,9 @@
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="com.stationly.mobile.ACTION_UPDATE_WIDGET" />
+                <!-- After an app update: rebuild every widget from the NEW
+                     layout. See DepartureWidgetProvider / widget_reinflate. -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"

@@ -9,7 +9,18 @@
 ```
 SPRINT:            5-6 — release surfaces + rollout (sprints 1-4 complete)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S019 (2026-09-13) — EPIC-10. The flicker, found by MEASURING
+LAST SESSION:      S021 (2026-11-21/22) — AV2-10.7 to 10.11. The Android 17
+                   widget made to behave like iOS's: rows that vanished on a
+                   Xiaomi, system corners, updates that never reached placed
+                   widgets, bigger tap areas at the original row size, no gear
+                   on Android 12+ (D10), a widget that opens the app on ITS
+                   station, a refresh you can see (an ANR fixed), and iOS's
+                   three size families. Device-verified on a Pixel 10 Pro Fold.
+                   S020 (2026-11-21) — maintenance. Rebased onto master
+                   @ 53667ca (iOS StoreKit + 1.1, website Support page); the
+                   one support conflict kept both sides. Q5 re-scoped as a
+                   MERGE-TIME item: it cannot touch the Android release.
+                   S019 (2026-09-13) — EPIC-10. The flicker, found by MEASURING
                    it: one refresh tap caused 132 redraws across four widgets,
                    and every redraw animated because `animateFirstView` defaults
                    to true. Four redraws now, none of which move. Three
@@ -35,23 +46,19 @@ LAST SESSION:      S019 (2026-09-13) — EPIC-10. The flicker, found by MEASURIN
                    board a user saved was deleted by their own next foreground.
                    Q5 turned out to be far bigger than its own text says — read
                    it before planning any merge to master.
-GATE:              GREEN (see the close-out log)
+GATE:              GREEN at S021 close (2026-11-22)
                    :core:testDebugUnitTest                  PASS
                    :core:verify…DatabaseMigration           PASS
                    :composeApp:testDebugUnitTest            PASS
                    :android:app:testStagingDebugUnitTest    PASS
-                   :android:app:compileStaging/ProdDebugKotlin  PASS
+                   :android:app:compileStagingDebugKotlin   PASS
                    :composeApp:compileDebugKotlinAndroid    PASS
-                   :composeApp:compileKotlinIosArm64        PASS
-                   :composeApp:assembleComposeAppDebugXCFramework  PASS
-                                                            (commonMain CHANGED
-                                                            in six places — all
-                                                            additive or shared
-                                                            fixes iOS wants too)
-WORKING TREE:      clean
-MASTER:            merged in at 91a51f7 — the eight iOS commits that shipped
-                   v1.0 (production Firebase, the iOS 26 icon, iPhone-only,
-                   the TestFlight scripts). No conflicts; none of it is Android.
+                   (commonMain unchanged in S021: no XCFramework run needed)
+WORKING TREE:      committed at S021 close, both repos (owner asked 2026-11-22)
+MASTER:            REBASED onto 53667ca (S020, 2026-11-21). Master's iOS
+                   StoreKit IAP, App Store links, iOS 1.1 and the website
+                   Support page are underneath this branch now. Pre-rebase
+                   tip kept locally as backup/dev_android_bring_to_v2-pre-rebase.
 DEVICE:            ✅ RUN ON THE PIXEL 7 PRO, 2026-09-12 — including a full
                    screen-by-screen walk of the MINIFIED RELEASE build (S017),
                    installed over the live versionCode 2.
@@ -94,26 +101,20 @@ DEVICE:            ✅ RUN ON THE PIXEL 7 PRO, 2026-09-12 — including a full
                    BEFORE the swap.
                    STILL OWED: nothing a session can reach. Hours of runtime
                    under R8 with real pushes needs the phone left alone.
-BLOCKED ON OWNER:  🔴 Q5 is now the biggest risk on the branch and it is NOT
-                   what it says on the tin: master has no migrations, so every
-                   App Store iOS user's database is stamped version 1 while
-                   holding the current schema. The first iOS release cut from
-                   this branch fails its migration on all of them. Three
-                   options written out in the question.
+BLOCKED ON OWNER:  Q5 is PARKED for merge time (S020, owner: focus is
+                   Android only). It cannot affect the Android release: it only
+                   bites when an iOS build is cut from code containing the
+                   .sqm files, i.e. after this branch merges to master. Resolve
+                   it before that merge, not before the Android rollout.
                    Q7 FIXED this session. Q3 answered (EPIC-06 header).
                    Q1/Q2/Q4/Q6 are decisions or console work, not blockers.
-NEXT UP:           **AV2-9.9**, then Q5, then the rollout. AV2-9.9 is the
-                   only buildable story left; Q5 and the rollout are not a
-                   session's to do.
-                   (1) Q5 is the owner's call and the biggest risk on the
-                   branch: master has no migrations, so every App Store iOS
-                   database is stamped version 1 holding the CURRENT schema.
-                   (2) AV2-8.3's rollout, which is Play Console work.
-                   Everything else is in Review, including the release build
-                   (walked 2026-09-12) and the screensaver (rendered the same
-                   day, for the first time in the programme).
-                   The one thing no walk can prove is hours of runtime under R8
-                   with real pushes landing. That needs the phone left alone.
+NEXT UP:           (1) AV2-10.11's remainder: LARGE's split layout and the
+                   status backfill, as iOS; see a 4x4 on the device.
+                   (2) AV2-9.9, after the owner's product call.
+                   (3) Owner: the "not assigned" rail platform label (backend),
+                   a Samsung/Xiaomi long-press check for D10.
+                   (4) AV2-8.3's rollout, which is Play Console work.
+                   Q5 is parked for merge time (see above).
 ```
 
 ### 🅑 Backlog — dependencies not yet met
@@ -126,18 +127,12 @@ NEXT UP:           **AV2-9.9**, then Q5, then the rollout. AV2-9.9 is the
 
 | Story | Epic | Title | Size |
 |---|---|---|---|
-| AV2-10.7 | 10 | SDUI audit — the inventory half | `M` |
+| AV2-10.11 (rest) | 10 | LARGE split layout + status backfill, as iOS | `M` |
 | AV2-9.9 | 09 | One platform drawn as two blocks | `M` |
 
-> AV2-10.7 is PART-DONE. S019 traced the consequence path and closed it: every
-> Android surface that runs with no screen above it — the widget, the two FCM
-> handlers, the screensaver — now warms the served config instead of running on
-> compiled defaults. What is left is the inventory the story actually asks for:
-> diff the keys the backend serves against what each client reads, which is the
-> only way to find one Android ignores entirely. The note under the story lists
-> what was examined and what was not.
->
-> AV2-9.9 and the above are the only stories on this board a session can pick up.
+> AV2-10.11's remainder is the top story: the size classes are built, LARGE's
+> two-pager layout (iOS `BoardLayout.split`) and the status backfill (iOS
+> `StatusPolicy.backfill`) are not. AV2-9.9 needs the owner first:
 > It is in the SHARED `MultiLineBoardProcessor`, so it lands on the home screen
 > and on iOS as well as the widget, and the rule is a product decision: merge
 > blocks whose header would be identical, or make the header carry what
@@ -152,10 +147,12 @@ NEXT UP:           **AV2-9.9**, then Q5, then the rollout. AV2-9.9 is the
 
 ### 🅥 Review — done, awaiting owner sign-off
 
-Twenty-two entries. In the order somebody signing off should read them:
+In the order somebody signing off should read them:
 
 | Story | Session | What to look at |
 |---|---|---|
+| **AV2-10.8 to 10.11** | S021 · device 2026-11-21/22 | **The Android 17 widget.** A customer's missing rows (a `wrap_content` root over weighted rows), corners that ignored the system shape (no `@android:id/background`), and app updates that never reached a placed widget. Then the owner's review: tap zones that enlarge the targets without growing a row; no gear on Android 12+ (D10); a widget that opens the app on its own station through the iOS widget's link; a refresh whose icon turns and whose roll lands with the new numbers, after an ANR was found holding the button dead; and iOS's three size families with headers that pick a fitting wording rather than wrap. Tables in EPIC-10. |
+| **AV2-10.7** | S019-S021 · device 2026-11-21 | **The SDUI inventory, against the real served map: 296 keys and one Android gap (`widget.state.*`), adopted as empty states that own their taps.** The backend serves Android wording to Android under the same keys. |
 | **EPIC-10** (10.1-10.6) | S017-S019 · device 2026-09-13 | **The widget behaves, and the flicker had two causes.** The refresh guards concurrency rather than time; the chevrons, gear and refresh are hittable without having been resized; adding a widget is one step; the manager says what a widget is. Then S019: one refresh tap was causing **132 redraws** across four widgets (measured, not estimated) because the broadcast carried no station id — and, separately, `ViewAnimator` animates the first child shown after a `removeAllViews` unless `animateFirstView` says otherwise, so every one of those redraws played the in-animation. Under a comment in our own code saying it could not. Now 4 redraws, none of which animate. Three animations where AV2-9.5 concluded one was the limit: three flippers stacked in one slot, each with its own pair, because the constraint is on the VIEW and not on the layout. Forward slides from the right, back from the left, refresh rises and squashes open from the bottom — all three caught mid-flight on the Pixel. The screensaver turns its own pages, because it is the one surface nobody is holding. |
 | **the platform sort** | S019 · device 2026-09-13 | **Unstoried, raised by the owner, and it lands on iOS too.** Blocks were ordered by whichever platform had the next train, so the board reshuffled itself on every push. Caught on the device: two captures of the same widget a minute apart, untouched, reading `DLR Platform 9  1/2` then `DLR Platform 10  1/2` — the thing the widget was placed for had moved behind an arrow. Now ordered by platform NAME, numerically so 10 follows 9, with a "nothing left to catch" key above it so a platform whose trains have all gone still cannot lead. The picker and the collapsed card share the key, so the three surfaces cannot disagree about the same station. The widget's pager also uses the short forms now — "DLR Plat. 9", which is what the in-app board has always printed on its rows. |
 | **EPIC-09** (9.1-9.8) | S018 · device 2026-09-12 | **The owner's review of S017, worked against the phone.** Widget settings are the WIDGET's now, not the station's BoardConfig they were silently editing. The depth control is gone rather than moved, because a page floor is not a board floor and stepping resized the widget on the home screen. The pager bar sits in the board (measured: 30.1dp tall to 20.2dp, chevron ink 14.5dp from the edge to 4.2dp). The manager teaches instead of dead-ending, adding a widget ends on the home screen, stepping animates while an ambient tick does not, and a widget is stamped with the account that placed it — without which a second account tracking the same hub inherited a live widget in the first person's configuration. Copy swept of em dashes and apologising, with a lexer-based guard so it cannot come back. |
@@ -207,7 +204,7 @@ Do not block on these unless a story names one as a dependency. Log and continue
 |---|---|---|---|---|
 | Q1 | Play policy route for tips — Play Billing, or a charity/non-profit exemption for external checkout? | S000 | AV2-7.3 scope only (the surface ships off either way) | OPEN |
 | Q2 | At what remaining-v1-install count do we drop the `stations` dual-write? | S000 | AV2-8.3 | OPEN |
-| Q5 | 🔴 **NO LONGER ABOUT TESTFLIGHT. Verified S016.** `origin/master` has **no `.sqm` files at all**, so the iOS build that shipped to the App Store stamps its databases `version 1` — while its `.sq` already holds the full current schema (19-column `UserSelectionEntity`, `ActivityEventEntity`, both new primary keys). The first iOS release cut from this branch therefore runs `1.sqm` on **every App Store user**, hits its deliberate `CREATE TABLE ActivityEventEntity` guard, fails, and rolls back — which is "safe" in the sense that no data is lost and fatal in the sense that the database will not open. The documented recovery is delete-and-reinstall, and that is not something an App Store user can be asked to do. Boards do come back from the cloud on sign-in, so the damage is recoverable, not silent. **Options, in rough order of preference:** (a) an iOS-side pre-migration fixup that re-stamps a version-1 database whose shape is already current to version 2 and lets `2.sqm` run normally — the two shapes ARE distinguishable, `ActivityEventEntity` exists in one and not the other; (b) merge the schema to master in an iOS release that ships nothing else, so the blast radius is one version; (c) accept it and tell people. **This is not caused by Q7's `2.sqm`** — it has been true since AV2-2.1 added `1.sqm` — but adding a second migration is what made it worth re-checking who the population actually is. | S004 | **any iOS release from this branch** | 🔴 OPEN, and the biggest risk left |
+| Q5 | 🔴 **NO LONGER ABOUT TESTFLIGHT. Verified S016.** `origin/master` has **no `.sqm` files at all**, so the iOS build that shipped to the App Store stamps its databases `version 1` — while its `.sq` already holds the full current schema (19-column `UserSelectionEntity`, `ActivityEventEntity`, both new primary keys). The first iOS release cut from this branch therefore runs `1.sqm` on **every App Store user**, hits its deliberate `CREATE TABLE ActivityEventEntity` guard, fails, and rolls back — which is "safe" in the sense that no data is lost and fatal in the sense that the database will not open. The documented recovery is delete-and-reinstall, and that is not something an App Store user can be asked to do. Boards do come back from the cloud on sign-in, so the damage is recoverable, not silent. **Options, in rough order of preference:** (a) an iOS-side pre-migration fixup that re-stamps a version-1 database whose shape is already current to version 2 and lets `2.sqm` run normally — the two shapes ARE distinguishable, `ActivityEventEntity` exists in one and not the other; (b) merge the schema to master in an iOS release that ships nothing else, so the blast radius is one version; (c) accept it and tell people. **This is not caused by Q7's `2.sqm`** — it has been true since AV2-2.1 added `1.sqm` — but adding a second migration is what made it worth re-checking who the population actually is. | S004 | **any iOS release from this branch** | ⏸ PARKED S020 — merge-time only. Owner is Android-only for now; this cannot reach the Android release. Resolve before merging to master. |
 | Q4 | Add `GOOGLE_SERVICES_STAGING_B64` as a repo secret so CI can compile and test `:android:app`? The file is gitignored, so CI skips those steps today and says so with a warning annotation. | S001 | `:android:app` coverage in CI | OPEN |
 | Q3 | Does Daydream survive into v2? | S000 | **EPIC-06 — no longer** | **ANSWERED S016, by taking the reversible option.** The premise was wrong: *Daydream* the VR platform is dead, `DreamService` the **screen saver** is not — it is in Settings → Display on current Android and v1 ships it. Keeping and porting is undoable in an hour; deleting a live feature is not. EPIC-06 shipped, and the question is now cheap: saying no deletes two files, not a package. |
 | Q7 | **The prediction primary key collapses two real trains.** | S012 | — | ✅ **FIXED S016.** The key ended in the FORMATTED `eta`, so two trains to the same destination on the same platform 40s apart both keyed as "1 min" and `INSERT OR REPLACE` threw the first away — the rider saw one train where two were coming. `targetEpochMs` is in the key now (`eta` stayed beside it; the `.sq` says why), `2.sqm` rebuilds the table, schema version 3. Cheap exactly as predicted: everything in that table is a cache FCM refills in seconds. The test that asserted the wrong behaviour on purpose now asserts 2, and turning it green turned a NEIGHBOURING test red — "the same train twice is collapsed" had been passing **because of** this defect, off a fixture that read the clock twice. |
@@ -246,12 +243,13 @@ the users, 03 is the foundation 04 builds on.
 | 05 Widget | 4 | 0 | **4** ✅ | 16 |
 | 06 Dream | 2 | 0 | **2** ✅ | 6 |
 | 07 Release surfaces | 3 | 0 | **3** ✅ | 10 |
-| 08 Rollout | 3 | 0 | 0 (8.1 in progress) | 11 |
-| **Total** | **27** | **6** | **18** | **102** |
+| 08 Rollout | 3 | 0 | 2 (8.3 is Play Console) | 11 |
+| 09 Widget ownership | 9 | 0 | **8** | 23 |
+| 10 Widget parity | 11 | 0 | **10** (10.11 partial) | 35 |
+| **Total** | **47** | **6** | **38** | **160** |
 
-**24 of 27 stories are built.** What is left is three, and all three need a phone
-or the owner: finish AV2-8.1 by walking a release build, AV2-8.2's two upgrade
-paths on hardware, and AV2-8.3's rollout.
+**44 of 47 stories are built.** Left: AV2-10.11's LARGE layout and backfill,
+AV2-9.9 (owner's product call), and AV2-8.3's rollout (Play Console).
 
 Sizes: `S`=2, `M`=3, `L`=5, `XL`=8. One point is roughly one focused hour, so a
 5h session is a `L` with room to close out, or an `XL` that will need two.

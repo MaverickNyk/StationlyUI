@@ -89,6 +89,41 @@ roughly one focused hour.
 | AV2-8.2 | Upgrade verification on hardware | M | AV2-2.2, AV2-8.1 |
 | AV2-8.3 | Ship | M | AV2-8.2 |
 
+## EPIC-09 — The widget is the app's to run · [detail](epics/EPIC-09-widget-ownership.md)
+
+> Raised by the owner after walking S017 on the phone.
+
+| Story | Title | Size | Depends on |
+|---|---|---|---|
+| AV2-9.1 | Widget settings stop editing the user's board | M | ✅ S018 |
+| AV2-9.2 | The manager earns its place | M | ✅ S018 |
+| AV2-9.3 | Adding a widget ends on the home screen | S | ✅ S018 |
+| AV2-9.4 | The pager bar belongs to the board | S | ✅ S018 |
+| AV2-9.5 | Motion | M | ✅ S018 |
+| AV2-9.6 | Copy | S | ✅ S018 |
+| AV2-9.7 | Confirm the widget work fits the post-iOS model | S | ✅ S018 |
+| AV2-9.8 | A widget belongs to the account that placed it | M | ✅ S018 |
+| AV2-9.9 | One platform, drawn as two blocks | M | owner's product call |
+
+## EPIC-10 — The widget behaves like the one on iOS · [detail](epics/EPIC-10-widget-parity.md)
+
+> Raised by the owner 2026-09-13; extended 2026-11-21/22 by a customer report
+> from Android 17 and the owner's review on a Pixel 10 Pro Fold.
+
+| Story | Title | Size | Depends on |
+|---|---|---|---|
+| AV2-10.1 | The refresh button guards concurrency, not time | S | ✅ S019 |
+| AV2-10.2 | Two animations, on manual action only, without flicker | M | ✅ S019 |
+| AV2-10.3 | The touch targets are too small | S | ✅ S019 |
+| AV2-10.4 | Adding a widget is one step, not two | S | ✅ S019 |
+| AV2-10.5 | The manager says what a widget is | S | ✅ S019 |
+| AV2-10.6 | The screensaver's platforms | M | ✅ S019 |
+| AV2-10.7 | SDUI audit | L | ✅ S021 |
+| AV2-10.8 | The Android 17 widget: rows, corners, updates | L | ✅ S021 |
+| AV2-10.9 | Taps that do what they say | M | ✅ S021 |
+| AV2-10.10 | Refresh that visibly happens | M | ✅ S021 |
+| AV2-10.11 | The widget at every size, as iOS draws it | L | 🔄 S021 · LARGE split + status backfill left |
+
 ---
 
 ## Not in scope for v2

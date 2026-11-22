@@ -38,7 +38,6 @@ import com.stationly.core.model.UserSelection
 import com.stationly.mobile.ui.util.BoardFallbackKind
 import com.stationly.mobile.ui.util.BoardFallbackState
 import com.stationly.mobile.ui.util.NetworkState
-import com.stationly.mobile.ui.util.StationStripFitter
 import com.stationly.mobile.ui.util.buildFallbackRowRemoteViews
 import com.stationly.mobile.ui.util.computeBoardFallbackState
 import com.stationly.mobile.ui.util.tickPredictions
@@ -123,9 +122,80 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         cancelEtaTickWatchdog(context)
     }
 
+    /**
+     * The user resized the widget. Redraw it for its new size class (WidgetSize):
+     * without this a resize kept whatever was drawn for the old size until the
+     * next push happened to land.
+     */
+    override fun onAppWidgetOptionsChanged(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetId: Int,
+        newOptions: android.os.Bundle?,
+    ) {
+        super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
+        val pendingResult = goAsync()
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                com.stationly.core.config.SduiConfig.ensureLoaded()
+                updateOne(context, appWidgetId)
+            } finally {
+                pendingResult.finish()
+            }
+        }
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         when (intent.action) {
+            Intent.ACTION_MY_PACKAGE_REPLACED -> {
+                // The app was just updated. Without this, a widget placed
+                // before the update can keep the OLD layout's view tree, because
+                // the launcher reapplies new actions onto it rather than
+                // inflating the new XML (same layout id). That would keep, for
+                // example, the Android 17 missing-rows fix off every widget
+                // already on a home screen. A blank frame of a different layout
+                // first forces the next real render to inflate fresh.
+                val manager = AppWidgetManager.getInstance(context)
+                val ids = manager.getAppWidgetIds(
+                    android.content.ComponentName(context, DepartureWidgetProvider::class.java),
+                )
+                ids.forEach { id ->
+                    manager.updateAppWidget(id, RemoteViews(context.packageName, R.layout.widget_reinflate))
+                }
+                android.util.Log.d("Widget", "App updated: re-inflating ${ids.size} widget(s)")
+                val pendingResult = goAsync()
+                CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                    try {
+                        com.stationly.core.config.SduiConfig.ensureLoaded()
+                        updateFromStorage(context)
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+                return
+            }
+            WidgetPinner.ACTION_PINNED -> {
+                // "Add to Home Screen" landed. The launcher put the id on the
+                // callback; bind it to the station the user asked for and draw
+                // it, so it never appears as "Choose a station". See WidgetPinner.
+                val id = intent.getIntExtra(
+                    AppWidgetManager.EXTRA_APPWIDGET_ID,
+                    AppWidgetManager.INVALID_APPWIDGET_ID,
+                )
+                val pendingResult = goAsync()
+                CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                    try {
+                        val bound = WidgetPinner.bindPinned(context, id)
+                        android.util.Log.d("Widget", "Pinned widget $id ${if (bound) "bound" else "left as-is"}")
+                        com.stationly.core.config.SduiConfig.ensureLoaded()
+                        if (bound) updateOne(context, id)
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+                return
+            }
             ACTION_ETA_TICK -> {
                 // Watchdog fired — FCM has been silent for ≥ 90s.
                 // Re-render from SQL so the ETAs catch up to the wall
@@ -220,8 +290,27 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             val pendingResult = goAsync()
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                 try {
-                    com.stationly.core.config.SduiConfig.ensureLoaded()
-                    if (intent.action != ACTION_UPDATE_WIDGET) {
+                    // ── Inside the broadcast's deadline, always ─────────────
+                    //
+                    // A widget tap arrives as a FOREGROUND broadcast, which
+                    // Android gives ~10s before it declares the app not
+                    // responding. This used to hold the broadcast open for the
+                    // whole network fetch, and a slow one produced an ANR (Pixel
+                    // 10 Pro Fold, staging, 2026-11-21: "ANR in
+                    // com.stationly.mobile ... ACTION_MANUAL_REFRESH"). Past the
+                    // budget the fetch is cancelled and the board is redrawn
+                    // from what SQL already holds; the guard below is released
+                    // either way, so the button is never left dead.
+                    // ── The spinner is the tap's feedback: first, and seen ──
+                    //
+                    // It used to appear after the config load and vanish as
+                    // soon as a fast fetch finished, a fraction of a second, so
+                    // the press looked like it did nothing (owner, 2026-11-21:
+                    // "the refresh animation is not rotating"). Now it is the
+                    // first thing a press does and stays up for at least one
+                    // visible turn, MIN_SPINNER_MS, before the redraw replaces it.
+                    val spinnerShownAt = System.currentTimeMillis()
+                    if (intent.action == ACTION_MANUAL_REFRESH) {
                         showRefreshSpinner(
                             context,
                             intent.getIntExtra(
@@ -229,6 +318,10 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                                 AppWidgetManager.INVALID_APPWIDGET_ID,
                             ),
                         )
+                    }
+                    val completed = kotlinx.coroutines.withTimeoutOrNull(RECEIVER_BUDGET_MS) {
+                    com.stationly.core.config.SduiConfig.ensureLoaded()
+                    if (intent.action != ACTION_UPDATE_WIDGET) {
                         val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
                         val repo = com.stationly.core.repository.DepartureRepository(
                             com.stationly.core.service.TflApiServiceFactory.create(),
@@ -270,7 +363,37 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                             if (boundHub == null) selections
                             else selections.filter { it.groupingId == boundHub }
 
-                        toFetch.forEach { repo.fetchInitialData(it) }
+                        // ── iOS's refresh rules, where Android needs them ────
+                        //
+                        // Signed out fetches nothing (iOS `refresh`: a tap on a
+                        // signed-out widget must not refill it). Otherwise one
+                        // concurrent, deduplicated fan-out over this station's
+                        // feeds, and a failure recorded against THIS station so
+                        // its widget shows the retry glyph (RefreshFailures).
+                        // Unlike iOS, still only the tapped station: Android has
+                        // FCM keeping the other widgets fresh (README rule 3).
+                        if (WidgetBindingStore.currentUid() == null) {
+                            android.util.Log.d("Widget", "Refresh skipped: signed out")
+                        } else {
+                            val result = repo.refreshBoards(toFetch)
+                            RefreshFailures.record(
+                                context,
+                                toFetch.map { it.groupingId }.distinct(),
+                                failed = result.allFailed,
+                            )
+                            android.util.Log.d(
+                                "Widget",
+                                "Refresh fetched ${result.succeeded}/${result.requested}" +
+                                    if (result.allFailed) " (marked failed)" else "",
+                            )
+                        }
+
+                        // Hold the spinner for one visible turn before the
+                        // redraw below swaps the icon back.
+                        val shownFor = System.currentTimeMillis() - spinnerShownAt
+                        if (shownFor < MIN_SPINNER_MS) kotlinx.coroutines.delay(MIN_SPINNER_MS - shownFor)
+                        // Spinner off BEFORE the redraw below, so it draws the icon.
+                        refreshingIds.clear()
 
                         // The app and the dream still need to know, and they
                         // are a flow emit either way. The WIDGET half is the
@@ -297,6 +420,25 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         if (changed.isBlank()) updateFromStorage(context)
                         else updateForStation(context, changed)
                     }
+                    true
+                    }
+                    if (completed == null) {
+                        // A timed-out refresh is a failed one for the board the
+                        // user tapped: give it the retry glyph.
+                        if (intent.action == ACTION_MANUAL_REFRESH) {
+                            val tapped = intent.getIntExtra(
+                                AppWidgetManager.EXTRA_APPWIDGET_ID,
+                                AppWidgetManager.INVALID_APPWIDGET_ID,
+                            )
+                            WidgetBindingStore.boundStation(context, tapped, WidgetBindingStore.currentUid())
+                                ?.let { RefreshFailures.record(context, listOf(it), failed = true) }
+                        }
+                        android.util.Log.w(
+                            "Widget",
+                            "${intent.action} passed ${RECEIVER_BUDGET_MS}ms; redrawing from storage",
+                        )
+                        updateFromStorage(context)
+                    }
                 } catch (e: Exception) {
                     android.util.Log.e("Widget", "Error during refresh", e)
                     updateFromStorage(context)
@@ -307,6 +449,11 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     // stops working and never says why.
                     if (intent.action == ACTION_MANUAL_REFRESH) {
                         refreshPrefs.edit().remove(KEY_REFRESH_STARTED_AT).apply()
+                        if (refreshingIds.isNotEmpty()) {
+                            // Never leave a spinner up after a timeout or a throw.
+                            refreshingIds.clear()
+                            updateFromStorage(context)
+                        }
                     }
                     pendingResult.finish()
                 }
@@ -317,6 +464,62 @@ class DepartureWidgetProvider : AppWidgetProvider() {
     companion object {
         const val ACTION_UPDATE_WIDGET = "com.stationly.mobile.ACTION_UPDATE_WIDGET"
         const val ACTION_MANUAL_REFRESH = "com.stationly.mobile.ACTION_MANUAL_REFRESH"
+
+        /**
+         * How long a widget broadcast may keep itself alive. A tap is a
+         * foreground broadcast with a ~10s ANR deadline; 8s leaves room for
+         * the redraw-from-storage that follows a timeout.
+         */
+        private const val RECEIVER_BUDGET_MS = 8_000L
+
+        // ── Header and pager geometry, in dp ────────────────────────────────
+        // Mirrors widget_departure_board.xml. The board has NO side padding
+        // (rows run edge to edge), so these are measured from the widget edge.
+
+        /** Width assumed when a launcher reports no size. */
+        private const val FALLBACK_WIDTH_DP = 250
+
+        /**
+         * What the centred station name keeps clear on EACH side: the refresh
+         * box (12dp margin + 32dp) plus 4dp of air, mirrored on the left so the
+         * name stays optically centred. Matches the XML title margins.
+         */
+        private const val HEADER_SIDE_RESERVE_DP = 48f
+
+        /** Where the station block starts on compact, which reads flush left. */
+        private const val COMPACT_STATION_START_DP = 12f
+
+        /** Roundel's end margin before the name. */
+        private const val STATION_ICON_GAP_DP = 8f
+
+        /** Kept spare beside the station name; see its use. */
+        private const val STATION_SLACK_DP = 16f
+
+        /**
+         * Kept spare when picking a header wording. Like [STATION_SLACK_DP]: the
+         * reported width runs over what the launcher draws, so a rung measured
+         * as an exact fit was being ellipsised ("Picc. Plat. 2 (Westbou...").
+         */
+        private const val HEADER_SLACK_DP = 12f
+
+        /** Text inset inside every row and platform header. */
+        private const val ROW_TEXT_INSET_DP = 12f
+
+        /**
+         * Everything on the pager bar that is not the title: 10dp padding each
+         * side, the 52dp chevrons, the back chevron's 28dp end margin and the
+         * 28dp "1/2" counter.
+         */
+        private const val PAGER_CHROME_DP = 10f + 52f + 28f + 28f + 52f + 10f
+
+        /** The shortest a refresh spinner stays up: about one visible turn. */
+        private const val MIN_SPINNER_MS = 900L
+
+        /** How long scroll mode shows the refresh roll before the list returns. */
+        private const val REFRESH_SNAPSHOT_MS = 700L
+
+        /** Widgets whose refresh is in flight; the render draws their spinner. */
+        private val refreshingIds: MutableSet<Int> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
         /**
          * A chevron on a [BoardConfig.platformNav] = STEP widget was tapped.
@@ -481,10 +684,11 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 else appWidgetManager.getAppWidgetIds(
                     android.content.ComponentName(context, DepartureWidgetProvider::class.java)
                 )
-            val views = RemoteViews(context.packageName, com.stationly.mobile.R.layout.widget_departure_board)
-            views.setViewVisibility(com.stationly.mobile.R.id.btn_refresh, android.view.View.GONE)
-            views.setViewVisibility(com.stationly.mobile.R.id.progress_refresh, android.view.View.VISIBLE)
-            for (id in ids) appWidgetManager.partiallyUpdateAppWidget(id, views)
+            // A FULL render, not partiallyUpdateAppWidget: the Pixel launcher on
+            // Android 17 dropped the partial update, so the spinner never showed
+            // (2026-11-21). The render reads `refreshingIds`.
+            refreshingIds.addAll(ids.toList())
+            ids.forEach { updateOne(context, it) }
         }
 
         /**
@@ -684,6 +888,11 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     context, appWidgetManager, appWidgetId,
                     isBound = false,
                     hasAnyBoard = selections.isNotEmpty(),
+                    emptyState = WidgetEmptyState.resolve(
+                        signedIn = WidgetBindingStore.currentUid() != null,
+                        hasAnyBoard = selections.isNotEmpty(),
+                        wasBound = boundTo != null,
+                    ),
                 )
                 return
             }
@@ -875,7 +1084,11 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 // Spend the flag even when the caller named a motion, so a
                 // refresh followed straight away by a chevron does not leave a
                 // flip owed and play it minutes later against a push.
-                motion = WidgetMotion.consumeRefresh(context, appWidgetId)
+                // The spinner's own redraw must not spend the tap's animation:
+                // the roll belongs to the redraw that brings the NEW rows, not
+                // the one drawn the instant the button was pressed.
+                motion = if (appWidgetId in refreshingIds) WidgetMotion.NONE
+                    else WidgetMotion.consumeRefresh(context, appWidgetId)
                     .let { armed -> motion ?: armed },
                 fromPage = fromPage,
             )
@@ -1059,8 +1272,19 @@ class DepartureWidgetProvider : AppWidgetProvider() {
          * whose rows open the app — a dead end reachable only by tapping the
          * wrong half of a widget that is already in its broken state.
          */
-        fun tapTargetFor(isBound: Boolean): WidgetTapTarget =
-            if (isBound) WidgetTapTarget.APP else WidgetTapTarget.CONFIGURE
+        /**
+         * Whether the widget draws its own settings gear: only below Android 12,
+         * where the launcher offers no "Settings" in the long-press menu.
+         */
+        fun showsSettingsButton(sdkInt: Int = android.os.Build.VERSION.SDK_INT): Boolean =
+            sdkInt < android.os.Build.VERSION_CODES.S
+
+        fun tapTargetFor(isBound: Boolean, emptyState: WidgetEmptyState? = null): WidgetTapTarget =
+            if (isBound) WidgetTapTarget.APP
+            // An empty state names its own destination: signed out and no
+            // stations go to the app (where you sign in and add one), the two
+            // "which station?" states go to this widget's configuration.
+            else emptyState?.tapTarget ?: WidgetTapTarget.CONFIGURE
 
         /**
          * Update a single widget instance
@@ -1094,6 +1318,11 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             /** Whether the ACCOUNT has any boards — a different question, and a
              *  different empty state ("pick a station" vs "which station?"). */
             hasAnyBoard: Boolean = false,
+            /**
+             * Why an unbound widget is empty, which decides both its message
+             * and where a tap on it goes. Null for a bound widget.
+             */
+            emptyState: WidgetEmptyState? = null,
             /** The bound board's mode, for the platform-header line prefix and
              *  the mode roundel. Passed in rather than guessed from the first
              *  selection, which is how a widget used to wear another station's
@@ -1197,19 +1426,65 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // belongs on the platform row per the agreed signage layout.
             views.setTextViewText(R.id.line_name, stationName)
 
-            // Size the strip's `maxEms` to the widget cell's actual width.
-            // The XML default (18) is calibrated for the smallest 2-cell
-            // case; on a 4-cell or fold-out cell we want the station name
-            // to use the room it has instead of truncating "Highbury &
-            // Islington Underground" mid-word. AppWidgetManager returns
-            // the system-measured cell width in dp via
-            // `OPTION_APPWIDGET_MIN_WIDTH` — that's our budget.
             val widgetOptions = appWidgetManager.getAppWidgetOptions(appWidgetId)
-            val cellWidthDp = widgetOptions
-                .getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 250)
-            val lineNameMaxEms = com.stationly.mobile.ui.util.StationStripFitter
-                .maxEmsForWidthDp(cellWidthDp)
-            views.setInt(R.id.line_name, "setMaxEms", lineNameMaxEms)
+            // ── Size class: the type scale for this widget's actual size ────
+            //
+            // The Android counterpart of iOS's per-family BoardMetrics. See
+            // WidgetSize. Medium is the XML defaults, so a 4x2 is unchanged.
+            val (widgetWidthDp, widgetHeightDpMeasured) = WidgetSize.measured(context, widgetOptions)
+            val widgetSize = WidgetSize.of(widgetWidthDp, widgetHeightDpMeasured)
+            val sp = android.util.TypedValue.COMPLEX_UNIT_SP
+            views.setTextViewTextSize(R.id.line_name, sp, widgetSize.station)
+            views.setTextViewTextSize(R.id.platform_pager_title, sp, widgetSize.platform)
+            views.setTextViewTextSize(R.id.platform_pager_count, sp, widgetSize.pagerCount)
+            views.setTextViewTextSize(R.id.status_severity, sp, widgetSize.status)
+            views.setTextViewTextSize(R.id.status_reason, sp, widgetSize.status)
+            views.setTextViewTextSize(R.id.clock, sp, widgetSize.clock)
+            views.setTextViewTextSize(R.id.last_updated_timer, sp, widgetSize.ago)
+            // Compact drops the wall clock, as iOS small does: the status bar
+            // already says the time, and the "ago" timer, which nothing else on
+            // the phone says, gets the footer.
+            views.setViewVisibility(
+                R.id.clock,
+                if (widgetSize.showsClock) android.view.View.VISIBLE else android.view.View.GONE,
+            )
+            // ── The station row: sized from the space it really has ─────────
+            //
+            // The name used to get a floor of 10 ems at 16sp (~160dp) whatever
+            // the widget, which on a 2x2 is wider than the whole header: the
+            // centred name-and-roundel block spilled out both sides and the
+            // roundel was clipped at the edge (owner, 2026-11-22). Now the name
+            // is capped to the measured space at this size class's type, and on
+            // compact the block sits flush LEFT, roundel at the edge, as iOS
+            // small reads (`centresStationName = false`). Elsewhere it stays
+            // centred between equal reserves.
+            val stationIconDp = if (widgetSize == WidgetSize.COMPACT) 16f else 22f
+            val headerWidthDp = (widgetWidthDp.takeIf { it > 0 } ?: FALLBACK_WIDTH_DP).toFloat()
+            val stationStartDp =
+                if (widgetSize.centresStation || showsSettingsButton()) HEADER_SIDE_RESERVE_DP else COMPACT_STATION_START_DP
+            val stationEndDp = HEADER_SIDE_RESERVE_DP
+            // STATION_SLACK_DP: the launcher's reported width runs a little over
+            // what it draws, and a block wider than its space is centred OVER
+            // both edges, which is what clipped the roundel on a 2x2.
+            val stationTextDp = (headerWidthDp - stationStartDp - stationEndDp - stationIconDp -
+                STATION_ICON_GAP_DP - STATION_SLACK_DP).coerceAtLeast(24f)
+            views.setInt(
+                R.id.line_name, "setMaxWidth",
+                (stationTextDp * context.resources.displayMetrics.density).toInt(),
+            )
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                val dip = android.util.TypedValue.COMPLEX_UNIT_DIP
+                views.setViewLayoutWidth(R.id.mode_icon, stationIconDp, dip)
+                views.setViewLayoutHeight(R.id.mode_icon, stationIconDp, dip)
+                // Flush left: give the slack to the END margin, so the centred
+                // block lands at the start.
+                val nameDp = WidgetText.widthDp(context, stationName, widgetSize.station, bold = true)
+                    .coerceAtMost(stationTextDp)
+                val endDp = if (widgetSize.centresStation) stationEndDp
+                    else stationEndDp + (stationTextDp - nameDp).coerceAtLeast(0f)
+                views.setViewLayoutMargin(R.id.station_lockup, RemoteViews.MARGIN_START, stationStartDp, dip)
+                views.setViewLayoutMargin(R.id.station_lockup, RemoteViews.MARGIN_END, endDp, dip)
+            }
 
             // Mode roundel on the station strip. Preferred path: the
             // backend-shipped icon cached locally by ModeIconCache during
@@ -1242,11 +1517,18 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 views.setViewVisibility(R.id.mode_icon, android.view.View.GONE)
             }
             
-            // Status and timer always visible — layout never shifts
+            // Status and timer always visible — layout never shifts.
+            //
+            // But only for a widget that is DRAWING a board. `hasSelection`
+            // is the ACCOUNT's question; an unbound widget on an account with
+            // boards used to print "Good Service :" for a line it does not
+            // have and an "ago" for data it does not show (Pixel 10 Pro Fold,
+            // 2026-11-21). The empty state is the whole message.
+            val showsBoard = isBound && hasSelection
             views.setViewVisibility(R.id.status_container, android.view.View.VISIBLE)
-            views.setViewVisibility(R.id.last_updated_timer, if (hasSelection) android.view.View.VISIBLE else android.view.View.INVISIBLE)
+            views.setViewVisibility(R.id.last_updated_timer, if (showsBoard) android.view.View.VISIBLE else android.view.View.INVISIBLE)
 
-            if (hasSelection) {
+            if (showsBoard) {
                 // "X ago" = time since the backend gave us this data, NOT
                 // since this widget redraw fired. Anchor the chronometer
                 // base so its zero point sits at the wall-clock moment
@@ -1287,7 +1569,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // to report on). Otherwise always visible to keep the widget
             // size stable across selected-board states; real status when
             // available, "Good Service" as the default.
-            if (!hasSelection) {
+            if (!showsBoard) {
                 views.setViewVisibility(R.id.status_container, android.view.View.GONE)
             } else {
                 views.setViewVisibility(R.id.status_container, android.view.View.VISIBLE)
@@ -1317,6 +1599,20 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
             )
             views.setOnClickPendingIntent(R.id.btn_settings, configureIntent)
+            // The bigger target over it (widget_departure_board.xml, tap zones).
+            views.setOnClickPendingIntent(R.id.zone_settings, configureIntent)
+            // ── The gear only where the launcher has no Settings of its own ──
+            //
+            // Android 12+ launchers put "Settings" in a widget's long-press menu
+            // (we declare `reconfigurable`), and an unbound widget's tap opens
+            // configuration anyway. There the gear was a second door to a rare
+            // task, taking the header's space and catching taps meant for
+            // refresh. Android 8 to 11 have no reconfigure in the launcher, so
+            // the gear stays: it is their only door from the widget itself.
+            // Owner decision, 2026-11-22.
+            val gear = if (showsSettingsButton()) android.view.View.VISIBLE else android.view.View.GONE
+            views.setViewVisibility(R.id.btn_settings, gear)
+            views.setViewVisibility(R.id.zone_settings, gear)
 
             // The BOARD opens the app, with launcher semantics so the Splash
             // Screen API shows the icon (a widget-triggered launch without
@@ -1326,19 +1622,38 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // tapped: the empty state says "tap to choose", so the tap has to
             // land somewhere that can choose. Sending it to the home screen
             // would be an instruction the app cannot carry out.
+            // ── Opens the app ON THIS WIDGET'S STATION ──────────────────────
+            //
+            // The same link the iOS widget uses (`StationlyDeepLink.board`):
+            // `<scheme>://home?station=<groupingId>`. MainActivity hands it to
+            // the shared `BoardFocus`, exactly as iOS's ContentView does, so a
+            // tap on widget A opens station A and on widget B station B, on both
+            // platforms, through one mechanism. Without a station (unbound) it
+            // is a plain launch. Scheme from BuildConfig so staging and prod
+            // each match what their manifest registers.
+            val focusStation = boundSelection?.groupingId?.takeIf { isBound && it.isNotBlank() }
             val openApp = Intent(context, com.stationly.mobile.MainActivity::class.java).apply {
-                action = Intent.ACTION_MAIN
-                addCategory(Intent.CATEGORY_LAUNCHER)
+                if (focusStation != null) {
+                    action = Intent.ACTION_VIEW
+                    data = android.net.Uri.parse(
+                        "${com.stationly.mobile.BuildConfig.DEEP_LINK_SCHEME}://home?station=" +
+                            android.net.Uri.encode(focusStation),
+                    )
+                } else {
+                    action = Intent.ACTION_MAIN
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                }
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
-            val boardIntent = when (tapTargetFor(isBound)) {
+            val boardIntent = when (tapTargetFor(isBound, emptyState)) {
                 WidgetTapTarget.APP -> android.app.PendingIntent.getActivity(
-                    context, 0, openApp,
+                    // Per widget: each one opens its own station.
+                    context, appWidgetId, openApp,
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
                 )
                 WidgetTapTarget.CONFIGURE -> configureIntent
             }
-            views.setOnClickPendingIntent(R.id.departure_board, boardIntent)
+            views.setOnClickPendingIntent(android.R.id.background, boardIntent)
 
             // ── The ROWS have to be given the tap separately ──
             //
@@ -1360,7 +1675,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             val rowsTemplate = android.app.PendingIntent.getActivity(
                 context,
                 appWidgetId,
-                when (tapTargetFor(isBound)) {
+                when (tapTargetFor(isBound, emptyState)) {
                     WidgetTapTarget.APP -> openApp
                     WidgetTapTarget.CONFIGURE ->
                         WidgetConfigureActivity.reconfigureIntent(context, appWidgetId)
@@ -1385,6 +1700,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
             views.setOnClickPendingIntent(R.id.btn_refresh, refreshPendingIntent)
+            views.setOnClickPendingIntent(R.id.zone_refresh, refreshPendingIntent)
 
             // ── The platform pager bar ───────────────────────────────────────
             //
@@ -1400,7 +1716,18 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 // row, so the widget stops being the one surface that spells it
                 // out in full.
                 views.setTextViewText(
-                    R.id.platform_pager_title, PlatformPages.compactTitle(pagedRows),
+                    R.id.platform_pager_title,
+                    // The ladder from its short rung (the pager always shows the
+                    // short forms, S019), narrowed further when the arrows leave
+                    // too little room, as iOS's pager header does.
+                    WidgetText.firstThatFits(
+                        context,
+                        com.stationly.core.util.MultiLineBoardProcessor
+                            .headerVariants(PlatformPages.title(pagedRows)).drop(1)
+                            .ifEmpty { listOf(PlatformPages.compactTitle(pagedRows)) },
+                        widgetSize.platform, bold = true,
+                        availableDp = (widgetWidthDp.takeIf { it > 0 }?.minus(PAGER_CHROME_DP + HEADER_SLACK_DP)) ?: 0f,
+                    ),
                 )
                 // "2/3" rather than dots: a RemoteViews cannot draw a pager
                 // indicator without a view per dot, and the number says the
@@ -1417,14 +1744,63 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     R.id.btn_platform_next,
                     platformStepIntent(context, appWidgetId, delta = 1),
                 )
+                // The bigger chevron targets, only while the bar is showing.
+                views.setViewVisibility(R.id.zone_platform_prev, android.view.View.VISIBLE)
+                views.setViewVisibility(R.id.zone_platform_next, android.view.View.VISIBLE)
+                views.setOnClickPendingIntent(
+                    R.id.zone_platform_prev,
+                    platformStepIntent(context, appWidgetId, delta = -1),
+                )
+                views.setOnClickPendingIntent(
+                    R.id.zone_platform_next,
+                    platformStepIntent(context, appWidgetId, delta = 1),
+                )
             } else {
                 views.setViewVisibility(R.id.platform_pager, android.view.View.GONE)
+                views.setViewVisibility(R.id.zone_platform_prev, android.view.View.GONE)
+                views.setViewVisibility(R.id.zone_platform_next, android.view.View.GONE)
             }
-            views.setViewVisibility(R.id.btn_refresh, android.view.View.VISIBLE)
-            views.setViewVisibility(R.id.progress_refresh, android.view.View.GONE)
+            val refreshing = appWidgetId in refreshingIds
+            val refreshFailed = RefreshFailures.isFailed(context, boundSelection?.groupingId)
+            views.setImageViewResource(
+                R.id.btn_refresh,
+                if (refreshFailed) R.drawable.ic_refresh_failed else R.drawable.ic_refresh,
+            )
+            val refreshLabel = if (refreshFailed) "Refresh failed, tap to retry" else "Refresh departures"
+            views.setContentDescription(R.id.btn_refresh, refreshLabel)
+            views.setContentDescription(R.id.zone_refresh, refreshLabel)
+            views.setViewVisibility(R.id.btn_refresh, if (refreshing) android.view.View.GONE else android.view.View.VISIBLE)
+            views.setViewVisibility(R.id.progress_refresh, if (refreshing) android.view.View.VISIBLE else android.view.View.GONE)
 
             // Clear existing rows setup
             val rowViews = mutableListOf<RemoteViews>()
+            // ── Platform headers: the longest wording that fits (iOS HeaderLadder) ──
+            //
+            // A header that wrapped to two lines and lost its second ("Mildmay
+            // Platform not / assigned" on a 2x2). The shared ladder steps
+            // "Platform" -> "Plat.", line names -> short forms, then drops the
+            // direction; the first rung that fits at this size's type wins.
+            val headerAvailDp = (widgetWidthDp.takeIf { it > 0 }?.minus(2 * ROW_TEXT_INSET_DP + HEADER_SLACK_DP)) ?: 0f
+            fun fitHeader(text: String): String = WidgetText.firstThatFits(
+                context, com.stationly.core.util.MultiLineBoardProcessor.headerVariants(text),
+                widgetSize.platform, bold = true, availableDp = headerAvailDp,
+            )
+            // ── Scroll mode with nothing to scroll fills the widget ─────────
+            //
+            // When every row fits, the rows are height-flexible and go in the
+            // non-scrolling container, sharing the spare height like the iOS
+            // widget, instead of leaving a band under the last row (owner,
+            // 2026-11-22). Decided BEFORE the rows are built, from their count,
+            // because a RemoteViews cannot change its layout afterwards.
+            val rowCountEstimate = sduiPayload?.components
+                ?.count { it !is com.stationly.core.model.sdui.SduiWidgetComponent.Status }
+                ?: drawnRows?.size ?: 0
+            val fitsAll = !stepping && ScrollFit.allRowsFit(
+                rowCountEstimate, widgetHeightDpMeasured, context.resources.configuration.fontScale,
+                rowScale = widgetSize.rowScale,
+            )
+            val rowLayout = if (fitsAll) R.layout.widget_departure_row_fill else R.layout.widget_departure_row
+            val headerLayout = if (fitsAll) R.layout.widget_platform_header_fill else R.layout.widget_platform_header
             
             // Checking actual selection state
              // (Already defined at start of function)
@@ -1444,7 +1820,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 }
                 theme?.backgroundColor?.let {
                     val dynBgColor = com.stationly.mobile.util.SduiThemeManager.parseColor(it, android.graphics.Color.BLACK)
-                    views.setInt(R.id.departure_board, "setBackgroundColor", dynBgColor)
+                    views.setInt(android.R.id.background, "setBackgroundColor", dynBgColor)
                 }
 
                 views.setTextViewText(R.id.line_name, sduiPayload.title)
@@ -1455,19 +1831,19 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 sduiPayload.components.forEach { component ->
                     when (component) {
                         is com.stationly.core.model.sdui.SduiWidgetComponent.Header -> {
-                            val header = RemoteViews(context.packageName, R.layout.widget_platform_header)
+                            val header = newHeader(context, headerLayout, widgetSize)
                             // Prefix every platform header with the line
                             // context so each platform row carries the
                             // same identity ("Piccadilly: Platform 1",
                             // "Piccadilly: Platform 2", …).
                             val title = StationlyFormatters.platformHeaderText(linePrefix, component.title)
-                            header.setTextViewText(R.id.platform_name, title)
+                            header.setTextViewText(R.id.platform_name, fitHeader(title))
                              val headerColor = com.stationly.mobile.util.SduiThemeManager.parseColor(component.color, dynTextColor)
                              header.setTextColor(R.id.platform_name, headerColor)
                             rowViews.add(header)
                         }
                         is com.stationly.core.model.sdui.SduiWidgetComponent.Row -> {
-                            val row = RemoteViews(context.packageName, R.layout.widget_departure_row)
+                            val row = newRow(context, rowLayout, widgetSize)
                             row.setTextViewText(R.id.destination_text, component.destination)
                             row.setTextViewText(R.id.eta_text, component.eta)
                             val etaColor = com.stationly.mobile.util.SduiThemeManager.parseColor(component.etaColor, dynTextColor)
@@ -1485,7 +1861,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                             }
                         }
                         is com.stationly.core.model.sdui.SduiWidgetComponent.Message -> {
-                            val row = RemoteViews(context.packageName, R.layout.widget_departure_row)
+                            val row = newRow(context, rowLayout, widgetSize)
                             row.setTextViewText(R.id.destination_text, component.text)
                             row.setTextViewText(R.id.eta_text, "")
                             val msgColor = com.stationly.mobile.util.SduiThemeManager.parseColor(component.color, dynTextColor)
@@ -1528,13 +1904,13 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     drawnRows.forEach { row ->
                         when (row) {
                             is com.stationly.core.util.MultiLineBoardProcessor.Row.PlatformHeader -> {
-                                val header = RemoteViews(context.packageName, R.layout.widget_platform_header)
-                                header.setTextViewText(R.id.platform_name, row.title)
+                                val header = newHeader(context, headerLayout, widgetSize)
+                                header.setTextViewText(R.id.platform_name, fitHeader(row.title))
                                 header.setOnClickFillInIntent(R.id.platform_name, Intent())
                                 rowViews.add(header)
                             }
                             is com.stationly.core.util.MultiLineBoardProcessor.Row.Departure -> {
-                                val dep = RemoteViews(context.packageName, R.layout.widget_departure_row)
+                                val dep = newRow(context, rowLayout, widgetSize)
                                 val destination = if (row.linePrefix.isBlank()) row.destination
                                 else row.linePrefix + " " + row.destination
                                 dep.setTextViewText(R.id.destination_text, destination)
@@ -1567,17 +1943,17 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 legacyRows.forEach { row ->
                     when (row) {
                         is com.stationly.core.util.LegacyRow.Header -> {
-                            val header = RemoteViews(context.packageName, R.layout.widget_platform_header)
+                            val header = newHeader(context, headerLayout, widgetSize)
                             header.setOnClickFillInIntent(R.id.platform_name, Intent())
                             // Prefix every platform header with the line
                             // context — same line, but each platform row
                             // carries its own identity.
                             val title = StationlyFormatters.platformHeaderText(linePrefix, row.title)
-                            header.setTextViewText(R.id.platform_name, title)
+                            header.setTextViewText(R.id.platform_name, fitHeader(title))
                             rowViews.add(header)
                         }
                         is com.stationly.core.util.LegacyRow.Departure -> {
-                            val dep = RemoteViews(context.packageName, R.layout.widget_departure_row)
+                            val dep = newRow(context, rowLayout, widgetSize)
                             dep.setOnClickFillInIntent(R.id.departure_row_root, Intent())
                             dep.setTextViewText(R.id.destination_text, row.destination)
                             dep.setTextViewText(R.id.eta_text, row.eta)
@@ -1588,7 +1964,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                             rowViews.add(dep)
                         }
                         is com.stationly.core.util.LegacyRow.Message -> {
-                            val msg = RemoteViews(context.packageName, R.layout.widget_platform_header)
+                            val msg = newHeader(context, headerLayout, widgetSize)
                             msg.setOnClickFillInIntent(R.id.platform_name, Intent())
                             msg.setTextViewText(R.id.platform_name, row.text)
                             rowViews.add(msg)
@@ -1611,7 +1987,12 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 val londonTime = java.time.Instant.ofEpochMilli(nowMs)
                     .atZone(java.time.ZoneId.of("Europe/London"))
                     .toLocalTime()
-                val fallbackState = if (!hasSelection) {
+                // An unbound widget says WHY it is empty (signed out, no
+                // stations, which station?, station removed) rather than
+                // showing a board fallback for a board it does not have.
+                val empty = emptyState
+                    ?: if (!isBound && !hasSelection) WidgetEmptyState.NO_STATIONS else null
+                val fallbackState = if (empty != null) {
                     BoardFallbackState(
                         BoardFallbackKind.CONNECTING, 0L
                     )
@@ -1627,16 +2008,21 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     )
                 }
                 if (fallbackState != null) {
-                    // No-selection state piggybacks on the CONNECTING kind
-                    // but overrides the copy so it doesn't duplicate the
-                    // "Stationly" header above; instead the title nudges
-                    // the user toward adding a board.
-                    val widgetStrings = if (!hasSelection) mapOf(
-                        "board.fallback.connecting.title"  to "No boards yet",
-                        "board.fallback.connecting.detail" to "Tap to add your first board",
-                    ) else emptyMap()
+                    // The SERVED strings, the same `board.fallback.*` copy the
+                    // home screen and the screensaver show. This used to pass an
+                    // empty map, so the widget alone printed compiled defaults
+                    // for "signal lost", "late night" and the rest (AV2-10.7).
+                    //
+                    // An empty state rides the CONNECTING kind and overrides
+                    // its two keys with the state's own words.
+                    val widgetStrings = if (empty != null) sduiStrings + mapOf(
+                        "board.fallback.connecting.title"  to empty.title(sduiStrings),
+                        "board.fallback.connecting.detail" to empty.detail(sduiStrings),
+                    ) else sduiStrings
                     buildFallbackRowRemoteViews(
                         context, fallbackState, widgetStrings,
+                        rowLayout = R.layout.widget_departure_row_fill,
+                        textSizeSp = widgetSize.row,
                     )
                 } else if (rowViews.isEmpty()) {
                     // Edge case: hasSelection && hasPredictions logically true, but
@@ -1647,7 +2033,9 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         BoardFallbackState(
                             BoardFallbackKind.NO_UPCOMING
                         ),
-                        emptyMap(),
+                        sduiStrings,
+                        rowLayout = R.layout.widget_departure_row_fill,
+                        textSizeSp = widgetSize.row,
                     )
                 } else rowViews
             }
@@ -1667,9 +2055,30 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     rowCap = ROWS_PER_PLATFORM,
                     motion = motion,
                     fromPage = PlatformPages.clamp(fromPage ?: safePage, pageCount),
+                    size = widgetSize,
                 )
+            } else if (
+                motion == WidgetMotion.REFRESH &&
+                finalRowViews === rowViews && rowViews.isNotEmpty() &&
+                android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+            ) {
+                // ── Scroll mode gets the refresh roll too ───────────────────
+                //
+                // The scrolling list cannot animate its contents, so a refresh
+                // the user asked for draws the board once in the refresh
+                // flipper, which plays the same roll as step mode, and a render
+                // moments later puts the scrolling list back with the same rows
+                // (owner, 2026-11-22: "not on the departure rows"). The motion
+                // flag is one-shot, so only the tap animates.
+                applyRefreshSnapshot(context, views, rowViews)
+                CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                    kotlinx.coroutines.delay(REFRESH_SNAPSHOT_MS)
+                    runCatching { updateOne(context, appWidgetId) }
+                }
             } else {
-                applyRowsToWidget(views, finalRowViews)
+                // A message (fallback or empty state) fills the board; a real
+                // board keeps the scrolling list.
+                applyRowsToWidget(views, finalRowViews, fill = finalRowViews !== rowViews || fitsAll)
             }
 
             // Important: Handle appWidgetId correctly if updating all from invalid
@@ -1736,6 +2145,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             rowCap: Int,
             motion: WidgetMotion,
             fromPage: Int,
+            size: WidgetSize = WidgetSize.MEDIUM,
         ) {
             views.setViewVisibility(R.id.rows_list, android.view.View.GONE)
             views.setViewVisibility(R.id.rows_container, android.view.View.GONE)
@@ -1751,15 +2161,15 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             views.setViewVisibility(stage, android.view.View.VISIBLE)
 
             if (!motion.animates) {
-                views.addView(stage, pageViews(context, pages.getOrNull(page), rowCap))
+                views.addView(stage, pageViews(context, pages.getOrNull(page), rowCap, size))
                 // NO `setDisplayedChild`. A flipper with one child is already
                 // showing it, and asking again is exactly what flashed.
                 return
             }
 
             // The board being left, then the board arriving.
-            views.addView(stage, pageViews(context, pages.getOrNull(fromPage), rowCap))
-            views.addView(stage, pageViews(context, pages.getOrNull(page), rowCap))
+            views.addView(stage, pageViews(context, pages.getOrNull(fromPage), rowCap, size))
+            views.addView(stage, pageViews(context, pages.getOrNull(page), rowCap, size))
             // ── Two calls, and both are needed ──────────────────────────────
             //
             // `ViewAnimator.showOnly` animates when `!mFirstTime ||
@@ -1772,18 +2182,58 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             views.setDisplayedChild(stage, 1)
         }
 
+        /** A departure row in this size class's type (WidgetSize). */
+        private fun newRow(context: Context, layout: Int, size: WidgetSize): RemoteViews =
+            RemoteViews(context.packageName, layout).apply {
+                setTextViewTextSize(R.id.destination_text, android.util.TypedValue.COMPLEX_UNIT_SP, size.row)
+                setTextViewTextSize(R.id.eta_text, android.util.TypedValue.COMPLEX_UNIT_SP, size.row)
+            }
+
+        /** A platform header in this size class's type (WidgetSize). */
+        private fun newHeader(context: Context, layout: Int, size: WidgetSize): RemoteViews =
+            RemoteViews(context.packageName, layout).apply {
+                setTextViewTextSize(R.id.platform_name, android.util.TypedValue.COMPLEX_UNIT_SP, size.platform)
+            }
+
+        /**
+         * Scroll mode's refresh roll: the board, twice, in the refresh flipper.
+         *
+         * Both frames carry the new rows (the old ones were overwritten by the
+         * fetch), so it reads as the board turning over onto itself, the same
+         * motion step mode plays. The same two-call `setDisplayedChild` as
+         * [applyPagesToFlipper], for the same reason.
+         */
+        private fun applyRefreshSnapshot(context: Context, views: RemoteViews, rowViews: List<RemoteViews>) {
+            views.setViewVisibility(R.id.rows_list, android.view.View.GONE)
+            views.setViewVisibility(R.id.rows_container, android.view.View.GONE)
+            WidgetMotion.flippers.forEach { id ->
+                views.removeAllViews(id)
+                views.setViewVisibility(id, android.view.View.GONE)
+            }
+            val stage = WidgetMotion.REFRESH.flipperId
+            views.setViewVisibility(stage, android.view.View.VISIBLE)
+            repeat(2) {
+                val page = RemoteViews(context.packageName, R.layout.widget_platform_page)
+                rowViews.forEach { page.addView(R.id.platform_page_rows, it) }
+                views.addView(stage, page)
+            }
+            views.setDisplayedChild(stage, 0)
+            views.setDisplayedChild(stage, 1)
+        }
+
         /** One platform, padded to a fixed height so the widget cannot resize. */
         private fun pageViews(
             context: Context,
             page: List<com.stationly.core.util.MultiLineBoardProcessor.Row>?,
             rowCap: Int,
+            size: WidgetSize = WidgetSize.MEDIUM,
         ): RemoteViews {
             val pageViews = RemoteViews(context.packageName, R.layout.widget_platform_page)
             // `bodyPadded`: the pager bar names the platform, so the header comes
             // off, and every page is the same height whatever the data does.
             com.stationly.core.util.PlatformPages.bodyPadded(page.orEmpty(), rowCap)
                 .forEach { row ->
-                    departureRowViews(context, row)?.let {
+                    departureRowViews(context, row, size)?.let {
                         pageViews.addView(R.id.platform_page_rows, it)
                     }
                 }
@@ -1794,9 +2244,12 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         private fun departureRowViews(
             context: Context,
             row: com.stationly.core.util.MultiLineBoardProcessor.Row,
+            size: WidgetSize = WidgetSize.MEDIUM,
         ): RemoteViews? {
             if (row !is com.stationly.core.util.MultiLineBoardProcessor.Row.Departure) return null
-            val dep = RemoteViews(context.packageName, R.layout.widget_departure_row)
+            // The FILL row: a page never scrolls, so its rows share the slot's
+            // height equally, as the iOS widget's cells do.
+            val dep = newRow(context, R.layout.widget_departure_row_fill, size)
             val destination =
                 if (row.linePrefix.isBlank()) row.destination
                 else row.linePrefix + " " + row.destination
@@ -1810,7 +2263,14 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             return dep
         }
 
-        private fun applyRowsToWidget(views: RemoteViews, rowViews: List<RemoteViews>) {
+        /**
+         * @param fill the rows are a MESSAGE (a fallback or an empty state):
+         *   a handful of `widget_departure_row_fill` rows that never scroll. They
+         *   go in the non-scrolling container on every API level, so they
+         *   stretch to fill the board instead of sitting at the top of a list
+         *   with an empty band under them.
+         */
+        private fun applyRowsToWidget(views: RemoteViews, rowViews: List<RemoteViews>, fill: Boolean = false) {
             // ── EVERY flipper, not just the resting one ─────────────────────
             //
             // A full update onto a widget already on screen is `reapply`, which
@@ -1824,7 +2284,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 views.removeAllViews(id)
                 views.setViewVisibility(id, android.view.View.GONE)
             }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            if (!fill && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                 views.setViewVisibility(R.id.rows_container, android.view.View.GONE)
                 views.setViewVisibility(R.id.rows_list, android.view.View.VISIBLE)
                 val builder = RemoteViews.RemoteCollectionItems.Builder()

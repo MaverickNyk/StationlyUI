@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The widget's outer background.
+
+     The rounded shape comes FIRST on purpose: a layer-list takes its outline
+     from its first layer, so `clipToOutline` on the root clips the dot-matrix
+     tile above it to the same rounded corner. On Android 12+ the launcher also
+     crops `@android:id/background` to the system shape; this is what keeps the
+     corner on launchers that do not. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#000000" />
+            <corners android:radius="@dimen/widget_corner_radius" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/departure_board_unlit_background" />
+</layer-list>

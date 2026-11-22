@@ -17,6 +17,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import com.stationly.app.AndroidPlatformAuthProvider
 import com.stationly.app.App
+import com.stationly.app.ui.summary.BoardFocus
 import com.stationly.core.model.deeplink.DeepLinkRoute
 import com.stationly.core.model.deeplink.parseDeepLink
 import com.stationly.mobile.service.ActivityUploadWorker
@@ -298,7 +299,12 @@ class MainActivity : ComponentActivity() {
         val uri = intent?.data ?: return
         when (val route = parseDeepLink(uri.toString(), BuildConfig.DEEP_LINK_SCHEME)) {
             is DeepLinkRoute.PasswordResetComplete -> passwordResetComplete = true
-            is DeepLinkRoute.Home                  -> { /* just opens the app — no-op */ }
+            // A widget tap carries `?station=<groupingId>` (the iOS widget's
+            // link format); slide the home screen to it via the shared
+            // BoardFocus, as iOS's ContentView does. Without one, just open.
+            is DeepLinkRoute.Home                  ->
+                uri.getQueryParameter("station")?.takeIf { it.isNotBlank() }
+                    ?.let { BoardFocus.request(it) }
             is DeepLinkRoute.VerifyEmail           -> applyVerification(route.oobCode)
             is DeepLinkRoute.ResetPassword         -> pendingResetOobCode = route.oobCode
             // Includes a known host arriving WITHOUT its code: v1 checked

@@ -309,3 +309,148 @@ it (`rowReserve` decides the shape of what gets stored). `DreamHost` now calls
   `monetisation-strategy`) and was left alone.
 - Consciously not attempted: anything that would DELETE a key. The strategy
   memory is explicit that thirty keys believed dead were live Android.
+
+**T1 finished, S021 (2026-11-21). DONE pending owner sign-off.**
+
+The inventory was run against the REAL served map, not the source: the
+backend's `getHomeConfig('android')` and `('ios')` executed locally, 296 keys
+each, identical key sets (only `support_money.*` values differ, by design).
+Every key was then classified by who reads it:
+
+| bucket | count | meaning |
+|---|---|---|
+| read by shared code (Android runs it) | 216 | includes templated reads (`station.label.$m`, `dream.settings.layout.${..}`) and prefix families (`line.color.`, `board.fallback.`) |
+| v1-only legacy | ~78 | `greeting.*`, `topbar.*`, `home.promo.widget/dream.*`, `explore.title`, `profile.delete_station.*`, `station.mode.*`, `app.minVersion/storeUrl/update.*`: read by the live v1 binary (verified with `git grep` on master's `android/`). **Never delete.** |
+| iOS-only reader | `widget.state.*` (8) | the ONE real Android gap |
+| client-read, never served | 2 | `dream.settings.section.platforms`, `dream.settings.whenitshows`: cosmetic, compiled copy |
+
+Every `BoardPolicy` / `limits.*` key the client reads IS served, so no timing
+runs on a compiled value that disagrees with the backend.
+
+**Adopted (T3):**
+- `widget.state.*` on Android, as `WidgetEmptyState`: SIGNED_OUT, NO_STATIONS,
+  NEEDS_STATION, REMOVED. **Android words, not iOS gestures** (owner direction:
+  use what Android can do). Each state is a short "Tap to ..." within the 30-char
+  widget budget and OWNS its tap target: sign-in and first-station go to the
+  APP, the two "which station?" states to the widget's configuration. The
+  backend serves Android wording to `X-Stationly-Client: android` under the same
+  keys (iOS unchanged; v1 never read them), on backend branch
+  `dev_android_bring_to_v2`, deployed to staging and verified with curl.
+- The widget's board fallbacks now use the SERVED `board.fallback.*` strings.
+  It passed `emptyMap()`, so signal-lost / late-night / no-upcoming printed
+  compiled copy on the widget while home and the screensaver printed served copy.
+
+---
+
+## AV2-10.8 — The Android 17 widget: rows, corners, updates · `L`
+
+**Raised by a customer on Android 17 (a Xiaomi), 2026-11-21:** the widget drew
+its header, status and clock with no departures between them, and the corners
+no longer matched the system's. Then found on the device while fixing it.
+
+**Built, S021. Device-verified on a Pixel 10 Pro Fold, Android 17, staging.**
+
+| Problem | Cause | Fix |
+|---|---|---|
+| Departure rows missing | Root was `wrap_content` over 0dp+weight rows; a launcher that measures "at most" gave the rows zero height | Root `match_parent` |
+| Corners cut square / wrong radius | No `@android:id/background`, so the launcher had nothing to crop to the system shape | Root is `@android:id/background` with `system_app_widget_background_radius` (16dp below API 31) and `clipToOutline` |
+| Placed widgets kept the OLD layout after an app update | Same layout id, so the launcher reapplied new actions onto the old view tree | `MY_PACKAGE_REPLACED` draws `widget_reinflate` for one frame, forcing a fresh inflate |
+| "Add to Home Screen" placed an unbound widget | The pin callback was FLAG_IMMUTABLE, so the platform could not add the widget id, and this launcher does not run the configure Activity after a pin | Callback MUTABLE with its own action; bound in the provider (`WidgetPinner.bindPinned`) |
+| Unbound widget showed "Good Service :" and an "ago" | Keyed on the ACCOUNT having boards, not THIS widget showing one | Status row and timer follow `isBound && hasSelection` |
+| Widget clock read "09:03:50 PM" beside the app's "21:03:50" | TextClock followed the phone's 12-hour setting | 24-hour in both formats |
+
+**Left:** not yet run on a Xiaomi launcher; the fix is to the measurement
+contract, verified on the Pixel.
+
+---
+
+## AV2-10.9 — Taps that do what they say · `M`
+
+**Owner, 2026-11-21:** the controls were small, refresh and settings sat side
+by side, and near misses fell through to the board and opened the app.
+
+**Built, S021. Device-verified.**
+
+- **Bigger TOUCH areas, original row sizes.** Transparent tap zones sit over
+  the board (`zone_refresh`, `zone_settings`, `zone_platform_prev/next`) with
+  the same PendingIntents as the icons under them. The root is a FrameLayout:
+  `board_content` underneath, zones on top. Chevron zones are GONE outside step
+  mode so they never cover a scrolling list. Near misses ~16dp off each glyph
+  verified: refresh refreshes, the chevron steps, none opens the app.
+- **No settings gear on Android 12+ (D10).** The launcher's long-press menu
+  has Settings there, and an unbound widget's tap opens configuration. Android
+  8 to 11 keep the gear (their only door). The widget manager and the
+  choose-station screen each say once where Settings lives on that version.
+- **A tap opens the app on THIS widget's station.** The open-app intent carries
+  `<scheme>://home?station=<groupingId>`, the iOS widget's own link
+  (`StationlyDeepLink.board`); MainActivity hands it to the shared
+  `BoardFocus.request`, as iOS's ContentView does. Verified: Arsenal widget ->
+  Arsenal, Southfields widget -> Southfields.
+- **Four empty states that own their taps** (from AV2-10.7, `WidgetEmptyState`).
+
+**Wrong turn, recorded:** the first attempt grew the header to 40dp and the
+pager bar to 36dp so the targets could be bigger. The owner wanted a bigger
+TOUCH area, not bigger rows, and it squeezed a 4x2's departures to ~18dp.
+Reverted in favour of the tap-zone layer.
+
+---
+
+## AV2-10.10 — Refresh that visibly happens · `M`
+
+**Owner, 2026-11-21/22:** "the refresh animation is not working", "the icon
+should rotate", and taps within ~15s "did nothing".
+
+**Built, S021. Device-verified.**
+
+| Problem | Cause | Fix |
+|---|---|---|
+| ANR on refresh | A widget tap is a foreground broadcast (~10s); the handler held it open for the whole fetch | Work inside `withTimeoutOrNull(RECEIVER_BUDGET_MS = 8s)`; past it, redraw from SQL and release the guard |
+| "Nothing for 15s" after a tap | The ANR'd fetch left the in-flight guard up. The guard itself was already iOS's concurrency rule (AV2-10.1) | Guard always released in `finally` |
+| Spinner never showed | `partiallyUpdateAppWidget` silently dropped by the Pixel launcher on Android 17; a fast fetch ended too soon anyway | Full render keyed on `refreshingIds`, shown first, held `MIN_SPINNER_MS` (900ms) |
+| The icon did not turn | A generic circle replaced it | `ic_refresh_spinning`: an `animated-rotate` of the arrow itself |
+| Roll played before the new numbers | The spinner's own redraw spent the one-shot REFRESH motion | Renders while refreshing use `WidgetMotion.NONE`; the roll belongs to the redraw with new rows |
+| Roll was a blink beside the arrows' slide | A third of the height plus a 150ms fade | Full vertical travel, 260ms, same easing as the slide |
+| Scroll mode never rolled | A ListView cannot animate its contents | On a REFRESH render, draw once in the refresh flipper (`applyRefreshSnapshot`), list back 700ms later |
+| Header grew on every refresh | Spinner was `match_parent` in the header | Fixed-size box |
+
+**iOS's refresh rules, adopted where Android needs them:** signed out fetches
+nothing; one concurrent `refreshBoards` fan-out; a per-station failure
+(`RefreshFailures`) shows `ic_refresh_failed` ("Refresh failed, tap to retry")
+on that station's widgets only, set on all-failed or timeout, cleared by the
+next success. **Not ported:** refreshing every widget on one tap. iOS does it
+because it has no push; Android's FCM keeps the others fresh (README rule 3).
+
+---
+
+## AV2-10.11 — The widget at every size, as iOS draws it · `L`
+
+**Owner, 2026-11-22:** "how will it behave in square 2x2 or 4x4 ... iOS does
+that nicely"; then the 2x2's platform row wrapped onto two lines and its station
+row spilled off the edges.
+
+**Built, S021. Device-verified at 2x2 and 4x2; 4x4 NOT yet seen.**
+
+- **Three size classes, iOS's three families** (`WidgetSize`): COMPACT under
+  ~250dp wide (iOS small: smaller type, no wall clock, station flush left with a
+  16dp roundel), MEDIUM (the XML defaults, so a 4x2 is unchanged), LARGE from
+  ~320dp tall (larger type). Type steps follow iOS's 11/12.5/14.5pt rows on
+  Android's 15sp. Applied to every text on the board and every row and header
+  builder; `onAppWidgetOptionsChanged` redraws on resize.
+- **Headers never wrap.** Platform headers and the pager title take the first
+  rung of the shared `MultiLineBoardProcessor.headerVariants` ladder that fits,
+  measured in the widget's own font (`WidgetText`, the counterpart of iOS's
+  `HeaderLadder`), and are single-line.
+- **The station row fits its space.** The old 10-em floor (~160dp) was wider
+  than a 2x2's whole header; the name is now capped to the measured space.
+  `StationStripFitter` is deleted.
+- **Scroll mode stretches when nothing would scroll** (`ScrollFit`): rows and
+  headers use the `_fill` layouts and share the spare height, as iOS's cells
+  do. Constants are measured at font scale 1.0 (scaling an already-scaled
+  measurement first made a four-row board miss by 1.6dp).
+- **Rows run edge to edge**, as iOS ("the dot-matrix board must cover the
+  widget end to end"): the board has no side padding; the 12dp text inset lives
+  inside each row.
+
+**Left, to match iOS fully:** LARGE's split layout (two pagers, iOS
+`BoardLayout.split`); backfilling the status strip into a spare departure slot
+(iOS `StatusPolicy.backfill`); and seeing a 4x4 on the device.

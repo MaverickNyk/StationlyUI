@@ -674,7 +674,14 @@ private fun WidgetsScreen(
         }
     }
     Spacer(Modifier.height(10.dp))
-    SettingsCaption("Tap a widget to change its station or how much it shows.")
+    // Where else this screen is reached from, said once, because the gear is
+    // gone from widgets on Android 12+ (DepartureWidgetProvider
+    // .showsSettingsButton) and touch-and-hold is invisible until you know it.
+    SettingsCaption(
+        "Tap a widget to change its station or how much it shows. " +
+            if (DepartureWidgetProvider.showsSettingsButton()) "You can also tap the gear on the widget itself."
+            else "On your Home Screen, touch and hold a widget and tap Settings.",
+    )
 }
 
 /**
@@ -868,7 +875,9 @@ private fun ConfigureScreen(
         ScreenHeading(
             "Choose station",
             "This widget will show live departures for the station you pick. " +
-                "Add another widget for another station.",
+                "Add another widget for another station. " +
+                if (DepartureWidgetProvider.showsSettingsButton()) "To change it later, tap the gear on the widget."
+                else "To change it later, touch and hold the widget and tap Settings.",
         )
         Spacer(Modifier.height(20.dp))
         StationChoiceList(
@@ -933,7 +942,10 @@ private fun ConfigureScreen(
         Spacer(Modifier.height(10.dp))
         SettingsCaption(
             if (widgetPin == null) {
-                "Nothing pinned. The platform with the soonest departure comes first."
+                // Platforms order by NAME since S019 ("soonest first" made the
+                // board reshuffle itself on every push); this used to describe
+                // the old rule.
+                "Nothing pinned. Platforms are shown in number order."
             } else {
                 "Pinned on this widget only. The board inside the app keeps its own order."
             },
