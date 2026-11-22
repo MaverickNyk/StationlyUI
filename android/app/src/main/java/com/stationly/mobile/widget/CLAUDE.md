@@ -392,10 +392,3 @@ helpers, or document why this surface needs to diverge.
   SDUI template (`sdui_layout_<stationId>` SharedPref), we bind it
   with the ticked predictions and render through that path instead
   of `prepareLegacyRows`. Both paths produce identical ETAs.
-
-## When you change something here
-
-After modifying any file in this folder, run `graphify update .` from
-the repo root to keep the project's knowledge graph in sync (AST-only,
-no API cost). The graph at `graphify-out/` is what future agents read
-for architecture context.

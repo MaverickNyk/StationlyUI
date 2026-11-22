@@ -218,10 +218,3 @@ colour cue, add a new glyph.
   the dispatch path goes through `registerIfAuthenticated` again;
   the SharedPrefs cache update happens after a successful POST so
   a failed POST won't poison the cache.
-
-## When you change something here
-
-After modifying any file in this folder, run `graphify update .` from
-the repo root to keep the project's knowledge graph in sync. The
-graph at `graphify-out/` is what future agents read for architecture
-context.

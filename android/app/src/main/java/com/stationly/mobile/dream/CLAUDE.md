@@ -72,9 +72,3 @@ timer is CPU drain on a docked phone.
 hub — the same board the home screen shows. v1's copy rendered the first
 selection only, and that difference was invisible until a user tracked two lines
 at one station.
-
-## When you change something here
-
-After modifying any file in this folder, run `graphify update .` from the repo
-root to keep the project's knowledge graph in sync (AST-only, no API cost). The
-graph at `graphify-out/` is what future agents read for architecture context.
