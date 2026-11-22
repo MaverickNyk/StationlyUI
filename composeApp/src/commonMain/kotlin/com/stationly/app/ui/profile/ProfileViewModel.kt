@@ -21,6 +21,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import com.stationly.app.ui.util.HomeConfigCache
+import com.stationly.app.ui.util.SduiScreenCache
+import com.stationly.core.config.ConfigKeys
 import kotlinx.coroutines.launch
 
 // Identity-key poll: re-read every STEP ms up to TIMEOUT ms, so the profile
@@ -28,6 +32,9 @@ import kotlinx.coroutines.launch
 // restore usually lands within a few hundred ms) instead of a fixed 1.5 s wait.
 private const val IDENTITY_POLL_STEP_MS = 120L
 private const val IDENTITY_POLL_TIMEOUT_MS = 3000L
+
+/** The last About layout the server sent; see [ProfileViewModel.loadAboutLayout]. */
+private val AboutLayoutCache = SduiScreenCache(ConfigKeys.ABOUT_LAYOUT_CACHE_KEY)
 
 class ProfileViewModel(
     private val authProvider: PlatformAuthProvider
@@ -116,21 +123,45 @@ class ProfileViewModel(
     // survivor logic to be got wrong. Stations are owned by the home screen and
     // its settings; see StationSettingsViewModel.
 
+    /**
+     * Cache first, network second, for both payloads Profile renders.
+     *
+     * Profile used to be the one screen that went straight to the network. It
+     * opened on the compiled About fallback, then the served layout arrived a
+     * second later with different copy, and everything under the About card
+     * jumped. The home-config strings did the same to the section labels and
+     * to the support card, whose visibility is decided from them.
+     *
+     * Reading the last good payload first means the screen opens as it will
+     * look; the fetch then only repaints when the server actually changed
+     * something, and an offline open still shows the served copy.
+     */
     private fun loadAboutLayout() {
         viewModelScope.launch {
+            AboutLayoutCache.load()?.let { cached ->
+                if (_uiState.value.aboutComponents.isEmpty()) {
+                    _uiState.update { it.copy(aboutComponents = cached.components) }
+                }
+            }
             try {
                 val screen = sduiApi.getAboutLayout()
-                _uiState.value = _uiState.value.copy(aboutComponents = screen.components)
+                _uiState.update { it.copy(aboutComponents = screen.components) }
+                AboutLayoutCache.save(screen)
             } catch (_: Exception) {}
         }
     }
 
     private fun loadHomeConfig() {
         viewModelScope.launch {
+            HomeConfigCache.load().takeIf { it.isNotEmpty() }?.let { cached ->
+                if (_uiState.value.homeConfig.isEmpty()) {
+                    _uiState.update { it.copy(homeConfig = cached) }
+                }
+            }
             try {
-                _uiState.value = _uiState.value.copy(
-                    homeConfig = sduiApi.getHomeConfig().strings
-                )
+                val strings = sduiApi.getHomeConfig().strings
+                _uiState.update { it.copy(homeConfig = strings) }
+                HomeConfigCache.save(strings)
             } catch (_: Exception) {}
         }
     }

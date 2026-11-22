@@ -35,4 +35,10 @@ object ConfigKeys {
      * first, the network second, and `WidgetGuideDefaults` if it has neither.
      */
     const val WIDGET_GUIDE_CACHE_KEY = "widget_guide_layout_cache"
+
+    /**
+     * Where the last successful Profile "About" layout is cached on device, so
+     * Profile opens on the served copy instead of swapping to it a second later.
+     */
+    const val ABOUT_LAYOUT_CACHE_KEY = "about_layout_cache"
 }

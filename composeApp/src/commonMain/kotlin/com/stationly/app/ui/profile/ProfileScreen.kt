@@ -28,6 +28,8 @@ import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalUriHandler
+import com.stationly.core.platform.Platform
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -85,11 +87,22 @@ private const val STATIONLY_WEB_URL = "https://stationly.co.uk"
  */
 private const val APP_STORE_URL = "itms-apps://apps.apple.com/app/id6799715716?action=write-review"
 
+/**
+ * Where "Rate Stationly" goes on Android: the Play Store app first, and the
+ * https listing when no app answers `market://` (a device without Play), which
+ * the browser or a Play-capable store then claims.
+ */
+private const val PLAY_STORE_URL = "market://details?id=com.stationly.mobile"
+private const val PLAY_STORE_WEB_URL = "https://play.google.com/store/apps/details?id=com.stationly.mobile"
+
 private val ProfileAboutFallback: List<SduiAppComponent> = listOf(
     SduiAppComponent.Card(
         id = "about_info",
         title = "Stationly",
-        body = "Live London departures. Buses, tubes, DLR and Overground on one board.",
+        // Same copy as the served layout (sduiService `about_info`). The
+        // fallback is only ever seen before the first fetch is cached, and a
+        // different sentence here is a visible swap when the served one lands.
+        body = "Real-time London transport departures at your fingertips. Track buses, tubes, DLR, and Overground — all from one board.",
         style = "brand"
     ),
     SduiAppComponent.Section(
@@ -99,14 +112,16 @@ private val ProfileAboutFallback: List<SduiAppComponent> = listOf(
             SduiAppComponent.LinkRow(id = "privacy", title = "Privacy Policy", subtitle = "How we handle your data", url = "$STATIONLY_WEB_URL/privacy", icon = "privacy_tip"),
             SduiAppComponent.LinkRow(id = "terms", title = "Terms of Service", subtitle = "Usage terms and conditions", url = "$STATIONLY_WEB_URL/terms", icon = "description"),
             SduiAppComponent.LinkRow(id = "contact", title = "Contact Us", subtitle = "Questions or feedback", url = "mailto:info@stationly.co.uk", icon = "email"),
-            // Android's fallback carries a fifth "rate" row pointing at
-            // `market://details?id=com.stationly.mobile`; iOS was missing the
-            // row entirely. Same row, App Store destination — `market://` has
-            // no handler on iOS and would dead-end (see the rewrite in
-            // AboutSection for backend-sent Android URLs).
-            SduiAppComponent.LinkRow(id = "rate", title = "Rate Stationly", subtitle = "Love the app? Let us know", url = APP_STORE_URL, icon = "star"),
+            // The url is a placeholder: AboutSection routes the "rate" row to
+            // the store for the platform it is running on.
+            SduiAppComponent.LinkRow(id = "rate", title = "Rate Stationly", subtitle = "Love the app? Let us know", url = PLAY_STORE_URL, icon = "star"),
         )
-    )
+    ),
+    SduiAppComponent.Card(
+        id = "acknowledgements",
+        body = "Powered by TfL Open Data. Contains OS data \u00a9 Crown copyright and database rights 2025. Neither TfL nor the UK Government endorse this app.",
+        style = "subtle"
+    ),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -519,6 +534,19 @@ private fun SectionHeader(title: String, icon: ImageVector) {
 
 @Composable
 private fun AboutCard(card: SduiAppComponent.Card) {
+    // `subtle` is the data-attribution footnote (TfL Open Data / OS copyright),
+    // which the licences require us to show but which is not content. It used
+    // to fall through to the full card below and borrowed the "Stationly"
+    // heading it does not have, reading as a second About card.
+    if (card.style == "subtle") {
+        Text(
+            card.body.orEmpty(),
+            color = White25, fontSize = 11.sp, lineHeight = 15.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        )
+        return
+    }
     Surface(color = Surface1, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, White08)) {
         Column(Modifier.fillMaxWidth().padding(20.dp)) {
             Text(card.title ?: "Stationly", color = Amber, fontWeight = FontWeight.Black, fontSize = 20.sp, letterSpacing = 0.5.sp)
@@ -543,20 +571,41 @@ private fun AboutCard(card: SduiAppComponent.Card) {
 @Composable
 private fun AboutSection(section: SduiAppComponent.Section) {
     val openUrl = LocalOpenUrl.current
+    val openStore = rememberRateOpener()
     val links = section.components.filterIsInstance<SduiAppComponent.LinkRow>()
     Surface(color = Surface1, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, White08)) {
         Column(Modifier.fillMaxWidth()) {
             links.forEachIndexed { i, link ->
-                // The backend SDUI layout sends Android's `market://details?id=...` URL.
-                // On iOS, rewrite it to the App Store review deep link so tapping
-                // "Rate Stationly" opens the App Store rather than failing silently.
-                val targetUrl = if (link.url.startsWith("market://", ignoreCase = true) || link.id == "rate") {
-                    APP_STORE_URL
-                } else {
-                    link.url
-                }
-                LinkRowItem(link) { openUrl(targetUrl, link.title) }
+                // The backend sends ONE layout with Android's `market://` URL,
+                // so a store link is resolved here, per platform, rather than
+                // trusted as sent. It used to be rewritten to the App Store on
+                // every platform, which Android cannot open, and the failure was
+                // swallowed: the row did nothing at all on Android.
+                val isStoreLink = link.id == "rate" || link.url.startsWith("market://", ignoreCase = true)
+                LinkRowItem(link) { if (isStoreLink) openStore() else openUrl(link.url, link.title) }
                 if (i < links.lastIndex) HorizontalDivider(color = White08, modifier = Modifier.padding(horizontal = 16.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Opens this app's store listing for the platform it is running on.
+ *
+ * Straight to the system handler, NOT through [LocalOpenUrl]: that keeps
+ * https inside Stationly's in-app browser, where a store listing renders but
+ * can neither rate nor install. On Android `market://` throws when no store app
+ * answers it, so the https listing is the fallback, opened externally.
+ */
+@Composable
+private fun rememberRateOpener(): () -> Unit {
+    val uriHandler = LocalUriHandler.current
+    return remember(uriHandler) {
+        {
+            if (Platform.getPlatformName() == "iOS") {
+                runCatching { uriHandler.openUri(APP_STORE_URL) }
+            } else if (runCatching { uriHandler.openUri(PLAY_STORE_URL) }.isFailure) {
+                runCatching { uriHandler.openUri(PLAY_STORE_WEB_URL) }
             }
         }
     }
