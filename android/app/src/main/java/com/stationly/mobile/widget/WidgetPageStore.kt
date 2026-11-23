@@ -34,6 +34,18 @@ object WidgetPageStore {
     internal const val KEY_PREFIX = "page_"
 
     /**
+     * `pagekey_<appWidgetId>`: the BLOCK the widget is on (the platform, or the
+     * bus pole's naptan), stored beside the index.
+     *
+     * The index alone sent a widget to the other direction whenever the blocks
+     * re-sorted (QA 2026-11-23, finding #5). The key is what a render resolves
+     * first ([com.stationly.core.util.PlatformPages.resolve]); the index is the
+     * fallback for a block that has left the board. Not prefixed `page_`, so
+     * the binding store's prefix sweep treats the two as separate keys.
+     */
+    internal const val BLOCK_KEY_PREFIX = "pagekey_"
+
+    /**
      * Where a widget starts when it is pointed at a different station.
      *
      * Keeping the old index would open a Bank widget on "the third one", which
@@ -42,6 +54,7 @@ object WidgetPageStore {
     const val PAGE_ON_REBIND = 0
 
     internal fun keyFor(appWidgetId: Int) = "$KEY_PREFIX$appWidgetId"
+    internal fun blockKeyFor(appWidgetId: Int) = "$BLOCK_KEY_PREFIX$appWidgetId"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(WidgetBindingStore.PREFS, Context.MODE_PRIVATE)
@@ -50,9 +63,21 @@ object WidgetPageStore {
     fun pageOf(context: Context, appWidgetId: Int): Int =
         prefs(context).getInt(keyFor(appWidgetId), 0)
 
-    fun setPage(context: Context, appWidgetId: Int, page: Int) {
+    /** The block the widget was last on, or null. See [BLOCK_KEY_PREFIX]. */
+    fun blockOf(context: Context, appWidgetId: Int): String? =
+        prefs(context).getString(blockKeyFor(appWidgetId), null)
+
+    /**
+     * Records the page AND the block on it. [blockKey] null clears the block,
+     * which is right for a rebind: the old station's block means nothing here.
+     */
+    fun setPage(context: Context, appWidgetId: Int, page: Int, blockKey: String? = null) {
         if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) return
-        prefs(context).edit().putInt(keyFor(appWidgetId), page).apply()
+        prefs(context).edit().apply {
+            putInt(keyFor(appWidgetId), page)
+            if (blockKey.isNullOrBlank()) remove(blockKeyFor(appWidgetId))
+            else putString(blockKeyFor(appWidgetId), blockKey)
+        }.apply()
     }
 
     /** Called when a widget is pointed at another station. */
@@ -62,7 +87,7 @@ object WidgetPageStore {
     fun forget(context: Context, appWidgetIds: IntArray) {
         if (appWidgetIds.isEmpty()) return
         prefs(context).edit().apply {
-            appWidgetIds.forEach { remove(keyFor(it)) }
+            appWidgetIds.forEach { remove(keyFor(it)); remove(blockKeyFor(it)) }
         }.apply()
     }
 }

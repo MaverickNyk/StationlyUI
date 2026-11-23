@@ -43,11 +43,15 @@ class MultiLineBoardProcessorTest {
         direction: String = "Northbound",
         stationId: String = "940GZZ",
         predictions: List<PredictionDisplay>,
+        terminus: String = "",
+        nextStop: String = "",
     ) = MultiLineBoardProcessor.Feed(
         stationId = stationId,
         line = line,
         direction = direction,
         predictions = predictions,
+        terminus = terminus,
+        nextStop = nextStop,
     )
 
     private fun headers(rows: List<Row>) = rows.filterIsInstance<Row.PlatformHeader>().map { it.title }
@@ -210,6 +214,74 @@ class MultiLineBoardProcessorTest {
         )
         assertEquals(listOf("Bus 39"), headers(unlettered),
             "most suburban stops are unlettered — the routes are all we have")
+    }
+
+    /** QA 2026-11-23, finding #9: both sides of Smithwood Close read "Bus 39". */
+    @Test
+    fun `an unlettered bus header names where it goes, so two sides of the road differ`() {
+        val rows = MultiLineBoardProcessor.buildRows(
+            feeds = listOf(
+                feed("39", stationId = "490008805N", direction = "inbound", terminus = "Putney Bridge Station", nextStop = "Levana Close",
+                    predictions = listOf(pred("Putney Bridge", 14, platform = ""))),
+                feed("39", stationId = "490012211N", direction = "outbound", terminus = "Clapham Junction", nextStop = "Church Road",
+                    predictions = listOf(pred("Clapham Junction", 2, platform = ""))),
+            ),
+            isBus = true,
+        )
+        assertEquals(
+            setOf("Bus 39 → Putney Bridge Station", "Bus 39 → Clapham Junction"),
+            headers(rows).toSet(),
+        )
+        // A lettered stop keeps its letter alone; the letter is what is on the pole.
+        val lettered = MultiLineBoardProcessor.buildRows(
+            feeds = listOf(feed("39", terminus = "Putney Bridge Station",
+                predictions = listOf(pred("Putney", 3, platform = "Stop W")))),
+            isBus = true,
+        )
+        assertEquals(listOf("Bus 39 Stop W"), headers(lettered))
+    }
+
+    /**
+     * Smithwood Close as saved on device: 39 and 639 share each pole and end in
+     * different places, so no single terminus names the block. The next stop,
+     * as the stop flag prints it, still tells the two sides apart.
+     */
+    @Test
+    fun `routes sharing a pole with different termini are named by their next stop`() {
+        val rows = MultiLineBoardProcessor.buildRows(
+            feeds = listOf(
+                feed("39", stationId = "N", direction = "inbound", terminus = "Putney Bridge Station", nextStop = "Levana Close",
+                    predictions = listOf(pred("Putney Bridge", 4, platform = ""))),
+                feed("639", stationId = "N", direction = "inbound", terminus = "Minstead Gardens", nextStop = "Levana Close",
+                    predictions = listOf(pred("Minstead Gardens", 1, platform = ""))),
+                feed("39", stationId = "S", direction = "outbound", terminus = "Clapham Junction Stn  / the Falcon", nextStop = "Church Road",
+                    predictions = listOf(pred("Clapham Junction", 2, platform = ""))),
+            ),
+            isBus = true,
+        )
+        assertEquals(
+            setOf("Bus 39, 639 towards Levana Close", "Bus 39 → Clapham Junction Stn / the Falcon"),
+            headers(rows).toSet(),
+            "and a double space in TfL's stop name is collapsed",
+        )
+    }
+
+    @Test
+    fun `the header ladder drops a bus destination only as its last rung`() {
+        val ladder = MultiLineBoardProcessor.headerVariants("Bus 39 → Putney Bridge Station")
+        assertEquals("Bus 39 → Putney Bridge Station", ladder.first())
+        assertEquals("Bus 39", ladder.last())
+        assertEquals("Bus 39, 639", MultiLineBoardProcessor.headerVariants("Bus 39, 639 towards Levana Close").last())
+    }
+
+    @Test
+    fun `a header row carries its block key`() {
+        val rows = MultiLineBoardProcessor.buildRows(
+            feeds = listOf(feed("39", stationId = "490012211N",
+                predictions = listOf(pred("Clapham Junction", 2, platform = "")))),
+            isBus = true,
+        )
+        assertEquals("490012211N", rows.filterIsInstance<Row.PlatformHeader>().single().key)
     }
 
     @Test

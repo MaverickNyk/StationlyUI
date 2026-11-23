@@ -9,7 +9,13 @@
 ```
 SPRINT:            5-6 — release surfaces + rollout (sprints 1-4 complete)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S022 (2026-11-22) — AV2-7.4 support through Play
+LAST SESSION:      S023 (2026-11-23) — widget at full bleed with
+                   proportional rows and an iOS-style pager (committed
+                   fdd0708, 6031e5c), then a QA sweep of the whole app on the
+                   Fold: 10 findings fixed, reviewed and device-verified
+                   (UNCOMMITTED, owner's call), the rest filed as EPIC-11.
+                   Detail: docs/QA_2026-11-23_ANDROID_SWEEP.md.
+                   S022 (2026-11-22) — AV2-7.4 support through Play
                    Billing (D11 answers Q1). Built and tested, still OFF:
                    it goes live when the owner creates the Play products and
                    sets SUPPORT_MONEY_ANDROID_ENABLED. Known iOS
@@ -52,7 +58,10 @@ LAST SESSION:      S022 (2026-11-22) — AV2-7.4 support through Play
                    board a user saved was deleted by their own next foreground.
                    Q5 turned out to be far bigger than its own text says — read
                    it before planning any merge to master.
-GATE:              GREEN at S021 close (2026-11-22)
+GATE:              GREEN at S023 close (2026-11-23): core + app unit
+                   tests, iOS compile of core and composeApp (commonMain
+                   changed), assembleStagingDebug.
+                   Previously GREEN at S021 close (2026-11-22)
                    :core:testDebugUnitTest                  PASS
                    :core:verify…DatabaseMigration           PASS
                    :composeApp:testDebugUnitTest            PASS
@@ -60,7 +69,8 @@ GATE:              GREEN at S021 close (2026-11-22)
                    :android:app:compileStagingDebugKotlin   PASS
                    :composeApp:compileDebugKotlinAndroid    PASS
                    (commonMain unchanged in S021: no XCFramework run needed)
-WORKING TREE:      committed at S021 close, both repos (owner asked 2026-11-22)
+WORKING TREE:      S023 QA fixes UNCOMMITTED (owner: no commit yet).
+                   Widget work committed: fdd0708, 6031e5c.
 MASTER:            REBASED onto 53667ca (S020, 2026-11-21). Master's iOS
                    StoreKit IAP, App Store links, iOS 1.1 and the website
                    Support page are underneath this branch now. Pre-rebase

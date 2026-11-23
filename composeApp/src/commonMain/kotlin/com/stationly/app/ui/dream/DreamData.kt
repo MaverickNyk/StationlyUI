@@ -106,6 +106,8 @@ fun loadDreamSnapshot(preferredStationId: String?): DreamSnapshot {
             stationId = b.station,
             line = b.line,
             direction = b.direction,
+            terminus = b.singleTerminus,
+            nextStop = b.directionTowards,
             predictions = runCatching {
                 Platform.sqlStorage.getPredictions(b.station, b.line, b.direction)
             }.getOrNull().orEmpty(),

@@ -119,6 +119,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -322,6 +324,23 @@ fun SelectionScreen(
         }
     }
 
+    // ── System back = the toolbar arrow ─────────────────────────────────
+    //
+    // The arrow steps back one stage (directions → station list → mode list),
+    // but nothing claimed the SYSTEM back, so the NavHost popped the whole
+    // flow: one swipe on the last step threw away the station, lines and
+    // directions with no warning (QA 2026-11-23, finding #3). Enabled exactly
+    // when the arrow would step rather than leave; otherwise the system back
+    // falls through to the NavHost and leaves, as the arrow does.
+    //
+    // iOS: same common code. The iOS host does not route an edge-swipe here
+    // unless back gestures are enabled for its controller, so the arrow stays
+    // the iOS path; this keeps the two in agreement wherever it is delivered.
+    @OptIn(ExperimentalComposeUiApi::class)
+    BackHandler(enabled = editStation == null && "mode" in selMap) {
+        viewModel.popLastSelection()
+    }
+
     Box(
         Modifier.fillMaxSize()
             // Subtle theme-aware fade: surface → background. (Originally a
@@ -374,6 +393,7 @@ fun SelectionScreen(
                         selectedId      = selMap["station"],
                         locating        = st.isLocating,
                         noNearby        = st.isGpsUnavailable,
+                        nearbyProblem   = st.nearbyProblem,
                         searchEmpty     = st.isSearchEmpty,
                         primary         = primary,
                         modeIcon        = mode?.iconUrl,
@@ -671,6 +691,7 @@ private fun StationScreen(
     recentStations: List<SduiDropdownOption>,
     selectedId: String?,
     locating: Boolean, noNearby: Boolean, searchEmpty: Boolean,
+    nearbyProblem: NearbyProblem? = null,
     primary: Color, modeIcon: String?, mode: String?, modeLabel: String?,
     onSelect: (SduiDropdownOption) -> Unit,
     onSearch: (String) -> Unit
@@ -716,8 +737,19 @@ private fun StationScreen(
     val titleFallback =
         if (!modeLabel.isNullOrBlank()) "Find a $modeLabel $noun" else "Find your $noun"
     val subtitleFallback =
-        if (noNearby) "Location off. Search by name."
+        if (noNearby) "Search by name."
         else "Nearby ${noun}s first, or search for another."
+    // Why there is no nearby list, in words true to the cause. It used to say
+    // "Location off. Type to find stops" for all of them, on the Tube too
+    // (QA 2026-11-23, finding #1).
+    val noNearbyDetail = when (nearbyProblem) {
+        NearbyProblem.NONE_NEARBY -> "No ${noun}s near you. Type a name to find one"
+        NearbyProblem.UNREACHABLE -> "Couldn't load nearby ${noun}s. Type a name to search"
+        NearbyProblem.NO_LOCATION, null -> "Couldn't find your location. Type a name to search"
+    }
+    // A typed search always wins over the nearby lookup, which can still be
+    // running; the spinner used to sit over the results (finding #2).
+    val searching = searchQuery.isNotBlank()
 
     Column(Modifier.fillMaxSize()) {
         Spacer(Modifier.height(16.dp))
@@ -760,7 +792,7 @@ private fun StationScreen(
         )
 
         when {
-            locating -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+            locating && !searching -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 val p by rememberInfiniteTransition("loc").animateFloat(
                     1f, 1.35f, infiniteRepeatable(tween(900), RepeatMode.Reverse), "lp")
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -791,9 +823,9 @@ private fun StationScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
                     Icon(Icons.Rounded.Search, null, tint = White25, modifier = Modifier.size(40.dp))
                     Spacer(Modifier.height(12.dp))
-                    Text("Search for a station", color = White55, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Search for a $noun", color = White55, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
-                    Text("Location off. Type to find stops", color = White25, fontSize = 12.sp)
+                    Text(noNearbyDetail, color = White25, fontSize = 12.sp, textAlign = TextAlign.Center)
                 }
             }
 
@@ -1781,7 +1813,7 @@ private fun CollapsedLineSummary(
     // raw id so a collapsed line is never blank while its fetch is in flight.
     val parts = picks.map { dirId ->
         val label = directions?.find { it.id == dirId }
-            ?.let { it.directionName ?: it.label }
+            ?.let(::directionSummaryLabel)
             ?: dirId.replaceFirstChar { c -> c.uppercase() }
         val filter = filters[SelectionViewModel.boardFilterKey(lineId, dirId)] ?: BoardFilter()
         if (filter.isActive) "$label (${filter.summary(modeId)})" else label
@@ -1853,4 +1885,36 @@ private fun InlineErr(msg: String, primary: Color, onRetry: () -> Unit) {
             Text("Retry", color = primary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
         }
     }
+}
+
+/**
+ * One direction, in the few words the collapsed line summary has room for.
+ *
+ * A compass direction when the mode has one ("Westbound"). Otherwise where it
+ * GOES, its terminus ("Putney Bridge Station", or "Edgware +1" where it
+ * divides), then the next stop, then the option's own label. It used to take
+ * `directionName` as-is, and every bus stop sends the literal word "Towards"
+ * there, so a two-way bus line summarised as "Towards · Towards" (QA
+ * 2026-11-23, finding #6). The direction card below already refuses a bare
+ * "Towards"; this is the same rule for the summary.
+ *
+ * iOS: shared code; the iOS app uses this same screen.
+ */
+private val WHITESPACE = Regex("\\s+")
+
+internal fun directionSummaryLabel(opt: SduiDropdownOption): String {
+    val compass = opt.directionName?.trim().orEmpty()
+    if (compass.isNotBlank() && !compass.equals("Towards", ignoreCase = true)) return compass
+    // Where it ENDS UP, as the direction card's "→" lines say. Not `towards`:
+    // that is the NEXT STOP ("Levana Close"), which on device made the summary
+    // name two side streets instead of Putney Bridge and Clapham Junction.
+    // TfL stop names carry stray double spaces ("Clapham Junction Stn  / the Falcon").
+    val termini = opt.destinations?.map { it.label.replace(WHITESPACE, " ").trim() }
+        ?.filter { it.isNotBlank() }.orEmpty()
+    if (termini.isNotEmpty()) {
+        return if (termini.size == 1) termini.first() else "${termini.first()} +${termini.size - 1}"
+    }
+    return opt.towards?.trim()?.takeIf { it.isNotBlank() }
+        ?: opt.label.trim().takeIf { it.isNotBlank() }
+        ?: compass
 }

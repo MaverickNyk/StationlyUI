@@ -46,6 +46,11 @@ kotlin {
                 implementation(compose.materialIconsExtended)
                 implementation(compose.ui)
                 implementation(compose.components.resources)
+                // System back for overlays and multi-step flows (in-app browser,
+                // add-station steps). Already in the build at runtime through
+                // navigation-compose; declared so common code can call it.
+                // Keep in step with the org.jetbrains.compose plugin version.
+                implementation("org.jetbrains.compose.ui:ui-backhandler:1.8.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")

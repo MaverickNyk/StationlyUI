@@ -5,7 +5,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,6 +57,7 @@ import com.stationly.core.model.user.PlatformNav
 import com.stationly.core.util.PlatformPages
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
+import com.stationly.app.ui.common.StationlyLogo
 import com.stationly.app.ui.common.pressScale
 import com.stationly.app.platform.HapticType
 
@@ -79,7 +79,6 @@ import com.stationly.app.platform.HapticType
 private val BoardAmber  = Color(0xFFFFC819)
 private val ActiveRowBg = Color(0xFF161616)
 private val CardBg      = Color(0xFF050505)
-private val StationlyRed = Color(0xFFE32017)
 
 /**
  * Uniform baseline for every row on the dream board. The widget XML's tiered
@@ -498,19 +497,17 @@ fun DreamBoard(
 
             // ── Footer: brand mark + optional clock + "X ago" chronometer ──
             Box(modifier = Modifier.fillMaxWidth().padding(top = 2.dp)) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = 6.dp)
-                        .size((22f * textScale).dp)
-                        .background(StationlyRed, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "S", color = Color.White,
-                        fontSize = (12f * textScale).sp, fontWeight = FontWeight.Black
-                    )
-                }
+                // The REAL brand mark, the same one in the same place as the
+                // home board's footer and the widget's (`stationly_logo`). It
+                // was a drawn red disc with a white "S" here, so the screensaver
+                // was the one surface wearing a different logo (owner,
+                // 2026-11-23: "we have a consistent icon on the bottom left").
+                // [StationlyLogo] is the single source; it carries its own
+                // fallback for a build without bundled resources.
+                StationlyLogo(
+                    size = (22f * textScale).dp,
+                    modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp),
+                )
                 if (showClock) {
                     Box(
                         modifier = Modifier.align(Alignment.Center)

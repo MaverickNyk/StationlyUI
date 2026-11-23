@@ -45,4 +45,20 @@ class BoardProportionsTest {
     @Test
     fun `nothing to stretch, nothing to solve`() =
         assertNull(BoardProportions.solve(300, WidgetSize.MEDIUM, 1f, rows = 0, headers = 0, pager = false, status = true))
+
+    /** QA 2026-11-23, #12: at font scale 1.3 the last row was clipped. */
+    @Test
+    fun `at large text a stretched row is never shorter than its text`() {
+        for (size in WidgetSize.values())
+            for (height in listOf(150, 214, 260, 320, 440))
+                for (fontScale in listOf(1.15f, 1.3f, 1.5f)) {
+                    listOf(
+                        BoardProportions.solve(height, size, fontScale, rows = 3, headers = 0, pager = true, status = true),
+                        BoardProportions.solve(height, size, fontScale, rows = 3, headers = 1, pager = false, status = true),
+                    ).filterNotNull().forEach { h ->
+                        val needed = size.row * fontScale * BoardProportions.LINE
+                        assertTrue("row ${h.rowDp} < text $needed ($size, $height, $fontScale)", h.rowDp >= needed - 0.01f)
+                    }
+                }
+    }
 }

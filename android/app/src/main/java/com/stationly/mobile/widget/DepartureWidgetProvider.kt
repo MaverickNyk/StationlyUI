@@ -952,6 +952,8 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     stationId = sel.station,
                     line = sel.line,
                     direction = sel.direction,
+                    terminus = sel.singleTerminus,
+                    nextStop = sel.directionTowards,
                     predictions = com.stationly.core.util.StationlyFormatters.sortPredictions(
                         tickPredictions(raw, nowMs)
                     ),
@@ -1099,7 +1101,13 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 boundSelection = selection,
                 boardRows = boardRows,
                 platformNav = widgetNav,
-                platformPage = WidgetPageStore.pageOf(context, appWidgetId),
+                // The page holding the block this widget was on, wherever that
+                // block sorts today; the stored index only if it has gone.
+                platformPage = com.stationly.core.util.PlatformPages.resolve(
+                    boardRows.orEmpty(),
+                    WidgetPageStore.blockOf(context, appWidgetId),
+                    WidgetPageStore.pageOf(context, appWidgetId),
+                ),
                 // Spend the flag even when the caller named a motion, so a
                 // refresh followed straight away by a chevron does not leave a
                 // flip owed and play it minutes later against a push.
@@ -1190,6 +1198,8 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     stationId = sel.station,
                     line = sel.line,
                     direction = sel.direction,
+                    terminus = sel.singleTerminus,
+                    nextStop = sel.directionTowards,
                     predictions = com.stationly.core.util.StationlyFormatters.sortPredictions(
                         tickPredictions(
                             com.stationly.core.platform.Platform.sqlStorage
@@ -1226,19 +1236,25 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             val boundTo = WidgetBindingStore.boundStation(context, appWidgetId, WidgetBindingStore.currentUid()) ?: return
             val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
             val selection = selections.firstOrNull { it.groupingId == boundTo } ?: return
-            val pageCount = PlatformPages.count(
-                boardRowsFor(
-                    selections, selection, boundTo,
-                    ROWS_PER_PLATFORM,
-                    WidgetSettings.pinOf(context, appWidgetId),
-                )
+            val rows = boardRowsFor(
+                selections, selection, boundTo,
+                ROWS_PER_PLATFORM,
+                WidgetSettings.pinOf(context, appWidgetId),
             )
+            val pageCount = PlatformPages.count(rows)
             if (pageCount <= 1) return
-            val current = PlatformPages.clamp(
-                WidgetPageStore.pageOf(context, appWidgetId), pageCount,
+            // Step from where the user actually IS (the block they were on), not
+            // from a position the blocks may have sorted away from.
+            val current = PlatformPages.resolve(
+                rows,
+                WidgetPageStore.blockOf(context, appWidgetId),
+                WidgetPageStore.pageOf(context, appWidgetId),
             )
             val next = PlatformPages.step(current, delta, pageCount)
-            WidgetPageStore.setPage(context, appWidgetId, next)
+            WidgetPageStore.setPage(
+                context, appWidgetId, next,
+                blockKey = PlatformPages.key(PlatformPages.page(rows, next)),
+            )
 
             // ── A FULL redraw, carrying the direction it was pressed in ──────
             //

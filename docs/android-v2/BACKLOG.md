@@ -122,7 +122,34 @@ roughly one focused hour.
 | AV2-10.8 | The Android 17 widget: rows, corners, updates | L | ✅ S021 |
 | AV2-10.9 | Taps that do what they say | M | ✅ S021 |
 | AV2-10.10 | Refresh that visibly happens | M | ✅ S021 |
-| AV2-10.11 | The widget at every size, as iOS draws it | L | 🔄 S021 · LARGE split + status backfill left |
+| AV2-10.11 | The widget at every size, as iOS draws it | L | 🔄 S021, S023 · full bleed + proportional rows + pager done; LARGE split + status backfill left |
+
+## EPIC-11 — QA sweep of Android 2.0 · [detail](../QA_2026-11-23_ANDROID_SWEEP.md)
+
+> A device pass over every screen and flow, 2026-11-23 (S023). Numbers are the
+> QA doc's finding numbers. Every row says whether iOS gets the fix for free
+> (shared code) or needs Swift.
+
+| Story | Title | Size | State |
+|---|---|---|---|
+| AV2-11.1 | Nearby search: honest wording, 8 s cap, permission outside the cap (#1) | S | ✅ S023 · shared |
+| AV2-11.2 | A typed search always beats the nearby lookup (#2) | S | ✅ S023 · shared |
+| AV2-11.3 | System Back steps through add-station and closes the in-app browser (#3, #4) | S | ✅ S023 · shared; iOS edge-swipe only if enabled |
+| AV2-11.4 | Direction summary names termini, not "Towards" (#6) | S | ✅ S023 · shared |
+| AV2-11.5 | Bus routes in numeric order (#7) | S | ✅ S023 · shared |
+| AV2-11.6 | Unlettered bus headers say where they go (#9) | M | ✅ S023 · shared incl. iOS widget feeds |
+| AV2-11.7 | A stepping widget remembers its block, not its position (#5) | M | ✅ S023 Android · **iOS needs Swift** |
+| AV2-11.8 | Widget row height at large text (#12) | S | ✅ S023 · Android only |
+| AV2-11.9 | One logo, bottom-left, on every board surface | S | ✅ S023 · shared |
+| AV2-11.10 | Landscape board and staging banner (#11) | M | open · device check first |
+| AV2-11.11 | Store prices in the buyer's currency (#13) | M | open · **iOS needs Swift** |
+| AV2-11.12 | Screensaver: both directions, board-location weather, "Route 39" (#14) | M | open |
+| AV2-11.13 | Offline indicator in the app (#15) | S | open |
+| AV2-11.14 | Widget manager: tell duplicates apart, back arrow (#16) | S | open |
+| AV2-11.15 | List layout nested scroll; station-settings preview/header (#17, #18) | M | open |
+| AV2-11.16 | Copy and polish batch (#19 to #28) | M | open |
+| AV2-11.17 | "Select all" above the line limit (#8) | S | owner's product call |
+| AV2-11.18 | Backend data: destination naming, Bank directions, a pole that stopped (#10, #32, #33) | M | backend |
 
 ---
 

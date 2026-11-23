@@ -148,6 +148,23 @@ object MultiLineBoardProcessor {
         /** "Eastbound" / "Inbound". May be blank. */
         val direction: String,
         val predictions: List<PredictionDisplay>,
+        /**
+         * Where this direction ENDS: its one terminus, "Putney Bridge Station"
+         * ([com.stationly.core.model.UserSelection.directionDestinations] when it
+         * holds exactly one). Blank when the direction divides or is unknown.
+         *
+         * Read only by a BUS header with no stop letter, which otherwise said
+         * just "Bus 39" for both sides of the road (QA 2026-11-23, finding #9).
+         */
+        val terminus: String = "",
+        /**
+         * The NEXT stop, "Levana Close"
+         * ([com.stationly.core.model.UserSelection.directionTowards]; despite
+         * its name, the picker stores the next stop there). The header's
+         * fallback when the routes at one pole end in different places: it is
+         * what TfL prints on the stop flag ("towards Levana Close").
+         */
+        val nextStop: String = "",
     )
 
     /**
@@ -183,7 +200,16 @@ object MultiLineBoardProcessor {
 
     sealed class Row {
         /** "Platform 2 (Eastbound)" for rail, "Stop W" for buses. */
-        data class PlatformHeader(val title: String) : Row()
+        data class PlatformHeader(
+            val title: String,
+            /**
+             * [Group.key]: the platform on rail, the pole naptan on bus. Stable
+             * where [title] may not be unique or may be reworded, so a consumer
+             * that has to come back to "the same block" (the widget's remembered
+             * page) holds on to this, not to a position or a title.
+             */
+            val key: String = "",
+        ) : Row()
         /**
          * [linePrefix] is blank unless the group mixes lines — see
          * [buildRows]. Blank [destination] + [eta] is a padding row.
@@ -362,6 +388,8 @@ object MultiLineBoardProcessor {
         lines: List<String>,
         directions: Set<String>,
         isBus: Boolean,
+        termini: Set<String> = emptySet(),
+        nextStops: Set<String> = emptySet(),
     ): String {
         val label = platformLabel.trim()
         // Buses: "Bus 39", "Bus 39, 34, 33", "Bus 39, 34 Stop N".
@@ -375,7 +403,16 @@ object MultiLineBoardProcessor {
         // "Stop N Outbound" is noise.
         if (isBus) {
             val routes = busRouteList(lines)
-            return listOf(routes, label).filter { it.isNotBlank() }.joinToString(" ")
+            // An unlettered stop has nothing to tell its two sides of the road
+            // apart, so both read "Bus 39" (QA 2026-11-23, finding #9). Name
+            // where this side GOES: its terminus when every route at the pole
+            // shares one ("Bus 39 → Putney Bridge Station"), else the next stop
+            // as the stop flag says it ("Bus 39, 639 towards Levana Close").
+            // A lettered stop keeps its letter alone; that is what is on the pole.
+            val heading = if (label.isNotBlank()) null else
+                termini.singleOrNull()?.let { "$BUS_TOWARDS_MARK $it" }
+                    ?: nextStops.singleOrNull()?.let { "$BUS_NEXT_STOP_WORD $it" }
+            return listOf(routes, label, heading.orEmpty()).filter { it.isNotBlank() }.joinToString(" ")
         }
         // Only when every feed in the group agrees — a platform worked in both
         // directions gets no suffix rather than an arbitrary one.
@@ -397,7 +434,9 @@ object MultiLineBoardProcessor {
      * burying the departures it sits above.
      */
     private fun busRouteList(lines: List<String>): String {
-        val routes = lines.filter { it.isNotBlank() }.distinct()
+        // By route number, not by which bus is due first: the header must not
+        // reorder itself ("639, 39" then "39, 639") as departures move.
+        val routes = BusRouteOrder.sorted(lines.filter { it.isNotBlank() }.distinct()) { it }
         if (routes.isEmpty()) return ""
         val shown = routes.take(MAX_BUS_ROUTES).joinToString(", ")
         val overflow = routes.size - MAX_BUS_ROUTES
@@ -410,6 +449,22 @@ object MultiLineBoardProcessor {
      * `board.status_label` and friends.
      */
     private const val BUS_PREFIX = "Bus"
+
+    /**
+     * The distinct, non-blank place names [of] gives for [feeds], with TfL's
+     * stray double spaces collapsed ("Clapham Junction Stn  / the Falcon"), so
+     * two boards naming one place one space apart count as one place.
+     */
+    private fun placeNames(feeds: List<Feed>, of: (Feed) -> String): Set<String> =
+        feeds.mapNotNullTo(mutableSetOf()) { feed ->
+            of(feed).replace(WHITESPACE_RUN, " ").trim().takeIf { it.isNotEmpty() }
+        }
+
+    /** Joins a bus header to where it ends: "Bus 39 → Putney Bridge Station". */
+    private const val BUS_TOWARDS_MARK = "→"
+
+    /** Joins a bus header to its next stop, as a stop flag does: "towards Levana Close". */
+    private const val BUS_NEXT_STOP_WORD = "towards"
 
     private const val MAX_BUS_ROUTES = 4
 
@@ -485,7 +540,14 @@ object MultiLineBoardProcessor {
             val Cased = d.replaceFirstChar { it.uppercase() }
             acc.replace(" ($Cased)", "").replace(" $Cased", "")
         }.trim()
-        return listOf(full, abbreviated, shortLines, noDirection).distinct()
+        // Last resort on a narrow widget: a bus header's "→ terminus" or
+        // "towards next stop" goes, leaving the routes. Only after every rung
+        // that keeps it, and only on a bus header: rail headers never carry
+        // either, and must not be cut at a station name that happens to.
+        val noTowards = if (!noDirection.startsWith("$BUS_PREFIX ")) noDirection
+            else noDirection.substringBefore(" $BUS_TOWARDS_MARK ")
+                .substringBefore(" $BUS_NEXT_STOP_WORD ").trim()
+        return listOf(full, abbreviated, shortLines, noDirection, noTowards).distinct()
     }
 
     /**
@@ -773,7 +835,7 @@ object MultiLineBoardProcessor {
             // An empty strip reads as a rendering bug. The station strip above
             // already names the stop, so with one group the header adds nothing
             // anyway — the rows simply start.
-            if (group.header.isNotBlank()) rows.add(Row.PlatformHeader(group.header))
+            if (group.header.isNotBlank()) rows.add(Row.PlatformHeader(group.header, group.key))
 
             val shown =
                 if (rowCap > 0) group.departures.take(rowCap) else group.departures
@@ -1007,7 +1069,12 @@ object MultiLineBoardProcessor {
                 // depth here and still wants the user's pin from prefs.
                 val shown = sorted.take(rowCap)
 
-                val header = headerFor(label, lines, directions, isBus)
+                // Every feed with a departure in this block, not only the ones in
+                // the rows shown, so the header does not flip as the cap moves.
+                val blockFeeds = entries.map { it.second }.distinct()
+                val termini = placeNames(blockFeeds) { it.terminus }
+                val nextStops = placeNames(blockFeeds) { it.nextStop }
+                val header = headerFor(label, lines, directions, isBus, termini, nextStops)
                 Group(
                     key = key,
                     header = header,

@@ -52,8 +52,17 @@ object BoardProportions {
      */
     const val SLACK = 0.97f
 
-    /** Rendered line height of one line of text, as a multiple of its size. */
-    private const val LINE = 1.32f
+    /**
+     * Rendered line height of one line of text, as a multiple of its size,
+     * including Android's font padding.
+     *
+     * Was 1.32, which is right at font scale 1.0 and a few px short at 1.3: the
+     * floors came out under what the text draws at, the solve still "fitted",
+     * and the bottom departure row lost its descenders (QA 2026-11-23, finding
+     * #12, Arsenal at font scale 1.3). 1.42 leaves the headroom; a board that
+     * cannot afford it is crowded and keeps its natural heights instead.
+     */
+    internal const val LINE = 1.42f
 
     data class Heights(
         val stationDp: Float,

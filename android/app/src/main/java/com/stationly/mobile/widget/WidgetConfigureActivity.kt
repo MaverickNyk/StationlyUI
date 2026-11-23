@@ -363,6 +363,8 @@ class WidgetConfigureActivity : ComponentActivity() {
                 stationId = board.station,
                 line = board.line,
                 direction = board.direction,
+                terminus = board.singleTerminus,
+                nextStop = board.directionTowards,
                 predictions = runCatching {
                     Platform.sqlStorage.getPredictions(board.station, board.line, board.direction)
                 }.getOrNull().orEmpty(),

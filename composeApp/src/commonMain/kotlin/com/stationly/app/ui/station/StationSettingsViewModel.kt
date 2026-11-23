@@ -285,6 +285,8 @@ class StationSettingsViewModel(
                 stationId = board.station,
                 line = board.line,
                 direction = board.direction,
+                terminus = board.singleTerminus,
+                nextStop = board.directionTowards,
                 predictions = predictions,
             )
         }

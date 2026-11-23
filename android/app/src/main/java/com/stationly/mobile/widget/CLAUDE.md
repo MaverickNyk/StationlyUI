@@ -358,6 +358,17 @@ helpers, or document why this surface needs to diverge.
   to start on STEP when a station had several platforms. Arrows ("Buttons") are
   a choice in the widget's settings; `applyDefaultsAndFinish` writes SCROLL on
   first placement only and never resets a widget already set up.
+- **A stepping widget remembers its BLOCK, not its position** (QA 2026-11-23).
+  `WidgetPageStore` keeps `pagekey_<id>` (the header's `key`: platform, or bus
+  pole naptan) beside `page_<id>`; renders and steps resolve with
+  `PlatformPages.resolve(rows, key, index)`. Blocks re-sort as departures move,
+  so an index alone silently switched a widget to the other direction. The iOS
+  widget still stores an index (`WidgetPageIntent.swift`): same fix needed there.
+- **Unlettered bus headers name where that side goes**: "Bus 39 → Putney Bridge
+  Station" from `Feed.terminus` (= `directionDestinations` when it holds one),
+  else "Bus 39, 639 towards Church Road" from `Feed.nextStop` (=
+  `directionTowards`, which is the NEXT stop despite its name). Every
+  `Feed(...)` builder must pass both, or both sides of the road read "Bus 39".
 - **Type follows the size class** (`WidgetSize`: COMPACT / MEDIUM / LARGE, the
   iOS families). Medium is the XML defaults. Headers pick a rung of
   `headerVariants` that fits (`WidgetText`); never let a header wrap.

@@ -546,6 +546,8 @@ fun SummaryScreen(
                                               stationId = selection.station,
                                               line = selection.line,
                                               direction = selection.direction,
+                                              terminus = selection.singleTerminus,
+                                              nextStop = selection.directionTowards,
                                               predictions = predictions[selection.boardKey].orEmpty(),
                                           )
                                       },

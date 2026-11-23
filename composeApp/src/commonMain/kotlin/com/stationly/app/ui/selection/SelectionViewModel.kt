@@ -40,6 +40,12 @@ import kotlinx.serialization.json.Json
 import com.stationly.app.platform.performHaptic
 import com.stationly.app.platform.HapticType
 
+/**
+ * The longest the station step waits for a location fix before giving up and
+ * pointing at the search box (QA 2026-11-23: it spun ~25s indoors).
+ */
+private const val LOCATION_WAIT_MS = 8_000L
+
 class SelectionViewModel(
     private val locationProvider: LocationProvider = platformLocationProvider()
 ) : ViewModel() {
@@ -434,37 +440,74 @@ class SelectionViewModel(
         }
     }
 
+    /**
+     * What the user has typed into the station search, trimmed. Blank when they
+     * are looking at the nearby list.
+     *
+     * The nearby lookup and a typed search both write `dropdownData["station"]`.
+     * A nearby result that lands AFTER the user started typing used to replace
+     * their search results with the nearby list (QA 2026-11-23, finding #2), so
+     * the nearby path checks this before writing.
+     */
+    private var activeSearchQuery: String = ""
+
     fun fetchNearbyStations(lat: Double? = null, lon: Double? = null, modeId: String? = null) {
         if (lat == null || lon == null) {
             viewModelScope.launch {
-                _uiState.value = _uiState.value.copy(isLocating = true)
-                val loc = locationProvider.getCurrentLocation()
+                _uiState.value = _uiState.value.copy(isLocating = true, nearbyProblem = null)
+                // Permission FIRST and unbounded: a person reading the system
+                // dialog must not run down the clock below.
+                // Then the fix, bounded. The platform lookup has no deadline of
+                // its own and was seen spinning ~25s indoors before giving up;
+                // past this the user is better served by the search box.
+                val loc = if (!locationProvider.ensurePermission()) null
+                    else withTimeoutOrNull(LOCATION_WAIT_MS) { locationProvider.getCurrentLocation() }
                 if (loc != null) {
                     _uiState.value = _uiState.value.copy(userLat = loc.first, userLon = loc.second)
                     fetchNearbyStations(loc.first, loc.second, modeId)
                 } else {
-                    _uiState.value = _uiState.value.copy(isLocating = false, isGpsUnavailable = true)
+                    _uiState.value = _uiState.value.copy(
+                        isLocating = false, isGpsUnavailable = true,
+                        nearbyProblem = NearbyProblem.NO_LOCATION,
+                    )
                 }
             }
             return
         }
         viewModelScope.launch {
             try {
-                _uiState.value = _uiState.value.copy(isLocating = true)
+                _uiState.value = _uiState.value.copy(isLocating = true, nearbyProblem = null)
                 val nearbyStations = sduiService.getNearbyStations(lat, lon, modeId)
+                // The user moved on to a typed search while this was in flight:
+                // their results stand, this list is dropped.
+                if (activeSearchQuery.isNotBlank()) {
+                    _uiState.value = _uiState.value.copy(isLocating = false, userLat = lat, userLon = lon)
+                    return@launch
+                }
                 if (nearbyStations.isNotEmpty()) {
                     val updatedData = _dropdownData.value.toMutableMap()
                     updatedData["station"] = withEditStation(nearbyStations)
                     _dropdownData.value = updatedData
                     _uiState.value = _uiState.value.copy(
                         isLocating = false, isGpsUnavailable = false,
-                        isSearchEmpty = false, userLat = lat, userLon = lon
+                        isSearchEmpty = false, userLat = lat, userLon = lon,
+                        nearbyProblem = null,
                     )
                 } else {
-                    _uiState.value = _uiState.value.copy(isLocating = false, isGpsUnavailable = true)
+                    // Location WORKED; there is just nothing of this mode near
+                    // it, which is every phone outside London.
+                    _uiState.value = _uiState.value.copy(
+                        isLocating = false, isGpsUnavailable = true,
+                        nearbyProblem = NearbyProblem.NONE_NEARBY,
+                    )
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (_: Exception) {
-                _uiState.value = _uiState.value.copy(isLocating = false, isGpsUnavailable = true)
+                _uiState.value = _uiState.value.copy(
+                    isLocating = false, isGpsUnavailable = true,
+                    nearbyProblem = NearbyProblem.UNREACHABLE,
+                )
             }
         }
     }
@@ -472,6 +515,7 @@ class SelectionViewModel(
     fun searchStations(query: String) {
         val state = _uiState.value
         val mode = _selections.value["mode"] ?: ""
+        activeSearchQuery = query.trim()
         if (query.isBlank()) {
             val lat = state.userLat
             val lon = state.userLon
@@ -487,6 +531,9 @@ class SelectionViewModel(
                 val results = sduiService.getDropdownData(
                     "/stations/search?searchKey=${query.trim()}&mode=$mode$locationSuffix"
                 )
+                // A slower answer to an earlier keystroke must not replace the
+                // answer to the latest one.
+                if (query.trim() != activeSearchQuery) return@launch
                 val updatedData = _dropdownData.value.toMutableMap()
                 updatedData["station"] = withEditStation(results)
                 _dropdownData.value = updatedData
@@ -498,6 +545,10 @@ class SelectionViewModel(
     }
 
     fun onDropdownSelected(componentId: String, value: String) {
+        // Any move between steps leaves the station search behind; a query
+        // carried over would make the NEXT nearby lookup think the user is
+        // still searching and throw its answer away (see activeSearchQuery).
+        if (componentId == "mode" || componentId == "station") activeSearchQuery = ""
         if (value.isBlank()) { performHaptic(HapticType.TAP); removeSelection(componentId); return }
 
         // BEFORE the haptic and before ANY state is touched. The `when` below
@@ -1115,6 +1166,7 @@ class SelectionViewModel(
 
     fun popLastSelection() {
         performHaptic(HapticType.TAP)
+        activeSearchQuery = "" // see onDropdownSelected
         val sel = _selections.value
         when {
             // Back on the line step returns to the station list in ONE press.
@@ -1487,7 +1539,7 @@ class SelectionViewModel(
                     try {
                         val cached = jsonFormat.decodeFromString<List<SduiDropdownOption>>(cachedJson)
                         val cur = _dropdownData.value.toMutableMap()
-                        cur[dropdown.id] = cached
+                        cur[dropdown.id] = inPickerOrder(dropdown.id, cached)
                         _dropdownData.value = cur
                         // Also from the CACHE, not just the live fetch below.
                         // The fetch is what normally teaches the store, but it
@@ -1505,7 +1557,7 @@ class SelectionViewModel(
                 rememberLineShortNames(dropdown.id, options)
 
                 val cur = _dropdownData.value.toMutableMap()
-                cur[dropdown.id] = options
+                cur[dropdown.id] = inPickerOrder(dropdown.id, options)
                 _dropdownData.value = cur
                 _uiState.value = _uiState.value.copy(
                     failedFetches = _uiState.value.failedFetches - dropdown.id
@@ -1525,6 +1577,20 @@ class SelectionViewModel(
                 )
             }
         }
+    }
+
+    /**
+     * The line step lists bus routes by NUMBER (14, 37, 39 ... 337), not in the
+     * backend's text order (14, 337, 37), which is what a passenger scans for
+     * (QA 2026-11-23, finding #7). Everything else, and rail lines, untouched.
+     * Applied where the list is stored, so "Select all" fills its quota in the
+     * same order the user reads.
+     */
+    private fun inPickerOrder(dropdownId: String, options: List<SduiDropdownOption>): List<SduiDropdownOption> {
+        if (dropdownId != "line") return options
+        val mode = _selections.value["mode"]
+        if (!com.stationly.core.util.MultiLineBoardProcessor.isBus(mode)) return options
+        return com.stationly.core.util.BusRouteOrder.sorted(options) { it.id.ifBlank { it.label } }
     }
 
     private fun scheduleAutoRetry() {

@@ -49,6 +49,8 @@ object AndroidLocationProvider : LocationProvider {
      */
     private val permissionGate = Mutex()
 
+    override suspend fun ensurePermission(): Boolean = hasPermission() || requestPermission()
+
     override suspend fun getCurrentLocation(): Pair<Double, Double>? {
         if (!hasPermission() && !requestPermission()) return null
 

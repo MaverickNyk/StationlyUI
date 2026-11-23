@@ -18,6 +18,50 @@ Template:
 
 ---
 
+## S023 — 2026-11-23 — EPIC-10 polish + EPIC-11 · **the widget at full bleed, and a QA sweep of the whole app**
+
+**Outcome:** Widget work DONE and committed. QA sweep run on device; 10 of its
+findings fixed, reviewed and device-verified (uncommitted); the rest recorded
+as EPIC-11 for the owner to prioritise.
+**Gate:** GREEN: `:core:testDebugUnitTest`, `:android:app:testStagingDebugUnitTest`,
+`:core:compileKotlinIosSimulatorArm64`, `:composeApp:compileKotlinIosSimulatorArm64`
+(commonMain and iosMain changed), `:android:app:assembleStagingDebug`.
+**Commits:** `fdd0708` widget full bleed / proportional rows / iOS-aligned pager /
+smooth refresh; `6031e5c` new widgets start on SCROLL. The QA fixes are
+UNCOMMITTED by owner instruction.
+**Did:**
+- Widget (AV2-10.11 follow-up): station and clock rows flush to the edges;
+  rows hold station > platform > departure > status at every size
+  (`BoardProportions`); pager "1/2" beside the title as iOS, slim arrows on
+  2x2; smooth 0.8 s refresh spin; picker preview matches the board.
+- New widgets start on SCROLL at every station (AV2-10.4 T2 revised by owner).
+- QA sweep (EPIC-11): fixed nearby search wording and timeout, search beating
+  the spinner, system Back in add-station and in the in-app browser, the
+  "Towards · Towards" summary, numeric bus-route order, unlettered bus headers
+  ("Bus 39 → Putney Bridge Station"), the widget remembering its page by block
+  (not index), widget line height at large text, and the screensaver's logo.
+**Learned:**
+- `UserSelection.directionTowards` is the NEXT stop, not the terminus; its
+  KDoc said otherwise and the first cut of two fixes named side streets
+  because of it. Termini live in `directionDestinations`.
+- RemoteViews refuses a plain `View` ("Class not allowed"): every widget showed
+  "Can't load widget" for a minute. Spacers must be FrameLayouts.
+- `animated-rotate` is a fixed 12-step tick; a level-driven `rotate` with
+  `indeterminateDuration` is smooth.
+- Common-code `BackHandler` needs `org.jetbrains.compose.ui:ui-backhandler`
+  declared; it is only transitively present at runtime.
+**Review:** a full pass found two bugs the fixes themselves introduced (the
+location cap covering the permission dialog; a stale search query swallowing
+the next nearby list), both fixed. See `docs/QA_2026-11-23_ANDROID_SWEEP.md`.
+**Next agent needs to know:** the QA doc is the source of truth for what is
+fixed, what each fix means for iOS, and what is open. Two iOS fixes need Swift
+and were NOT made (owner: iOS untouched): the widget's page memory
+(`WidgetPageIntent.swift`) and StoreKit local-currency prices. Two backend data
+findings (#32 Bank Central directions swapped, #33 a Smithwood pole that stopped
+updating) need the backend/Syncer, not the app.
+
+---
+
 ## S022 — 2026-11-22 — AV2-7.4 · **support through Google Play Billing**
 
 **Outcome:** DONE to Review, except the on-device purchase (task e), which waits

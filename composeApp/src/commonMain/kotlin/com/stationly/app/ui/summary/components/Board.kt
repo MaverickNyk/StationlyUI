@@ -1,7 +1,5 @@
 package com.stationly.app.ui.summary.components
 
-import com.stationly.app.resources.Res
-import com.stationly.app.resources.stationly_logo
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.scaleIn
@@ -235,6 +233,8 @@ private fun List<SectionRender>.toFeeds(): List<MultiLineBoardProcessor.Feed> = 
         stationId = r.section.selection.station,
         line = r.section.selection.line,
         direction = r.section.selection.direction,
+        terminus = r.section.selection.singleTerminus,
+        nextStop = r.section.selection.directionTowards,
         predictions = r.ticked,
     )
 }
@@ -254,6 +254,8 @@ private fun List<BoardSection>.toRawFeeds(): List<MultiLineBoardProcessor.Feed> 
         stationId = section.selection.station,
         line = section.selection.line,
         direction = section.selection.direction,
+        terminus = section.selection.singleTerminus,
+        nextStop = section.selection.directionTowards,
         predictions = section.predictions,
     )
 }
@@ -2049,30 +2051,16 @@ private fun BoardFooter(lastUpdated: Long) {
     val ago = remember(nowSec / 1000, lastUpdated) { agoLabel(lastUpdated, nowSec) }
 
     Box(modifier = Modifier.fillMaxWidth().padding(top = 2.dp), contentAlignment = Alignment.Center) {
-        // Stationly maker mark (left) — the REAL brand logo, matching
-        // Android's footer `stationly_logo` ImageView (22dp); red-disc drawn
-        // fallback keeps the board crash-proof when resources aren't bundled.
-        if (com.stationly.app.platform.composeResourcesBundled) {
-            Image(
-                painter = org.jetbrains.compose.resources.painterResource(Res.drawable.stationly_logo),
-                contentDescription = "Stationly",
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(start = 6.dp)
-                    .size(22.dp)
-            )
-        } else {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(start = 6.dp)
-                    .size(22.dp)
-                    .background(StationlyRed, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("S", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Black)
-            }
-        }
+        // Stationly maker mark (left): the REAL brand logo, the same mark in
+        // the same place as the widget footer (`stationly_logo`, 22dp) and the
+        // screensaver. Through [StationlyLogo], the single source, which
+        // carries the fallback for a build without bundled resources; this
+        // footer used to inline its own copy, which is how the screensaver came
+        // to draw a different mark without anyone noticing (2026-11-23).
+        com.stationly.app.ui.common.StationlyLogo(
+            size = 22.dp,
+            modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp),
+        )
         // Live clock (center) on its own lit strip, like Android's TextClock
         // with the active-row background.
         Box(modifier = Modifier.background(ActiveRowBg).padding(horizontal = 6.dp)) {

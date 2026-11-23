@@ -270,4 +270,26 @@ class PlatformPagesTest {
         assertEquals("", PlatformPages.compactTitle(listOf(dep("No upcoming departures", ""))))
         assertEquals("", PlatformPages.compactTitle(emptyList()))
     }
+
+    // ── Remembering a page by its block (QA 2026-11-23, finding #5) ──
+
+    private fun keyed(key: String, vararg dest: String): List<Row> =
+        listOf<Row>(Row.PlatformHeader("Bus 39", key)) + dest.map { Row.Departure("39", it, "1 min") }
+
+    @Test
+    fun `a remembered block is found wherever it has sorted to`() {
+        val before = keyed("N", "Putney") + keyed("S", "Clapham Junction")
+        val after = keyed("S", "Clapham Junction") + keyed("N", "Putney")
+        // The user was on page 2 ("S") before the re-sort.
+        assertEquals(1, PlatformPages.indexOfKey(before, "S"))
+        assertEquals(0, PlatformPages.resolve(after, key = "S", index = 1),
+            "the index alone would have landed on the other direction")
+    }
+
+    @Test
+    fun `a block that has gone falls back to the clamped index`() {
+        val rows = keyed("N", "Putney") + keyed("S", "Clapham Junction")
+        assertEquals(1, PlatformPages.resolve(rows, key = "GONE", index = 5))
+        assertEquals(0, PlatformPages.resolve(rows, key = null, index = 0))
+    }
 }

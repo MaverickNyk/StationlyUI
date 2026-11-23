@@ -137,6 +137,37 @@ object PlatformPages {
     fun count(rows: List<MultiLineBoardProcessor.Row>): Int = split(rows).size
 
     /**
+     * The block a page shows, as [MultiLineBoardProcessor.Row.PlatformHeader.key].
+     * Blank for a page with no header.
+     */
+    fun key(page: List<MultiLineBoardProcessor.Row>): String =
+        (page.firstOrNull() as? MultiLineBoardProcessor.Row.PlatformHeader)?.key.orEmpty()
+
+    /**
+     * Which page shows the block keyed [key] TODAY, or null when no page does.
+     *
+     * ## Why a stepping surface remembers a key and not an index
+     * Blocks re-order: a board's blocks sort with "nothing left to catch" and
+     * soonest departure among their keys, so the same two blocks swap places as
+     * the buses move. A remembered INDEX then silently lands on the other block
+     * (QA 2026-11-23, finding #5: a widget on "Bus 39 2/2" towards Clapham
+     * Junction showed Putney after a refresh, under the same title). The key
+     * follows the block wherever it sorts; the index is only the fallback for a
+     * block that has gone.
+     */
+    fun indexOfKey(rows: List<MultiLineBoardProcessor.Row>, key: String?): Int? {
+        if (key.isNullOrBlank()) return null
+        return split(rows).indexOfFirst { key(it) == key }.takeIf { it >= 0 }
+    }
+
+    /**
+     * Where a stepping surface should be: the page holding [key] if it is still
+     * on the board, else the remembered [index] clamped to what is there.
+     */
+    fun resolve(rows: List<MultiLineBoardProcessor.Row>, key: String?, index: Int): Int =
+        indexOfKey(rows, key) ?: clamp(index, count(rows))
+
+    /**
      * The title to put beside the chevrons.
      *
      * The page's own header when it has one; blank when it does not, which is
