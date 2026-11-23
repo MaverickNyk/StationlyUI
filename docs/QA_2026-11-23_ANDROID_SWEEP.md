@@ -11,7 +11,7 @@ fix means for iOS**. Most fixes are in shared Kotlin (`core/commonMain`,
 any Swift change. Where the iOS fix needs Swift, it says so and it has NOT been
 made: the iOS app is live (1.1) and is left untouched on purpose.
 
-**Status: uncommitted.** Gate green after the code review: core unit tests,
+**Status: committed as `bf6d724` on `dev_android_bring_to_v2`.** Gate green after the code review: core unit tests,
 Android app unit tests (124), composeApp unit tests (77), iOS compile of core
 and composeApp (`compileKotlinIosSimulatorArm64`), `assembleStagingDebug`.
 
