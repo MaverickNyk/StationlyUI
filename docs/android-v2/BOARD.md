@@ -123,9 +123,13 @@ BLOCKED ON OWNER:  Q5 is PARKED for merge time (S020, owner: focus is
                    it before that merge, not before the Android rollout.
                    Q7 FIXED this session. Q3 answered (EPIC-06 header).
                    Q1/Q2/Q4/Q6 are decisions or console work, not blockers.
-NEXT UP:           (1) AV2-10.11's remainder: LARGE's split layout and the
-                   status backfill, as iOS; see a 4x4 on the device.
+NEXT UP:           (1) Owner sign-off of the Review column, then an
+                   internal-track build for what only Play can test (in-app
+                   updates, long R8 runtime, sign-in after upgrade, a Play
+                   Billing purchase).
                    (2) AV2-9.9, after the owner's product call.
+                   AV2-10.11's LARGE split + status backfill: DROPPED by the
+                   owner (2026-11-23), Android widgets are rectangles.
                    (3) Owner: the "not assigned" rail platform label (backend),
                    a Samsung/Xiaomi long-press check for D10.
                    (4) AV2-8.3's rollout, which is Play Console work.
@@ -143,12 +147,11 @@ NEXT UP:           (1) AV2-10.11's remainder: LARGE's split layout and the
 
 | Story | Epic | Title | Size |
 |---|---|---|---|
-| AV2-10.11 (rest) | 10 | LARGE split layout + status backfill, as iOS | `M` |
 | AV2-9.9 | 09 | One platform drawn as two blocks | `M` |
 
-> AV2-10.11's remainder is the top story: the size classes are built, LARGE's
-> two-pager layout (iOS `BoardLayout.split`) and the status backfill (iOS
-> `StatusPolicy.backfill`) are not. AV2-9.9 needs the owner first:
+> AV2-10.11's remainder (LARGE split + status backfill) was dropped by the owner
+> on 2026-11-23: Android widgets are placed as rectangles, so the 4x4-only iOS
+> layout is not needed. AV2-9.9 needs the owner first:
 > It is in the SHARED `MultiLineBoardProcessor`, so it lands on the home screen
 > and on iOS as well as the widget, and the rule is a product decision: merge
 > blocks whose header would be identical, or make the header carry what

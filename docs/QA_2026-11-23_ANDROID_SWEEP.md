@@ -86,7 +86,7 @@ it never applied them. Now:
   `BOARD_TIMING_CONSISTENCY.md`).
 iOS: no change. Its widget already mirrors `BoardTicker` in Swift, and its app
 uses the shared board. Gate green; widgets re-rendered on device without errors.
-**Uncommitted** (owner: do not commit).
+Committed as `c1ffca4`.
 
 ---
 

@@ -426,6 +426,13 @@ because it has no push; Android's FCM keeps the others fresh (README rule 3).
 
 ## AV2-10.11 — The widget at every size, as iOS draws it · `L`
 
+> **Scope change, owner 2026-11-23:** LARGE's two-section layout (iOS
+> `BoardLayout.split`) and the status backfill (iOS `StatusPolicy.backfill`) are
+> DROPPED. Android widgets are placed as rectangles, not 4x4 squares, so the
+> iOS large-family layout is not needed. The story is closed on what was built:
+> size classes, fitting headers, full bleed, proportional rows, the iOS-style
+> pager (S021, S023).
+
 **Owner, 2026-11-22:** "how will it behave in square 2x2 or 4x4 ... iOS does
 that nicely"; then the 2x2's platform row wrapped onto two lines and its station
 row spilled off the edges.

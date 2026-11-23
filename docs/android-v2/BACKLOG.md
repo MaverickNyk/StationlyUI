@@ -122,7 +122,7 @@ roughly one focused hour.
 | AV2-10.8 | The Android 17 widget: rows, corners, updates | L | ✅ S021 |
 | AV2-10.9 | Taps that do what they say | M | ✅ S021 |
 | AV2-10.10 | Refresh that visibly happens | M | ✅ S021 |
-| AV2-10.11 | The widget at every size, as iOS draws it | L | 🔄 S021, S023 · full bleed + proportional rows + pager done; LARGE split + status backfill left |
+| AV2-10.11 | The widget at every size, as iOS draws it | L | ✅ S021, S023 · LARGE split + status backfill DROPPED by owner 2026-11-23: Android widgets are placed as rectangles, not 4x4 squares |
 
 ## EPIC-11 — QA sweep of Android 2.0 · [detail](../QA_2026-11-23_ANDROID_SWEEP.md)
 
@@ -141,7 +141,7 @@ roughly one focused hour.
 | AV2-11.7 | A stepping widget remembers its block, not its position (#5) | M | ✅ S023 Android · **iOS needs Swift** |
 | AV2-11.8 | Widget row height at large text (#12) | S | ✅ S023 · Android only |
 | AV2-11.9 | One logo, bottom-left, on every board surface | S | ✅ S023 · shared |
-| AV2-11.19 | Widget and screensaver tick by the SERVED `board.tick.*` rules (grace, retention, "Gone") | M | ✅ S023 · uncommitted · iOS already did |
+| AV2-11.19 | Widget and screensaver tick by the SERVED `board.tick.*` rules (grace, retention, "Gone") | M | ✅ S023 · `c1ffca4` · iOS already did |
 | AV2-11.10 | Landscape board and staging banner (#11) | M | open · device check first |
 | AV2-11.11 | Store prices in the buyer's currency (#13) | M | open · **iOS needs Swift** |
 | AV2-11.12 | Screensaver: both directions, board-location weather, "Route 39" (#14) | M | open |
