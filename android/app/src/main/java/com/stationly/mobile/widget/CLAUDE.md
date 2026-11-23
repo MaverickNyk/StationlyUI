@@ -401,6 +401,32 @@ helpers, or document why this surface needs to diverge.
   render while the widget is in `refreshingIds` must not consume the REFRESH
   motion: the roll belongs to the redraw with the new rows. Scroll mode rolls
   via `applyRefreshSnapshot`, then the list returns.
+- **The refresh roll is row by row** (owner, 2026-11-23: "pull every row", not
+  one curtain). The refresh flipper has no inAnimation; the old board fades
+  (`widget_refresh_out`, 90 ms) and the arriving page is
+  `widget_platform_page_refresh`, whose layout animation (`widget_rows_refresh`)
+  raises each row a beat after the one above (36 ms apart, 240 ms each). A
+  layout animation plays on a view's FIRST draw, so it lives only in that layout;
+  never put it on `widget_platform_page`, or every push would cascade. After a
+  roll, `settleAfterRoll` redraws at rest (scroll mode gets its list back; a
+  launcher rebuilding the widget cannot replay a stored roll).
+- **A press during a running fetch still spins and rolls.** The unlock refresh
+  is the usual one; the press is armed and spun, and the running fetch's
+  `stopSpinners` takes the spinner down and redraws it.
+- **Only a press animates** (owner, 2026-11-23). Unlock and boot refresh via
+  `triggerRefresh`, the same action with NO widget id; no id means no spinner,
+  no `MIN_SPINNER_MS` hold and no roll. It used to spin every widget on each
+  unlock. A press's PendingIntent must keep `EXTRA_APPWIDGET_ID`.
+- **Every render restarts the status marquee**, because a TextView restarts it
+  whenever its text is set. So redraws must be few (owner, 2026-11-23: it
+  stuttered "da da da da" after a refresh). Push-driven redraws
+  (`updateForStation`, `updateForLine`) go through `scheduleRedraw`: one render
+  per widget once the burst is quiet for `REDRAW_QUIET_MS` (300 ms), capped at
+  `REDRAW_MAX_WAIT_MS` (1.2 s). Measured before: 2 renders of each Highbury
+  widget in 130 ms, 4 of Smithwood in 400 ms, and 64 every 30 s from the app's
+  poll. The app's 30 s SQL poll (`SummaryViewModel`) no longer redraws the
+  widget on Android (iOS still needs it), and its other widget updates now name
+  `stationId`, because blank means "sweep every widget".
 - **Scroll mode stretches when nothing would scroll** (`ScrollFit`, decided
   before the rows are built). Recalibrate its constants at font scale 1.0 if the
   row or header layouts change height.

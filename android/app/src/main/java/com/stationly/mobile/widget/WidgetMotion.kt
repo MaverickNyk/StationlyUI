@@ -52,7 +52,9 @@ enum class WidgetMotion(val flipperId: Int) {
     PREV(R.id.platform_flipper_prev),
 
     /**
-     * The refresh button, and only ever a press of it. Rises from the bottom.
+     * The refresh button, and only ever a press of it. The old board fades and
+     * the new one turns over ROW BY ROW, each rising from below a beat after the
+     * one above (widget_platform_page_refresh; owner, 2026-11-23).
      *
      * ## Why the animations are short, measured rather than chosen
      * A redraw REBUILDS the stage, which destroys the views an animation is
@@ -60,9 +62,9 @@ enum class WidgetMotion(val flipperId: Int) {
      *
      * The gap is measured: a refresh produces two redraws of the tapped widget,
      * the armed one and an ambient one about **1.4 seconds** later (the config
-     * broadcast and `notifyPredictions` are the same signal arriving twice). At
-     * 230ms the flip has been over for more than a second by then, with six
-     * times the margin it needs.
+     * broadcast and `notifyPredictions` are the same signal arriving twice). The
+     * row-by-row roll is about 0.6s for nine rows, and push redraws now merge
+     * into one per burst (`scheduleRedraw`), so it still finishes first.
      *
      * It is a real constraint and not a theoretical one: stretched to six
      * seconds to photograph it on the device, the second redraw visibly cut the

@@ -88,6 +88,41 @@ iOS: no change. Its widget already mirrors `BoardTicker` in Swift, and its app
 uses the shared board. Gate green; widgets re-rendered on device without errors.
 Committed as `c1ffca4`.
 
+### Also fixed: widget refresh spin on unlock, and the stuttering marquee (owner, 2026-11-23)
+
+- **Unlock spun every widget.** Screen-on/unlock refreshes via `triggerRefresh`,
+  the same action as a press but with no widget id, and the spinner did not
+  check. Now only a press (an id) spins or rolls; the wake refresh is silent and
+  skips the 900 ms spinner hold. Device: wake gave "Refresh fetched 6/6" with
+  four still icons; a tap still turned the icon.
+- **The status marquee stuttered after a refresh.** A TextView restarts its
+  marquee whenever its text is set, and every redraw sets it. Logged on device:
+  each Highbury widget drawn twice in 130 ms per push pair, Smithwood four times
+  in 400 ms, and 64 renders every 30 s from the app's SQL poll (one blank,
+  "sweep everything" update per board). Fixes:
+  - push-driven redraws merge into one per widget per burst
+    (`DepartureWidgetProvider.scheduleRedraw`, 300 ms quiet, 1.2 s cap,
+    `RedrawCoalesceTest`);
+  - `SummaryViewModel`'s widget update names `stationId`, and its 30 s poll no
+    longer redraws the widget on Android (pushes and the minute watchdog
+    already do).
+  After: 70 s idle gave one render per widget per push burst (8 Smithwood
+  pushes, 1 render); a tap gave spinner, new data, then the next push.
+
+- **The refresh roll moved as one curtain.** Now the old board fades and the
+  rows roll in one after another (layout animation on a refresh-only page
+  layout), press only. Checked on device by the owner: working.
+- **Review fixes to the above:** a press made while the unlock refresh was
+  still running was silently dropped (no spinner, no roll), because the unlock
+  no longer spins; it now gets both, and the running fetch redraws it
+  (`stopSpinners`, with a backstop). Step mode now settles after a roll like
+  scroll mode, so a launcher rebuild (unfold) cannot replay it.
+
+iOS: no change in behaviour. `stationId` is ignored by the iOS widget manager
+(it reloads all timelines), and the poll still reloads WidgetKit on iOS.
+Whether WidgetKit's marquee shows the same stutter was not checked.
+Uncommitted.
+
 ---
 
 ## Code review (2026-11-23, after the device run)

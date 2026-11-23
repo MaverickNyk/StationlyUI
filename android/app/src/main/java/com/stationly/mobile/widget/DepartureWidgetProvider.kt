@@ -261,6 +261,35 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         "Widget",
                         "Refresh coalesced into the one started ${(now - startedAt) / 1000}s ago",
                     )
+                    // ── A press that rides a fetch already running ──────────
+                    //
+                    // Most often the silent refresh an unlock starts, which is
+                    // exactly when somebody glances and presses. It used to be
+                    // dropped with nothing on screen, so the button looked dead.
+                    // Now the press still gets its spinner and its roll: the
+                    // running fetch clears the spinner and redraws this widget
+                    // when it lands (see `stopSpinners`).
+                    val pressed = intent.getIntExtra(
+                        AppWidgetManager.EXTRA_APPWIDGET_ID,
+                        AppWidgetManager.INVALID_APPWIDGET_ID,
+                    )
+                    if (pressed != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                        WidgetMotion.armRefresh(context, pressed, now)
+                        val pending = goAsync()
+                        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                            try { showRefreshSpinner(context, pressed) }
+                            catch (e: Exception) { android.util.Log.e("Widget", "Spinner failed", e) }
+                            finally { pending.finish() }
+                        }
+                        // Backstop: if the running fetch landed between the
+                        // check above and the spinner going up, nothing else
+                        // would take it down.
+                        val app = context.applicationContext
+                        redrawExecutor.schedule({
+                            val stillRunning = refreshPrefs.getLong(KEY_REFRESH_STARTED_AT, 0L) != 0L
+                            if (pressed in refreshingIds && !stillRunning) stopSpinners(app)
+                        }, RECEIVER_BUDGET_MS + 1_000L, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    }
                     return
                 }
                 refreshPrefs.edit().putLong(KEY_REFRESH_STARTED_AT, now).apply()
@@ -308,16 +337,21 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     // "the refresh animation is not rotating"). Now it is the
                     // first thing a press does and stays up for at least one
                     // visible turn, MIN_SPINNER_MS, before the redraw replaces it.
-                    val spinnerShownAt = System.currentTimeMillis()
-                    if (intent.action == ACTION_MANUAL_REFRESH) {
-                        showRefreshSpinner(
-                            context,
-                            intent.getIntExtra(
-                                AppWidgetManager.EXTRA_APPWIDGET_ID,
-                                AppWidgetManager.INVALID_APPWIDGET_ID,
-                            ),
-                        )
-                    }
+                    //
+                    // ONLY a press spins (owner, 2026-11-23). An unlock or a
+                    // boot sends the same action through `triggerRefresh`, with
+                    // no widget id, and used to spin every widget on the home
+                    // screen each time the phone woke: ambient work dressed as
+                    // a busy control. A press always names its widget, so "no
+                    // id" is the test, the same one `WidgetMotion.armRefresh`
+                    // uses for the roll.
+                    val pressedId = intent.getIntExtra(
+                        AppWidgetManager.EXTRA_APPWIDGET_ID,
+                        AppWidgetManager.INVALID_APPWIDGET_ID,
+                    )
+                    val spins = intent.action == ACTION_MANUAL_REFRESH &&
+                        pressedId != AppWidgetManager.INVALID_APPWIDGET_ID
+                    if (spins) showRefreshSpinner(context, pressedId)
                     val completed = kotlinx.coroutines.withTimeoutOrNull(RECEIVER_BUDGET_MS) {
                     com.stationly.core.config.SduiConfig.ensureLoaded()
                     if (intent.action != ACTION_UPDATE_WIDGET) {
@@ -388,11 +422,16 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         }
 
                         // Hold the spinner for one visible turn before the
-                        // redraw below swaps the icon back.
-                        val shownFor = System.currentTimeMillis() - spinnerShownAt
-                        if (shownFor < MIN_SPINNER_MS) kotlinx.coroutines.delay(MIN_SPINNER_MS - shownFor)
+                        // redraw below swaps the icon back. Measured from when
+                        // a spinner last went up, which may be a press that
+                        // joined this (silent) refresh; with none up, a silent
+                        // refresh redraws at once.
+                        if (refreshingIds.isNotEmpty()) {
+                            val shownFor = System.currentTimeMillis() - spinnerSince
+                            if (shownFor < MIN_SPINNER_MS) kotlinx.coroutines.delay(MIN_SPINNER_MS - shownFor)
+                        }
                         // Spinner off BEFORE the redraw below, so it draws the icon.
-                        refreshingIds.clear()
+                        stopSpinners(context)
 
                         // The app and the dream still need to know, and they
                         // are a flow emit either way. The WIDGET half is the
@@ -533,8 +572,12 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         /** The shortest a refresh spinner stays up: about one visible turn. */
         private const val MIN_SPINNER_MS = 900L
 
-        /** How long scroll mode shows the refresh roll before the list returns. */
-        private const val REFRESH_SNAPSHOT_MS = 700L
+        /**
+         * How long scroll mode shows the refresh roll before the list returns.
+         * The row-by-row roll takes about 0.6s for nine rows
+         * (widget_rows_refresh), so this leaves it room to finish.
+         */
+        private const val REFRESH_SNAPSHOT_MS = 900L
 
         /** Widgets whose refresh is in flight; the render draws their spinner. */
         private val refreshingIds: MutableSet<Int> = java.util.concurrent.ConcurrentHashMap.newKeySet()
@@ -618,6 +661,10 @@ class DepartureWidgetProvider : AppWidgetProvider() {
          * source of truth for "did we actually round-trip to the
          * backend". Don't duplicate the debounce here — they'd race on
          * the SharedPrefs key and one would always win.
+         *
+         * Carries NO widget id, and that is what keeps it quiet: no spinner,
+         * no roll. Only a press is owed an animation (owner, 2026-11-23:
+         * spinning on every unlock was "too much distraction").
          */
         fun triggerRefresh(context: Context) {
             context.sendBroadcast(Intent(context, DepartureWidgetProvider::class.java).apply {
@@ -689,11 +736,11 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         /**
          * Spin the widget that was pressed, and only that one.
          *
-         * [appWidgetId] is `INVALID` for callers that genuinely mean all of
-         * them, which is the programmatic path. A user's tap always names its
-         * own widget: spinning every board because one was pressed is three
-         * widgets claiming to be busy on behalf of one, and it is half of what
-         * the owner saw as flickering.
+         * Called only for a press, which always names its own widget: spinning
+         * every board because one was pressed is three widgets claiming to be
+         * busy on behalf of one, and it is half of what the owner saw as
+         * flickering. The programmatic path (unlock, boot) refreshes silently
+         * and never calls this. `INVALID` still means all, for safety.
          */
         fun showRefreshSpinner(context: Context, appWidgetId: Int) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
@@ -705,9 +752,26 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // A FULL render, not partiallyUpdateAppWidget: the Pixel launcher on
             // Android 17 dropped the partial update, so the spinner never showed
             // (2026-11-21). The render reads `refreshingIds`.
+            spinnerSince = System.currentTimeMillis()
             refreshingIds.addAll(ids.toList())
             ids.forEach { updateOne(context, it) }
         }
+
+        /**
+         * Take every spinner down, and make sure each of those widgets is
+         * redrawn. The station redraws that follow a fetch cover the widgets
+         * of the stations it fetched; a press that joined a fetch for ANOTHER
+         * station would otherwise keep spinning until its next push. The ids
+         * join the same burst, so a widget covered twice still draws once.
+         */
+        private fun stopSpinners(context: Context) {
+            val spinning = refreshingIds.toList()
+            refreshingIds.removeAll(spinning.toSet())
+            scheduleRedraw(context, spinning)
+        }
+
+        /** When a spinner last went up, for the MIN_SPINNER_MS hold. */
+        @Volatile private var spinnerSince = 0L
 
         /**
          * Redraw every placed widget, each from the station it is bound to.
@@ -794,9 +858,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     .associateWith { WidgetBindingStore.boundStation(context, it, uid) },
                 hubs = hubs,
             )
-            for (id in targets) {
-                renderWidget(context, appWidgetManager, id, selections)
-            }
+            scheduleRedraw(context, targets)
         }
 
         fun updateForStation(context: Context, pushedStationId: String) {
@@ -817,8 +879,70 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 bindings = appWidgetIds.toList().associateWith { WidgetBindingStore.boundStation(context, it, uid) },
                 hubs = affectedHubs,
             )
-            for (id in targets) {
-                renderWidget(context, appWidgetManager, id, selections)
+            scheduleRedraw(context, targets)
+        }
+
+        // ── One redraw per burst, not one per push ──────────────────────────
+        //
+        // A station with several lines, or a bus stop with several poles, is
+        // several pushes landing within half a second: measured 2 renders of
+        // every Highbury & Islington widget inside 130 ms, and 4 of the
+        // Smithwood Close widget inside 400 ms. Each full render re-applies the
+        // status text, and a TextView restarts its marquee from the start
+        // (with its ~1.2 s pause) whenever its text is set, so the status row
+        // stuttered after every refresh (owner, 2026-11-23: "da da da da").
+        //
+        // So push-driven redraws (station and line) gather here and draw once
+        // the burst goes quiet: REDRAW_QUIET_MS after the last request, and
+        // never later than REDRAW_MAX_WAIT_MS after the first, so a steady
+        // stream cannot starve a widget. The watchdog tick, the refresh
+        // spinner and `updateFromStorage` stay immediate.
+
+        private val redrawLock = Any()
+        private val pendingRedraws = mutableSetOf<Int>()
+        private var redrawTask: java.util.concurrent.ScheduledFuture<*>? = null
+        private var burstStartedAt = 0L
+        private val redrawExecutor: java.util.concurrent.ScheduledExecutorService =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+
+        private const val REDRAW_QUIET_MS = 300L
+        private const val REDRAW_MAX_WAIT_MS = 1_200L
+
+        private fun scheduleRedraw(context: Context, ids: Collection<Int>) {
+            if (ids.isEmpty()) return
+            val app = context.applicationContext
+            synchronized(redrawLock) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (pendingRedraws.isEmpty()) burstStartedAt = now
+                pendingRedraws.addAll(ids)
+                redrawTask?.cancel(false)
+                redrawTask = redrawExecutor.schedule(
+                    { flushRedraws(app) },
+                    coalesceDelay(now - burstStartedAt),
+                    java.util.concurrent.TimeUnit.MILLISECONDS,
+                )
+            }
+        }
+
+        /** How long to wait, [waitedMs] into a burst. Pure; see the test. */
+        internal fun coalesceDelay(waitedMs: Long): Long =
+            minOf(REDRAW_QUIET_MS, (REDRAW_MAX_WAIT_MS - waitedMs).coerceAtLeast(0L))
+
+        private fun flushRedraws(context: Context) {
+            val ids = synchronized(redrawLock) {
+                pendingRedraws.toList().also { pendingRedraws.clear() }
+            }
+            if (ids.isEmpty()) return
+            try {
+                val appWidgetManager = AppWidgetManager.getInstance(context)
+                // A widget removed while the burst gathered is not drawn.
+                val placed = appWidgetManager.getAppWidgetIds(
+                    android.content.ComponentName(context, DepartureWidgetProvider::class.java)
+                ).toSet()
+                val selections = com.stationly.core.platform.Platform.sqlStorage.getAllSelections()
+                ids.filter { it in placed }.forEach { renderWidget(context, appWidgetManager, it, selections) }
+            } catch (e: Exception) {
+                android.util.Log.e("Widget", "Coalesced redraw failed", e)
             }
         }
 
@@ -2116,6 +2240,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     fromPage = PlatformPages.clamp(fromPage ?: safePage, pageCount),
                     size = widgetSize,
                 )
+                if (motion == WidgetMotion.REFRESH) settleAfterRoll(context, appWidgetId)
             } else if (
                 motion == WidgetMotion.REFRESH &&
                 finalRowViews === rowViews && rowViews.isNotEmpty() &&
@@ -2130,10 +2255,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 // (owner, 2026-11-22: "not on the departure rows"). The motion
                 // flag is one-shot, so only the tap animates.
                 applyRefreshSnapshot(context, views, rowViews)
-                CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-                    kotlinx.coroutines.delay(REFRESH_SNAPSHOT_MS)
-                    runCatching { updateOne(context, appWidgetId) }
-                }
+                settleAfterRoll(context, appWidgetId)
             } else {
                 // A message (fallback or empty state) fills the board; a real
                 // board keeps the scrolling list.
@@ -2250,7 +2372,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
 
             // The board being left, then the board arriving.
             views.addView(stage, pageViews(context, pages.getOrNull(fromPage), rowCap, size))
-            views.addView(stage, pageViews(context, pages.getOrNull(page), rowCap, size))
+            views.addView(stage, pageViews(context, pages.getOrNull(page), rowCap, size, arrivingPageLayout(motion)))
             // ── Two calls, and both are needed ──────────────────────────────
             //
             // `ViewAnimator.showOnly` animates when `!mFirstTime ||
@@ -2362,8 +2484,10 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             }
             val stage = WidgetMotion.REFRESH.flipperId
             views.setViewVisibility(stage, android.view.View.VISIBLE)
-            repeat(2) {
-                val page = RemoteViews(context.packageName, R.layout.widget_platform_page)
+            // The leaving frame is the plain page; the arriving one rolls its
+            // rows in one by one (arrivingPageLayout).
+            listOf(R.layout.widget_platform_page, arrivingPageLayout(WidgetMotion.REFRESH)).forEach { layout ->
+                val page = RemoteViews(context.packageName, layout)
                 rowViews.forEach { page.addView(R.id.platform_page_rows, it) }
                 views.addView(stage, page)
             }
@@ -2371,14 +2495,43 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             views.setDisplayedChild(stage, 1)
         }
 
+        /**
+         * Redraw [appWidgetId] at rest once the refresh roll has played.
+         *
+         * Scroll mode needs it to get its list back. Step mode needs it because
+         * a launcher re-applies the LAST update when it rebuilds a widget
+         * (unfolding the phone, the launcher restarting), and a stored refresh
+         * would replay the fade and the row cascade with nobody pressing
+         * anything. The motion flag is spent by now, so this draws still. It
+         * lands before the marquee's own start delay, so the status row does
+         * not visibly restart.
+         */
+        private fun settleAfterRoll(context: Context, appWidgetId: Int) {
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                kotlinx.coroutines.delay(REFRESH_SNAPSHOT_MS)
+                runCatching { updateOne(context, appWidgetId) }
+            }
+        }
+
+        /**
+         * The page a motion brings in. A refresh press gets the page whose rows
+         * roll in one after another (owner, 2026-11-23: "pull every row", not
+         * the whole board as one curtain). Everything else gets the plain page:
+         * its layout animation would otherwise play on every push and tick.
+         */
+        private fun arrivingPageLayout(motion: WidgetMotion): Int =
+            if (motion == WidgetMotion.REFRESH) R.layout.widget_platform_page_refresh
+            else R.layout.widget_platform_page
+
         /** One platform, padded to a fixed height so the widget cannot resize. */
         private fun pageViews(
             context: Context,
             page: List<com.stationly.core.util.MultiLineBoardProcessor.Row>?,
             rowCap: Int,
             size: WidgetSize = WidgetSize.MEDIUM,
+            layout: Int = R.layout.widget_platform_page,
         ): RemoteViews {
-            val pageViews = RemoteViews(context.packageName, R.layout.widget_platform_page)
+            val pageViews = RemoteViews(context.packageName, layout)
             // `bodyPadded`: the pager bar names the platform, so the header comes
             // off, and every page is the same height whatever the data does.
             com.stationly.core.util.PlatformPages.bodyPadded(page.orEmpty(), rowCap)

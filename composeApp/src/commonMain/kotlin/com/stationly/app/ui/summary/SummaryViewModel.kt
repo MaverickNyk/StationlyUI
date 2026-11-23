@@ -201,7 +201,15 @@ class SummaryViewModel(
         viewModelScope.launch {
             while (true) {
                 delay(30_000)
-                _selections.value.forEach { loadPredictions(it) }
+                // The poll re-reads SQL that nothing has changed since the last
+                // push. On Android every SQL write already redraws the widgets
+                // (FreshDataNotifier, ProcessPredictionsUseCase) and the minute
+                // watchdog ticks them, so redrawing here too only restarted the
+                // status marquee every 30 s, even with the app in the
+                // background (2026-11-23). iOS has no push path into WidgetKit,
+                // so it keeps reloading from here.
+                val pollRedrawsWidget = Platform.getPlatformName() == "iOS"
+                _selections.value.forEach { loadPredictions(it, pushToWidget = pollRedrawsWidget) }
             }
         }
         // Instant refresh when an FCM push lands while the app is active:
@@ -269,7 +277,7 @@ class SummaryViewModel(
         }
     }
 
-    private fun loadPredictions(selection: UserSelection) {
+    private fun loadPredictions(selection: UserSelection, pushToWidget: Boolean = true) {
         viewModelScope.launch {
             try {
                 val rawPreds = Platform.sqlStorage.getPredictions(
@@ -344,7 +352,7 @@ class SummaryViewModel(
                         if (reason.isNotEmpty()) "${s.statusSeverityDescription}: $reason"
                         else s.statusSeverityDescription
                     }
-                    Platform.widgetManager.updateWidget(
+                    if (pushToWidget) Platform.widgetManager.updateWidget(
                         com.stationly.core.model.WidgetState(
                             stationName = selection.stationName,
                             lineName = selection.line,
@@ -352,7 +360,15 @@ class SummaryViewModel(
                             status = widgetStatus,
                             lastUpdated = predsTimestamp / 1000,
                             direction = selection.direction,
-                            mode = selection.mode
+                            mode = selection.mode,
+                            // Name the board. Blank means "redraw every widget",
+                            // and this runs once per board on every poll: 8 boards
+                            // were 8 full sweeps of 8 widgets (64 renders) every
+                            // 30 s, each one restarting the status marquee
+                            // (2026-11-23). Named, Android redraws only that
+                            // board's widgets, merged with the push burst. iOS
+                            // ignores the id (it reloads every timeline).
+                            stationId = selection.station,
                         )
                     )
                 }

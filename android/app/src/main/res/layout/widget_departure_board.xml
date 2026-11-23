@@ -387,14 +387,15 @@
         android:outAnimation="@anim/widget_page_back_out"
         android:visibility="gone" />
 
-    <!-- The same slot, on a refresh the user asked for. -->
+    <!-- The same slot, on a refresh the user asked for. No inAnimation: the
+         arriving page is widget_platform_page_refresh, whose ROWS roll in one
+         after another; the old board only fades (owner, 2026-11-23). -->
     <ViewFlipper
         android:id="@+id/platform_flipper_refresh"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:animateFirstView="false"
-        android:inAnimation="@anim/widget_refresh_in"
         android:outAnimation="@anim/widget_refresh_out"
         android:visibility="gone" />
 

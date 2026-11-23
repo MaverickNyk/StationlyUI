@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     One ROW of the board arriving after a refresh the user asked for (owner,
+     2026-11-23: "pull every row", "slightly airport style" but no per-letter
+     flaps). Each row rises one row-height from below and lights up; the
+     layout animation (widget_rows_refresh) starts each row a beat after the
+     one above, so the board turns over row by row like a split-flap.
+
+     startOffset leaves the old board's fade (widget_refresh_out) a moment to
+     clear before the first row moves. Before its turn a row is held in its
+     starting frame (alpha 0), so rows appear in order, never all at once.
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="240"
+    android:interpolator="@android:interpolator/decelerate_quad"
+    android:startOffset="60">
+    <translate
+        android:fromYDelta="100%"
+        android:toYDelta="0" />
+    <alpha
+        android:fromAlpha="0"
+        android:toAlpha="1" />
+</set>

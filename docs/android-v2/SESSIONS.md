@@ -40,6 +40,10 @@ logo, docs.
   "Towards · Towards" summary, numeric bus-route order, unlettered bus headers
   ("Bus 39 → Putney Bridge Station"), the widget remembering its page by block
   (not index), widget line height at large text, and the screensaver's logo.
+- Later the same day (AV2-11.19 to 11.22): the widget ticks by the served SDUI
+  timing rules; unlock refreshes silently; push redraws merge into one per
+  widget per burst (`scheduleRedraw`), which stopped the status marquee
+  stuttering; the refresh roll goes row by row (`widget_platform_page_refresh`).
 **Learned:**
 - `UserSelection.directionTowards` is the NEXT stop, not the terminus; its
   KDoc said otherwise and the first cut of two fixes named side streets
@@ -48,6 +52,11 @@ logo, docs.
   "Can't load widget" for a minute. Spacers must be FrameLayouts.
 - `animated-rotate` is a fixed 12-step tick; a level-driven `rotate` with
   `indeterminateDuration` is smooth.
+- A TextView restarts its marquee whenever its text is set, so every widget
+  redraw restarts the status row. Redraw count IS a visual property: measured
+  64 renders every 30 s from the app's SQL poll before it was cut.
+- A layout animation plays on a view's first draw, so it can only live in a
+  layout used for the one motion that wants it.
 - Common-code `BackHandler` needs `org.jetbrains.compose.ui:ui-backhandler`
   declared; it is only transitively present at runtime.
 **Review:** a full pass found two bugs the fixes themselves introduced (the

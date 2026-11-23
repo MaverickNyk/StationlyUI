@@ -1,14 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-     The board leaving on a REFRESH: rolls up and out, the mirror of
-     widget_refresh_in, same distance and duration so the pair reads as one
-     surface moving (the way widget_page_out mirrors widget_page_in).
+     The board leaving on a REFRESH: a short fade in place. The new board's rows
+     then roll in one by one (widget_row_roll_in). It used to roll the whole
+     board up and out as one sheet, which read as a curtain (owner, 2026-11-23).
 -->
-<set xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shareInterpolator="false">
-    <translate
-        android:duration="260"
-        android:fromYDelta="0"
-        android:interpolator="@android:interpolator/decelerate_quad"
-        android:toYDelta="-100%p" />
-</set>
+<alpha xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="90"
+    android:fromAlpha="1"
+    android:toAlpha="0" />
