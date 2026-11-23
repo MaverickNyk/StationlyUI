@@ -1,22 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Same root treatment as widget_departure_board.xml, so the picker's preview
-     has the corner the placed widget will have. -->
+     has the corner the placed widget will have.
+
+     A static copy of the board at its natural sizes (2026-11-23): full bleed,
+     the station row and lit clock row flush to the edges, a platform header a
+     step above the departures, 12dp text insets. `previewLayout` is read on
+     Android 12+ only, where the widget has no settings gear (D10), so the
+     preview has none either. Keep it in step with widget_departure_board.xml:
+     it is the first thing a user sees of the widget. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@android:id/background"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="@drawable/widget_board_background"
     android:clipToOutline="true"
-    android:orientation="vertical"
-    android:padding="10dp">
+    android:orientation="vertical">
 
     <!-- Header Row -->
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@drawable/departure_board_active_row_background"
-        android:paddingTop="2dp"
-        android:paddingBottom="2dp">
+        android:paddingTop="7dp"
+        android:paddingBottom="5dp">
 
         <TextView
             android:layout_width="wrap_content"
@@ -29,28 +35,15 @@
             android:ellipsize="end"
             android:maxEms="18"
             android:textColor="@color/tfl_amber"
-            android:textSize="15sp"
+            android:textSize="16.5sp"
             android:textStyle="bold" />
 
-        <!-- Gear left, refresh right: the same arrangement as the live widget. -->
-        <ImageView
-            android:layout_width="32dp"
-            android:layout_height="26dp"
-            android:layout_gravity="start|center_vertical"
-            android:layout_marginStart="4dp"
-            android:paddingStart="6dp"
-            android:paddingTop="3dp"
-            android:paddingEnd="6dp"
-            android:paddingBottom="3dp"
-            android:scaleType="fitCenter"
-            android:src="@drawable/ic_settings"
-            android:contentDescription="Settings" />
-
+        <!-- Refresh right, as the live widget on Android 12+. -->
         <ImageView
             android:layout_width="32dp"
             android:layout_height="26dp"
             android:layout_gravity="end|center_vertical"
-            android:layout_marginEnd="4dp"
+            android:layout_marginEnd="12dp"
             android:paddingStart="6dp"
             android:paddingTop="3dp"
             android:paddingEnd="6dp"
@@ -60,6 +53,23 @@
             android:contentDescription="Refresh" />
     </FrameLayout>
 
+    <!-- Platform header: a step above the departures. -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:background="@drawable/departure_board_active_row_background"
+        android:gravity="center"
+        android:paddingStart="12dp"
+        android:paddingTop="2dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="2dp"
+        android:singleLine="true"
+        android:text="Central Platform 1 (Westbound)"
+        android:textColor="@color/tfl_amber"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
     <!-- Departure Row 1 -->
     <LinearLayout
         android:layout_width="match_parent"
@@ -67,8 +77,8 @@
         android:layout_marginTop="2dp"
         android:background="@drawable/departure_board_active_row_background"
         android:orientation="horizontal"
-        android:paddingStart="4dp"
-        android:paddingEnd="4dp">
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
 
         <TextView
             android:layout_width="0dp"
@@ -96,8 +106,8 @@
         android:layout_marginTop="2dp"
         android:background="@drawable/departure_board_active_row_background"
         android:orientation="horizontal"
-        android:paddingStart="4dp"
-        android:paddingEnd="4dp">
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
 
         <TextView
             android:layout_width="0dp"
@@ -125,8 +135,8 @@
         android:layout_marginTop="2dp"
         android:background="@drawable/departure_board_active_row_background"
         android:orientation="horizontal"
-        android:paddingStart="4dp"
-        android:paddingEnd="4dp">
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
 
         <TextView
             android:layout_width="0dp"
@@ -154,8 +164,8 @@
         android:layout_marginTop="2dp"
         android:background="@drawable/departure_board_active_row_background"
         android:orientation="horizontal"
-        android:paddingStart="4dp"
-        android:paddingEnd="4dp">
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
 
         <TextView
             android:layout_width="0dp"
@@ -180,18 +190,21 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
+        android:layout_marginTop="2dp"
         android:background="@drawable/departure_board_active_row_background"
+        android:gravity="center_vertical"
+        android:paddingTop="3dp"
+        android:paddingBottom="3dp"
         android:orientation="horizontal"
-        android:paddingStart="4dp"
-        android:paddingEnd="4dp">
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Good Service"
             android:textColor="@color/tfl_amber"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:textStyle="bold" />
 
         <TextView
@@ -199,7 +212,7 @@
             android:layout_height="wrap_content"
             android:text=" : "
             android:textColor="@color/tfl_amber"
-            android:textSize="13sp" />
+            android:textSize="12sp" />
 
         <TextView
             android:layout_width="0dp"
@@ -209,25 +222,37 @@
             android:ellipsize="end"
             android:text="Central line"
             android:textColor="@color/tfl_amber"
-            android:textSize="13sp" />
+            android:textSize="12sp" />
     </LinearLayout>
 
     <!-- Clock Row -->
     <RelativeLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp">
+        android:layout_marginTop="2dp"
+        android:background="@drawable/departure_board_active_row_background"
+        android:paddingTop="2dp"
+        android:paddingBottom="3dp"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp">
+
+        <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_alignParentStart="true"
+            android:layout_centerVertical="true"
+            android:src="@drawable/stationly_logo"
+            android:contentDescription="Stationly" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_centerInParent="true"
-            android:background="@drawable/departure_board_active_row_background"
             android:paddingStart="6dp"
             android:paddingEnd="6dp"
             android:text="08:23:45"
             android:textColor="@color/tfl_amber"
-            android:textSize="19sp"
+            android:textSize="16sp"
             android:textStyle="bold" />
 
         <TextView

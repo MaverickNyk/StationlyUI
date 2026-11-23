@@ -336,7 +336,24 @@ helpers, or document why this surface needs to diverge.
   `widget_departure_row`: a ListView item cannot take weight.
 - **Rows run edge to edge** (owner, 2026-11-22, as iOS): `board_content` has
   no side padding; the inset lives inside rows/headers (12dp), the pager (10dp),
-  status (12dp) and footer (10dp). Do not put side padding back on the board.
+  status (12dp) and footer (14dp). Do not put side padding back on the board.
+- **Full bleed top to bottom, and rows keep a fixed proportion** (owner,
+  2026-11-23). `board_content` has no padding at all: the station row touches
+  the top edge and the lit clock row the bottom, with corner clearance as padding
+  INSIDE them. On a stretching board (`BoardProportions`, Android 12+) every row
+  outside the stretching container is sized as a multiple of a departure row:
+  station 1.45, platform 1.2, footer 1.1, status 0.8, each floored at its own
+  text. Platform headers inside a fill container hold 1.2 by weight
+  (`widget_platform_header_fill`). The tap zones move with the header. A
+  scrolling list and a crowded board keep natural heights.
+- **The pager's "1/2" sits beside the title, as iOS's `PlatformPagerHeader`**:
+  centred together, platform x 0.72, bold, `tfl_amber_dim`, shown at EVERY size
+  and never squeezed (the title is wrap_content + weight, so it shrinks first,
+  and the fitter subtracts the marker's measured width). On a 2x2 the arrow
+  columns slim to 30dp (Android 12+). Headers that still do not fit at their
+  shortest rung shrink to 70% before ellipsising (`WidgetText.fit`, iOS
+  `minimumScaleFactor(0.7)`). RemoteViews will not inflate a plain `View`: a
+  spacer must be a FrameLayout, or every widget shows "Can't load widget".
 - **Type follows the size class** (`WidgetSize`: COMPACT / MEDIUM / LARGE, the
   iOS families). Medium is the XML defaults. Headers pick a rung of
   `headerVariants` that fits (`WidgetText`); never let a header wrap.

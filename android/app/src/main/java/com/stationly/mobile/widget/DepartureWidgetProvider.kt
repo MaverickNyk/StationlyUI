@@ -505,12 +505,31 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         /** Text inset inside every row and platform header. */
         private const val ROW_TEXT_INSET_DP = 12f
 
-        /**
-         * Everything on the pager bar that is not the title: 10dp padding each
-         * side, the 52dp chevrons, the back chevron's 28dp end margin and the
-         * 28dp "1/2" counter.
-         */
-        private const val PAGER_CHROME_DP = 10f + 52f + 28f + 28f + 52f + 10f
+        // ── The pager bar ────────────────────────────────────────────────
+        //
+        // Everything on it that is not the title: 10dp padding each side and
+        // an arrow column at each end. The "1/2" sits beside the title and is
+        // measured per render. On a 2x2 (COMPACT, Android 12+) the columns
+        // slim down: at full width a ~170dp widget had nothing left for the
+        // title and showed only "1/2" (owner, 2026-11-23).
+        private const val PAGER_PADDING_DP = 10f
+        private const val CHEVRON_DP = 52f
+        private const val COMPACT_CHEVRON_DP = 30f
+        /** The chevron's edge inset and ink box; the rest of a column is inward padding. */
+        private const val CHEVRON_EDGE_DP = 2f
+        private const val CHEVRON_INK_DP = 8f
+        /** The tap zones laid over the arrows, wider than the columns. */
+        private const val CHEVRON_ZONE_DP = 80f
+        private const val COMPACT_CHEVRON_ZONE_DP = 56f
+        /** The gap between the platform name and its "1/2". */
+        private const val PAGER_COUNT_GAP_DP = 6f
+
+        /** The header's natural height: 7dp + 26dp button box + 5dp. */
+        private const val NATURAL_HEADER_DP = 38f
+        /** The pager bar's natural height, near enough, at medium type. */
+        private const val NATURAL_PAGER_DP = 24f
+        /** How far a chevron zone reaches past the bar, into the row under it. */
+        private const val CHEVRON_ZONE_OVERHANG_DP = 6f
 
         /** The shortest a refresh spinner stays up: about one visible turn. */
         private const val MIN_SPINNER_MS = 900L
@@ -1709,33 +1728,31 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // platform, so the bar is the only thing naming which.
             if (stepping) {
                 views.setViewVisibility(R.id.platform_pager, android.view.View.VISIBLE)
-                // `compactTitle`, not `title`: this bar has two chevrons and a
-                // page marker to pay for before the text gets any width, and a
-                // RemoteViews cannot measure to pick a rung. "DLR Plat. 9" is
-                // also exactly what the board inside the app prints on every
-                // row, so the widget stops being the one surface that spells it
-                // out in full.
-                views.setTextViewText(
-                    R.id.platform_pager_title,
-                    // The ladder from its short rung (the pager always shows the
-                    // short forms, S019), narrowed further when the arrows leave
-                    // too little room, as iOS's pager header does.
-                    WidgetText.firstThatFits(
-                        context,
-                        com.stationly.core.util.MultiLineBoardProcessor
-                            .headerVariants(PlatformPages.title(pagedRows)).drop(1)
-                            .ifEmpty { listOf(PlatformPages.compactTitle(pagedRows)) },
-                        widgetSize.platform, bold = true,
-                        availableDp = (widgetWidthDp.takeIf { it > 0 }?.minus(PAGER_CHROME_DP + HEADER_SLACK_DP)) ?: 0f,
-                    ),
-                )
+                val pagerChromeDp = applyPagerChrome(context, views, compact = widgetSize == WidgetSize.COMPACT)
                 // "2/3" rather than dots: a RemoteViews cannot draw a pager
                 // indicator without a view per dot, and the number says the
-                // same thing in less space on a control this size.
-                views.setTextViewText(
-                    R.id.platform_pager_count,
-                    "${safePage + 1}/$pageCount",
+                // same thing in less space on a control this size. Shown at
+                // EVERY size and never squeezed (iOS): the title gives way.
+                val pageMarker = "${safePage + 1}/$pageCount"
+                views.setTextViewText(R.id.platform_pager_count, pageMarker)
+                val markerDp = WidgetText.widthDp(context, pageMarker, widgetSize.pagerCount, bold = true) +
+                    PAGER_COUNT_GAP_DP
+                // The ladder from its short rung (the pager always shows the
+                // short forms, S019: "DLR Plat. 9", as the in-app board prints
+                // it), narrowed further when the arrows and the marker leave
+                // too little room, and shrunk to 70% as a last resort, as
+                // iOS's pager header does.
+                val pagerTitle = WidgetText.fit(
+                    context,
+                    com.stationly.core.util.MultiLineBoardProcessor
+                        .headerVariants(PlatformPages.title(pagedRows)).drop(1)
+                        .ifEmpty { listOf(PlatformPages.compactTitle(pagedRows)) },
+                    widgetSize.platform, bold = true,
+                    availableDp = (widgetWidthDp.takeIf { it > 0 }
+                        ?.minus(pagerChromeDp + markerDp + HEADER_SLACK_DP)) ?: 0f,
                 )
+                views.setTextViewText(R.id.platform_pager_title, pagerTitle.text)
+                views.setTextViewTextSize(R.id.platform_pager_title, sp, pagerTitle.sp)
                 views.setOnClickPendingIntent(
                     R.id.btn_platform_prev,
                     platformStepIntent(context, appWidgetId, delta = -1),
@@ -1774,6 +1791,9 @@ class DepartureWidgetProvider : AppWidgetProvider() {
 
             // Clear existing rows setup
             val rowViews = mutableListOf<RemoteViews>()
+            // Which of [rowViews] are platform headers, so BoardProportions knows
+            // how deep the stretching container's content is in departure rows.
+            val headerViews = mutableSetOf<RemoteViews>()
             // ── Platform headers: the longest wording that fits (iOS HeaderLadder) ──
             //
             // A header that wrapped to two lines and lost its second ("Mildmay
@@ -1781,10 +1801,14 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // "Platform" -> "Plat.", line names -> short forms, then drops the
             // direction; the first rung that fits at this size's type wins.
             val headerAvailDp = (widgetWidthDp.takeIf { it > 0 }?.minus(2 * ROW_TEXT_INSET_DP + HEADER_SLACK_DP)) ?: 0f
-            fun fitHeader(text: String): String = WidgetText.firstThatFits(
-                context, com.stationly.core.util.MultiLineBoardProcessor.headerVariants(text),
-                widgetSize.platform, bold = true, availableDp = headerAvailDp,
-            )
+            fun fitHeader(header: RemoteViews, text: String) {
+                val fitted = WidgetText.fit(
+                    context, com.stationly.core.util.MultiLineBoardProcessor.headerVariants(text),
+                    widgetSize.platform, bold = true, availableDp = headerAvailDp,
+                )
+                header.setTextViewText(R.id.platform_name, fitted.text)
+                header.setTextViewTextSize(R.id.platform_name, sp, fitted.sp)
+            }
             // ── Scroll mode with nothing to scroll fills the widget ─────────
             //
             // When every row fits, the rows are height-flexible and go in the
@@ -1795,9 +1819,13 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             val rowCountEstimate = sduiPayload?.components
                 ?.count { it !is com.stationly.core.model.sdui.SduiWidgetComponent.Status }
                 ?: drawnRows?.size ?: 0
+            val headerCountEstimate = sduiPayload?.components
+                ?.count { it is com.stationly.core.model.sdui.SduiWidgetComponent.Header }
+                ?: drawnRows?.count { it is com.stationly.core.util.MultiLineBoardProcessor.Row.PlatformHeader }
+                ?: 0
             val fitsAll = !stepping && ScrollFit.allRowsFit(
                 rowCountEstimate, widgetHeightDpMeasured, context.resources.configuration.fontScale,
-                rowScale = widgetSize.rowScale,
+                rowScale = widgetSize.rowScale, headerCount = headerCountEstimate,
             )
             val rowLayout = if (fitsAll) R.layout.widget_departure_row_fill else R.layout.widget_departure_row
             val headerLayout = if (fitsAll) R.layout.widget_platform_header_fill else R.layout.widget_platform_header
@@ -1831,13 +1859,13 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 sduiPayload.components.forEach { component ->
                     when (component) {
                         is com.stationly.core.model.sdui.SduiWidgetComponent.Header -> {
-                            val header = newHeader(context, headerLayout, widgetSize)
+                            val header = newHeader(context, headerLayout, widgetSize).also { headerViews += it }
                             // Prefix every platform header with the line
                             // context so each platform row carries the
                             // same identity ("Piccadilly: Platform 1",
                             // "Piccadilly: Platform 2", …).
                             val title = StationlyFormatters.platformHeaderText(linePrefix, component.title)
-                            header.setTextViewText(R.id.platform_name, fitHeader(title))
+                            fitHeader(header, title)
                              val headerColor = com.stationly.mobile.util.SduiThemeManager.parseColor(component.color, dynTextColor)
                              header.setTextColor(R.id.platform_name, headerColor)
                             rowViews.add(header)
@@ -1904,8 +1932,8 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     drawnRows.forEach { row ->
                         when (row) {
                             is com.stationly.core.util.MultiLineBoardProcessor.Row.PlatformHeader -> {
-                                val header = newHeader(context, headerLayout, widgetSize)
-                                header.setTextViewText(R.id.platform_name, fitHeader(row.title))
+                                val header = newHeader(context, headerLayout, widgetSize).also { headerViews += it }
+                                fitHeader(header, row.title)
                                 header.setOnClickFillInIntent(R.id.platform_name, Intent())
                                 rowViews.add(header)
                             }
@@ -1943,13 +1971,13 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 legacyRows.forEach { row ->
                     when (row) {
                         is com.stationly.core.util.LegacyRow.Header -> {
-                            val header = newHeader(context, headerLayout, widgetSize)
+                            val header = newHeader(context, headerLayout, widgetSize).also { headerViews += it }
                             header.setOnClickFillInIntent(R.id.platform_name, Intent())
                             // Prefix every platform header with the line
                             // context — same line, but each platform row
                             // carries its own identity.
                             val title = StationlyFormatters.platformHeaderText(linePrefix, row.title)
-                            header.setTextViewText(R.id.platform_name, fitHeader(title))
+                            fitHeader(header, title)
                             rowViews.add(header)
                         }
                         is com.stationly.core.util.LegacyRow.Departure -> {
@@ -1964,7 +1992,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                             rowViews.add(dep)
                         }
                         is com.stationly.core.util.LegacyRow.Message -> {
-                            val msg = newHeader(context, headerLayout, widgetSize)
+                            val msg = newHeader(context, headerLayout, widgetSize).also { headerViews += it }
                             msg.setOnClickFillInIntent(R.id.platform_name, Intent())
                             msg.setTextViewText(R.id.platform_name, row.text)
                             rowViews.add(msg)
@@ -2081,6 +2109,28 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 applyRowsToWidget(views, finalRowViews, fill = finalRowViews !== rowViews || fitsAll)
             }
 
+            // ── Row proportions: the hierarchy at any size (BoardProportions) ──
+            //
+            // Only a board whose rows STRETCH is proportioned. Stepping pages
+            // always stretch (ROWS_PER_PLATFORM rows under the pager); the other
+            // containers stretch when they hold a message or everything fits. A
+            // scrolling list keeps natural heights: its rows are fixed and the
+            // space is theirs to scroll through.
+            fun solve(rows: Int, headers: Int) = BoardProportions.solve(
+                heightDp = widgetHeightDpMeasured, size = widgetSize,
+                fontScale = context.resources.configuration.fontScale,
+                rows = rows, headers = headers, pager = stepping, status = showsBoard,
+            )
+            val proportions = when {
+                stepping && finalRowViews === rowViews -> solve(rows = ROWS_PER_PLATFORM, headers = 0)
+                finalRowViews !== rowViews || fitsAll -> {
+                    val headers = finalRowViews.count { it in headerViews }
+                    solve(rows = finalRowViews.size - headers, headers = headers)
+                }
+                else -> null
+            }
+            applyProportions(views, proportions)
+
             // Important: Handle appWidgetId correctly if updating all from invalid
             if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
                 appWidgetManager.updateAppWidget(appWidgetId, views)
@@ -2180,6 +2230,75 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // call alone would be the silent one, and the board would cut.
             views.setDisplayedChild(stage, 0)
             views.setDisplayedChild(stage, 1)
+        }
+
+        /**
+         * Sizes the rows outside the stretching container (BoardProportions),
+         * or puts them back to their natural heights when [heights] is null.
+         *
+         * Android 12+ only: `setViewLayoutHeight` arrived in API 31. Older
+         * versions keep natural heights, which still hold the order of the
+         * type ladder; they just do not grow with a tall widget.
+         *
+         * Always written, never skipped: a full update onto a widget on screen
+         * is `reapply`, which keeps the last render's layout params, so a board
+         * going from stretched to scrolling has to be put back explicitly.
+         *
+         * The tap zones move with the header, since they are laid over it at
+         * fixed offsets.
+         */
+        private fun applyProportions(views: RemoteViews, heights: BoardProportions.Heights?) {
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return
+            val dip = android.util.TypedValue.COMPLEX_UNIT_DIP
+            val px = android.util.TypedValue.COMPLEX_UNIT_PX
+            val wrap = android.view.ViewGroup.LayoutParams.WRAP_CONTENT.toFloat()
+            fun height(id: Int, dp: Float?) =
+                if (dp == null) views.setViewLayoutHeight(id, wrap, px) else views.setViewLayoutHeight(id, dp, dip)
+
+            height(R.id.header_row, heights?.stationDp)
+            height(R.id.platform_pager, heights?.pagerDp)
+            height(R.id.status_container, heights?.statusDp)
+            height(R.id.footer_row, heights?.footerDp)
+
+            // Zones: the header and the gap under it for gear/refresh, and the
+            // pager's band (and a little of the row below) for the chevrons.
+            val header = heights?.stationDp ?: NATURAL_HEADER_DP
+            val pagerTop = header + BoardProportions.GAP_DP
+            views.setViewLayoutHeight(R.id.zone_settings, pagerTop, dip)
+            views.setViewLayoutHeight(R.id.zone_refresh, pagerTop, dip)
+            val pagerBand = (heights?.pagerDp ?: NATURAL_PAGER_DP) + CHEVRON_ZONE_OVERHANG_DP
+            listOf(R.id.zone_platform_prev, R.id.zone_platform_next).forEach { id ->
+                views.setViewLayoutMargin(id, RemoteViews.MARGIN_TOP, pagerTop, dip)
+                views.setViewLayoutHeight(id, pagerBand, dip)
+            }
+        }
+
+        /**
+         * The pager bar's arrow columns for this size: full on medium and large,
+         * slim on COMPACT (Android 12+; older versions cannot resize a view).
+         * Written both ways every time, because `reapply` keeps the last
+         * render's state. Returns the chrome's width in dp, for the title
+         * fitter; the "1/2" beside the title is measured separately.
+         */
+        private fun applyPagerChrome(context: Context, views: RemoteViews, compact: Boolean): Float {
+            val legacy = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S
+            val column = if (compact && !legacy) COMPACT_CHEVRON_DP else CHEVRON_DP
+            if (!legacy) {
+                val density = context.resources.displayMetrics.density
+                fun px(dp: Float) = (dp * density).toInt()
+                val edge = px(CHEVRON_EDGE_DP)
+                val inward = px(column - CHEVRON_EDGE_DP - CHEVRON_INK_DP)
+                val dip = android.util.TypedValue.COMPLEX_UNIT_DIP
+                views.setViewLayoutWidth(R.id.btn_platform_prev, column, dip)
+                views.setViewLayoutWidth(R.id.btn_platform_next, column, dip)
+                views.setViewPadding(R.id.btn_platform_prev, edge, edge, inward, edge)
+                views.setViewPadding(R.id.btn_platform_next, inward, edge, edge, edge)
+                // Narrower zones on a 2x2, so the two do not meet over the title.
+                val zone = if (compact) COMPACT_CHEVRON_ZONE_DP else CHEVRON_ZONE_DP
+                views.setViewLayoutWidth(R.id.zone_platform_prev, zone, dip)
+                views.setViewLayoutWidth(R.id.zone_platform_next, zone, dip)
+            }
+            return 2 * PAGER_PADDING_DP + 2 * column
         }
 
         /** A departure row in this size class's type (WidgetSize). */

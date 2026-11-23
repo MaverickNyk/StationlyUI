@@ -21,6 +21,19 @@ import android.os.Bundle
  *  - [LARGE]: wide and at least ~320dp tall, a 4x4. Larger type, like iOS
  *    `.large`.
  *
+ * One step per rung (owner, 2026-11-23): station > platform > departure >
+ * status, as iOS's ladder. The platform used to be the departure rows' size,
+ * so the only thing marking a platform bar out was bold. The station's step is
+ * half a point on medium and large: its ROW is already the deepest on the board
+ * (BoardProportions), and a full point cut "Arsenal Underground Station" short
+ * on a 4x2.
+ *
+ * The pager's "1/2" is the platform size x 0.72, as iOS.
+ *
+ * The footer clock sits a step BELOW the station ("it does not outrank the
+ * station name", iOS). It was 19sp on medium, the in-app board's size, which on
+ * a widget made the footer the heaviest row on the board.
+ *
  * The steps between classes follow iOS's ratios (small/medium/large rows
  * 11/12.5/14.5pt) applied to Android's 15sp medium baseline.
  */
@@ -35,12 +48,12 @@ enum class WidgetSize(
     val showsClock: Boolean,
     val centresStation: Boolean,
 ) {
-    COMPACT(station = 13.5f, platform = 13f, row = 13f, status = 10.5f, clock = 16f, ago = 11.5f,
+    COMPACT(station = 14.5f, platform = 14f, row = 13f, status = 10.5f, clock = 13.5f, ago = 11.5f,
         pagerCount = 10f, showsClock = false, centresStation = false),
-    MEDIUM(station = 16f, platform = 15f, row = 15f, status = 12f, clock = 19f, ago = 12f,
-        pagerCount = 11f, showsClock = true, centresStation = true),
-    LARGE(station = 18f, platform = 17f, row = 17f, status = 13.5f, clock = 21f, ago = 13f,
-        pagerCount = 12f, showsClock = true, centresStation = true);
+    MEDIUM(station = 16.5f, platform = 16f, row = 15f, status = 12f, clock = 16f, ago = 12f,
+        pagerCount = 11.5f, showsClock = true, centresStation = true),
+    LARGE(station = 18.5f, platform = 18f, row = 17f, status = 13.5f, clock = 18f, ago = 13f,
+        pagerCount = 13f, showsClock = true, centresStation = true);
 
     /** How this class's rows compare to the medium rows the layouts were measured at. */
     val rowScale: Float get() = row / MEDIUM.row

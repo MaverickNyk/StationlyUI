@@ -29,14 +29,15 @@
         android:id="@+id/board_content"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="vertical"
-        android:paddingTop="10dp"
-        android:paddingBottom="10dp">
-        <!-- No SIDE padding, on purpose (owner, 2026-11-22): every row's lit
-             background runs to the widget's edges, as the iOS board does ("the
-             dot-matrix board must cover the widget end to end"). The breathing
-             room moved INSIDE the rows: text insets of 12dp below, and the
-             header's controls carry their own margins. -->
+        android:orientation="vertical">
+        <!-- No padding at ALL, on purpose: the board is full bleed, as the iOS
+             one is ("the dot-matrix board must cover the widget end to end").
+             Sides (owner, 2026-11-22): every row's lit background runs to the
+             widget's edges, with 12dp text insets inside the rows. Top and
+             bottom (owner, 2026-11-23): the station row starts at the top edge
+             and the clock row ends at the bottom one. The corner clearance the
+             old 10dp bought lives INSIDE those two rows as padding, so their
+             lit backgrounds reach the corners while their contents stay clear. -->
 
     <!-- Top Header Row — full-width active background, name centered, buttons right -->
     <FrameLayout
@@ -44,8 +45,11 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@drawable/departure_board_active_row_background"
-        android:paddingTop="2dp"
-        android:paddingBottom="2dp">
+        android:paddingTop="7dp"
+        android:paddingBottom="5dp">
+        <!-- 7/5dp, not 2/2: this row now touches the top edge, so the padding
+             is what keeps the gear and refresh glyphs inside the system corner
+             curve. Top-heavy because only the TOP edge has a corner. -->
 
         <!-- Centered station lockup: mode roundel + station name. The icon
              carries the transport-mode identity (tube/overground/DLR/bus/
@@ -80,7 +84,7 @@
                 android:maxLines="1"
                 android:ellipsize="end"
                 android:textColor="@color/tfl_amber"
-                android:textSize="16sp"
+                android:textSize="16.5sp"
                 android:textStyle="bold"
                 tools:text="Arsenal Underground Station" />
         </LinearLayout>
@@ -138,7 +142,15 @@
                 android:paddingBottom="3dp"
                 android:visibility="gone"
                 android:indeterminate="true"
-                android:indeterminateDrawable="@drawable/ic_refresh_spinning" />
+                android:indeterminateBehavior="repeat"
+                android:indeterminateDuration="800"
+                android:indeterminateDrawable="@drawable/ic_refresh_spinning"
+                android:interpolator="@android:anim/linear_interpolator" />
+            <!-- 800ms a turn, linear and continuous: one smooth spin per
+                 frame rather than the old 12-step tick (see
+                 ic_refresh_spinning). Linear because an eased turn slows to a
+                 near stop every revolution, which is the stop-and-go this
+                 replaced. -->
         </FrameLayout>
     </FrameLayout>
 
@@ -232,7 +244,6 @@
             android:id="@+id/btn_platform_prev"
             android:layout_width="52dp"
             android:layout_height="match_parent"
-            android:layout_marginEnd="28dp"
             android:contentDescription="Previous platform"
             android:paddingStart="2dp"
             android:paddingTop="2dp"
@@ -241,37 +252,56 @@
             android:scaleType="fitCenter"
             android:src="@drawable/ic_chevron_left" />
 
-        <TextView
-            android:id="@+id/platform_pager_title"
+        <!-- ── Title and "1/2", centred TOGETHER (iOS PlatformPagerHeader) ──
+             The marker sits right after the platform name, a notch smaller
+             and dimmer, and the pair is centred as one between the arrows.
+             It used to be a fixed slot at the far right, balanced by a spacer
+             on the left, which cost 56dp a 2x2 did not have: the name got
+             ~10dp and the bar read only "1/2" (owner, 2026-11-23).
+
+             The marker is never squeezed, as on iOS: the title is
+             `wrap_content` WITH weight, which a LinearLayout shrinks first
+             when the pair is wider than the room, so "Mildmay Plat. 2" gives
+             way before "1/2" does. The fitter in the provider picks a rung
+             that fits beside the marker, so that is only a backstop. -->
+        <FrameLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:ellipsize="end"
-            android:gravity="center"
-            android:singleLine="true"
-            android:textColor="@color/tfl_amber"
-            android:textSize="15sp"
-            android:textStyle="bold" />
+            android:layout_weight="1">
 
-        <!-- "1/2" is a fixed 28dp slot, and `btn_platform_prev` carries a 28dp
-             end margin whose only job is to cancel it out. A weighted TextView
-             centres in what is LEFT of the row, so a counter down one side
-             alone drags the platform name off-centre by half its width: 9.3dp
-             on the bar this replaces, measured on the device. Under a station
-             name that is itself centred, and above rows that are, that is the
-             kind of wrongness you see without being able to name it.
+            <!-- The FrameLayout is what centres this pair; not a useless parent. -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                tools:ignore="UselessParent">
 
-             Fixed rather than `wrap_content` for the same reason — a counter
-             that grew with the page count would walk the title sideways as the
-             user stepped. 28dp holds "10/12" at 11sp, and past that it clips
-             rather than pushing, which is the right way round. -->
-        <TextView
-            android:id="@+id/platform_pager_count"
-            android:layout_width="28dp"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:textColor="@color/tfl_amber"
-            android:textSize="11sp" />
+                <TextView
+                    android:id="@+id/platform_pager_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    tools:ignore="InefficientWeight"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:textColor="@color/tfl_amber"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <!-- iOS: platform x 0.72, bold, amberDim. -->
+                <TextView
+                    android:id="@+id/platform_pager_count"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:singleLine="true"
+                    android:textColor="@color/tfl_amber_dim"
+                    android:textSize="11.5sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </FrameLayout>
 
         <!-- The mirror of the back arrow: ink 4dp from the board's edge, level
              with the ETA column, and 18dp of inward padding doing the same job
@@ -389,12 +419,17 @@
         android:id="@+id/status_container"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
+        android:layout_marginTop="2dp"
         android:background="@drawable/departure_board_active_row_background"
+        android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="12dp"
+        android:paddingTop="3dp"
         android:paddingEnd="12dp"
+        android:paddingBottom="3dp"
         android:visibility="gone">
+        <!-- 3dp top and bottom (owner, 2026-11-23): with none, the 12sp marquee
+             was a sliver between a full departure row and the footer. -->
 
         <TextView
             android:id="@+id/status_severity"
@@ -433,24 +468,36 @@
         </TextView>
     </LinearLayout>
 
+    <!-- The footer is a lit row like every other, flush to the bottom edge
+         (owner, 2026-11-23), matching iOS's `DotMatrixFooter` LitCell. It was
+         bare panel with only the clock lit, which left an unlit band under the
+         board. 2dp gap like every row; bottom-heavy padding because the
+         bottom corners are where the logo and "ago" sit. Kept tight
+         (2/3dp): the clock's own line height already makes this the deepest
+         row, and more padding made it read as heavier than the station row
+         it is meant to bookend (owner, 2026-11-23). -->
     <RelativeLayout
+        android:id="@+id/footer_row"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:paddingStart="10dp"
-        android:paddingEnd="10dp">
+        android:layout_marginTop="2dp"
+        android:background="@drawable/departure_board_active_row_background"
+        android:paddingTop="2dp"
+        android:paddingBottom="3dp"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp">
 
         <!-- Stationly maker mark on the left, vertically centred on the
              footer row alongside the ticking clock + chronometer. Drawn
              at full opacity so the brand reads crisply against the dark
-             dot-matrix panel; size bumped to 22dp so the disc has enough
-             pixel weight to look intentional rather than smudged. -->
+             dot-matrix panel. 20dp: enough pixel weight to look intentional
+             rather than smudged, and clear of the bottom-left corner curve now
+             the footer is flush to the edge. -->
         <ImageView
-            android:layout_width="22dp"
-            android:layout_height="22dp"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
             android:layout_alignParentStart="true"
             android:layout_centerVertical="true"
-            android:layout_marginStart="6dp"
             android:src="@drawable/stationly_logo"
             android:contentDescription="Stationly" />
 
@@ -463,13 +510,12 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_centerInParent="true"
-            android:background="@drawable/departure_board_active_row_background"
             android:format12Hour="HH:mm:ss"
             android:format24Hour="HH:mm:ss"
             android:paddingStart="6dp"
             android:paddingEnd="6dp"
             android:textColor="@color/tfl_amber"
-            android:textSize="19sp"
+            android:textSize="16sp"
             android:textStyle="bold"
             tools:text="17:23:42" />
 
@@ -495,23 +541,24 @@
          controls under them, so a thumb that lands near an icon does what the
          icon says instead of falling through to the board (which opens the app).
 
-         Geometry follows the board's fixed parts: 10dp padding, then the 26dp
-         header, then the 2dp margin and ~20dp pager bar. The header zones reach
-         up into the empty padding; the chevron zones take the bar and a few dp
-         of the row under it. Settings LEFT, refresh RIGHT: their zones never
+         Geometry follows the board's fixed parts: the 38dp header (7dp + 26dp
+         + 5dp, flush to the top), then the 2dp gap and the pager bar. These
+         are the natural sizes; on Android 12+ `applyProportions` moves the
+         zones with the rows when the board stretches. The chevron zones take
+         the bar and a few dp of the row under it. Settings LEFT, refresh RIGHT: their zones never
          touch, so one cannot be mistaken for the other. The chevron zones are
          GONE outside step mode, so they never cover a scrolling list. -->
     <FrameLayout
         android:id="@+id/zone_settings"
         android:layout_width="72dp"
-        android:layout_height="38dp"
+        android:layout_height="40dp"
         android:layout_gravity="top|start"
         android:contentDescription="Widget settings" />
 
     <FrameLayout
         android:id="@+id/zone_refresh"
         android:layout_width="72dp"
-        android:layout_height="38dp"
+        android:layout_height="40dp"
         android:layout_gravity="top|end"
         android:contentDescription="Refresh" />
 
@@ -520,7 +567,7 @@
         android:layout_width="80dp"
         android:layout_height="30dp"
         android:layout_gravity="top|start"
-        android:layout_marginTop="38dp"
+        android:layout_marginTop="40dp"
         android:contentDescription="Previous platform"
         android:visibility="gone" />
 
@@ -529,7 +576,7 @@
         android:layout_width="80dp"
         android:layout_height="30dp"
         android:layout_gravity="top|end"
-        android:layout_marginTop="38dp"
+        android:layout_marginTop="40dp"
         android:contentDescription="Next platform"
         android:visibility="gone" />
 

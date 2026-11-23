@@ -42,4 +42,29 @@ object WidgetText {
         if (availableDp <= 0f) return variants.first()
         return variants.firstOrNull { widthDp(context, it, sp, bold) <= availableDp } ?: variants.last()
     }
+
+    /** A rung and the size to draw it at. */
+    data class Fitted(val text: String, val sp: Float)
+
+    /**
+     * [firstThatFits], and when even the shortest rung is too wide, the size
+     * that makes it fit, down to [minScale] of [sp], before the view ellipsises.
+     *
+     * iOS's `HeaderLadder` last resort (`minimumScaleFactor(0.7)`): a header
+     * a little smaller beats a header missing its platform number.
+     */
+    fun fit(
+        context: Context,
+        variants: List<String>,
+        sp: Float,
+        bold: Boolean,
+        availableDp: Float,
+        minScale: Float = 0.7f,
+    ): Fitted {
+        val text = firstThatFits(context, variants, sp, bold, availableDp)
+        if (availableDp <= 0f || text.isEmpty()) return Fitted(text, sp)
+        val width = widthDp(context, text, sp, bold)
+        if (width <= availableDp) return Fitted(text, sp)
+        return Fitted(text, sp * (availableDp / width).coerceIn(minScale, 1f))
+    }
 }

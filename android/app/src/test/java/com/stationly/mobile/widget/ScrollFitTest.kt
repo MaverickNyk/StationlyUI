@@ -28,6 +28,14 @@ class ScrollFitTest {
         assertFalse(ScrollFit.allRowsFit(rowCount = 4, widgetHeightDp = 213, fontScale = 1.3f))
     }
 
+    /** Headers are deeper than rows: counting them as rows over-promised. */
+    @Test
+    fun `platform headers take more room than departure rows`() {
+        // 6 rows fit at 225dp as rows, but not when 2 of them are headers.
+        assertTrue(ScrollFit.allRowsFit(rowCount = 6, widgetHeightDp = 225))
+        assertFalse(ScrollFit.allRowsFit(rowCount = 6, widgetHeightDp = 225, headerCount = 2))
+    }
+
     @Test
     fun `nothing to draw or no size is not a fit`() {
         assertFalse(ScrollFit.allRowsFit(rowCount = 0, widgetHeightDp = 213))
