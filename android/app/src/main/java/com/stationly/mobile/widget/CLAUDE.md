@@ -354,6 +354,10 @@ helpers, or document why this surface needs to diverge.
   shortest rung shrink to 70% before ellipsising (`WidgetText.fit`, iOS
   `minimumScaleFactor(0.7)`). RemoteViews will not inflate a plain `View`: a
   spacer must be a FrameLayout, or every widget shows "Can't load widget".
+- **A new widget starts on SCROLL, every station** (owner, 2026-11-23). It used
+  to start on STEP when a station had several platforms. Arrows ("Buttons") are
+  a choice in the widget's settings; `applyDefaultsAndFinish` writes SCROLL on
+  first placement only and never resets a widget already set up.
 - **Type follows the size class** (`WidgetSize`: COMPACT / MEDIUM / LARGE, the
   iOS families). Medium is the XML defaults. Headers pick a rung of
   `headerVariants` that fits (`WidgetText`); never let a header wrap.

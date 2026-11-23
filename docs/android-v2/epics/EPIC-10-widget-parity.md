@@ -176,8 +176,10 @@ second step is a settings screen nobody asked for at the moment they are trying
 to put a widget on their home screen.
 
 - **T1** Placing a widget ends at the home screen once the station is chosen.
-- **T2** It starts on that station's DEFAULTS: stepping when the station has
-  several platforms, nothing pinned.
+- **T2** It starts on that station's DEFAULTS: scrolling, nothing pinned.
+  (Was "stepping when the station has several platforms"; changed by the owner
+  on 2026-11-23 so every new widget shows all its platforms as one list, the
+  same as a widget added from inside the app. Arrows are a setting.)
 - **T3** The settings remain reachable from the gear and from the manager, which
   is where somebody who wants them will look.
 

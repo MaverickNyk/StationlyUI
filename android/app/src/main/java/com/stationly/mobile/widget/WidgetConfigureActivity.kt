@@ -265,8 +265,8 @@ class WidgetConfigureActivity : ComponentActivity() {
                                 appWidgetId = m.appWidgetId,
                                 isFirstPlacement = isFirstPlacement,
                                 onBind = { commit(m.appWidgetId, it) },
-                                onFirstPlacementDone = { groupingId ->
-                                    applyDefaultsAndFinish(m.appWidgetId, groupingId)
+                                onFirstPlacementDone = {
+                                    applyDefaultsAndFinish(m.appWidgetId)
                                 },
                                 onDone = ::finish,
                                 onNoBoards = ::openAppAndFinish,
@@ -427,45 +427,24 @@ class WidgetConfigureActivity : ComponentActivity() {
     /**
      * The settings a freshly placed widget starts with, then out of the way.
      *
-     * ## Why stepping is the default when there is more than one platform
-     * A widget is a fixed cell. Scrolling inside one fights the launcher's own
-     * scroll and is a gesture almost nobody makes, so a multi-platform station
-     * placed on the default would show one platform and hide the rest behind an
-     * interaction the user never discovers. With one platform the arrows have
-     * nowhere to go and the bar hides itself anyway, so SCROLL is the honest
-     * setting to store.
+     * ## Scrolling is the default, at every station (owner, 2026-11-23)
+     * A multi-platform station used to start on STEP ("Buttons"), on the theory
+     * that nobody scrolls inside a widget. The owner's call is that a new widget
+     * shows every platform as one list, and the arrows are a choice made in the
+     * widget's settings. It is also what a widget added from inside the app
+     * (`WidgetPinner`, which stores nothing) already did, so the two ways of
+     * adding a widget now start the same.
+     *
+     * Written explicitly rather than left absent, so the widget's settings page
+     * shows what it is on. First placement only: a widget somebody has already
+     * set up is never reset by this.
      *
      * Nothing pinned, because a pin is a statement about how somebody uses a
      * station and the app has not been told yet.
-     *
-     * Read off the board that exists RIGHT NOW. A station whose second platform
-     * is quiet tonight starts on SCROLL and the user can change it; guessing
-     * from anything other than the live board would be guessing.
      */
-    private fun applyDefaultsAndFinish(appWidgetId: Int, groupingId: String) {
+    private fun applyDefaultsAndFinish(appWidgetId: Int) {
         runCatching {
-            val selections = Platform.sqlStorage.getAllSelections()
-            val selection = selections.firstOrNull { it.groupingId == groupingId }
-            val platforms = selection?.let {
-                MultiLineBoardProcessor.pinnablePlatforms(
-                    feeds = selections.filter { s -> s.groupingId == groupingId }.map { s ->
-                        MultiLineBoardProcessor.Feed(
-                            stationId = s.station,
-                            line = s.line,
-                            direction = s.direction,
-                            predictions = runCatching {
-                                Platform.sqlStorage.getPredictions(s.station, s.line, s.direction)
-                            }.getOrNull().orEmpty(),
-                        )
-                    },
-                    isBus = MultiLineBoardProcessor.isBus(it.mode),
-                ).size
-            } ?: 0
-            WidgetSettings.setNav(
-                this,
-                appWidgetId,
-                if (platforms > 1) PlatformNav.STEP else PlatformNav.SCROLL,
-            )
+            WidgetSettings.setNav(this, appWidgetId, PlatformNav.SCROLL)
             WidgetSettings.setPin(this, appWidgetId, null)
             redraw(appWidgetId)
         }
