@@ -36,7 +36,8 @@ internal class PlayBillingConnection(
 
         val fresh = BillingClient.newBuilder(context)
             .setListener(listener)
-            // One-time products only. Required by Billing 7, and it is what lets
+            // One-time products only. Required since Billing 7 (the no-arg form is
+            // gone in 8+), and it is what lets
             // a cash-at-a-shop payment arrive as PENDING rather than failing.
             .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
             .build()

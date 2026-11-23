@@ -34,16 +34,19 @@ fun com.android.build.api.dsl.ApplicationProductFlavor.deepLinkScheme(scheme: St
 
 android {
     namespace = "com.stationly.mobile"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.stationly.mobile"
         minSdk = 26
-        // Google Play requires new apps and updates to target API 35
-        // (Android 15) as of 31 Aug 2025. The app already opts into
-        // edge-to-edge via enableEdgeToEdge() in MainActivity, which is the
-        // main behaviour change enforced at this level.
-        targetSdk = 35
+        // Google Play requires API 36 (Android 16) for new uploads; it refused
+        // the first v2 bundle at 35. What 36 changes, checked against this app:
+        // edge-to-edge was already enforced at 35 (enableEdgeToEdge() in
+        // MainActivity, no opt-out attribute anywhere); predictive back is on by
+        // default, which Compose's BackHandler / navigation already speak, and
+        // nothing overrides onBackPressed; large-screen orientation and
+        // resizability locks are ignored, and none are declared.
+        targetSdk = 36
         // ── v2 (AV2-8.3 task a) ──────────────────────────────────────────
         //
         // `versionCode 2` / `versionName "1.0"` is what is live in the Play
@@ -56,13 +59,16 @@ android {
         // not higher. So this is a prerequisite for the hardware verification,
         // not a step after it.
         //
+        // 4: Play Console kept version code 3 from the first upload, which it
+        // refused (Billing 7, target 35). A used code can never be reused.
+        //
         // ⚠️ **There is no rollback.** A v1 APK installed over v2 opens a
         // version-3 database with a version-1 schema and the framework throws;
         // `AndroidSqliteDriver` has no downgrade path. Play does not serve
         // downgrades, so this is sideload-only in practice — but the consequence
         // stands: once this reaches a device, that device cannot go back. A bad
         // v2 is fixed by shipping 2.0.1.
-        versionCode = 3
+        versionCode = 4
         versionName = "2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

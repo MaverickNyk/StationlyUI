@@ -79,7 +79,7 @@ kotlin {
                 // to resolve inside this module.
                 implementation("com.google.android.play:app-update-ktx:2.1.0")
                 // Play Billing for the support tiers (ui/support/PlayBilling.kt).
-                implementation("com.android.billingclient:billing-ktx:7.1.1")
+                implementation("com.android.billingclient:billing-ktx:9.1.0")
             }
         }
 
@@ -109,10 +109,10 @@ kotlin {
 
 android {
     namespace = "com.stationly.composeapp"
-    compileSdk = 34
+    compileSdk = 36
     defaultConfig {
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 36
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
