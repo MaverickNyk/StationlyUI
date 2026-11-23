@@ -121,7 +121,7 @@ Committed as `c1ffca4`.
 iOS: no change in behaviour. `stationId` is ignored by the iOS widget manager
 (it reloads all timelines), and the poll still reloads WidgetKit on iOS.
 Whether WidgetKit's marquee shows the same stutter was not checked.
-Uncommitted.
+Committed as `15123d3`.
 
 ---
 

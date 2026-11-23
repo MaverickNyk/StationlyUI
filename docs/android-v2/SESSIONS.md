@@ -28,7 +28,8 @@ as EPIC-11 for the owner to prioritise.
 (commonMain and iosMain changed), `:android:app:assembleStagingDebug`.
 **Commits:** `fdd0708` widget full bleed / proportional rows / iOS-aligned pager /
 smooth refresh; `6031e5c` new widgets start on SCROLL; `bf6d724` QA sweep fixes,
-logo, docs.
+logo, docs; `c1ffca4` served SDUI timing rules; `15123d3` quiet unlock
+refresh, steady marquee, row-by-row refresh roll.
 **Did:**
 - Widget (AV2-10.11 follow-up): station and clock rows flush to the edges;
   rows hold station > platform > departure > status at every size
