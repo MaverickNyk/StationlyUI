@@ -152,6 +152,57 @@ object WidgetPinner {
         return if (age in 0..PENDING_TTL_MS) station else null
     }
 
+    /**
+     * Bring the home screen forward once the launcher has accepted a pin.
+     *
+     * ## Why (Pixel launcher, measured 2026-11-23)
+     * The launcher does not place an accepted widget at once: it QUEUES it and
+     * places it when it next comes to the front. With the app still open behind
+     * the "Add to home screen" dialog, the user then goes home themselves, and
+     * the swipe-up gesture made the launcher process that queue TWICE: two
+     * copies of one widget id on the home screen. Android delivers updates to
+     * one view per id, so the second copy froze and a tap on it animated the
+     * other. Measured on the same phone, same station, back to back: gesture
+     * home → 2 copies (widget 31); Home key → 1 copy (widget 32). Every
+     * duplicate in the launcher's log (8, 9, 21, 23, 26, 27, 29, 30) was a
+     * pin from inside the app.
+     *
+     * Starting HOME is a normal launcher resume, which places the widget once
+     * (verified: widget 33, one copy, and a swipe-up afterwards added nothing).
+     * It lands on the launcher's default page, which may not be the page the
+     * widget went to. The Widgets screen
+     * never hit this because it finishes as it asks ([WidgetConfigureActivity]
+     * `pinAndFinish`), so the launcher is already in front.
+     *
+     * Only when the app is still VISIBLE (behind the launcher's dialog). On the
+     * Widgets-screen route the app has already gone and the launcher is in
+     * front; sending it HOME again would scroll it to the default page, away
+     * from the page the new widget landed on.
+     */
+    fun showHomeScreen(context: Context) {
+        val visible = appIsVisible()
+        android.util.Log.d("Widget", "Pin accepted; app visible=$visible${if (visible) ", showing the home screen" else ""}")
+        if (!visible) return
+        runCatching {
+            context.startActivity(
+                Intent(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_HOME)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
+
+    /**
+     * Whether one of this app's activities is on screen. A paused activity
+     * behind another app's dialog is VISIBLE (200); a finished one leaves the
+     * process cached, far above that.
+     */
+    private fun appIsVisible(): Boolean {
+        val info = android.app.ActivityManager.RunningAppProcessInfo()
+        android.app.ActivityManager.getMyMemoryState(info)
+        return info.importance <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE
+    }
+
     fun clearPending(context: Context) {
         context.getSharedPreferences(WidgetBindingStore.PREFS, Context.MODE_PRIVATE)
             .edit()

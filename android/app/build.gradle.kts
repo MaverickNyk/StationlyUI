@@ -68,7 +68,13 @@ android {
         // downgrades, so this is sideload-only in practice — but the consequence
         // stands: once this reaches a device, that device cannot go back. A bad
         // v2 is fixed by shipping 2.0.1.
-        versionCode = 4
+        //
+        // 4 is the committed FLOOR. A Play upload names its own code on the
+        // command line (`scripts/android-release.sh production --version-code N`
+        // passes -Pstationly.versionCode=N), the way the iOS script passes the
+        // build number: Play rejects any code it has seen before, including
+        // ones it refused, so the number belongs to the upload, not the commit.
+        versionCode = (project.findProperty("stationly.versionCode") as String?)?.toInt() ?: 4
         versionName = "2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

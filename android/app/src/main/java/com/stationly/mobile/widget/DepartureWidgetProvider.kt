@@ -182,6 +182,9 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     AppWidgetManager.EXTRA_APPWIDGET_ID,
                     AppWidgetManager.INVALID_APPWIDGET_ID,
                 )
+                // Home FIRST, before the bind and the draw: the launcher has the
+                // new widget queued and places it when it next comes to the front.
+                WidgetPinner.showHomeScreen(context)
                 val pendingResult = goAsync()
                 CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                     try {

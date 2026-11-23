@@ -123,6 +123,20 @@ iOS: no change in behaviour. `stationId` is ignored by the iOS widget manager
 Whether WidgetKit's marquee shows the same stutter was not checked.
 Committed as `15123d3`.
 
+### Also fixed: duplicate widgets after "Add to Home Screen" (owner, 2026-11-23)
+
+Two widgets for one station, one frozen, and a tap on it animated the other.
+Both were ONE widget id shown twice by the Pixel launcher: it queues an
+accepted pin and, when the user came home with the swipe-up gesture, processed
+that queue twice. Measured on device: gesture home → 2 copies, Home key → 1.
+Fix: the pin-accepted callback starts the home screen (`WidgetPinner.
+showHomeScreen`), a normal launcher resume; verified one copy, and a later
+swipe-up added nothing. Only when the app is still visible behind the
+launcher's dialog: from the Widgets screen the launcher is already in front,
+and a second HOME would scroll it away from the new widget. The owner's own two
+adds on that build (34, 35) each landed once. Not an iOS concern (WidgetKit has
+no pin flow).
+
 ---
 
 ## Code review (2026-11-23, after the device run)

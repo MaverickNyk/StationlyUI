@@ -145,6 +145,8 @@ roughly one focused hour.
 | AV2-11.20 | Unlock refreshes widgets silently; only a press spins or rolls (a press during that refresh still does) | S | ✅ S023 · Android only |
 | AV2-11.21 | Status marquee stutter: push redraws merged to one per widget per burst; app's 30 s poll stops redrawing the widget on Android | M | ✅ S023 · Android; shared VM change is a no-op on iOS |
 | AV2-11.22 | Refresh roll goes row by row, not one curtain | S | ✅ S023 · Android only · owner checked on device |
+| AV2-11.23 | "Add to Home Screen" placed two copies of one widget (Pixel launcher, gesture home); the app now goes home itself on accept | M | ✅ S023 · Android only · root-caused and verified on device |
+| AV2-11.24 | `scripts/android-dev.sh` and `scripts/android-release.sh`: environment named, built artefacts verified (iOS-script parity) | M | ✅ S023 · see `docs/ANDROID_BUILD_AND_RELEASE.md` |
 | AV2-11.10 | Landscape board and staging banner (#11) | M | open · device check first |
 | AV2-11.11 | Store prices in the buyer's currency (#13) | M | open · **iOS needs Swift** |
 | AV2-11.12 | Screensaver: both directions, board-location weather, "Route 39" (#14) | M | open |

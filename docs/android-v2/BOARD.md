@@ -126,7 +126,10 @@ BLOCKED ON OWNER:  Q5 is PARKED for merge time (S020, owner: focus is
 NEXT UP:           (1) Owner sign-off of the Review column, then an
                    internal-track build for what only Play can test (in-app
                    updates, long R8 runtime, sign-in after upgrade, a Play
-                   Billing purchase).
+                   Billing purchase). Build it with
+                   `scripts/android-release.sh production --version-code N`
+                   (docs/ANDROID_BUILD_AND_RELEASE.md); the staging app must
+                   be uninstalled from the test phone first (same package).
                    (2) AV2-9.9, after the owner's product call.
                    AV2-10.11's LARGE split + status backfill: DROPPED by the
                    owner (2026-11-23), Android widgets are rectangles.

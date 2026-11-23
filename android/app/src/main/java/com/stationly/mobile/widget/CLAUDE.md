@@ -413,6 +413,22 @@ helpers, or document why this surface needs to diverge.
 - **A press during a running fetch still spins and rolls.** The unlock refresh
   is the usual one; the press is armed and spun, and the running fetch's
   `stopSpinners` takes the spinner down and redraws it.
+- **"Add to Home Screen" goes home itself, or the Pixel launcher adds it TWICE**
+  (2026-11-23, root-caused on device). The launcher queues an accepted pin and
+  places it when it next comes to the front; coming back with the swipe-up
+  gesture made it process the queue twice: two copies of ONE widget id. Android
+  updates one view per id, so the copy it skipped froze, and a tap on it spun
+  the other. Same station, back to back: gesture home → 2 copies (31), Home key
+  → 1 (32). Every duplicate in the launcher log was a pin from inside the app.
+  Fix: `ACTION_PINNED` calls `WidgetPinner.showHomeScreen` first, a normal
+  launcher resume (verified: 33, one copy, a later swipe-up added nothing),
+  and only while the app is VISIBLE behind the dialog. The Widgets screen never
+  hit it because `pinAndFinish` finishes as it asks, and there a second HOME
+  would only scroll the launcher away from the new widget. To
+  spot one: `dumpsys appwidget` lists the id once while two views show it, and
+  the launcher's `dumpsys activity <launcher>` log shows two
+  `AddWorkspaceItemsTask` lines with the same `appWidgetId`. Removing one copy
+  of a duplicated id leaves the other working; remove both to clear it.
 - **Only a press animates** (owner, 2026-11-23). Unlock and boot refresh via
   `triggerRefresh`, the same action with NO widget id; no id means no spinner,
   no `MIN_SPINNER_MS` hold and no roll. It used to spin every widget on each

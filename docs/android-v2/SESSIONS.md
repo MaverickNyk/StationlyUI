@@ -45,6 +45,10 @@ refresh, steady marquee, row-by-row refresh roll.
   timing rules; unlock refreshes silently; push redraws merge into one per
   widget per burst (`scheduleRedraw`), which stopped the status marquee
   stuttering; the refresh roll goes row by row (`widget_platform_page_refresh`).
+- AV2-11.23: duplicate widgets after "Add to Home Screen" root-caused on device
+  (the Pixel launcher processes a queued pin twice when you come home with the
+  swipe-up gesture) and fixed by going home on accept. AV2-11.24: Android build
+  scripts with the iOS scripts' guarantees.
 **Learned:**
 - `UserSelection.directionTowards` is the NEXT stop, not the terminus; its
   KDoc said otherwise and the first cut of two fixes named side streets
@@ -56,6 +60,9 @@ refresh, steady marquee, row-by-row refresh roll.
 - A TextView restarts its marquee whenever its text is set, so every widget
   redraw restarts the status row. Redraw count IS a visual property: measured
   64 renders every 30 s from the app's SQL poll before it was cut.
+- When something on a widget "does not update", check `dumpsys appwidget`
+  before the code: the launcher showed one id twice, and Android only updates
+  one view per id. The launcher's own `dumpsys activity` log names every add.
 - A layout animation plays on a view's first draw, so it can only live in a
   layout used for the one motion that wants it.
 - Common-code `BackHandler` needs `org.jetbrains.compose.ui:ui-backhandler`
