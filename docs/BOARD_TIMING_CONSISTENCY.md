@@ -8,6 +8,16 @@ into view as trains leave.
 
 ---
 
+> **2026-11-23, Android:** the Android WIDGET was the one surface not on this
+> pipeline. It ticked each line through an Android-only `tickPredictions` with a
+> hard-coded 30 s grace and no "Gone" retention, so it ignored the served
+> `board.tick.*` rules. It now runs the three steps below exactly
+> (`DepartureWidgetProvider.tickedGroupsFor`), and the screensaver, which ticked
+> each feed BEFORE grouping and so never retained a departed train, now does too.
+> Departed rows are dim amber on every surface (`#B88F1A`). The Android-only
+> ticker is deleted. Consumers of the pipeline: home board, screensaver, Android
+> widget, and (by hand-mirrored twin) the iOS widget.
+
 ## 1. The pipeline
 
 One implementation in `core`, three consumers. The order of the three steps is

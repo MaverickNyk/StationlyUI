@@ -46,7 +46,6 @@ import com.stationly.core.util.resolveBoardFallbackCopy
 import com.stationly.core.util.GlobalBoardProcessor
 import com.stationly.core.util.LegacyRow
 import com.stationly.core.util.LineShortNames
-import com.stationly.app.ui.util.tickPredictions
 import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.StaleColor
 import com.stationly.core.util.StationlyFormatters
@@ -57,6 +56,8 @@ import com.stationly.core.model.user.PlatformNav
 import com.stationly.core.util.PlatformPages
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
+import com.stationly.core.util.BoardTicker
+import com.stationly.core.config.BoardPolicyStore
 import com.stationly.app.ui.common.StationlyLogo
 import com.stationly.app.ui.common.pressScale
 import com.stationly.app.platform.HapticType
@@ -77,6 +78,8 @@ import com.stationly.app.platform.HapticType
 // Dot-matrix signage palette — locked dark regardless of dream theme (the
 // board IS the signage, not chrome). Same values as Board.kt.
 private val BoardAmber  = Color(0xFFFFC819)
+/** A retained already-departed row. Same as Board.kt's `BoardAmberDim` and the widget's `tfl_amber_dim`. */
+private val BoardAmberDim = Color(0xFFB88F1A)
 private val ActiveRowBg = Color(0xFF161616)
 private val CardBg      = Color(0xFF050505)
 
@@ -164,33 +167,37 @@ fun DreamBoard(
 
     // ── The station's platforms, rebuilt each minute ────────────────────────
     //
-    // The same three steps the widget takes: tick every feed against ONE
-    // wall-clock reading, group into platform blocks, cap each block. Rebuilt
-    // here rather than carried on the snapshot because a screensaver runs all
-    // night between pushes — finished rows would go on saying "2 min" until
-    // the next one landed.
+    // The same steps as the home board (`Board.kt`) and the widget
+    // (`tickedGroupsFor`): group the RAW feeds with the full reserve, tick the
+    // blocks with [BoardTicker.tick] under the served [BoardPolicy] (departed
+    // grace, retained "Gone" rows, the departed label), then cap to the
+    // station's depth. It used to tick each feed first and group after, which
+    // honoured the served grace but never retained a departed train, so the
+    // screensaver could empty a platform the home board was still holding
+    // (2026-11-23). Rebuilt here rather than carried on the snapshot because a
+    // screensaver runs all night between pushes.
     //
     // Empty when the snapshot carries no feeds, which is every caller that
     // still builds a DreamSnapshot by hand (the settings preview). Those fall
     // through to the legacy single-board rows below, unchanged.
     val boardRows: List<MultiLineBoardProcessor.Row> =
-        remember(snapshot.feeds, snapshot.rowCap, nowMs) {
+        remember(snapshot.feeds, snapshot.rowCap, nowMs, lastUpdated) {
             if (snapshot.feeds.isEmpty()) emptyList() else {
-                val ticked = snapshot.feeds.map { feed ->
-                    feed.copy(
-                        predictions = StationlyFormatters.sortPredictions(
-                            tickPredictions(feed.predictions, nowMs)
-                        )
-                    )
-                }
-                MultiLineBoardProcessor.rowsFrom(
-                    MultiLineBoardProcessor.buildGroups(
-                        feeds = ticked,
+                val policy = BoardPolicyStore.current
+                val ticked = BoardTicker.tick(
+                    groups = MultiLineBoardProcessor.buildGroups(
+                        feeds = snapshot.feeds,
                         isBus = MultiLineBoardProcessor.isBus(sel?.mode),
-                        rowCap = snapshot.rowCap,
+                        rowCap = MultiLineBoardProcessor.rowReserve,
+                        nowMs = nowMs,
+                        policy = policy,
                     ),
-                    rowCap = snapshot.rowCap,
+                    nowMs = nowMs,
+                    payloadAgeMs = if (lastUpdated <= 0L) 0L else (nowMs - lastUpdated).coerceAtLeast(0L),
+                    displayRows = snapshot.rowCap,
+                    policy = policy,
                 )
+                MultiLineBoardProcessor.rowsFrom(ticked, rowCap = snapshot.rowCap, policy = policy)
             }
         }
 
@@ -396,19 +403,23 @@ fun DreamBoard(
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
+                                    // A retained departed train ("Gone") in dim
+                                    // amber, as the home board and the widget
+                                    // draw it: one fact, one shade.
+                                    val ink = if (row.departed) BoardAmberDim else BoardAmber
                                     // Per ROW, not per selection: the processor
                                     // decides block by block whether a prefix
                                     // helps — a single-line block does not need
                                     // one, a mixed block does.
                                     if (row.linePrefix.isNotBlank()) {
                                         Text(
-                                            row.linePrefix, color = BoardAmber, fontSize = rowSp,
+                                            row.linePrefix, color = ink, fontSize = rowSp,
                                             fontWeight = FontWeight.Bold, maxLines = 1,
                                         )
                                         Spacer(Modifier.width(8.dp))
                                     }
                                     Text(
-                                        row.destination, color = BoardAmber, fontSize = rowSp,
+                                        row.destination, color = ink, fontSize = rowSp,
                                         fontWeight = FontWeight.Normal,
                                         modifier = Modifier.weight(1f), maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
@@ -416,7 +427,7 @@ fun DreamBoard(
                                     if (row.eta.isNotBlank()) {
                                         Spacer(Modifier.width(8.dp))
                                         Text(
-                                            row.eta, color = BoardAmber, fontSize = rowSp,
+                                            row.eta, color = ink, fontSize = rowSp,
                                             fontWeight = FontWeight.Bold,
                                         )
                                     }

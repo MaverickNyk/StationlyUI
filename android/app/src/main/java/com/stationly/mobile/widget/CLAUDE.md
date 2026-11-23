@@ -88,10 +88,12 @@ External entry points:
      is never to show the wrong stop.)
 2. **Watchdog fires** (`ACTION_ETA_TICK`) → `updateFromStorage(context)`
    - Reads predictions back from SQL
-   - Re-derives each row's `eta` from `targetEpochMs + now` via the
-     shared `tickPredictions` helper in `ui/util/PredictionTicker.kt`
-   - Drops rows whose train has departed (>60s past target)
-   - Caps the survivors at 3 per platform for display
+   - Groups the RAW rows into blocks (full `rowReserve`), then ticks the
+     blocks with core's `BoardTicker.tick` under the SERVED `BoardPolicy`
+     (`tickedGroupsFor`): `eta` re-derived from `targetEpochMs + now`,
+     departed trains dropped after `board.tick.departedGraceMs`, the last
+     ones retained as "Gone" (dim amber) when the payload is old enough
+   - Caps each block at 3 per platform for display
    - Renders RemoteViews and pushes via `appWidgetManager.updateAppWidget`
 3. **User taps refresh** (`ACTION_MANUAL_REFRESH`) → same path as FCM
    but proactively hits the TfL repository (`fetchInitialData`) before
@@ -122,7 +124,7 @@ widget is RemoteViews, no coroutines. Solution: AlarmManager.
 
 **Why the next wall-clock minute (not `now + 60s`)?** Because the
 home + dream surfaces tick aligned to wall-clock minutes (see
-`ui/util/PredictionTicker.kt#rememberMinuteTick`). The widget must
+`composeApp/.../ui/util/MinuteTick.kt#rememberMinuteTick`). The widget must
 flip at the same instant or the user sees inconsistent values
 between surfaces.
 
@@ -230,13 +232,20 @@ station's icon.
 the SQL string.**
 SQL stores the eta that was current at FCM time. The tick layer
 recomputes from `targetEpochMs + now` on every render. See
-`tickPredictions` in `ui/util/PredictionTicker.kt`.
+`BoardTicker` in core and `tickedGroupsFor` in the provider.
 
 **3. Dropped rows shift the queue.**
-After ticking, rows whose `targetEpochMs < now − 60s` are removed
-from the list, and the visible 3-per-platform cap is re-applied.
-Storage keeps 8 per platform (5 buffer rows beyond the visible 3)
-so the queue can shift up without waiting for FCM.
+After ticking, rows past the SERVED grace (`board.tick.departedGraceMs`,
+not a constant) are removed, and the visible 3-per-platform cap is
+re-applied. Storage keeps `board.tick.rowReserve` per platform so the
+queue can shift up without waiting for FCM. Group first, tick second,
+cap last: capping first leaves a block nothing to shift up.
+
+**3a. The widget ticks by the SERVED rules, like every other surface**
+(2026-11-23). It used an Android-only `tickPredictions` with a
+hard-coded 30 s grace and no retention, so it ignored the SDUI timing
+rules iOS introduced and the app board and screensaver follow. That
+helper is DELETED; never reintroduce a compiled-in grace or label.
 
 **4. `lastUpdated` is the SQL row timestamp, not "now".**
 `SqlStorage.getPredictionsTimestamp` is the only honest source. The
@@ -258,13 +267,14 @@ has removed it.
 The widget shares its tick logic with the home Board and the dream
 through these abstractions:
 
+- `core/.../util/BoardTicker` — the tick: grace, retention, departed
+  label, bump, all from the served `BoardPolicy`. The home board, the
+  screensaver and the widget (`tickedGroupsFor`) all call
+  `BoardTicker.tick` on grouped blocks; the iOS widget's Swift copy
+  points at it. Cannot diverge.
 - `core/.../util/StationlyFormatters.formatMinutesRemaining` — the
   one formula that turns `(targetEpochMs, nowMs)` into a display
-  string. Used by Compose `rememberTickedPredictions` AND the widget's
-  inline tick step. Cannot diverge.
-- `ui/util/PredictionTicker.tickPredictions` — the filter+reformat
-  function. Used by Compose `rememberTickedPredictions` (which wraps
-  it with a minute-tick state) AND directly by the widget.
+  string, used inside `BoardTicker`.
 - `core/.../util/MultiLineBoardProcessor` — the grouping. Feeds in
   (one per pole/line/direction), platform blocks out, ordered and
   labelled. Home, dream and widget all render from it, which is what

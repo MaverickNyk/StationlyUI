@@ -40,7 +40,6 @@ import com.stationly.mobile.ui.util.BoardFallbackState
 import com.stationly.mobile.ui.util.NetworkState
 import com.stationly.mobile.ui.util.buildFallbackRowRemoteViews
 import com.stationly.mobile.ui.util.computeBoardFallbackState
-import com.stationly.mobile.ui.util.tickPredictions
 import com.stationly.core.util.StationlyFormatters
 import com.stationly.mobile.R
 import com.stationly.mobile.util.HomeConfigStore
@@ -939,27 +938,6 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             val boardSelections = selections.filter { it.groupingId == boundTo }
             val nowMs = System.currentTimeMillis()
 
-            // Re-derive each row's `eta` from its absolute `targetEpochMs`
-            // against the current wall clock AND drop rows whose train
-            // has already departed (more than 60s past target). Single
-            // helper shared with the Compose-side tick layer so home +
-            // dream + widget cannot drift — same formula, same threshold,
-            // same source of truth. See PredictionTicker.tickPredictions.
-            val feeds = boardSelections.map { sel ->
-                val raw = com.stationly.core.platform.Platform.sqlStorage
-                    .getPredictions(sel.station, sel.line, sel.direction)
-                com.stationly.core.util.MultiLineBoardProcessor.Feed(
-                    stationId = sel.station,
-                    line = sel.line,
-                    direction = sel.direction,
-                    terminus = sel.singleTerminus,
-                    nextStop = sel.directionTowards,
-                    predictions = com.stationly.core.util.StationlyFormatters.sortPredictions(
-                        tickPredictions(raw, nowMs)
-                    ),
-                )
-            }
-
             // Rows per platform: three, unless this station asks for more.
             //
             // This briefly varied with the widget's HEIGHT — 2 on a short one, 4
@@ -1006,26 +984,19 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // padded with blanks when the data is thinner. See
             // PlatformPages.bodyPadded, and the owner's call on 2026-09-12.
             val rowCap = ROWS_PER_PLATFORM
-            val boardRows = com.stationly.core.util.MultiLineBoardProcessor.rowsFrom(
-                com.stationly.core.util.MultiLineBoardProcessor.buildGroups(
-                    feeds = feeds,
-                    isBus = com.stationly.core.util.MultiLineBoardProcessor.isBus(selection.mode),
-                    // A BoardConfig carrying ONLY the widget's pin. The
-                    // processor takes its pin off a config, and the widget's
-                    // config is not the board's — building one here says that
-                    // plainly rather than reaching for the user's.
-                    prefs = BoardConfig(pin = widgetPin),
-                    rowCap = rowCap,
-                ),
-                rowCap = rowCap,
-            )
+            val tickedGroups = tickedGroupsFor(boardSelections, selection, widgetPin, rowCap, nowMs)
+            val boardRows = com.stationly.core.util.MultiLineBoardProcessor.rowsFrom(tickedGroups, rowCap = rowCap)
 
             // Still the flat list, for the three things that are not rows: has
             // anything loaded, the SDUI template binding, and the fallback
             // state. Union across every board at this hub, so a station with one
-            // quiet line and one busy one reads as having data.
-            val predictions = com.stationly.core.util.GlobalBoardProcessor
-                .processPredictions(feeds.flatMap { it.predictions }, perPlatformCap = rowCap)
+            // quiet line and one busy one reads as having data. Taken from the
+            // TICKED blocks, so it agrees with the rows about what is still
+            // coming.
+            val predictions = com.stationly.core.util.GlobalBoardProcessor.processPredictions(
+                tickedGroups.flatMap { g -> g.departures.map { it.prediction } },
+                perPlatformCap = rowCap,
+            )
 
             // ── One status line for a board that may carry several ──
             //
@@ -1192,31 +1163,74 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             rowCap: Int,
             pin: com.stationly.core.model.user.BoardPin? = null,
         ): List<com.stationly.core.util.MultiLineBoardProcessor.Row> {
-            val nowMs = System.currentTimeMillis()
-            val feeds = selections.filter { it.groupingId == boundTo }.map { sel ->
+            val boards = selections.filter { it.groupingId == boundTo }
+            return com.stationly.core.util.MultiLineBoardProcessor.rowsFrom(
+                tickedGroupsFor(boards, selection, pin, rowCap, System.currentTimeMillis()),
+                rowCap = rowCap,
+            )
+        }
+
+        /**
+         * One station's board at [nowMs], ticked by the SAME rules as the app
+         * and the screensaver: [com.stationly.core.util.BoardTicker] with the
+         * served [com.stationly.core.config.BoardPolicy] (departed grace,
+         * retention of "Gone" rows, the departed label, the row reserve).
+         *
+         * ## Why this replaced `tickPredictions` here (2026-11-23)
+         * The widget ticked each line's rows through the Android-only
+         * `tickPredictions`, which drops a train a hard-coded 30 s after its
+         * time and knows nothing of retention or the label. iOS added those as
+         * SDUI-driven rules (`board.tick.*`), the app board and screensaver
+         * adopted them through `BoardTicker`, and the widget was the one surface
+         * still on compiled values: it could show a train the app had already
+         * marked "Gone", or empty a platform the app was still holding.
+         *
+         * Same order as the app (`Board.kt`): group the RAW stored rows with the
+         * full reserve, then tick, then let the caller cut to [displayRows].
+         * Capping before ticking leaves a block nothing to shift up.
+         *
+         * Shared by the render and by the chevrons ([boardRowsFor]), so the
+         * page count a tap steps through is the page count drawn.
+         */
+        internal fun tickedGroupsFor(
+            boards: List<com.stationly.core.model.UserSelection>,
+            selection: com.stationly.core.model.UserSelection,
+            pin: com.stationly.core.model.user.BoardPin?,
+            displayRows: Int,
+            nowMs: Long,
+        ): List<com.stationly.core.util.MultiLineBoardProcessor.Group> {
+            val sql = com.stationly.core.platform.Platform.sqlStorage
+            val policy = com.stationly.core.config.BoardPolicyStore.current
+            val feeds = boards.map { sel ->
                 com.stationly.core.util.MultiLineBoardProcessor.Feed(
                     stationId = sel.station,
                     line = sel.line,
                     direction = sel.direction,
                     terminus = sel.singleTerminus,
                     nextStop = sel.directionTowards,
-                    predictions = com.stationly.core.util.StationlyFormatters.sortPredictions(
-                        tickPredictions(
-                            com.stationly.core.platform.Platform.sqlStorage
-                                .getPredictions(sel.station, sel.line, sel.direction),
-                            nowMs,
-                        )
-                    ),
+                    predictions = sql.getPredictions(sel.station, sel.line, sel.direction),
                 )
             }
-            return com.stationly.core.util.MultiLineBoardProcessor.rowsFrom(
-                com.stationly.core.util.MultiLineBoardProcessor.buildGroups(
+            val lastUpdated = boards.mapNotNull { sel ->
+                sql.getLastUpdatedTimestamp(sel.station, sel.line, sel.direction)
+            }.maxOrNull() ?: 0L
+            return com.stationly.core.util.BoardTicker.tick(
+                groups = com.stationly.core.util.MultiLineBoardProcessor.buildGroups(
                     feeds = feeds,
                     isBus = com.stationly.core.util.MultiLineBoardProcessor.isBus(selection.mode),
+                    // A BoardConfig carrying ONLY the widget's pin: the widget's
+                    // settings are not the board's (see WidgetSettings).
                     prefs = BoardConfig(pin = pin),
-                    rowCap = rowCap,
+                    rowCap = com.stationly.core.util.MultiLineBoardProcessor.rowReserve,
+                    nowMs = nowMs,
+                    policy = policy,
                 ),
-                rowCap = rowCap,
+                nowMs = nowMs,
+                // Never-updated data has no age: treat as fresh, so an empty
+                // first paint does not resurrect rows (same as Board.kt).
+                payloadAgeMs = if (lastUpdated <= 0L) 0L else (nowMs - lastUpdated).coerceAtLeast(0L),
+                displayRows = displayRows,
+                policy = policy,
             )
         }
 
@@ -1959,6 +1973,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                                 else row.linePrefix + " " + row.destination
                                 dep.setTextViewText(R.id.destination_text, destination)
                                 dep.setTextViewText(R.id.eta_text, row.eta)
+                                tintDeparted(context, dep, row.departed)
                                 dep.setInt(
                                     R.id.destination_text, "setGravity",
                                     android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL,
@@ -2390,12 +2405,25 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 else row.linePrefix + " " + row.destination
             dep.setTextViewText(R.id.destination_text, destination)
             dep.setTextViewText(R.id.eta_text, row.eta)
+            tintDeparted(context, dep, row.departed)
             dep.setInt(
                 R.id.destination_text, "setGravity",
                 android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL,
             )
             dep.setOnClickFillInIntent(R.id.departure_row_root, Intent())
             return dep
+        }
+
+        /**
+         * A retained already-departed train ("Gone", [BoardTicker]'s label) in
+         * dim amber, live trains in amber: the same two shades the app board
+         * uses (`BoardAmberDim` / `BoardAmber` in Board.kt), so one fact never
+         * reads as two. Set both ways every time: rows are recycled RemoteViews.
+         */
+        private fun tintDeparted(context: Context, row: RemoteViews, departed: Boolean) {
+            val color = context.getColor(if (departed) R.color.tfl_amber_dim else R.color.tfl_amber)
+            row.setTextColor(R.id.destination_text, color)
+            row.setTextColor(R.id.eta_text, color)
         }
 
         /**

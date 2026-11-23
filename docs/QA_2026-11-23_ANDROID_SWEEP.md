@@ -66,6 +66,28 @@ The iOS WIDGET draws its own `StationlyMark` in Swift and was not touched.
 Not changed, noted: the sign-in "Signing you in…" overlay pulses an amber "S"
 disc. It is a loading animation, not the board's maker mark.
 
+### Also fixed: the Android widget ignored the SDUI timing rules (owner question, 2026-11-23)
+iOS introduced served timing rules (`board.tick.departedGraceMs`,
+`retentionMinAgeMs`, `departedLabel`, `rowReserve`, the stale ladder) read
+through `BoardPolicyStore`. On Android the home board, sign-in and screensaver
+load them, the widget and push paths warm them (`SduiConfig.ensureLoaded`), and
+the backend serves them to Android unchanged. But the WIDGET ticked through an
+Android-only `tickPredictions` with a hard-coded 30 s grace and no retention, so
+it never applied them. Now:
+- The widget builds its board like the app: group the raw rows with the full
+  reserve, `BoardTicker.tick` under the served policy, cap to 3
+  (`DepartureWidgetProvider.tickedGroupsFor`, shared by render and chevrons).
+- The screensaver ticked each feed BEFORE grouping, which honoured the served
+  grace but never retained a departed train; it now uses the same three steps.
+- Retained "Gone" rows are dim amber (`#B88F1A`) on the widget and screensaver,
+  as on the home board.
+- The Android-only `ui/util/PredictionTicker.kt` is deleted (no callers left);
+  notes updated (`ui/util/CLAUDE.md`, `widget/CLAUDE.md`,
+  `BOARD_TIMING_CONSISTENCY.md`).
+iOS: no change. Its widget already mirrors `BoardTicker` in Swift, and its app
+uses the shared board. Gate green; widgets re-rendered on device without errors.
+**Uncommitted** (owner: do not commit).
+
 ---
 
 ## Code review (2026-11-23, after the device run)

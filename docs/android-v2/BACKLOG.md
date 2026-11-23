@@ -141,6 +141,7 @@ roughly one focused hour.
 | AV2-11.7 | A stepping widget remembers its block, not its position (#5) | M | ✅ S023 Android · **iOS needs Swift** |
 | AV2-11.8 | Widget row height at large text (#12) | S | ✅ S023 · Android only |
 | AV2-11.9 | One logo, bottom-left, on every board surface | S | ✅ S023 · shared |
+| AV2-11.19 | Widget and screensaver tick by the SERVED `board.tick.*` rules (grace, retention, "Gone") | M | ✅ S023 · uncommitted · iOS already did |
 | AV2-11.10 | Landscape board and staging banner (#11) | M | open · device check first |
 | AV2-11.11 | Store prices in the buyer's currency (#13) | M | open · **iOS needs Swift** |
 | AV2-11.12 | Screensaver: both directions, board-location weather, "Route 39" (#14) | M | open |
