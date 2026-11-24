@@ -121,26 +121,18 @@ investigation.
 the payload `type`. Backend can override per-payload via
 `payload.channel`.
 
-## Status-change auto-notifications
+## Notifications are served policy (since 2026-11-24)
 
-`FcmMessagingService.handleLineStatusUpdate` diffs the previous and
-new `statusSeverityDescription` for the user's selected lines. Fires
-a notification on **significant transitions only**:
+**Read `docs/LINE_ALERTS.md` first.** Line alerts: `LineAlerts` is a thin Android
+shell (`LineAlertPlatform`) over core's `LineAlertCoordinator`. Sent ones:
+`dispatchRemoteNotification` goes through core's `RemoteNotifications`. Nothing
+here decides; never add a compiled-in severity, threshold or cap.
 
-- `wasGood`: line previously had "Good Service" → now something else
-- `isGood`: line previously had a disruption → now "Good Service"
-- `enteredSevere`: any other transition INTO the severe states
-  (`Severe Delays`, `Service Closed`, `Part Suspended`, `Suspended`,
-  `Planned Closure`)
-
-Other transitions (e.g. Minor Delays → Reduced Service) are dropped
-to avoid notification fatigue.
-
-Severity is derived locally from the new status:
-- `Good Service` → `success`
-- Severe set → `danger`
-- Minor Delays / Part Closure / Reduced Service → `warning`
-- else → `neutral`
+`NotificationDispatcher.dispatch` returns false when the user has blocked the app
+or channel: "posted" must mean shown. Images are bounded in time and size (they
+load inside the push handler). An unknown channel falls back, or Android shows
+nothing. `NotificationActionReceiver` (Mute) is not exported, and sent
+notifications cannot carry an in-place action.
 
 ## FCM token registration
 
@@ -178,8 +170,7 @@ silently no-op. The token will be re-tried on next app launch.
 Don't add retry loops; the operation isn't critical-path.
 
 **3. Status-change notifications NEVER fire on first launch.**
-`handleLineStatusUpdate` checks `prevStatus == null` and returns
-early. The user has to OPT IN by experiencing the line being fine
+`LineAlertRules.onChange` returns Nothing when the previous status is null. The user has to OPT IN by experiencing the line being fine
 first; otherwise their first impression of the app is
 "Stationly thinks your line is broken" which is a bad UX.
 

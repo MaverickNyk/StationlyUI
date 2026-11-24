@@ -28,6 +28,15 @@ object ConfigKeys {
     const val HOME_CONFIG_CACHE_KEY = "home_config_strings_cache"
 
     /**
+     * When [HOME_CONFIG_CACHE_KEY] was last fetched from the network, epoch ms
+     * as a string. Lets a background path that runs with no screen open (the
+     * line-status alert decision) refetch a config older than
+     * `notify.config.maxAgeMs`, so a served policy change reaches phones whose
+     * app is never opened. Absent = never stamped = treat as stale.
+     */
+    const val HOME_CONFIG_FETCHED_AT_KEY = "home_config_fetched_at"
+
+    /**
      * Where the last successful widget-guide layout is cached on device.
      *
      * The guide is the one screen whose whole job is to help somebody who is

@@ -74,6 +74,13 @@ class FcmMessagingService : FirebaseMessagingService() {
                     remoteMessage.data["rev"]?.toLongOrNull(),
                 )
             }
+            remoteMessage.data["type"] == "config_refresh" -> {
+                // Silent: the backend changed a served value (most often the
+                // line-alert policy) and wants phones to fetch it soon rather
+                // than on their next app open. Shows nothing. A jittered job,
+                // because this push reaches every install at the same moment.
+                LineAlerts.ConfigRefreshWorker.enqueue(this, remoteMessage.data["reason"])
+            }
             remoteMessage.data.containsKey("sdui_payload") -> {
                 handleSduiUpdate(remoteMessage)
             }
@@ -101,7 +108,16 @@ class FcmMessagingService : FirebaseMessagingService() {
             val payload = format.decodeFromString<
                 com.stationly.core.model.notification.NotificationPayload
             >(json)
-            NotificationDispatcher.dispatch(this, payload)
+            // Whether a SENT notification is shown is served policy too
+            // (notify.remote.*, quiet hours, expiry). Blocking is right here:
+            // the push handler's thread is already off the main thread, and
+            // returning early would let the OS end it mid-image.
+            kotlinx.coroutines.runBlocking {
+                com.stationly.core.config.SduiConfig.ensureLoaded()
+                com.stationly.core.notification.RemoteNotifications.handle(payload, BuildConfig.VERSION_CODE) {
+                    NotificationDispatcher.dispatch(this@FcmMessagingService, it)
+                }
+            }
         } catch (e: Exception) {
             Log.e("FCM", "Invalid notification_payload, skipping", e)
         }
@@ -212,131 +228,17 @@ class FcmMessagingService : FirebaseMessagingService() {
                     lineId = status.id,
                 )
 
-                // Build + dispatch one notification IF this is a
-                // significant transition (good service ⇄ disruption, or
-                // crossed into a severe state). Uses the first matching
-                // selection just to pick a "deep-link station" for the
-                // tap target; the notification is about the line not
-                // the station.
-                val firstSelection = subscribedToThisLine.first()
-                maybeDispatchStatusChangeNotification(
-                    prevStatus = prevStatus,
-                    newStatus  = status,
-                    deepLinkStationId = firstSelection.station,
-                )
+                // Whether this becomes a notification is the SERVED policy's
+                // call (notify.* keys), applied in LineAlerts. It used to be a
+                // compiled rule here that alerted on every move off or back to
+                // Good Service, nightly closures included.
+                LineAlerts.onStatusChange(this@FcmMessagingService, prevStatus, status)
             }
         } catch (e: Exception) {
             Log.e("FCM", "Error processing line status update", e)
         }
     }
 
-    /**
-     * Decide if a line-status transition deserves a user-facing
-     * notification and dispatch one if so. Encapsulated here so the
-     * "what counts as significant?" policy is in one obvious place.
-     *
-     * Significant transitions:
-     *   - Was Good Service → now anything else (degradation).
-     *   - Was anything else → now Good Service (recovery — useful
-     *     "you can stop checking" signal).
-     *   - Stepped INTO the severe-disruption band (Severe Delays,
-     *     Service Closed, Part Suspended) from a milder state.
-     *
-     * Trivial degradations (Good Service → Minor Delays) still notify
-     * because the cost of an over-notify on a subscribed line is low;
-     * the user wanted to know about that line. We can tune the threshold
-     * here later if telemetry shows fatigue.
-     */
-    private fun maybeDispatchStatusChangeNotification(
-        prevStatus: LineStatus?,
-        newStatus: LineStatus,
-        deepLinkStationId: String,
-    ) {
-        val prevSev   = prevStatus?.statusSeverityDescription?.trim().orEmpty()
-        val newSev    = newStatus.statusSeverityDescription.trim()
-
-        // No-op if status didn't change, or we've never seen this line
-        // before (first-launch on a degraded line shouldn't fire a "you
-        // entered an alert" notification — the user has to OPT IN by
-        // experiencing the line being fine first).
-        if (prevStatus == null) return
-        if (prevSev.equals(newSev, ignoreCase = true)) return
-
-        val wasGood = prevSev.equals("Good Service", ignoreCase = true)
-        val isGood  = newSev.equals("Good Service", ignoreCase = true)
-        val severeStates = setOf(
-            "Severe Delays", "Service Closed", "Part Suspended",
-            "Suspended", "Planned Closure",
-        )
-        val enteredSevere = newSev in severeStates && prevSev !in severeStates
-
-        val significant = wasGood || isGood || enteredSevere
-        if (!significant) return
-
-        val lineLabel = newStatus.name.takeIf { it.isNotBlank() }
-            ?: newStatus.id.replaceFirstChar { it.uppercase() }
-
-        val title = if (isGood) {
-            "$lineLabel · Good Service"
-        } else {
-            "$lineLabel · $newSev"
-        }
-        val body = if (isGood) {
-            "Service has recovered. Previously $prevSev."
-        } else {
-            (newStatus.reason?.takeIf { it.isNotBlank() })
-                ?: "Was $prevSev. Tap to see your board."
-        }
-        // Hex for the line — defaults to brand amber if the line isn't
-        // in our known palette (a bus line, an unfamiliar overground line).
-        val color: String? = com.stationly.core.util.TflLineColors.hexFor(newStatus.id)
-
-        // Severity bucket — drives the title colour in the dispatcher.
-        // The line identity stays in the title text ("Piccadilly · …");
-        // the visual cue users actually scan for is "is this bad news?".
-        //   - Good Service                            → success (green)
-        //   - Severe / Suspended / Closed / Closure  → danger  (red)
-        //   - Minor Delays / Part Closure / Reduced  → warning (amber)
-        //   - everything else                         → neutral (system default)
-        val severity: String = when {
-            isGood -> "success"
-            newSev in severeStates -> "danger"
-            newSev.equals("Minor Delays", ignoreCase = true) ||
-            newSev.equals("Part Closure", ignoreCase = true) ||
-            newSev.equals("Reduced Service", ignoreCase = true) -> "warning"
-            else -> "neutral"
-        }
-
-        val payload = com.stationly.core.model.notification.NotificationPayload(
-            type             = "line_status_change",
-            title            = title,
-            body             = body,
-            severity         = severity,
-            // Short context so the chip carries both "Piccadilly" (large
-            // icon + line colour) AND "Status update" (subtitle) at a glance.
-            subtitle         = if (isGood) "Service restored" else "Status update",
-            channel          = com.stationly.core.model.notification.NotificationChannelIds.LINE_STATUS,
-            priority         = if (isGood) "default" else "high",
-            color            = color,
-            style            = "bigText",
-            // The scheme is the build's, not a literal: staging registers
-            // `stationly-staging://` and MainActivity accepts only that, so a
-            // hardcoded `stationly` here would build a notification whose tap
-            // opens the app and then focuses nothing. (The PendingIntent names
-            // MainActivity explicitly, so the tap still lands — it is the
-            // routing that would go quiet, which is the harder kind to notice.)
-            deepLink         = "${BuildConfig.DEEP_LINK_SCHEME}://home?station=$deepLinkStationId",
-            groupKey         = "stationly_line_status",
-            // Stable id per-line — so a Piccadilly status flapping
-            // updates the existing chip instead of stacking new ones.
-            notificationId   = ("line_status::" + newStatus.id.lowercase()).hashCode(),
-            lineId           = newStatus.id,
-            lineName         = lineLabel,
-            previousStatus   = prevSev,
-            newStatus        = newSev,
-        )
-        NotificationDispatcher.dispatch(this, payload)
-    }
     
     private fun handlePredictionUpdate(remoteMessage: RemoteMessage) {
         val payloadJson = remoteMessage.data["payload"] ?: return

@@ -63,6 +63,9 @@ import com.stationly.core.model.user.HomeLayout
 import com.stationly.core.repository.UserSettings
 import com.stationly.core.activity.ActivityEvents
 import com.stationly.core.activity.ActivityLog
+import com.stationly.core.config.NotificationPolicy.AlertLevel
+import com.stationly.core.config.NotificationPolicyStore
+import com.stationly.core.notification.LineAlertPreferences
 import com.stationly.core.platform.Platform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -303,6 +306,7 @@ fun HomeSettingsScreen(
                     onClick = { openAppNotificationSettings() },
                 )
             }
+            LineAlertsSetting()
 
             Spacer(Modifier.height(28.dp))
 
@@ -326,6 +330,61 @@ fun HomeSettingsScreen(
     }
 }
 
+
+/* ── Line alerts ────────────────────────────────────────────────────────── */
+
+/**
+ * How loud line-status alerts are: Severe only / All changes / Off.
+ *
+ * Android only: it is the only platform that turns a line-status change into a
+ * notification (iOS shows none, so the row would be a control for nothing).
+ * Hidden too while the backend's kill switch (`notify.line.enabled`) is off,
+ * for the same reason. Which severities each level means is SERVED
+ * (`notify.line.alertSeverities` / `allSeverities`); an untouched setting
+ * follows `notify.line.defaultLevel`. See docs/LINE_ALERTS.md.
+ */
+@Composable
+private fun LineAlertsSetting() {
+    if (Platform.getPlatformName() != "Android") return
+    val policy = NotificationPolicyStore.current
+    if (!policy.enabled) return
+    val scope = rememberCoroutineScope()
+    var level by remember { mutableStateOf<AlertLevel?>(null) }
+    LaunchedEffect(Unit) {
+        level = LineAlertPreferences.effective(policy)
+    }
+    val current = level ?: return
+
+    Spacer(Modifier.height(16.dp))
+    SettingsSectionLabel("Line alerts")
+    SegmentedRow(
+        options = AlertLevel.entries,
+        selected = current,
+        onSelect = { option ->
+            if (option != current) {
+                performHaptic(HapticType.TAP)
+                level = option
+                scope.launch { LineAlertPreferences.set(option) }
+            }
+        },
+        label = {
+            when (it) {
+                AlertLevel.SEVERE -> "Severe"
+                AlertLevel.ALL -> "All"
+                AlertLevel.OFF -> "Off"
+            }
+        },
+    )
+    SettingsCaption(
+        // Served, like what each level MEANS (notify.line.*Severities), so the
+        // words can never describe a policy the backend has since changed.
+        when (current) {
+            AlertLevel.SEVERE -> policy.copy.levelSevere
+            AlertLevel.ALL -> policy.copy.levelAll
+            AlertLevel.OFF -> policy.copy.levelOff
+        },
+    )
+}
 
 /* ── Layout picker ──────────────────────────────────────────────────────── */
 

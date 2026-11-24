@@ -137,6 +137,17 @@ and a second HOME would scroll it away from the new widget. The owner's own two
 adds on that build (34, 35) each landed once. Not an iOS concern (WidgetKit has
 no pin flow).
 
+### Also fixed: "a notification every day" (owner, 2026-11-23)
+
+v1's compiled rule alerted on any move off or back to Good Service and counted
+"Service Closed" as severe: every line made a loud pair each night, plus bus
+roadworks and Minor Delays flapping. Replaced by a SERVED policy (`notify.*`,
+backend `notificationPolicyService.ts`, env-overridable, instant
+`config_refresh` push) applied by shared core code (`LineAlertCoordinator`),
+with a user setting (Severe / All / Off). Verified on device
+overnight; see docs/LINE_ALERTS.md. Live v1 keeps the old behaviour until it
+updates. iOS needs a backend-decided design: docs/IOS_NOTIFICATIONS.md.
+
 ---
 
 ## Code review (2026-11-23, after the device run)

@@ -40,8 +40,8 @@ object StationlyNotificationChannels {
                 "Line status alerts",
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = "Major status changes on lines you've added to your board: " +
-                    "Severe Delays, Part Suspended, Service Closed, and recoveries."
+                description = "Disruption on lines you've added to your board. " +
+                    "Choose how much in Stationly's settings."
                 enableLights(true)
                 enableVibration(true)
             }

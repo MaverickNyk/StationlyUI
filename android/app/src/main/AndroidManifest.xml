@@ -124,6 +124,11 @@
             android:excludeFromRecents="true" />
 
         <!-- Widget Provider -->
+        <!-- In-place notification buttons (Mute). Never reachable from outside. -->
+        <receiver
+            android:name=".service.NotificationActionReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".widget.DepartureWidgetProvider"
             android:exported="false"

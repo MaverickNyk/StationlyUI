@@ -130,13 +130,33 @@ data class NotificationPayload(
     val lineName: String? = null,
     val previousStatus: String? = null,
     val newStatus: String? = null,
+    /**
+     * Post without sound, vibration or a heads-up pop-up: it lands in the shade
+     * only. Line-status alerts in quiet hours and recovery updates use it
+     * (`notify.quiet.mode`, `notify.line.recovery`). Defaulted, so every
+     * existing sender is unchanged.
+     */
+    val silent: Boolean = false,
+    /** Not shown after this moment: a phone that was off must not show old news. */
+    val expiresAtMs: Long? = null,
+    /** Takes itself out of the shade this long after it is shown. */
+    val timeoutAfterMs: Long? = null,
+    /** Only app builds in this range show it. */
+    val minVersionCode: Int? = null,
+    val maxVersionCode: Int? = null,
 )
 
 /** Inline action button (e.g. "View board", "Mute line"). */
 @Serializable
 data class NotificationAction(
     val label: String,
-    val deepLink: String,
+    val deepLink: String = "",
+    /**
+     * Something the app does in place instead of opening ([deepLink] ignored),
+     * e.g. `mute_line:victoria`. Never honoured from a SENT notification: only
+     * the app's own alerts may carry one (see `RemoteNotifications`).
+     */
+    val action: String? = null,
 )
 
 /**

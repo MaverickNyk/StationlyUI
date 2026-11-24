@@ -198,5 +198,14 @@ object ActivityEvents {
      * with a count above zero are a different question being asked, usually why
      * the board looks stale, and should not be averaged in with the first.
      */
+    // ── Notifications ───────────────────────────────────────────────────────
+    // What makes the served policy tunable on evidence: how many are shown,
+    // opened and muted, and why the rest were not shown. `type` and `reason`
+    // only, plus the line for a line alert. Never the text.
+    const val NOTIFICATION_POSTED = "notification.posted"
+    const val NOTIFICATION_OPENED = "notification.opened"
+    const val NOTIFICATION_SUPPRESSED = "notification.suppressed"
+    const val NOTIFICATION_MUTED = "notification.muted"
+
     const val WIDGET_GUIDE_OPENED = "widget.guide_opened"
 }

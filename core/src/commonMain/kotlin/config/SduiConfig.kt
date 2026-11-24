@@ -1,6 +1,7 @@
 package com.stationly.core.config
 
 import com.stationly.core.platform.Platform
+import kotlinx.serialization.encodeToString
 
 /**
  * The one place a fetched SDUI config map is adopted.
@@ -37,6 +38,7 @@ object SduiConfig {
         if (strings.isEmpty()) return
         BoardPolicyStore.refresh(strings)
         LinePaletteStore.refresh(strings)
+        NotificationPolicyStore.refresh(strings)
         adopted = true
     }
 
@@ -88,6 +90,57 @@ object SduiConfig {
     suspend fun ensureLoaded() {
         if (adopted) return
         loadFromCache()
+    }
+
+    /**
+     * Fetch home-config from the network NOW, cache it, stamp it and adopt it.
+     *
+     * For paths with no screen above them: the silent `config_refresh` push
+     * (sent by the backend after a policy change) and [refreshIfStale]. A
+     * failure keeps whatever was adopted before; returns whether it worked.
+     */
+    suspend fun refreshFromNetwork(timeoutMs: Long = 8_000L): Boolean {
+        // withTimeoutOrNull, not runCatching around withTimeout: runCatching
+        // would also swallow the CALLER's cancellation, which must propagate.
+        val fresh = try {
+            kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+                com.stationly.core.service.NetworkModule.sduiApi.getHomeConfig().strings
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        if (fresh.isNullOrEmpty()) return false
+        runCatching {
+            Platform.storageManager.saveString(ConfigKeys.HOME_CONFIG_CACHE_KEY, json.encodeToString(fresh))
+        }
+        stampFetched()
+        refresh(fresh)
+        return true
+    }
+
+    /**
+     * Refetch when the cached config is older than [maxAgeMs] (or was never
+     * stamped). Loads the cache first either way, so a failed fetch still
+     * leaves the last served values adopted rather than compiled defaults.
+     */
+    suspend fun refreshIfStale(maxAgeMs: Long, nowMs: Long = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()) {
+        ensureLoaded()
+        if (isStale(maxAgeMs, nowMs)) refreshFromNetwork()
+    }
+
+    /** Whether the cached config is older than [maxAgeMs], or was never stamped. */
+    suspend fun isStale(maxAgeMs: Long, nowMs: Long = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()): Boolean {
+        val stampedAt = runCatching {
+            Platform.storageManager.loadString(ConfigKeys.HOME_CONFIG_FETCHED_AT_KEY)?.toLongOrNull()
+        }.getOrNull() ?: 0L
+        return nowMs - stampedAt >= maxAgeMs
+    }
+
+    /** Record that the cached home-config was just fetched from the network. */
+    suspend fun stampFetched(nowMs: Long = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()) {
+        runCatching { Platform.storageManager.saveString(ConfigKeys.HOME_CONFIG_FETCHED_AT_KEY, nowMs.toString()) }
     }
 }
 

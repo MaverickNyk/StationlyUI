@@ -20,7 +20,10 @@ import com.stationly.app.App
 import com.stationly.app.ui.summary.BoardFocus
 import com.stationly.core.model.deeplink.DeepLinkRoute
 import com.stationly.core.model.deeplink.parseDeepLink
+import com.stationly.core.activity.ActivityEvents
+import com.stationly.core.activity.ActivityLog
 import com.stationly.mobile.service.ActivityUploadWorker
+import com.stationly.mobile.service.NotificationDispatcher
 import com.stationly.mobile.service.UserSyncCoordinator
 import com.stationly.mobile.ui.common.StagingBanner
 import com.stationly.mobile.widget.WidgetConfigureActivity
@@ -124,6 +127,7 @@ class MainActivity : ComponentActivity() {
             authProvider.isLoggedIn()
         }
 
+        if (savedInstanceState == null) recordNotificationOpened(intent)
         handleDeepLink(intent)
 
         setContent {
@@ -275,7 +279,15 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        recordNotificationOpened(intent)
         handleDeepLink(intent)
+    }
+
+    /** A tap that came from a notification, counted once (the extra is spent). */
+    private fun recordNotificationOpened(intent: Intent?) {
+        val type = intent?.getStringExtra(NotificationDispatcher.EXTRA_OPENED_TYPE) ?: return
+        intent.removeExtra(NotificationDispatcher.EXTRA_OPENED_TYPE)
+        ActivityLog.record(ActivityEvents.NOTIFICATION_OPENED, "type", type)
     }
 
     /**

@@ -147,6 +147,7 @@ roughly one focused hour.
 | AV2-11.22 | Refresh roll goes row by row, not one curtain | S | ✅ S023 · Android only · owner checked on device |
 | AV2-11.23 | "Add to Home Screen" placed two copies of one widget (Pixel launcher, gesture home); the app now goes home itself on accept | M | ✅ S023 · Android only · root-caused and verified on device |
 | AV2-11.24 | `scripts/android-dev.sh` and `scripts/android-release.sh`: environment named, built artefacts verified (iOS-script parity) | M | ✅ S023 · see `docs/ANDROID_BUILD_AND_RELEASE.md` |
+| AV2-11.25 | Line alerts: every rule served (`notify.*`), quiet by default, user level setting, config push; iOS plan in `docs/IOS_NOTIFICATIONS.md` | L | ✅ S023 · backend branch `dev_notification_policy` · device-verified overnight 2026-11-24 incl. a minified build, see `docs/LINE_ALERTS.md` |
 | AV2-11.10 | Landscape board and staging banner (#11) | M | open · device check first |
 | AV2-11.11 | Store prices in the buyer's currency (#13) | M | open · **iOS needs Swift** |
 | AV2-11.12 | Screensaver: both directions, board-location weather, "Route 39" (#14) | M | open |
