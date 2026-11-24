@@ -41,6 +41,8 @@ widget/
 │                                FINISHES, not when it is set.
 ├── WidgetPinner.kt              `requestPinAppWidget`, so "Add to Home
 │                                Screen" can live on the station itself.
+├── V1WidgetAdoption.kt         One-shot: widgets placed by v1 keep the
+│                                station they showed. See MIGRATION.md §6.
 ├── WidgetRedrawTargets.kt       Which widgets a push is about. Pure,
 │                                tested — the push names a POLE and a
 │                                binding names a STOP.
@@ -214,7 +216,8 @@ backend sends Android wording to Android: short taps, not iOS's
 "Touch and hold, then tap Edit Widget"), compiled defaults otherwise.
 Board fallbacks (signal lost, late night…) use the SERVED
 `board.fallback.*` strings, same as home and the screensaver.
-It does **not** fall back to the first station.
+It does **not** fall back to the first station (`V1WidgetAdoption`, once, for
+widgets v1 placed, is the only exception: it is what they already showed).
 Showing somebody a train that is not theirs, at a stop they are not
 standing at, with nothing on screen to say so, is the worst thing a
 departure board can do — and it is what this package used to do by

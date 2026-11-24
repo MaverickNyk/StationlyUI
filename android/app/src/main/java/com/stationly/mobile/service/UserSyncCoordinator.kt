@@ -3,7 +3,11 @@ package com.stationly.mobile.service
 import android.content.Context
 import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
+import com.stationly.app.sync.UserStateSync
+import com.stationly.core.model.sdui.UserProfileResponse
+import com.stationly.core.model.user.hasBoardsFor
 import com.stationly.core.platform.Platform
+import com.stationly.core.platform.V1Upgrade
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.repository.UserSyncRepository
@@ -12,6 +16,7 @@ import com.stationly.core.service.TflApiServiceFactory
 import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.mobile.util.FreshDataNotifier
+import com.stationly.mobile.widget.V1WidgetAdoption
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -154,9 +159,18 @@ object UserSyncCoordinator {
                     //
                     // Null means the revision gate was closed: nothing was
                     // fetched, nothing changed, and there is nothing to announce.
-                    val profile = repo.reconcileBoards(uid, lifecycle, observedRev)
+                    //
+                    // The read of the table comes first: it is what opens, and so
+                    // migrates, the database that leaves the v1 note.
+                    val before = Platform.sqlStorage.getAllSelections()
+                    val fromV1 = V1Upgrade.boardsPending(context)
+                    val profile = repo.reconcileBoards(uid, lifecycle, observedRev, keepLocalBoards = fromV1)
+                    // A bus stop may have just gained its hub, which is what a
+                    // widget is bound to. Before anything below redraws it.
+                    if (fromV1) V1WidgetAdoption.followHubs(context, before, Platform.sqlStorage.getAllSelections())
                     if (profile == null) {
                         Log.d("UserSync", "Reconcile skipped — account unchanged (rev gate)")
+                        if (fromV1) publishV1Boards(context, uid, null)
                         return@withLock
                     }
 
@@ -184,6 +198,10 @@ object UserSyncCoordinator {
                     runCatching { lifecycle.reconcileTopics() }
 
                     Log.d("UserSync", "Reconcile complete: ${profile.boards.size} board(s), rev ${profile.stateRev}")
+
+                    // Last: it is network, and a failure must not keep the
+                    // screens from showing what the reconcile already changed.
+                    if (fromV1) publishV1Boards(context, uid, profile)
                 } catch (e: com.stationly.core.service.UserNotFoundException) {
                     // The account was deleted (here or on another device) and we
                     // missed / never got the `user_sync` deleted push. Treat the
@@ -194,6 +212,49 @@ object UserSyncCoordinator {
                     Log.w("UserSync", "Reconcile failed (will retry on next foreground)", e)
                 }
             }
+        }
+    }
+
+    /**
+     * Put the boards a v1 install was holding into the account's board list.
+     *
+     * v1 saved only to `stations`. Where the account also has an iPhone it has a
+     * `boards` list without them, so [UserSyncRepository.reconcileBoards] keeps
+     * them once (`keepLocalBoards`) and this publishes the union.
+     *
+     * The note is cleared only when the account is SEEN to hold them, by reading
+     * it back: a push can be dropped (offline) or declined (another device's
+     * clock is ahead) and neither is reported here. Until then every reconcile
+     * tries again, up to [V1Upgrade.mayRetryBoards]'s limit.
+     */
+    private suspend fun publishV1Boards(
+        context: Context,
+        uid: String,
+        profile: UserProfileResponse?,
+    ) {
+        // Somebody else's account: the reconcile applied nothing, and neither
+        // does this.
+        if (profile != null && profile.uid != uid) return
+
+        val local = Platform.sqlStorage.getAllSelections()
+        if (local.isEmpty() || profile?.hasBoardsFor(local) == true) {
+            V1Upgrade.boardsDone(context)
+            return
+        }
+        UserStateSync.boardsChanged()
+        UserStateSync.flushNow()
+
+        val saved = SduiApiServiceFactory.create().getUserProfile(uid)
+        when {
+            saved.uid == uid && saved.hasBoardsFor(local) -> {
+                Log.d("UserSync", "v1 boards are in the account's list: ${local.size} row(s)")
+                V1Upgrade.boardsDone(context)
+            }
+            !V1Upgrade.mayRetryBoards(context) -> {
+                Log.w("UserSync", "v1 boards still not in the account's list; giving up")
+                V1Upgrade.boardsDone(context)
+            }
+            else -> Log.w("UserSync", "v1 boards not in the account's list yet; will retry")
         }
     }
 
@@ -222,7 +283,7 @@ object UserSyncCoordinator {
         scope.launch {
             try {
                 Platform.storageManager.saveDurable(
-                    com.stationly.app.sync.UserStateSync.ACCOUNT_REMOVED_FLAG,
+                    UserStateSync.ACCOUNT_REMOVED_FLAG,
                     "1",
                 )
                 // Full local teardown + Firebase sign-out. MainActivity's
@@ -308,7 +369,7 @@ object UserSyncCoordinator {
      */
     fun flushPendingBoardWrite() {
         scope.launch {
-            runCatching { com.stationly.app.sync.UserStateSync.flushNow() }
+            runCatching { UserStateSync.flushNow() }
                 .onFailure { Log.w("UserSync", "Board flush on background failed (retries on next change)", it) }
         }
     }

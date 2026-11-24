@@ -14,6 +14,7 @@ import com.stationly.mobile.service.BroadcastTopic
 import com.stationly.mobile.service.FcmTokenRegistrar
 import com.stationly.mobile.service.StationlyNotificationChannels
 import com.stationly.mobile.widget.DepartureWidgetProvider
+import com.stationly.mobile.widget.V1WidgetAdoption
 
 class StationlyApplication : Application() {
     private val screenReceiver = object : BroadcastReceiver() {
@@ -25,6 +26,8 @@ class StationlyApplication : Application() {
         val env = if (BuildConfig.FLAVOR == "staging") AppEnvironment.STAGING else AppEnvironment.PRODUCTION
         Platform.initialize(this, BuildConfig.STATIONLY_API_KEY, env)
         AuthLog.init(this)
+        // Widgets placed by v1 keep their station. Does nothing on any other start.
+        V1WidgetAdoption.onAppStart(this)
         // Mirror FirebaseAuth's user into the shared session store. Until this
         // existed, `AuthBridge.swift` was the ONLY writer of the identity keys
         // the shared UI reads, so every Android device drew "?" for its avatar

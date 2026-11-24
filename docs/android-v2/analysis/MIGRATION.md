@@ -346,3 +346,49 @@ Firestore reads, and it is guarded by `subscribed_all_topic` already.
 
 `ReleasePolicy` already carries an `android: PlatformRelease` alongside `ios`, so
 the floor is a config change, not a code change.
+
+---
+
+## 6. What the v1 upgrade does once (added 2026-11-24)
+
+The 1 → 2 migration leaves two one-shot notes in durable prefs (`V1Upgrade`,
+written from `DriverFactory`'s `onUpgrade`, so only a real v1 install gets them).
+
+| Note | Spent by | What it does |
+|---|---|---|
+| widgets | `V1WidgetAdoption`, at the first app start (or widget draw) after the update | Binds every unbound widget to the first selection, which is what v1 drew. Without it every v1 widget became "Choose a station". |
+| boards | `UserSyncCoordinator.publishV1Boards`, on the first reconcile | Keeps boards only this phone has (`reconcileBoards(keepLocalBoards = true)`), publishes the union, and clears the note only after reading the account back. Without it, on an account that also has an iPhone, the v1 boards were deleted and the next push overwrote `stations` too. |
+
+Details that matter:
+
+- A v1 row has no hub. Under `keepLocalBoards` it takes the cloud's, or the push
+  would split one bus stop into two boards; bindings follow (`followHubs`).
+- While the boards note stands, a board deleted on another device comes back, so
+  it gives up after five completed attempts. Offline does not count.
+- The widget note is spent at once on a phone with no widgets. Left standing, it
+  would bind the first widget the user ever adds to their first station, and
+  "Add to Home Screen" would not correct it. With widgets but no stations (signed
+  out at the update) it waits, because v1 drew the first station on sign-in.
+- The boards push runs after the screens are refreshed, so a failed push or
+  read-back cannot leave them stale.
+- The revision is not stamped by that reconcile, so a failed push is retried.
+- iOS never passes `keepLocalBoards`; its reconcile is unchanged.
+
+**Verified on a Pixel 10 Pro Fold, staging, 2026-11-24**, by planting a v1-shaped
+database and installing over it: three widgets kept the v1 station, a v1-only board survived and
+reached the account, the bus hub stayed one board, and the notes were cleared.
+After that run the note began to be spent at app start as well, and the boards
+push moved after the screen refresh. Rerun on the phone: an unbound widget was
+bound on a cold start and the note cleared (app start and a draw both run there,
+so which one did it is not known). NOT rerun: the boards push in its new place.
+NOT covered: a real v1 from Play updating to v2 (internal track).
+
+Testing trap: install the new build BEFORE planting the v1 database, then
+reinstall it. Planting first lets a push wake the old build, which migrates the
+file without leaving the notes.
+
+Known and unchanged: a v1 database arriving by backup onto a NEW phone goes
+through sign-in, which restores the account's `boards` list, so an account with
+an iPhone list still loses a v1-only board there. And any Android push from a
+process that has not signed in restamps `addedAt`, which can change board order
+at the next sign-in.

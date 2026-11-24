@@ -119,3 +119,16 @@ fun UserProfileResponse.effectiveBoards(): List<Board> {
     val usable = boards.filter { it.isUsable }
     return usable.ifEmpty { Board.fromSelections(stations.toUserSelections()) }
 }
+
+/**
+ * Whether the account's OWN board list already has every one of [local].
+ *
+ * `boardsUpdatedAt == 0` is a no whatever the list says: it was derived from
+ * `stations` at read time and nothing has actually been saved.
+ */
+fun UserProfileResponse.hasBoardsFor(local: List<UserSelection>): Boolean {
+    if (boardsUpdatedAt == 0L) return false
+    fun key(s: UserSelection) = Triple(s.station, s.line.lowercase(), s.direction.lowercase())
+    val saved = boards.flatMap { it.toSelections() }.map(::key).toSet()
+    return local.all { key(it) in saved }
+}

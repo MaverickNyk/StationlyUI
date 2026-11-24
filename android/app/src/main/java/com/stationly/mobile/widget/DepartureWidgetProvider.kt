@@ -998,6 +998,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             /** The platform being left, for an animated step. */
             fromPage: Int? = null,
         ) {
+            V1WidgetAdoption.adoptIfPending(context, selections)
             val boundTo = WidgetBindingStore.boundStation(context, appWidgetId, WidgetBindingStore.currentUid())
             // The board's selections, in the user's own order. A hub can hold
             // several (lines, directions); the widget renders the first, which

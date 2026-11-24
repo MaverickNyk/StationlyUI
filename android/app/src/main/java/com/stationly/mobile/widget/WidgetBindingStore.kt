@@ -195,6 +195,9 @@ object WidgetBindingStore {
             id to station
         }.toMap()
 
+    /** Every widget with a binding, whoever placed it. */
+    internal fun boundIds(context: Context): Set<Int> = allRegardlessOfOwner(context).keys
+
     fun prune(context: Context) {
         val live = AppWidgetManager.getInstance(context)
             .getAppWidgetIds(ComponentName(context, DepartureWidgetProvider::class.java))

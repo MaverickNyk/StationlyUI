@@ -132,11 +132,18 @@ class UserSyncRepository(
      *   payload today, a socket frame after P4. Null means "go and ask", which
      *   is what the foreground path does. Passing a rev that is already known
      *   saves the round trip entirely.
+     * @param keepLocalBoards union instead of replace: a board only this device
+     *   has is kept. For the one Android reconcile after a v1 upgrade, whose
+     *   boards were only ever saved to the legacy `stations` list and so cannot
+     *   be in a list an iPhone wrote. The revision is NOT stamped, because the
+     *   device has not adopted the cloud's list; the push that publishes the
+     *   union stamps it. False everywhere else, including all of iOS.
      */
     suspend fun reconcileBoards(
         uid: String,
         lifecycle: StationLifecycleUseCase,
         observedRev: Long? = null,
+        keepLocalBoards: Boolean = false,
     ): UserProfileResponse? {
         val rev = observedRev ?: apiService.getUserStateRev(uid)
         if (!LocalRevStore.shouldFetch(storageManager, uid, rev)) return null
@@ -200,7 +207,10 @@ class UserSyncRepository(
         // one and had been left out. It suppresses one branch — the empty-state
         // wipe — so boards written DURING the rewrite still publish normally.
         WidgetRestore.during {
-        local.filter { key(it.station, it.line, it.direction) !in cloudKeys }.forEach { sel ->
+        val gone = if (keepLocalBoards) emptyList() else {
+            local.filter { key(it.station, it.line, it.direction) !in cloudKeys }
+        }
+        gone.forEach { sel ->
             val remaining = sqlStorage.getAllSelections().filterNot {
                 it.station == sel.station && it.line == sel.line && it.direction == sel.direction
             }
@@ -229,7 +239,11 @@ class UserSyncRepository(
                 existing.viaStationIds != restored.viaStationIds ||
                 existing.viaKeys != restored.viaKeys ||
                 existing.patternIds != restored.patternIds
-            if (filterChanged) lifecycle.updateBoardFilter(restored)
+            // A v1 row has no hub ("same as station"). Publishing it that way
+            // would pull this pole out of the hub board the other device built,
+            // splitting one bus stop into two boards on every device.
+            val hubMissing = keepLocalBoards && existing.groupingId != restored.groupingId
+            if (filterChanged || hubMissing) lifecycle.updateBoardFilter(restored)
         }
         } // WidgetRestore.during
 
@@ -246,7 +260,7 @@ class UserSyncRepository(
         // From the profile, never from the rev that opened the gate: the
         // observed rev may have been an undershoot (a concurrent write), while
         // the profile carries what the document actually said when it was read.
-        LocalRevStore.store(storageManager, uid, profile.stateRev)
+        if (!keepLocalBoards) LocalRevStore.store(storageManager, uid, profile.stateRev)
 
         return profile
     }
