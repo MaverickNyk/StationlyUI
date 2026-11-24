@@ -56,8 +56,9 @@ class SelectionRepository(
     /**
      * [initialize], for a process no screen has started (a push, a widget).
      *
-     * [saveSelection] rewrites the whole table from the cache, so saving ONE
-     * board while the cache is empty deletes every other board on the device.
+     * Every write below rewrites the whole table from the cache, so saving ONE
+     * board while the cache is empty deleted every other board on the device.
+     * The live iOS 1.1 does this when a silent `user.sync` push adds a board.
      * Only when empty: re-reading under a screen that is mid-write could cache
      * a half-written table.
      */
@@ -71,6 +72,7 @@ class SelectionRepository(
      * @param oldSelection Optional old selection to replace (for edits)
      */
     suspend fun saveSelection(newSelection: UserSelection, oldSelection: UserSelection?) {
+        loadIfEmpty()
         val currentSelections = _selections.value.toMutableList()
         
         // Remove old selection if provided
@@ -124,6 +126,7 @@ class SelectionRepository(
      */
     suspend fun updateSelectionsInPlace(selections: List<UserSelection>) {
         if (selections.isEmpty()) return
+        loadIfEmpty()
         val current = _selections.value.toMutableList()
         var changed = false
         for (selection in selections) {

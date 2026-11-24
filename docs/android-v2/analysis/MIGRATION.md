@@ -405,7 +405,9 @@ line failure is cleared when the user moves to another station.
 `SelectionRepository.saveSelection` rewrites the whole table from an in-memory
 cache that only a screen loaded. A reconcile with no screen, adding one board from
 the cloud, wrote that board alone, and the read-back then cleared the v1 note. The
-reconcile now calls `loadIfEmpty()` first; `ColdProcessSaveTest` shows both sides.
+reconcile calls `loadIfEmpty()` first, and since 2026-11-24 so does every save
+(`ColdProcessSaveTest`). Live iOS 1.1 has the same fault: see the end of
+`docs/QA_2026-11-23_ANDROID_SWEEP.md`.
 
 Known and unchanged: a v1 database arriving by backup onto a NEW phone goes
 through sign-in, which restores the account's `boards` list, so an account with

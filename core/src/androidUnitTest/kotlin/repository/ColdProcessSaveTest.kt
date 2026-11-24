@@ -31,20 +31,28 @@ class ColdProcessSaveTest {
     private fun SqlStorage.stations() = getAllSelections().map { it.station }.toSet()
 
     @Test
-    fun `the hazard - a save in a cold process drops every other board`() = runBlocking {
+    fun `a save in a cold process keeps every other board`() = runBlocking {
         val disk = storage().apply { saveSelection(row("V1")); saveSelection(row("V1B")) }
         coldProcess()
         repository(disk).saveSelection(row("IPHONE"), null)
-        assertEquals(setOf("IPHONE"), disk.stations())
+        assertEquals(setOf("V1", "V1B", "IPHONE"), disk.stations())
     }
 
     @Test
-    fun `loading first keeps them`() = runBlocking {
+    fun `an edit in a cold process is kept`() = runBlocking {
         val disk = storage().apply { saveSelection(row("V1")); saveSelection(row("V1B")) }
         coldProcess()
-        repository(disk).loadIfEmpty()
-        repository(disk).saveSelection(row("IPHONE"), null)
-        assertEquals(setOf("V1", "V1B", "IPHONE"), disk.stations())
+        repository(disk).updateSelectionInPlace(row("V1B").copy(parentStationId = "HUB"))
+        assertEquals(setOf("V1", "V1B"), disk.stations())
+        assertEquals("HUB", disk.getAllSelections().single { it.station == "V1B" }.parentStationId)
+    }
+
+    @Test
+    fun `the first board of an empty account is saved`() = runBlocking {
+        val disk = storage()
+        coldProcess()
+        repository(disk).saveSelection(row("FIRST"), null)
+        assertEquals(setOf("FIRST"), disk.stations())
     }
 
     @Test

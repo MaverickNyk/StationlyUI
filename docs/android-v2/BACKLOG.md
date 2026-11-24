@@ -155,6 +155,8 @@ roughly one focused hour.
 | AV2-11.30 | Code review fixes: boards lost by a reconcile in a push-started process; offline sign-out hung on FCM; uncredited Play purchase retried only once per process; one station's lines or error landing on another; malformed line-status push could crash | H | fixed, tests for the first · not device-verified |
 | AV2-11.31 | Forced sign-out (account deleted elsewhere) leaves the app on a dead session until restart: v1's auth observer was not carried over | M | open |
 | AV2-11.32 | A deep link is handled again when the Activity is recreated (rotation, theme change) | S | open |
+| AV2-11.33 | **iOS (live 1.1):** a background sync that adds a board drops every other board on the iPhone; see the end of `docs/QA_2026-11-23_ANDROID_SWEEP.md` | H | fixed in shared code, `BackgroundSyncReplayTest` · **live until an iOS release** |
+| AV2-11.34 | Screensaver crash: `StationlyDreamService.onDetachedFromWindow` moves a DESTROYED lifecycle (Pixel 11 Pro, build 6, 2026-11-24 16:33) | H | open |
 | AV2-11.10 | Landscape board and staging banner (#11) | M | open · device check first |
 | AV2-11.11 | Store prices in the buyer's currency (#13) | M | open · **iOS needs Swift** |
 | AV2-11.12 | Screensaver: both directions, board-location weather, "Route 39" (#14) | M | open |

@@ -213,3 +213,55 @@ Gate after the review: core unit tests, Android app unit tests,
 6. Smithwood Close board and widget headers: "Bus 39 → …" (only once the board has `directionTowards`; re-save the board if it shows plain "Bus 39").
 7. Widget in arrows mode: step to page 2, refresh twice, stays on the same direction.
 8. Font scale 1.3: no clipped widget rows. Then put the font scale back to 1.05.
+
+## iOS: boards lost by a background sync (owner, 2026-11-24). Fixed in shared code, NOT released
+
+Seen: an account used on both phones. One board deleted on Android (3 left), then
+one added. The iPhone (live 1.1) ended with only the new board; Android kept all 4.
+
+Cause, reproduced by replaying those steps through the actual 1.1 source (`fab76d6`,
+shared Kotlin run on the JVM): with nothing in memory the add leaves only the new
+board and it stays gone; the next account change brings the rest back, as the owner
+then saw; with a screen loaded nothing is lost. `if (_selections.value.isEmpty())
+initialize()` at the top of `saveSelection` fixes it there. NOT seen on an iPhone:
+that iOS had started the app with no screen.
+`SelectionRepository.saveSelection` rewrites the whole table from an in-memory list
+that only a SCREEN loads (`SummaryViewModel`, login). A silent `user.sync` push can
+start the app with no screen, and `UserSyncBridge` never loads it, so adding one
+board writes that board alone. The revision is then stamped, so the iPhone believes
+it is up to date. An edit on that iPhone would push its short list to the account.
+Deleting in that state is safe; adding is not, which is the sequence seen.
+
+Android had the same bug (builds up to 5), fixed in 6 (`loadIfEmpty`, AV2-11.30;
+`ColdProcessSaveTest` reproduces it). Now `saveSelection` and
+`updateSelectionsInPlace` both load first, which covers iOS with no Swift
+(owner approved the shared change); `BackgroundSyncReplayTest` runs these steps.
+**Live 1.1 still has it**: it needs an iOS release, cut from the 1.1 source with
+only this change, not from this branch.
+
+| Build | State |
+|---|---|
+| iOS 1.1 (live) | Has it, until an iOS release |
+| Android 3 to 5 (v2 tests) | Same code, same hazard (not reproduced there) |
+| Android 6 and 7 | The sync path is safe (`UserSyncCoordinator` loads first) |
+| Next Android build | Every save and edit is safe |
+| Android v1 (live) | Not examined: older, separate code |
+
+**The rule:** `SelectionRepository`'s writes rewrite the table from the cache, so the
+cache must be loaded before any of them. `saveSelection` and
+`updateSelectionsInPlace` see to it; a new write that rebuilds the table must too.
+
+**Recovering an iPhone left short:** the account still has the full list. Do not add,
+edit or delete on that iPhone: it would push its short list over the account. Open
+the app, leave it on its home screen, and change a board on the other phone.
+
+**Shipping it on iOS:** branch from the 1.1 source (`fab76d6`), take only the two
+`loadIfEmpty()` calls and the function, release as 1.2. Not from this branch (Q5).
+`BackgroundSyncReplayTest` uses a JVM database driver 1.1 does not have: run it there
+by adding `androidUnitTest` with `sqlite-driver:2.0.2` to `core/build.gradle.kts`,
+which is how it was reproduced.
+
+**Optional, backend, not done:** until 1.2 is out, do not send the silent `user.sync`
+push for `boards` and `stations` to iPhones on 1.1 or older (the device row has
+`appVersion`; unknown counts as old). They sync when opened. `deleted` and `profile`
+must still go. No backend change is needed for the fix itself.
