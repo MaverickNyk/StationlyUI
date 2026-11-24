@@ -367,9 +367,11 @@ helpers, or document why this surface needs to diverge.
   shortest rung shrink to 70% before ellipsising (`WidgetText.fit`, iOS
   `minimumScaleFactor(0.7)`). RemoteViews will not inflate a plain `View`: a
   spacer must be a FrameLayout, or every widget shows "Can't load widget".
-- **A new widget starts at 4x2** (owner, 2026-11-24), by
+- **A new widget starts at the FULL WIDTH and 2 rows** (owner, 2026-11-24), by
   `departure_widget_info.xml` alone: the picker and `requestPinAppWidget` both read
-  it. Keep `targetCell*` (Android 12+) and `min*` (older) saying the same thing.
+  it. Two copies, `xml-v31` (Android 12+) and `xml` (8 to 11), alike in everything
+  but the default size. No attribute means "full width"; the XML comments say how
+  the launcher arrives at it, and `WidgetDefaultSizeTest` runs its rule.
 - **A new widget starts on SCROLL, every station** (owner, 2026-11-23). It used
   to start on STEP when a station had several platforms. Arrows ("Buttons") are
   a choice in the widget's settings; `applyDefaultsAndFinish` writes SCROLL on

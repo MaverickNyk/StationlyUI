@@ -1,43 +1,74 @@
 package com.stationly.mobile.widget
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.w3c.dom.Element
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
+import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.min
 
-/** A new widget is 4x2 on every Android version (owner, 2026-11-24). */
+/** A new widget is the full width of the home screen and 2 rows (owner, 2026-11-24). */
 class WidgetDefaultSizeTest {
 
-    private val info = DocumentBuilderFactory.newInstance().newDocumentBuilder()
-        .parse(File("src/main/res/xml/departure_widget_info.xml")).documentElement
+    private fun info(dir: String): Element = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+        .parse(File("src/main/res/$dir/departure_widget_info.xml")).documentElement
 
-    private fun attr(name: String) = info.getAttribute("android:$name")
-    private fun dp(name: String) = attr(name).removeSuffix("dp").toInt()
+    private val older = info("xml")
+    private val android12 = info("xml-v31")
 
-    @Test
-    fun `Android 12 and later start at 4x2`() {
-        assertEquals("4", attr("targetCellWidth"))
-        assertEquals("2", attr("targetCellHeight"))
+    private fun Element.value(name: String) = getAttribute("android:$name").removeSuffix("dp").ifBlank { "0" }.toInt()
+
+    /** A home screen. Cell sizes in dp; [landscape] is null where the launcher stays upright. */
+    private class Grid(val name: String, val width: Int, val columns: Int, val cell: Int, val landscape: Int? = null)
+
+    private val grids = listOf(
+        Grid("Pixel 11 Pro, 5x6", 427, 5, 100, 60),
+        Grid("Pixel, 5x5", 393, 5, 118, 66),
+        Grid("Pixel, 4 columns", 411, 4, 118, 66),
+        Grid("4x5, tall cells", 360, 4, 118),
+        Grid("4x6", 360, 4, 100),
+        Grid("4x6, wide", 393, 4, 102),
+        Grid("5x6", 384, 5, 100),
+        Grid("small 4x5", 320, 4, 90),
+    )
+
+    /** AOSP's `initSpans`, with [margin] for the padding launchers added before Android 12. */
+    private fun spans(info: Element, grid: Grid, margin: Int): Pair<Int, Int> {
+        fun cells(size: Int, cell: Double) = max(1, ceil((size + margin) / cell).toInt())
+        val cellWidth = (grid.width - 16.0) / grid.columns
+        fun rows(size: Int) = listOfNotNull(grid.cell, grid.landscape).maxOf { cells(size, it.toDouble()) }
+
+        val minColumns = cells(info.value("minResizeWidth"), cellWidth)
+        val minRows = rows(info.value("minResizeHeight"))
+        val targetColumns = info.value("targetCellWidth")
+        val targetRows = info.value("targetCellHeight")
+        val targetFits = targetColumns in minColumns..grid.columns && targetRows >= minRows
+        return if (targetFits) targetColumns to targetRows
+        else min(cells(info.value("minWidth"), cellWidth), grid.columns) to rows(info.value("minHeight"))
     }
 
-    /**
-     * Before Android 12 a launcher takes as many columns as `minWidth` needs.
-     * An estimate (16dp of margin, 8dp each side), so it checks the property that
-     * matters: 4, or the full width of a narrow 5-column grid, and never 3.
-     */
     @Test
-    fun `older Android never starts narrower than 4 columns`() {
-        for (width in listOf(360, 393, 411, 430)) for (columns in listOf(4, 5)) {
-            val cell = (width - 16.0) / columns
-            val taken = Math.ceil((dp("minWidth") + 16) / cell).toInt()
-            assertTrue("$width dp, $columns columns: $taken", taken in 4..columns)
+    fun `Android 12 and later start full width and 2 rows`() {
+        for (g in grids) assertEquals(g.name, g.columns to 2, spans(android12, g, margin = 0))
+    }
+
+    /** The rows are the phone's own here: a dense grid may take 3, never fewer than 2. */
+    @Test
+    fun `older Android starts full width too`() {
+        for (g in grids) {
+            val (columns, rows) = spans(older, g, margin = 16)
+            assertEquals(g.name, g.columns, columns)
+            assertEquals("${g.name}: $rows rows", true, rows in 2..3)
         }
     }
 
     @Test
-    fun `it can still be made smaller by hand`() {
-        assertTrue(dp("minResizeWidth") <= dp("minWidth"))
-        assertTrue(dp("minResizeHeight") <= dp("minHeight"))
+    fun `the two files differ only in the default size`() {
+        fun Element.rest() = (0 until attributes.length).map { attributes.item(it) }
+            .associate { it.nodeName to it.nodeValue }
+            .filterKeys { it !in setOf("android:minWidth", "android:minHeight", "android:targetCellWidth", "android:targetCellHeight") }
+        assertEquals(older.rest(), android12.rest())
     }
 }

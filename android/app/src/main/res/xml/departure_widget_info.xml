@@ -1,19 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A new widget starts at 4x2 (owner, 2026-11-24), the size the board was tuned
-     on, from the launcher's picker and from "Add to Home Screen" alike: both read
-     this file. targetCell* is Android 12+. Android 8 to 11, and any launcher that
-     ignores it, take as many cells as min* needs, which depends on the phone's
-     grid: 300dp is 4 columns on the common grids and 5 (full width) on a narrow
-     5-column one, never 3. 250 gave 3 on a 4-column 411dp phone. -->
+<!-- Android 8 to 11. A new widget starts at the full width and 2 rows (owner,
+     2026-11-24). These launchers take as many cells as min* needs: 320dp is every
+     column of a 4 or 5 column phone. Android 12+ reads xml-v31, which must match
+     this file in everything but the default size. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:initialKeyguardLayout="@layout/widget_departure_board"
     android:initialLayout="@layout/widget_departure_board"
-    android:minWidth="300dp"
+    android:minWidth="320dp"
     android:minHeight="110dp"
     android:minResizeWidth="180dp"
     android:minResizeHeight="110dp"
-    android:targetCellWidth="4"
-    android:targetCellHeight="2"
     android:previewImage="@mipmap/ic_launcher"
     android:previewLayout="@layout/widget_preview"
     android:resizeMode="horizontal|vertical"

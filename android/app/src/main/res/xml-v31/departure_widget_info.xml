@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+. A new widget starts at the full width and 2 rows (owner,
+     2026-11-24). AOSP's launcher (LauncherAppWidgetProviderInfo.initSpans) uses
+     targetCell* only when it FITS the grid, else the cells min* needs, capped at
+     the grid. So 5 columns is exactly 5x2; on 4 the target is refused and 320dp
+     caps at 4; 130dp is 2 rows of the taller cells such a grid has. A target of 4
+     left a column empty on 5 (Pixel 11 Pro). xml/ is the older twin. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:initialKeyguardLayout="@layout/widget_departure_board"
+    android:initialLayout="@layout/widget_departure_board"
+    android:minWidth="320dp"
+    android:minHeight="130dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="110dp"
+    android:targetCellWidth="5"
+    android:targetCellHeight="2"
+    android:previewImage="@mipmap/ic_launcher"
+    android:previewLayout="@layout/widget_preview"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="86400000"
+    android:widgetCategory="home_screen"
+    android:configure="com.stationly.mobile.widget.WidgetConfigureActivity"
+    android:widgetFeatures="reconfigurable" />
