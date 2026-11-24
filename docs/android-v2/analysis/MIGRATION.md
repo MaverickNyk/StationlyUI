@@ -387,6 +387,26 @@ Testing trap: install the new build BEFORE planting the v1 database, then
 reinstall it. Planting first lets a push wake the old build, which migrates the
 file without leaving the notes.
 
+**v1's saved preferences (found by the owner on production build 5, 2026-11-24).**
+The planted-database test above did not include them. v1 wrote each
+`cached_dropdown_*_ts` with `putLong` and `dismissed_announcement_*` with
+`putBoolean`; the shared code reads both as text, and `getString` throws on
+another type. Symptom: "Couldn't load modes" coming and going in Set up a Board,
+for ever. By code reading, also the line and direction steps, and an uncaught
+throw (a crash) opening a v1 station's settings. Fixed in `textOrNull`
+(`Platform.kt`, Android), pinned by `StoredTextTest`. The audit compared every v1
+preference write with v2's reads: those two were the only mismatches. Any future
+upgrade test must plant v1's `StationlyPrefs` as well as its database.
+
+The mode, line and direction steps also no longer show an error over a list they have, and a
+line failure is cleared when the user moves to another station.
+
+**Boards lost in a process a push started (code review, 2026-11-24; in build 5).**
+`SelectionRepository.saveSelection` rewrites the whole table from an in-memory
+cache that only a screen loaded. A reconcile with no screen, adding one board from
+the cloud, wrote that board alone, and the read-back then cleared the v1 note. The
+reconcile now calls `loadIfEmpty()` first; `ColdProcessSaveTest` shows both sides.
+
 Known and unchanged: a v1 database arriving by backup onto a NEW phone goes
 through sign-in, which restores the account's `boards` list, so an account with
 an iPhone list still loses a v1-only board there. And any Android push from a

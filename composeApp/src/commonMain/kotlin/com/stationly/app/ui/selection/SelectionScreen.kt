@@ -258,7 +258,11 @@ fun SelectionScreen(
     val st by viewModel.uiState.collectAsStateWithLifecycle()
     val selMap by viewModel.selections.collectAsStateWithLifecycle()
     val dropdownData by viewModel.dropdownData.collectAsStateWithLifecycle()
-    val modes by viewModel.modes.collectAsStateWithLifecycle()
+    val loadedModes by viewModel.modes.collectAsStateWithLifecycle()
+    // The same list, fetched by two paths that share one error flag. Either will
+    // do: taking only the first left an endless spinner, and no Retry, when it
+    // failed and the other succeeded.
+    val modes = loadedModes.ifEmpty { dropdownData["mode"].orEmpty() }
     val recentStations by viewModel.recentStations.collectAsStateWithLifecycle()
     val linePicks by viewModel.linePicks.collectAsStateWithLifecycle()
     val existingPicks by viewModel.existingPicks.collectAsStateWithLifecycle()
@@ -413,7 +417,8 @@ fun SelectionScreen(
                         loadingDirections = loadingDirections,
                         failedDirections  = failedDirections,
                         loadingLines      = dropdownData["line"] == null && "line" !in st.failedFetches,
-                        errLines          = "line" in st.failedFetches,
+                        // Only with nothing to show; see ModeScreen.
+                        errLines          = dropdownData["line"] == null && "line" in st.failedFetches,
                         primary           = primary,
                         mode              = selMap["mode"],
                         modeIcon          = mode?.iconUrl,
@@ -616,7 +621,9 @@ private fun ModeScreen(
     onSelect: (SduiDropdownOption) -> Unit, onRetry: () -> Unit
 ) {
     when {
-        err -> Err("Couldn't load modes", primary, onRetry)
+        // Only with nothing to show. Modes are fetched more than once, and one
+        // late failure must not take down a list that has already loaded.
+        modes.isEmpty() && err -> Err("Couldn't load modes", primary, onRetry)
         modes.isEmpty() -> Loader(primary)
         else -> Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.height(24.dp))
@@ -1071,7 +1078,7 @@ private fun LineDirectionScreen(
                                 }
                                 Spacer(Modifier.height(8.dp))
                                 when {
-                                    line.id in failedDirections ->
+                                    line.id in failedDirections && directionsByLine[line.id] == null ->
                                         InlineErr("Couldn't load directions", primary) {
                                             onRetryDirections(line.id)
                                         }

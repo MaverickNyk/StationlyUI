@@ -7,7 +7,9 @@ import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.auth.FirebaseAuth
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.WidgetState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
@@ -147,8 +149,21 @@ class AndroidNotificationManager(
      * behind on a device somebody else is about to sign into.
      */
     override suspend fun clearAllTopics() {
-        val topics = readLedger()
-        topics.forEach { unsubscribe(it) }
+        // All requested first, then a bounded wait. FCM keeps a request and
+        // retries it by itself, but its Task stays open until it succeeds, so
+        // awaiting without a limit hung a sign-out made offline.
+        val requests = readLedger().map { FirebaseMessaging.getInstance().unsubscribeFromTopic(it) }
+        withTimeoutOrNull(CLEAR_TOPICS_WAIT_MS) {
+            requests.forEach { request ->
+                try {
+                    request.await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    android.util.Log.e(TAG, "Failed to unsubscribe during teardown", e)
+                }
+            }
+        }
         prefs().edit().remove(KEY_TOPICS).apply()
     }
 
@@ -189,6 +204,7 @@ class AndroidNotificationManager(
 
     private companion object {
         const val TAG = "NotificationManager"
+        const val CLEAR_TOPICS_WAIT_MS = 5_000L
         const val PREFS = "StationlyPrefs"
 
         /**
@@ -201,14 +217,35 @@ class AndroidNotificationManager(
     }
 }
 
-// Android StorageManager implementation
-class AndroidStorageManager(
-    private val context: Context
-) : StorageManager {
-    
-    private val prefs: SharedPreferences by lazy {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+/**
+ * A stored value as text, whatever type it was written as.
+ *
+ * `getString` THROWS on a value of another type, and v1 wrote two of the keys
+ * the shared code reads here as something else: each `cached_dropdown_*_ts` with
+ * `putLong`, and `dismissed_announcement_*` with `putBoolean`. On an upgraded
+ * phone the throw failed the station picker ("Couldn't load modes") before it
+ * could overwrite the value, so it never healed.
+ *
+ * Text rather than null: the timestamp and the dismissal are still true.
+ */
+internal fun SharedPreferences.textOrNull(key: String): String? = try {
+    getString(key, null)
+} catch (_: ClassCastException) {
+    when (val value = all[key]) {
+        is Number, is Boolean -> value.toString()
+        else -> null
     }
+}
+
+// Android StorageManager implementation
+class AndroidStorageManager internal constructor(
+    /** Opens a prefs file by name; a seam for the test. */
+    private val open: (String) -> SharedPreferences,
+) : StorageManager {
+
+    constructor(context: Context) : this({ context.getSharedPreferences(it, Context.MODE_PRIVATE) })
+
+    private val prefs: SharedPreferences by lazy { open(PREFS) }
     
     private val json = Json { ignoreUnknownKeys = true }
     
@@ -250,23 +287,19 @@ class AndroidStorageManager(
         prefs.edit().putString(key, value).apply()
     }
     
-    override suspend fun loadString(key: String): String? {
-        return prefs.getString(key, null)
-    }
+    override suspend fun loadString(key: String): String? = prefs.textOrNull(key)
 
     /**
      * A SEPARATE prefs file, so the logout wipe of the session store misses it.
      * The direct mirror of iOS keeping these in the App Group suite.
      */
-    private val durablePrefs by lazy {
-        context.getSharedPreferences(DURABLE_PREFS, android.content.Context.MODE_PRIVATE)
-    }
+    private val durablePrefs by lazy { open(DURABLE_PREFS) }
 
     override suspend fun saveDurable(key: String, value: String) {
         durablePrefs.edit().putString(key, value).apply()
     }
 
-    override suspend fun loadDurable(key: String): String? = durablePrefs.getString(key, null)
+    override suspend fun loadDurable(key: String): String? = durablePrefs.textOrNull(key)
 
     override suspend fun removeDurable(key: String) {
         durablePrefs.edit().remove(key).apply()

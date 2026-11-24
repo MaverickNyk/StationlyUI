@@ -149,6 +149,12 @@ roughly one focused hour.
 | AV2-11.24 | `scripts/android-dev.sh` and `scripts/android-release.sh`: environment named, built artefacts verified (iOS-script parity) | M | ✅ S023 · see `docs/ANDROID_BUILD_AND_RELEASE.md` |
 | AV2-11.25 | Line alerts: every rule served (`notify.*`), quiet by default, user level setting, config push; iOS plan in `docs/IOS_NOTIFICATIONS.md` | L | ✅ S023 · backend branch `dev_notification_policy` · device-verified overnight 2026-11-24 incl. a minified build, see `docs/LINE_ALERTS.md` |
 | AV2-11.26 | v1 upgrade: widgets keep their station; v1-only boards survive on an account that also has an iPhone; CI gate uses the runner's JDK | M | ✅ device-verified 2026-11-24 with planted v1 data, see `analysis/MIGRATION.md` §6 · Android only; shared reconcile gains an opt-in flag iOS never sets |
+| AV2-11.27 | v1 upgrade: preferences v1 saved as numbers/booleans broke "Set up a Board" (and could crash station settings); read as text now | H | fixed, unit-tested · device check needs build 6 on an upgraded phone · see `analysis/MIGRATION.md` §6 |
+| AV2-11.28 | Play purchases were sent without the user token, so the server refused every one (401) and nothing was recorded | H | fixed, unit-tested · device check needs build 6 and a test purchase, mark checked after 15 min · see `SUPPORT_CONTRIBUTIONS.md` 8.7 |
+| AV2-11.29 | A new widget starts at 4x2 (was 5x3), from the picker and "Add to Home Screen" | S | done, checked in the built APK · placement on a launcher not yet seen · launchers decide, see the XML comment |
+| AV2-11.30 | Code review fixes: boards lost by a reconcile in a push-started process; offline sign-out hung on FCM; uncredited Play purchase retried only once per process; one station's lines or error landing on another; malformed line-status push could crash | H | fixed, tests for the first · not device-verified |
+| AV2-11.31 | Forced sign-out (account deleted elsewhere) leaves the app on a dead session until restart: v1's auth observer was not carried over | M | open |
+| AV2-11.32 | A deep link is handled again when the Activity is recreated (rotation, theme change) | S | open |
 | AV2-11.10 | Landscape board and staging banner (#11) | M | open · device check first |
 | AV2-11.11 | Store prices in the buyer's currency (#13) | M | open · **iOS needs Swift** |
 | AV2-11.12 | Screensaver: both directions, board-location weather, "Route 39" (#14) | M | open |

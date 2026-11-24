@@ -14,6 +14,7 @@ import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.util.StationlyFormatters
 import com.stationly.mobile.BuildConfig
 import com.stationly.mobile.widget.DepartureWidgetProvider
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -219,7 +220,10 @@ class FcmMessagingService : FirebaseMessagingService() {
 
         try {
             val status = gson.fromJson(payloadJson, LineStatus::class.java)
-            CoroutineScope(Dispatchers.IO).launch {
+            // A failure in here (Gson leaves a missing field null) costs this
+            // push, not the process.
+            val onFailure = CoroutineExceptionHandler { _, e -> Log.e("FCM", "Error handling line status", e) }
+            CoroutineScope(Dispatchers.IO + onFailure).launch {
                 // Which severity counts as the worst one is SERVED
                 // (`BoardPolicy.severityOrder`), and this runs in a process
                 // where no screen need ever have opened to fetch it. See

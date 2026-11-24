@@ -163,6 +163,10 @@ object UserSyncCoordinator {
                     // The read of the table comes first: it is what opens, and so
                     // migrates, the database that leaves the v1 note.
                     val before = Platform.sqlStorage.getAllSelections()
+                    // A push can start this process with no screen to have
+                    // loaded the boards, and the restore below would then
+                    // write its boards over the whole table.
+                    SelectionRepository(Platform.storageManager, Platform.sqlStorage).loadIfEmpty()
                     val fromV1 = V1Upgrade.boardsPending(context)
                     val profile = repo.reconcileBoards(uid, lifecycle, observedRev, keepLocalBoards = fromV1)
                     // A bus stop may have just gained its hub, which is what a

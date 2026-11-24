@@ -838,9 +838,11 @@ class SelectionViewModel(
 
         viewModelScope.launch {
             _loadingDirections.value = _loadingDirections.value + lineId
+            val deps = _selections.value + ("line" to lineId)
+            // See fetchDropdownData.
+            fun superseded() = deps["station"] != _selections.value["station"]
             try {
                 var finalUrl = dropdown.dataSourceUrl
-                val deps = _selections.value + ("line" to lineId)
                 deps.forEach { (key, value) -> finalUrl = finalUrl.replace("{$key}", value) }
                 if (finalUrl.contains("{")) return@launch // Unresolved params
 
@@ -851,7 +853,7 @@ class SelectionViewModel(
                 val cachedJson = storageManager.loadString(cacheKey)
                 val cachedTs = storageManager.loadString(tsKey)?.toLongOrNull() ?: 0L
                 val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
-                if (cachedJson != null && isDropdownCacheFresh(cachedTs, now)) {
+                if (cachedJson != null && isDropdownCacheFresh(cachedTs, now) && !superseded()) {
                     try {
                         val cached = jsonFormat.decodeFromString<List<SduiDropdownOption>>(cachedJson)
                         _directionsByLine.value = _directionsByLine.value + (lineId to cached)
@@ -862,6 +864,7 @@ class SelectionViewModel(
                 val options = sduiService.getDropdownData(finalUrl)
                 storageManager.saveString(cacheKey, jsonFormat.encodeToString(options))
                 storageManager.saveString(tsKey, now.toString())
+                if (superseded()) return@launch
 
                 _directionsByLine.value = _directionsByLine.value + (lineId to options)
                 invalidateGraphs(lineId)
@@ -875,6 +878,7 @@ class SelectionViewModel(
                 // as something that moved under the user's finger.
                 autoSelectSoleDirection(lineId, options)
             } catch (_: Exception) {
+                if (superseded()) return@launch
                 _uiState.value = _uiState.value.copy(
                     failedFetches = _uiState.value.failedFetches + failKey
                 )
@@ -1145,8 +1149,10 @@ class SelectionViewModel(
         _directionsByLine.value = emptyMap()
         _loadingDirections.value = emptySet()
         _uiState.value = _uiState.value.copy(
+            // "line" too: it is the PREVIOUS station's failure, and left set it
+            // showed "Couldn't load lines" over a new station still loading.
             failedFetches = _uiState.value.failedFetches
-                .filterNot { it.startsWith(DIRECTION_FAIL_PREFIX) }.toSet()
+                .filterNot { it == "line" || it.startsWith(DIRECTION_FAIL_PREFIX) }.toSet()
         )
     }
 
@@ -1463,7 +1469,9 @@ class SelectionViewModel(
     fun clearSelections() {
         editStationOption = null
         _selections.value = emptyMap()
-        _dropdownData.value = emptyMap()
+        // The modes stay: they belong to no selection, and this is what the mode
+        // step shows when its own fetch failed.
+        _dropdownData.value = _dropdownData.value.filterKeys { it == "mode" }
         clearLinePicks()
         _uiState.value = _uiState.value.copy(
             error = null, failedFetches = emptySet(),
@@ -1520,8 +1528,11 @@ class SelectionViewModel(
     ) {
         viewModelScope.launch {
             var finalUrl = dropdown.dataSourceUrl
+            val deps = selectionsMap ?: _selections.value
+            // The user has moved to another station since: neither its lines nor
+            // its failure belongs on the one they are looking at now.
+            fun superseded() = dropdown.id == "line" && deps["station"] != _selections.value["station"]
             try {
-                val deps = selectionsMap ?: _selections.value
                 deps.forEach { (key, value) -> finalUrl = finalUrl.replace("{$key}", value) }
 
                 if (finalUrl.contains("{")) return@launch // Unresolved params
@@ -1535,7 +1546,7 @@ class SelectionViewModel(
                 val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
                 val cacheValid = cachedJson != null && isDropdownCacheFresh(cachedTs, now)
 
-                if (cacheValid) {
+                if (cacheValid && !superseded()) {
                     try {
                         val cached = jsonFormat.decodeFromString<List<SduiDropdownOption>>(cachedJson)
                         val cur = _dropdownData.value.toMutableMap()
@@ -1555,6 +1566,7 @@ class SelectionViewModel(
                 storageManager.saveString(cacheKey, jsonFormat.encodeToString(options))
                 storageManager.saveString(tsKey, now.toString())
                 rememberLineShortNames(dropdown.id, options)
+                if (superseded()) return@launch
 
                 val cur = _dropdownData.value.toMutableMap()
                 cur[dropdown.id] = inPickerOrder(dropdown.id, options)
@@ -1572,6 +1584,7 @@ class SelectionViewModel(
                     }
                 }
             } catch (_: Exception) {
+                if (superseded()) return@launch
                 _uiState.value = _uiState.value.copy(
                     failedFetches = _uiState.value.failedFetches + dropdown.id
                 )

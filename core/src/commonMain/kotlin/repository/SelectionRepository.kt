@@ -52,6 +52,18 @@ class SelectionRepository(
         val savedSelections = sqlStorage.getAllSelections()
         _selections.value = savedSelections
     }
+
+    /**
+     * [initialize], for a process no screen has started (a push, a widget).
+     *
+     * [saveSelection] rewrites the whole table from the cache, so saving ONE
+     * board while the cache is empty deletes every other board on the device.
+     * Only when empty: re-reading under a screen that is mid-write could cache
+     * a half-written table.
+     */
+    suspend fun loadIfEmpty() {
+        if (_selections.value.isEmpty()) initialize()
+    }
     
     /**
      * Save a new selection or update existing one
