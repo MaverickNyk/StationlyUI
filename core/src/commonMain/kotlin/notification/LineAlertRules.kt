@@ -138,8 +138,11 @@ object LineAlertRules {
         alertsToday: Int,
         nowMs: Long,
         zone: TimeZone = policy.zone(),
+        // The backend already judged it by the rules in force, and this phone's
+        // copy of them may be older.
+        checkedByServer: Boolean = false,
     ): ConfirmAction {
-        if (!isAlertWorthy(current, mode, level, policy)) return ConfirmAction.Nothing
+        if (!checkedByServer && !isAlertWorthy(current, mode, level, policy)) return ConfirmAction.Nothing
 
         // Already telling them exactly this.
         if (memory.open && memory.alertedSeverity.equals(current.trim(), ignoreCase = true)) {

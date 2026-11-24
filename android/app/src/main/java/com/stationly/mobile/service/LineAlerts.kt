@@ -32,6 +32,10 @@ object LineAlerts {
     suspend fun onStatusChange(context: Context, previous: LineStatus?, current: LineStatus) =
         LineAlertCoordinator.onStatusChange(platform(context), previous, current)
 
+    /** The backend's confirmed alert, or the end of one. */
+    suspend fun onServerAlert(context: Context, status: LineStatus, tier: String, cleared: Boolean) =
+        LineAlertCoordinator.onServerAlert(platform(context), status, tier, cleared)
+
     /** The Mute button on an alert. */
     suspend fun mute(context: Context, line: String) = LineAlertCoordinator.mute(platform(context), line)
 

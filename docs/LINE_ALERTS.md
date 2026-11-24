@@ -14,22 +14,38 @@ until they update. iOS shows no line alerts.
 
 ## How a line alert is decided
 
-`core/.../notification/`: `LineAlertRules` (pure), `LineAlertCoordinator`
-(memory, wording, wiring), `LineAlertPreferences` (the user's level, rollout place).
+**The backend decides WHEN, the phone decides WHETHER FOR THIS PERSON**
+(`notify.line.decider` = `server`, the default).
 
-1. **A status push arrives** (`onStatusChange`). Compared with the last PUSH, not
-   the status table: the widget's own refresh (every unlock) writes that too and
-   used to hide changes. Alert-worthy? A re-check is scheduled
-   `confirmAfterMs` later. Becoming disrupted starts the wait; moving between two
-   disruptions keeps it. Uses the cached policy: a push handler may be ended at
-   any moment. First sighting never alerts.
-2. **The re-check** (`confirm`), a job that needs a network. Reads the status from
-   the BACKEND (status pushes are sent once per change and live 90 s, so the
-   stored copy can be hours wrong). No answer = no alert, tried again. Then
-   cooldown, daily cap, quiet hours, same-severity.
-3. **How it ends.** Recovery updates OUR alert quietly (or per `recovery`), only
-   if it is still showing. Closing for the night, Off, the kill switch, a muted
-   line: ours is taken down without a word. It also expires by itself.
+1. **Backend** (`lineAlertService.ts`). Every new line status goes through
+   `advance`: becoming alert-worthy starts a wait of `confirmAfterMs`; moving
+   between two disruptions keeps it; clearing ends it. First sighting never
+   alerts. At the deadline `claimDue` checks it is still alert-worthy by the rules
+   in force THEN, and sends `line_alert` to `LineStatus_<mode>_<line>`.
+   Two tiers, `severe` and `all`, each with its own wait. State is one Firestore
+   document per line, changed in transactions: a restart loses nothing and
+   several workers send one push. Alert pushes live 1 h; a newer one replaces a
+   waiting one.
+2. **Phone** (`LineAlertCoordinator.onServerAlert`). Needs no network. Ignores a
+   tier that is not its level; then mute, rollout, cooldown, daily cap, quiet
+   hours, same severity.
+3. **How it ends.** The status push, or the backend's `clear` for a phone that
+   missed it. Recovery updates OUR alert quietly (or per `recovery`), only if it
+   is still showing. Closing for the night, Off, the kill switch, a muted line:
+   taken down without a word. It also expires by itself.
+
+Lines are seeded at startup and refreshed every 5 minutes, and again at the
+deadline. The kill switch, modes, severities and wait apply on the backend at
+once, with no phone refresh. Older app builds ignore `line_alert`.
+
+**Why not on the phone.** It used to wait and re-check itself (WorkManager). About
+four minutes after the screen goes off on battery, Android cuts background network
+and defers jobs (`blocked=DOZE|APP_BACKGROUND`): measured 2026-11-24, no alert in
+15 minutes. An allow-while-idle alarm fired but still had no network. Every earlier
+test had been on a charger with the screen on. **Test alerts on a sleeping phone**:
+`dumpsys battery unplug`, screen off, `dumpsys deviceidle force-idle`, app killed.
+`decider` = `device` restores the old way, as a fallback only; change it with
+`"push": true`, or phones on an older copy wait for a backend that is not sending.
 
 Blocked by the user (app or channel)? Not shown, so nothing is spent or counted.
 A muted line (Mute button) and a device outside `rolloutPercent` count as Off.
@@ -65,6 +81,7 @@ with `"push": true`.
 | Key | Default | What it does |
 |---|---|---|
 | `notify.line.enabled` | true | Kill switch for every line alert |
+| `notify.line.decider` | server | Who waits and re-checks: the backend, or the phone (unreliable asleep) |
 | `notify.line.rolloutPercent` | 100 | Share of devices that alert at all; a device keeps its place |
 | `notify.line.defaultLevel` | severe | Level of a user who never chose one |
 | `notify.line.alertSeverities` | Severe Delays,Suspended,Part Suspended | Severities that alert at "Severe only" |
@@ -128,6 +145,11 @@ sounded. Outside quiet hours on the phone's clock, so it was the severity rule.
 From the phone's records: the Mac slept and its logs were lost. Not Doze
 (charging, screen on), and it ended before the morning reopening.
 
-Not covered: iOS; a genuine severe disruption from start to end; the Firestore
-write and listener behind live edits (stubbed, so nothing was written to the
-shared staging database); signing out and in; a reboot between push and re-check.
+**Backend-decided, on a deeply sleeping phone (2026-11-24, staging):** on battery,
+app killed, deep idle: alert with sound 48 s after the status (wait set to 45);
+silent recovery in 2 s; a 20 s blip said nothing; backend reloaded mid-wait, exactly
+one alert; kill switch mid-wait, nothing sent. Live edits were made against real
+Firestore the same day.
+
+Not covered: iOS; a genuine TfL disruption through the Syncer from start to end;
+light (not forced) sleep; signing out and in; several backend workers at once.

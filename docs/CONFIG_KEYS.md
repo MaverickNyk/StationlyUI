@@ -7,10 +7,10 @@ A key marked `android` is read by the production client and can never be
 dropped. The Android column is a floor, not a complete list — that tree is
 ahead of the shipped binary, which only the Play Console can tell you about.
 
-- keys served: **333**
-- read by iOS: **236**
+- keys served: **334**
+- read by iOS: **237**
 - read by Android: **22**
-- served and read by at least one client: **222**
+- served and read by at least one client: **223**
 - read but never served (client keeps its fallback): **14**
 - served but read by neither (retained under the additive rule): **111**
 
@@ -279,6 +279,7 @@ ahead of the shipped binary, which only the Play Console can tell you about.
 | `notify.line.confirmAfterMs` | yes | yes | — |
 | `notify.line.confirmRetries` | yes | yes | — |
 | `notify.line.cooldownMs` | yes | yes | — |
+| `notify.line.decider` | yes | yes | — |
 | `notify.line.defaultLevel` | yes | yes | — |
 | `notify.line.enabled` | yes | yes | — |
 | `notify.line.expireAfterMs` | yes | yes | — |

@@ -4,6 +4,11 @@ Read `LINE_ALERTS.md` first (what the product does and every `notify.*` rule).
 This is what an iOS release needs. **Nothing here is built.** Written 2026-11-24
 from the code as it stands; no iOS code was changed.
 
+**Update 2026-11-24: steps 1 to 3 of "Backend" below are BUILT** for Android
+(`lineAlertService.ts`: detect, wait, confirm, tiers, Firestore state). iOS adds a
+per-device send at `deliver`. Android applies personal rules on the phone; iOS
+cannot, so those still have to be evaluated on the backend (step 4 on).
+
 ## The one thing to know
 
 **Do not port Android's design. On iOS the BACKEND should decide.**

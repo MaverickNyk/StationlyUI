@@ -114,6 +114,7 @@ class NotificationPolicyTest {
     fun `the backends defaults are the apps defaults`() {
         val served = mapOf(
                 "notify.line.enabled" to "true",
+                "notify.line.decider" to "server",
                 "notify.line.rolloutPercent" to "100",
                 "notify.line.defaultLevel" to "severe",
                 "notify.line.alertSeverities" to "Severe Delays,Suspended,Part Suspended",
@@ -154,7 +155,7 @@ class NotificationPolicyTest {
     fun `every served key is read`() {
         // A value no default has, for each scalar key, must change the policy.
         val changed = mapOf(
-            "notify.line.enabled" to "false", "notify.line.rolloutPercent" to "7", "notify.line.defaultLevel" to "off",
+            "notify.line.enabled" to "false", "notify.line.decider" to "device", "notify.line.rolloutPercent" to "7", "notify.line.defaultLevel" to "off",
             "notify.line.alertSeverities" to "X", "notify.line.allSeverities" to "X", "notify.line.modes" to "x",
             "notify.line.confirmAfterMs" to "1", "notify.line.confirmRetries" to "2", "notify.line.cooldownMs" to "1",
             "notify.line.maxPerDay" to "9", "notify.line.recovery" to "off", "notify.line.expireAfterMs" to "1",
@@ -166,7 +167,7 @@ class NotificationPolicyTest {
             "notify.copy.recoveredBody" to "x", "notify.copy.recoveredBodyGood" to "x", "notify.copy.muteAction" to "x", "notify.copy.levelSevere" to "x",
             "notify.copy.levelAll" to "x", "notify.copy.levelOff" to "x",
         )
-        assertEquals(33, changed.size)
+        assertEquals(34, changed.size)
         for ((key, value) in changed) {
             assertTrue(NotificationPolicy.resolve(mapOf(key to value)) != NotificationPolicy.DEFAULT, key)
         }

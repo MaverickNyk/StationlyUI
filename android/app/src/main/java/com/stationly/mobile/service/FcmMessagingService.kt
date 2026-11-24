@@ -79,8 +79,12 @@ class FcmMessagingService : FirebaseMessagingService() {
                 // line-alert policy) and wants phones to fetch it soon rather
                 // than on their next app open. Shows nothing. A jittered job,
                 // because this push reaches every install at the same moment.
+                // Loaded first: in a process this push has just started, the
+                // served jitter would otherwise be the compiled one.
+                kotlinx.coroutines.runBlocking { com.stationly.core.config.SduiConfig.ensureLoaded() }
                 LineAlerts.ConfigRefreshWorker.enqueue(this, remoteMessage.data["reason"])
             }
+            remoteMessage.data["type"] == "line_alert" -> handleLineAlert(remoteMessage)
             remoteMessage.data.containsKey("sdui_payload") -> {
                 handleSduiUpdate(remoteMessage)
             }
@@ -189,6 +193,27 @@ class FcmMessagingService : FirebaseMessagingService() {
         }
     }
     
+    /**
+     * The backend confirmed a disruption (or its end). Finished before this
+     * returns: on a sleeping phone the process has only the push's own window.
+     */
+    private fun handleLineAlert(remoteMessage: RemoteMessage) {
+        val json = remoteMessage.data["line_alert"] ?: return
+        try {
+            val status = gson.fromJson(json, LineStatus::class.java)
+            kotlinx.coroutines.runBlocking {
+                com.stationly.core.config.SduiConfig.ensureLoaded()
+                LineAlerts.onServerAlert(
+                    this@FcmMessagingService, status,
+                    tier = remoteMessage.data["tier"].orEmpty(),
+                    cleared = remoteMessage.data["kind"] == "clear",
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("FCM", "Error processing line alert", e)
+        }
+    }
+
     private fun handleLineStatusUpdate(remoteMessage: RemoteMessage) {
         val payloadJson = remoteMessage.data["payload"] ?: return
 

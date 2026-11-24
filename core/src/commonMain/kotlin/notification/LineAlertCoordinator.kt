@@ -129,21 +129,68 @@ object LineAlertCoordinator {
         )
         log("$line: \"$previous\" → \"${current.statusSeverityDescription}\" ($level) → $action")
         when (action) {
+            // The backend is already waiting on this one; its push is the re-check.
             is ChangeAction.ScheduleConfirm ->
-                platform.scheduleConfirm(line, current.mode, action.delayMs, action.keepPending)
-            is ChangeAction.Recover -> {
-                platform.cancelConfirm(line)
-                platform.post(
-                    payloadFor(platform, current, mem.alertedSeverity ?: previous.orEmpty(), recovered = true, silent = action.silent, env = env),
-                )
-                memory.close(line)
-            }
-            ChangeAction.ClearOurs -> {
-                platform.cancelConfirm(line)
-                platform.cancel(notificationIdFor(line))
-                memory.close(line)
-            }
+                if (policy.serverDecides) platform.cancelConfirm(line)
+                else platform.scheduleConfirm(line, current.mode, action.delayMs, action.keepPending)
+            is ChangeAction.Recover -> recover(platform, memory, line, current, mem.alertedSeverity ?: previous.orEmpty(), action.silent, env)
+            ChangeAction.ClearOurs -> clearOurs(platform, memory, line)
             ChangeAction.Nothing -> platform.cancelConfirm(line)
+        }
+    }
+
+    private suspend fun recover(
+        platform: LineAlertPlatform, memory: Memory, line: String, current: LineStatus, earlier: String, silent: Boolean, env: LineAlertEnv,
+    ) {
+        platform.cancelConfirm(line)
+        platform.post(payloadFor(platform, current, earlier, recovered = true, silent = silent, env = env))
+        memory.close(line)
+    }
+
+    private suspend fun clearOurs(platform: LineAlertPlatform, memory: Memory, line: String) {
+        platform.cancelConfirm(line)
+        platform.cancel(notificationIdFor(line))
+        memory.close(line)
+    }
+
+    /**
+     * The backend waited, checked, and sent [current] (`line_alert` push): what
+     * is left is personal to this device. [tier] is whose severities it passed;
+     * a phone on another level ignores it. [cleared] is the end of a disruption
+     * it announced, for a phone that missed the short-lived status push.
+     * Needs no network: that is the point.
+     */
+    suspend fun onServerAlert(platform: LineAlertPlatform, current: LineStatus, tier: String, cleared: Boolean) =
+        onServerAlert(platform, current, tier, cleared, LiveEnv)
+
+    internal suspend fun onServerAlert(
+        platform: LineAlertPlatform, current: LineStatus, tier: String, cleared: Boolean, env: LineAlertEnv,
+    ): Unit = lock.withLock {
+        val policy = env.policy()
+        val line = current.id.lowercase()
+        if (!policy.serverDecides || env.selections().none { it.line.equals(line, ignoreCase = true) }) return@withLock
+        val memory = Memory(env.storage)
+        // Heard from here too, so that the push saying it is over is a change.
+        memory.markSeen(line, current.statusSeverityDescription)
+        if (env.configIsStale(policy)) platform.requestConfigRefresh()
+        if (!cleared) {
+            if (NotificationPolicy.AlertLevel.parse(tier) != levelFor(line, policy, memory, env)) {
+                log("$line: server alert ($tier) is not for this level")
+                return@withLock
+            }
+            confirmLocked(platform, line, current.mode, current, env, checkedByServer = true)
+            return@withLock
+        }
+        val mem = memoryOf(platform, memory, line)
+        if (!mem.open) return@withLock
+        val action = LineAlertRules.onChange(
+            mem.alertedSeverity, current.statusSeverityDescription, current.mode, levelFor(line, policy, memory, env), policy, mem, env.now(),
+        )
+        log("$line: server clear \"${current.statusSeverityDescription}\" → $action")
+        when (action) {
+            is ChangeAction.Recover -> recover(platform, memory, line, current, mem.alertedSeverity.orEmpty(), action.silent, env)
+            ChangeAction.ClearOurs -> clearOurs(platform, memory, line)
+            else -> Unit
         }
     }
 
@@ -172,6 +219,7 @@ object LineAlertCoordinator {
 
     private suspend fun confirmLocked(
         platform: LineAlertPlatform, line: String, mode: String, current: LineStatus, env: LineAlertEnv,
+        checkedByServer: Boolean = false,
     ) {
         val memory = Memory(env.storage)
         val policy = env.policy()
@@ -179,7 +227,7 @@ object LineAlertCoordinator {
         val now = env.now()
         val mem = memoryOf(platform, memory, line)
         val today = memory.alertsToday(now, policy.zone())
-        val action = LineAlertRules.onConfirm(current.statusSeverityDescription, mode, level, policy, mem, today, now)
+        val action = LineAlertRules.onConfirm(current.statusSeverityDescription, mode, level, policy, mem, today, now, checkedByServer = checkedByServer)
         log("$line: re-check \"${current.statusSeverityDescription}\" ($level, today=$today) → $action")
         if (action !is ConfirmAction.Post) {
             env.record(ActivityEvents.NOTIFICATION_SUPPRESSED, mapOf("type" to TYPE, "line" to line, "reason" to "recheck"))

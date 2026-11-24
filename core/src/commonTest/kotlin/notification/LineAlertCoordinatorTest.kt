@@ -64,7 +64,8 @@ class LineAlertCoordinatorTest {
     private class FakeEnv : LineAlertEnv {
         override val storage = FakeStorage()
         var time = at(12)
-        var policy = NotificationPolicy.DEFAULT.copy(quietZone = "Europe/London")
+        /** The phone deciding by itself; the server-decided cases set [serverDecides]. */
+        var policy = NotificationPolicy.DEFAULT.copy(quietZone = "Europe/London", serverDecides = false)
         var place = 0
         val events = mutableListOf<String>()
         override suspend fun bucket() = place
@@ -283,5 +284,83 @@ class LineAlertCoordinatorTest {
             id = "victoria", name = "Victoria", mode = "tube",
             statusSeverityDescription = severity, reason = null, lastUpdatedTime = "",
         )
+    }
+
+    // ── Decided by the backend ────────────────────────────────────────────────
+
+    private fun serverDecides() { env.policy = env.policy.copy(serverDecides = true) }
+    private suspend fun server(severity: String, tier: String = "severe", cleared: Boolean = false) =
+        LineAlertCoordinator.onServerAlert(platform, status(severity), tier, cleared, env)
+
+    @Test
+    fun `when the backend decides the phone schedules nothing and fetches nothing`() = runTest {
+        serverDecides()
+        push("Good Service", stored = "Good Service")
+        push("Severe Delays")
+        assertFalse(platform.pending)
+        env.backend = null
+        server("Severe Delays")
+        assertEquals(1, platform.posts.size)
+        assertFalse(platform.posts.single().silent)
+    }
+
+    @Test
+    fun `a phone that missed both status pushes is still told and cleared`() = runTest {
+        serverDecides()
+        server("Suspended")
+        assertEquals(1, platform.posts.size)
+        server("Good Service", cleared = true)
+        assertEquals(2, platform.posts.size)
+        assertTrue(platform.posts.last().silent)
+        server("Good Service", cleared = true)
+        assertEquals(2, platform.posts.size)
+    }
+
+    @Test
+    fun `the ordinary recovery push ends a backend alert and the clear adds nothing`() = runTest {
+        serverDecides()
+        server("Suspended")
+        push("Good Service")
+        server("Good Service", cleared = true)
+        assertEquals(2, platform.posts.size)
+    }
+
+    @Test
+    fun `the backend alert obeys level mute rollout cap cooldown and quiet hours`() = runTest {
+        serverDecides()
+        server("Severe Delays", tier = "all")
+        env.level = AlertLevel.OFF
+        server("Severe Delays")
+        env.level = AlertLevel.SEVERE
+        env.policy = env.policy.copy(rolloutPercent = 0)
+        server("Severe Delays")
+        env.policy = env.policy.copy(rolloutPercent = 100, maxPerDay = 0)
+        server("Severe Delays")
+        env.policy = env.policy.copy(maxPerDay = 3)
+        LineAlertCoordinator.mute(platform, "victoria", env)
+        server("Severe Delays")
+        assertEquals(0, platform.posts.size)
+        env.time = at(12) + 13 * 60 * 60_000L // mute over; 01:00, quiet
+        server("Severe Delays")
+        assertTrue(platform.posts.single().silent)
+        platform.showing.clear() // swiped
+        server("Severe Delays") // a repeat inside the cooldown
+        assertEquals(1, platform.posts.size)
+    }
+
+    @Test
+    fun `the backends severities win over an older copy on the phone`() = runTest {
+        serverDecides()
+        server("Reduced Service")
+        assertEquals(1, platform.posts.size)
+    }
+
+    @Test
+    fun `a line not ridden and a phone told to decide itself ignore the backend`() = runTest {
+        server("Suspended")
+        serverDecides()
+        env.boards = listOf("central")
+        server("Suspended")
+        assertEquals(0, platform.posts.size)
     }
 }

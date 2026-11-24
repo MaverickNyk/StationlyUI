@@ -15,12 +15,14 @@ import kotlinx.datetime.TimeZone
  * a missing or malformed value falls back to the compiled default here, which
  * is the same as the backend's default, so the first deploy changes nothing.
  *
- * Only Android decides line-status alerts on the device today; iOS shows none.
- * On iOS the backend applies the same policy: docs/IOS_NOTIFICATIONS.md.
+ * The backend decides WHEN (the wait and the check); the phone applies what is
+ * personal to it (level, mute, caps, quiet hours). iOS: docs/IOS_NOTIFICATIONS.md.
  */
 data class NotificationPolicy(
     /** Kill switch for every line-status alert. */
     val enabled: Boolean,
+    /** The backend waits, re-checks and sends `line_alert`; else this phone does, which a sleeping phone cannot. */
+    val serverDecides: Boolean,
     /** Share of devices (0..100) that alert at all; see `LineAlertPreferences.bucket`. */
     val rolloutPercent: Int,
     /** Alert-worthy severities at the default "Severe only" level. */
@@ -136,6 +138,7 @@ data class NotificationPolicy(
         const val KEY_COPY_LEVEL_ALL = "notify.copy.levelAll"
         const val KEY_COPY_LEVEL_OFF = "notify.copy.levelOff"
 
+        const val KEY_DECIDER = "notify.line.decider"
         const val KEY_ROLLOUT = "notify.line.rolloutPercent"
         const val KEY_CONFIRM_RETRIES = "notify.line.confirmRetries"
         const val KEY_EXPIRE = "notify.line.expireAfterMs"
@@ -155,6 +158,7 @@ data class NotificationPolicy(
 
         val DEFAULT = NotificationPolicy(
             enabled = true,
+            serverDecides = true,
             rolloutPercent = 100,
             alertSeveritiesByMode = emptyMap(),
             allSeveritiesByMode = emptyMap(),
@@ -224,6 +228,11 @@ data class NotificationPolicy(
             }.toMap()
             return NotificationPolicy(
                 enabled = bool(KEY_ENABLED, d.enabled),
+                serverDecides = when (m[KEY_DECIDER]?.trim()?.lowercase()) {
+                    "server" -> true
+                    "device" -> false
+                    else -> d.serverDecides
+                },
                 rolloutPercent = RemoteConfig.int(m, KEY_ROLLOUT, d.rolloutPercent, 0, 100),
                 alertSeveritiesByMode = byMode(KEY_ALERT),
                 allSeveritiesByMode = byMode(KEY_ALL),
