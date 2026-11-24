@@ -290,6 +290,8 @@ tasks.withType<Test>().configureEach {
             include("**/*.kt")
         },
         rootProject.file("android/app/src/main/res/values/strings.xml"),
+        // Read off disk by `WidgetDefaultSizeTest`, for the same reason.
+        rootProject.file("android/app/src/main/res/xml/departure_widget_info.xml"),
     )
         .withPropertyName("userFacingCopySources")
         .withPathSensitivity(PathSensitivity.RELATIVE)
