@@ -320,12 +320,13 @@ class SupportViewModel(
         syncAccount()
         if (homeConfig.isEmpty()) return
         val parsed = SupportMoneyConfigDefaults.parse(homeConfig)
+        // Support is live for this platform: pick up any purchase that was paid
+        // for but never got credited. Here because this is the first point the
+        // app knows payments are on at all, and before the unchanged check so a
+        // later entry can retry one the server could not answer.
+        if (parsed.isOfferable) resumeNativePurchases()
         if (parsed == _uiState.value.config && homeConfig == _uiState.value.strings) return
         _uiState.value = _uiState.value.copy(config = parsed, strings = homeConfig)
-        // Support is live for this platform: pick up any purchase a previous
-        // run paid for but never got credited. Here because this is the first
-        // point the app knows payments are on at all.
-        if (parsed.isOfferable) resumeNativePurchases()
         // A board added before the card landed is still waiting to be judged.
         evaluateBanner()
     }

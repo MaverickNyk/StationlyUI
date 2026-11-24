@@ -30,16 +30,16 @@ class PlayVerifyOutcomeTest {
 
     @Test
     fun pending_is_not_a_rejection() {
-        assertEquals(PlayVerifyOutcome.RetryLater, PlayVerifyOutcome.from(400, body(reason = "purchase_pending")))
+        assertEquals(PlayVerifyOutcome.RetryLater(400), PlayVerifyOutcome.from(400, body(reason = "purchase_pending")))
     }
 
     @Test
     fun everything_that_is_not_an_answer_is_asked_again() {
         for (status in listOf(401, 403, 429, 500, 502, 503)) {
-            assertEquals(PlayVerifyOutcome.RetryLater, PlayVerifyOutcome.from(status, body(reason = "x")), "HTTP $status")
+            assertEquals(PlayVerifyOutcome.RetryLater(status), PlayVerifyOutcome.from(status, body(reason = "x")), "HTTP $status")
         }
-        assertEquals(PlayVerifyOutcome.RetryLater, PlayVerifyOutcome.from(400, null), "an unreadable 400")
-        assertEquals(PlayVerifyOutcome.RetryLater, PlayVerifyOutcome.from(200, null), "an unreadable 200")
-        assertEquals(PlayVerifyOutcome.RetryLater, PlayVerifyOutcome.from(200, body(ok = false)), "a 200 that is not ok")
+        assertEquals(PlayVerifyOutcome.RetryLater(400), PlayVerifyOutcome.from(400, null), "an unreadable 400")
+        assertEquals(PlayVerifyOutcome.RetryLater(200), PlayVerifyOutcome.from(200, null), "an unreadable 200")
+        assertEquals(PlayVerifyOutcome.RetryLater(200), PlayVerifyOutcome.from(200, body(ok = false)), "a 200 that is not ok")
     }
 }

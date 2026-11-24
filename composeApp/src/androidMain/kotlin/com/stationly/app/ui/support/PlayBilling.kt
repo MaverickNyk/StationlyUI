@@ -1,5 +1,7 @@
 package com.stationly.app.ui.support
 
+import android.os.SystemClock
+import android.util.Log
 import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.BillingClient.BillingResponseCode
 import com.android.billingclient.api.BillingFlowParams
@@ -63,7 +65,13 @@ internal object PlayBilling : PurchasesUpdatedListener {
     /** Purchase tokens being sent right now, so a resume racing a live purchase sends once. */
     private val inFlight = mutableSetOf<String>()
 
-    private var resumedThisProcess = false
+    /** When [resume] may look again. Never, once everything it found has been answered. */
+    private var nextResumeAtMs = 0L
+    private const val RESUME_RETRY_MS = 5 * 60_000L
+
+    private fun retryResumeLater() {
+        nextResumeAtMs = SystemClock.elapsedRealtime() + RESUME_RETRY_MS
+    }
 
     // ── Starting a purchase ───────────────────────────────────────────────
 
@@ -112,19 +120,22 @@ internal object PlayBilling : PurchasesUpdatedListener {
     /**
      * Sends every unconsumed purchase to the backend.
      *
-     * Once per process unless [force]d. Enough, because an unfinished purchase
-     * is rare and a launch is exactly when the app last died; forced when Play
-     * says a purchase is still pending credit.
+     * Once per process, unless [force]d (Play says a purchase is still pending
+     * credit) or the last look did not settle everything. A process is NOT a
+     * launch here: pushes and widgets keep one alive for days, and Google
+     * refunds an uncredited purchase after three.
      */
     fun resume(force: Boolean = false) {
-        if (resumedThisProcess && !force) return
+        if (!force && SystemClock.elapsedRealtime() < nextResumeAtMs) return
         if (currentUid() == null) return
-        resumedThisProcess = true
+        nextResumeAtMs = Long.MAX_VALUE
         scope.launch {
-            val billing = connection.client() ?: return@launch
-            billing.queryPurchasesAsync(
+            val billing = connection.client() ?: return@launch retryResumeLater()
+            val found = billing.queryPurchasesAsync(
                 QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
-            ).purchasesList.forEach { handle(it, interactive = false) }
+            )
+            if (found.billingResult.responseCode != BillingResponseCode.OK) retryResumeLater()
+            found.purchasesList.forEach { handle(it, interactive = false) }
         }
     }
 
@@ -173,14 +184,18 @@ internal object PlayBilling : PurchasesUpdatedListener {
         scope.launch {
             try {
                 val outcome = NetworkModule.sduiApi.verifyPlayPurchase(productId, token)
+                // The only trace of whether a payment was credited: the thank-you
+                // and the mark show either way. Never the token.
+                Log.i("PlayBilling", "verify $productId: $outcome")
                 // A purchase finished from a PREVIOUS run gets its thank-you the
                 // first time the server credits it, and never again: a retry of
                 // one already credited comes back newlyRecorded = false.
                 if (!interactive && outcome is PlayVerifyOutcome.Credited && outcome.newlyRecorded) {
                     SupportReturn.deliver(amount = null, tier = null, sessionId = sessionId)
                 }
+                if (outcome is PlayVerifyOutcome.RetryLater) retryResumeLater()
                 // RetryLater and Rejected both leave the purchase unconsumed.
-                // RetryLater: the next launch sends it again. Rejected: Google
+                // RetryLater: the next look sends it again. Rejected: Google
                 // refunds an unconsumed purchase after three days, the right
                 // ending for a payment the server will not credit.
             } finally {

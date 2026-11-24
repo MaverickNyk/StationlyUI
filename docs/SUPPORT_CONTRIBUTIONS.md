@@ -314,11 +314,19 @@ every tier reaches Play and shows the "unavailable" notice (no products yet);
 no browser ever opens; no crash. Google's API answered 403 "API not enabled" for
 the staging project, which is checklist step 4.
 
-**Production, 2026-11-24 (owner's report, Pixel 11 Pro, Play install):** the
-test payment worked and the supporter badge appeared, so the server verified the
-purchase with Google and recorded it. Not reported: buying the same tier twice
-(proof that it was consumed), the other tiers, and the server log. A license
-tester's purchase is recorded like a real one, so it counts in the totals.
+**Production, 2026-11-24 (Pixel 11 Pro, Play install): Play's side works, the
+server's does NOT.** The test payment completed and the mark appeared, then went
+after about ten minutes. The mark at that point is only the device's optimistic
+window (`OPTIMISTIC_WINDOW_MS`), so it proves nothing about the server; an earlier
+version of this note wrongly said it did. Cause: `StationlyAuth` adds the bearer
+only to paths containing `/user/`, and `verifyPlayPurchase` posts to
+`/support-money/verify-play`, which requires one. Every Android purchase gets a
+401, is never recorded and never consumed, so Google refunds it (a license
+tester's after 3 minutes, a real one after 3 days). The server's own Google access
+is therefore still untested. Fixed in `StationlyAuth.needsUserToken`, pinned by
+`UserTokenRoutesTest`; NOT yet verified on a device. The result of each check is
+now logged (`PlayBilling`: `verify <product>: <outcome>`). To prove a purchase was
+recorded, look at the mark AFTER fifteen minutes, or the ledger row.
 
 Trap: an internal tester is charged real money unless the account is ALSO on
 Play Console's License testing list. With several Google accounts on the phone,

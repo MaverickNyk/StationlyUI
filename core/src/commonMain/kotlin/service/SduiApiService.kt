@@ -431,7 +431,7 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
             throw e
         } catch (_: Exception) {
             // Offline, DNS, timeout: no answer about the purchase at all.
-            return PlayVerifyOutcome.RetryLater
+            return PlayVerifyOutcome.RetryLater()
         }
         val body = runCatching { response.body<PlayVerifyResponse>() }.getOrNull()
         return PlayVerifyOutcome.from(response.status.value, body)
@@ -490,7 +490,8 @@ sealed interface PlayVerifyOutcome {
     /** [newlyRecorded] is false on a retry of a purchase already credited: no second thank-you. */
     data class Credited(val newlyRecorded: Boolean) : PlayVerifyOutcome
     data class Rejected(val reason: String) : PlayVerifyOutcome
-    data object RetryLater : PlayVerifyOutcome
+    /** [httpStatus] is for the log only; null when there was no answer at all. */
+    data class RetryLater(val httpStatus: Int? = null) : PlayVerifyOutcome
 
     companion object {
         /**
@@ -504,7 +505,7 @@ sealed interface PlayVerifyOutcome {
         fun from(httpStatus: Int, body: PlayVerifyResponse?): PlayVerifyOutcome = when {
             httpStatus == 200 && body?.ok == true -> Credited(newlyRecorded = body.recorded)
             httpStatus == 400 && body != null && body.reason != PENDING -> Rejected(body.reason ?: "rejected")
-            else -> RetryLater
+            else -> RetryLater(httpStatus)
         }
 
         private const val PENDING = "purchase_pending"
