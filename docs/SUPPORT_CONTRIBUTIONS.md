@@ -314,6 +314,16 @@ every tier reaches Play and shows the "unavailable" notice (no products yet);
 no browser ever opens; no crash. Google's API answered 403 "API not enabled" for
 the staging project, which is checklist step 4.
 
+**Production, 2026-11-24 (owner's report, Pixel 11 Pro, Play install):** the
+test payment worked and the supporter badge appeared, so the server verified the
+purchase with Google and recorded it. Not reported: buying the same tier twice
+(proof that it was consumed), the other tiers, and the server log. A license
+tester's purchase is recorded like a real one, so it counts in the totals.
+
+Trap: an internal tester is charged real money unless the account is ALSO on
+Play Console's License testing list. With several Google accounts on the phone,
+Play uses the one that downloaded the app.
+
 ### 8.8 Tests
 - backend `src/tests/run.ts`: per-platform config, account binding vector,
   completed / pending / cancelled / unknown / foreign / duplicate / deleted
