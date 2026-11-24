@@ -256,7 +256,7 @@ and no Stripe links (`SupportMoneyConfigService.getSupportMoneyConfig`,
              │               4. Google: consume (server-side, after recording)
              ├─ PENDING / failure ─ StoreNotice shown under the Pay button
              └─ app dies before step 4 ─ purchase stays unconsumed
-                   └─ next launch: PlayBilling.resume sends it again (idempotent)
+                   └─ next Home/Profile entry (5 min apart) or launch: PlayBilling.resume sends it again (idempotent)
 ```
 
 ### 8.3 Files
@@ -274,7 +274,7 @@ and no Stripe links (`SupportMoneyConfigService.getSupportMoneyConfig`,
 
 ### 8.4 Guarantees
 - **Never consumed before it is recorded.** Only the server consumes. A crash,
-  timeout or server error leaves the purchase for the next launch.
+  timeout or server error leaves the purchase for a retry (at most every 5 minutes) or the next launch.
 - **Never credited to the wrong account.** The account binding is checked
   server-side, and the client skips purchases bound to a different account.
 - **Never credited at a client-chosen price.** The amount is the served tier's

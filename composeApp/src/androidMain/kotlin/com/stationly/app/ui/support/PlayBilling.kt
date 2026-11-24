@@ -38,7 +38,7 @@ import kotlinx.coroutines.launch
  *    records it in the ledger and CONSUMES it. The device never consumes, so a
  *    purchase is never used up before it has been credited.
  * 4. If step 3 does not finish (app killed, no signal, server down), Play keeps
- *    the purchase unconsumed. [resume] finds it on the next launch and sends it
+ *    the purchase unconsumed. [resume] finds it, within minutes or on the next launch, and sends it
  *    again; the server's ledger makes that safe to repeat.
  *
  * ## Never a web checkout
