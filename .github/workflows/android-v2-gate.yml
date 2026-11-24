@@ -33,6 +33,14 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # gradle.properties pins the JDK to a Homebrew path, which the owner's Mac
+      # needs (its default `java` is 16) and no runner has: Gradle stopped there,
+      # so this gate never ran a test. The user-level file outranks the project's.
+      - name: Use the runner's JDK 17
+        run: |
+          mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
+          echo "org.gradle.java.home=$JAVA_HOME" >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
+
       # `sdk.dir` is not needed (the runner exports ANDROID_HOME), and both
       # STATIONLY_API_KEY properties fall back to "" in the build script. The
       # prod signing config is already guarded by a `?.let` on the keystore
@@ -121,6 +129,10 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Use the runner's JDK 17 (see the other job)
+        run: |
+          mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
+          echo "org.gradle.java.home=$JAVA_HOME" >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
       - run: touch local.properties
       - name: Assemble the iOS XCFramework
         run: ./gradlew :composeApp:assembleComposeAppDebugXCFramework --no-daemon

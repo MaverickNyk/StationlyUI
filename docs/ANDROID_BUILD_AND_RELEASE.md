@@ -18,7 +18,7 @@ Nothing secret is in git. A production build reads:
 | Setting | Source |
 |---|---|
 | Backend `api.stationly.co.uk` | `BuildConfig.FLAVOR == "prod"` → `AppEnvironment.PRODUCTION` (`StationlyApplication`, `AppConfig`) |
-| Firebase `stationly-prod` | `android/app/src/prod/google-services.json` (committed) |
+| Firebase `stationly-prod` | `android/app/src/prod/google-services.json` (git-ignored, on the build machine) |
 | API key | `prod.STATIONLY_API_KEY` in `local.properties` (git-ignored) |
 | Upload signing key | `prod.keystore.path/storePassword/keyAlias/keyPassword` in `local.properties` |
 | App name, deep link scheme | the `prod` flavour: "Stationly", `stationly://` |
@@ -34,7 +34,7 @@ green build):
 1. Package `com.stationly.mobile`, the version code you asked for, a version
    name without `-staging`, label "Stationly".
 2. Firebase project `stationly-prod`, and the Firebase app id equal to the one
-   for this package in the committed `google-services.json`.
+   for this package in the local `google-services.json`.
 3. `BuildConfig`: `FLAVOR = "prod"`, deep link scheme `stationly`, API key
    present, equal to `prod.STATIONLY_API_KEY` and not the staging key. The key
    is never printed.
