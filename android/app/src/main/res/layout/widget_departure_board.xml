@@ -436,6 +436,7 @@
             android:id="@+id/status_severity"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:drawablePadding="4dp"
             android:textColor="@color/tfl_amber"
             android:textSize="12sp"
             android:textStyle="bold"

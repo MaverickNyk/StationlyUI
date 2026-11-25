@@ -73,6 +73,8 @@ data class BoardFallbackState(
     val statusSeverity: String? = null,
     /** Real TfL reason (e.g. "Engineering works"), only set for DISRUPTED. */
     val statusReason: String? = null,
+    /** Words that replace the kind's own: a station notice (see BoardNotice). */
+    val message: BoardFallbackCopy? = null,
 )
 
 /**
@@ -191,7 +193,20 @@ fun computeBoardFallbackState(
 }
 
 /** Resolved fallback copy: a bold title + 0..n normal-weight detail lines. */
-data class BoardFallbackCopy(val title: String, val detailLines: List<String>)
+data class BoardFallbackCopy(
+    val title: String,
+    val detailLines: List<String>,
+    /** Words that depend on the room there is. */
+    val notice: com.stationly.core.model.BoardNotice? = null,
+) {
+    /** The rows under the title. */
+    fun rows(fits: (String) -> Boolean): List<String> =
+        notice?.rows(BOARD_FALLBACK_ROW_COUNT - 1, fits) ?: detailLines
+}
+
+/** A closed station's message, in the shape every other empty board uses. */
+fun com.stationly.core.model.BoardNotice.asFallback(): BoardFallbackState =
+    BoardFallbackState(BoardFallbackKind.DISRUPTED, message = BoardFallbackCopy(title, details, this))
 
 /**
  * Resolve the SDUI/default copy for [state]. Mirrors the Android `resolveCopy`:
@@ -218,6 +233,7 @@ fun resolveBoardFallbackCopy(
      */
     substituteAge: Boolean = true,
 ): BoardFallbackCopy {
+    state.message?.let { return it }
     if (state.kind == BoardFallbackKind.DISRUPTED) {
         val title = state.statusSeverity?.takeIf { it.isNotBlank() }
             ?: strings["board.fallback.disrupted.title"]

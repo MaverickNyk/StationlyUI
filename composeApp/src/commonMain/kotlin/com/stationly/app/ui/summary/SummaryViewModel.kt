@@ -16,6 +16,8 @@ import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.config.SduiConfig
 import com.stationly.core.config.BoardQuota
 import com.stationly.core.usecase.SyncPredictionsUseCase
+import com.stationly.core.model.StationNotice
+import com.stationly.core.repository.StationNoticeStore
 import com.stationly.core.util.FreshData
 import com.stationly.core.util.FreshDataNotifier
 import com.stationly.core.util.GlobalBoardProcessor
@@ -121,6 +123,9 @@ class SummaryViewModel(
      * list to observe or to keep in step.
      */
     val boardConfigs: StateFlow<Map<String, BoardConfig>> = UserSettings.configs
+
+    /** Closures and the like, by stop id. Empty unless the feature is on. */
+    val stationNotices: StateFlow<Map<String, StationNotice>> = StationNoticeStore.all
 
     /** Stacked list or one station per swipeable page — see [HomeLayout]. */
     val homeLayout: StateFlow<HomeLayout> = UserSettings.layout
@@ -442,6 +447,12 @@ class SummaryViewModel(
      * whether the user tracks one station or seven.
      */
     private suspend fun refreshStaleBoards(selections: List<UserSelection>) {
+        // Not only with stale departures: a board kept fresh by pushes has none,
+        // and this is what recovers a closure push the phone never got.
+        viewModelScope.launch {
+            StationNoticeStore.ensureLoaded()
+            StationNoticeStore.refresh(selections) { NetworkModule.tflApi.getStationNotices(it) }
+        }
         // Cold start fires this from `init` AND from the screen's first
         // ON_RESUME, within milliseconds of each other. Both would pass the
         // staleness test — neither has written anything yet — and every stop

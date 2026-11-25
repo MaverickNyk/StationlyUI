@@ -9,7 +9,9 @@
 ```
 SPRINT:            5-6 — release surfaces + rollout (sprints 1-4 complete)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S023 (2026-11-23) — widget at full bleed with
+LAST SESSION:      S024 (2026-11-25) — station closures (AV2-11.42), behind a
+                   served flag that is off; on staging, device-verified.
+                   S023 (2026-11-23) — widget at full bleed with
                    proportional rows and an iOS-style pager (fdd0708,
                    6031e5c), then a QA sweep of the whole app on the Fold:
                    10 findings fixed, reviewed and device-verified (bf6d724),

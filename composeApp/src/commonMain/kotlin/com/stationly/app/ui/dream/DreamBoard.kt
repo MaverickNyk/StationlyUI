@@ -36,9 +36,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.stationly.app.ui.summary.components.BoardWarning
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.foundation.layout.BoxWithConstraints
 import com.stationly.app.platform.ModeIconStore
 import kotlinx.coroutines.delay
 import com.stationly.core.util.BOARD_FALLBACK_ROW_COUNT
+import com.stationly.core.util.asFallback
 import com.stationly.core.util.computeBoardFallbackState
 import com.stationly.app.ui.util.rememberMinuteTick
 import com.stationly.app.ui.util.rememberTickedPredictions
@@ -119,6 +125,7 @@ fun DreamBoard(
     // Self-tick row ETAs once per minute — shared contract with home/widget.
     val predictions = rememberTickedPredictions(snapshot.predictions)
     val lineStatus = snapshot.lineStatus
+    val notice = snapshot.notice
     val lastUpdated = snapshot.lastUpdatedMs
     // Same wall-clock minute tick drives the ago-colour (amber → grey → red)
     // in lockstep with the home Board and the widget.
@@ -151,7 +158,8 @@ fun DreamBoard(
 
     // Same fallback rules as home + widget so the three surfaces never
     // disagree about why the board is empty.
-    val fallbackState = if (sel == null) null else remember(predictions, lastUpdated, nowMs, lineStatus) {
+    val fallbackState = if (sel == null) null else remember(predictions, lastUpdated, nowMs, lineStatus, notice) {
+        if (notice?.hides == true && !snapshot.someOpen) return@remember notice.asFallback()
         val londonTime = Instant.fromEpochMilliseconds(nowMs)
             .toLocalDateTime(TimeZone.of("Europe/London")).time
         computeBoardFallbackState(
@@ -220,16 +228,7 @@ fun DreamBoard(
     // Fallback copy rows (bold title + detail lines padded to the shared row
     // count) — override the legacy rows when active, exactly like Android's
     // applyBoardFallbackToRows.
-    val fallbackRows: List<Pair<String, Boolean>>? = remember(fallbackState, sduiStrings) {
-        fallbackState?.let { st ->
-            val copy = resolveBoardFallbackCopy(st, sduiStrings)
-            buildList {
-                add(copy.title to true)
-                copy.detailLines.forEach { add(it to false) }
-                while (size < BOARD_FALLBACK_ROW_COUNT) add("" to false)
-            }
-        }
-    }
+    val fallbackCopy = remember(fallbackState, sduiStrings) { fallbackState?.let { resolveBoardFallbackCopy(it, sduiStrings) } }
 
     // Dream-scaled sizes — everything multiplies the uniform row baseline.
     val rowSp    = (ROW_BASE_SP * textScale).sp
@@ -356,16 +355,37 @@ fun DreamBoard(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(rowGap, Alignment.Top),
             ) {
-                if (fallbackRows != null) {
+                if (fallbackCopy != null) BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val roomPx = with(LocalDensity.current) { (maxWidth - 8.dp).toPx() }
+                    val measurer = rememberTextMeasurer()
+                    val style = LocalTextStyle.current.copy(fontSize = rowSp)
+                    val fallbackRows = remember(fallbackCopy, roomPx, style) {
+                        buildList {
+                            add(fallbackCopy.title to true)
+                            fallbackCopy.rows { measurer.measure(it, style, maxLines = 1).size.width <= roomPx }.forEach { add(it to false) }
+                            while (size < BOARD_FALLBACK_ROW_COUNT) add("" to false)
+                        }
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(rowGap)) {
                     fallbackRows.forEach { (text, bold) ->
                         DreamActiveStrip {
-                            Text(
-                                text, color = BoardAmber, fontSize = rowSp,
-                                fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
-                                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                val warn = bold && fallbackState?.message != null
+                                val sign = with(LocalDensity.current) { rowSp.toDp() }
+                                if (warn) BoardWarning(sign, Modifier.padding(end = 8.dp))
+                                Text(
+                                    text, color = BoardAmber, fontSize = rowSp,
+                                    fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+                                    textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                                if (warn) BoardWarning(sign, Modifier.padding(start = 8.dp))
+                            }
                         }
+                    }
                     }
                 } else if (pagedRows.isNotEmpty()) {
                     // The bar between the chevrons names the platform, so the
@@ -487,15 +507,15 @@ fun DreamBoard(
             }
 
             // ── Status strip: severity : reason ──
-            val severity = lineStatus?.statusSeverityDescription?.takeIf { it.isNotBlank() }
-                ?: "Good Service"
-            val reason = lineStatus?.reason?.takeIf { it.isNotBlank() } ?: ""
+            val lineSeverity = lineStatus?.statusSeverityDescription?.takeIf { it.isNotBlank() } ?: "Good Service"
+            val (severity, reason) = notice?.stripWith((lineSeverity to lineStatus?.reason.orEmpty()).takeIf { snapshot.someOpen }) ?: (lineSeverity to lineStatus?.reason.orEmpty())
             DreamActiveStrip {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(severity, color = BoardAmber, fontSize = statusSp, fontWeight = FontWeight.Bold)
+                    if (notice != null) BoardWarning(with(LocalDensity.current) { statusSp.toDp() }, Modifier.padding(end = 4.dp))
+                    Text(severity, color = BoardAmber, fontSize = statusSp, fontWeight = FontWeight.Bold, maxLines = if (notice != null) 1 else Int.MAX_VALUE)
                     if (reason.isNotBlank()) {
                         Text(" : ", color = BoardAmber, fontSize = statusSp)
                         Text(

@@ -18,6 +18,35 @@ Template:
 
 ---
 
+## S024 — 2026-11-25 — AV2-11.42 · **a closed station says so**
+
+**Outcome:** DONE behind `flag.stationStatus.show` (off in production, on for staging
+Android). Server half in stationly-backend and StationlySyncer, deployed to staging.
+**Gate:** GREEN, with `:composeApp:testDebugUnitTest`, `:core:compileKotlinIosSimulatorArm64`
+and `:composeApp:compileKotlinIosSimulatorArm64` (848 app tests; no Swift changed).
+**Did:**
+- A station can be closed while its line has Good Service; boards showed the line's status
+  and whatever TfL listed. Now a closed stop, line or direction replaces its departures on
+  home, widget and screensaver, in TfL's own words when they fit the rows (`rowsThatFit`),
+  with amber warning signs; the hero card turns red (owner chose both looks). Exit only and
+  "Closes 23:35" lead the strip and leave departures. Search says "Closed now".
+- Words come from the Syncer; the app decides only where they go (`StationNotice.kt`).
+  Stored apart from departures (`StationNoticeStore`); every notice expires.
+- Served feature flags (`FeatureFlags.kt`), failing closed.
+**Learned:**
+- Judging a notice by words that would make it NOT a closure cannot be finished: three
+  reviews each broke a deny-list, and one a loose allow-list. Only whole plain forms now.
+- A push that STARTS the process can be stored before anything watches the store: the
+  handler redraws the widget itself.
+- Extra work on `refreshBoards` counts against the widget's 8 s: the closure request gets
+  1.5 s after the departures, no more.
+- With the flag off the build was compared on the Fold with the commit before it: the same.
+**Next agent needs to know:** to read a new TfL wording see "To read a new wording" in
+STATION_STATUS.md. Not seen: a v1 phone receiving the push, a real rail closure, List
+layout with a collapsed closed station.
+
+---
+
 ## S023 — 2026-11-23 — EPIC-10 polish + EPIC-11 · **the widget at full bleed, and a QA sweep of the whole app**
 
 **Outcome:** Widget work DONE and committed. QA sweep run on device; 10 of its

@@ -86,6 +86,7 @@ class FcmMessagingService : FirebaseMessagingService() {
                 LineAlerts.ConfigRefreshWorker.enqueue(this, remoteMessage.data["reason"])
             }
             remoteMessage.data["type"] == "line_alert" -> handleLineAlert(remoteMessage)
+            remoteMessage.data["type"] == "station_status" -> handleStationStatus(remoteMessage)
             remoteMessage.data.containsKey("sdui_payload") -> {
                 handleSduiUpdate(remoteMessage)
             }
@@ -212,6 +213,26 @@ class FcmMessagingService : FirebaseMessagingService() {
             }
         } catch (e: Exception) {
             Log.e("FCM", "Error processing line alert", e)
+        }
+    }
+
+    /**
+     * A station closed, reopened, or the like. Silent: it changes boards only.
+     * Sent to every app; stored even with the feature off, so turning it on shows
+     * what is true now. `stationStatus.show` decides whether it is ever shown.
+     * The widget is told here too: a push that STARTS this process can be stored before
+     * StationlyApplication begins to watch, which would then see nothing new.
+     */
+    private fun handleStationStatus(remoteMessage: RemoteMessage) {
+        kotlinx.coroutines.runBlocking {
+            com.stationly.core.config.SduiConfig.ensureLoaded()
+            val changed = com.stationly.core.repository.StationNoticeStore.adoptPush(remoteMessage.data["station_status"])
+            Log.d("FCM", "Station status from ${remoteMessage.from}: changed=$changed")
+            if (changed && com.stationly.core.config.FeatureFlags.isOn(com.stationly.core.config.FeatureFlags.STATION_STATUS)) {
+                remoteMessage.from?.substringAfter("Station_", "")?.takeIf { it.isNotEmpty() }?.let {
+                    com.stationly.mobile.util.FreshDataNotifier.notifyPredictions(this@FcmMessagingService, it)
+                }
+            }
         }
     }
 

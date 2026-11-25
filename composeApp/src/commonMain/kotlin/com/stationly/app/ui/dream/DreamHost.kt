@@ -107,8 +107,20 @@ fun DreamHost(onExit: () -> Unit) {
         // board. A dream runs in the app's process but not necessarily after
         // any screen has opened, so nothing else here has done this.
         runCatching { com.stationly.core.repository.UserSettings.ensureLoaded() }
+        com.stationly.core.repository.StationNoticeStore.ensureLoaded()
         snapshot = withContext(Dispatchers.Default) { loadDreamSnapshot(preferredStation) }
         FreshDataNotifier.events.collect {
+            snapshot = withContext(Dispatchers.Default) { loadDreamSnapshot(preferredStation) }
+        }
+    }
+
+    // A closure starts, ends and expires by the clock, with no signal to wait for.
+    val minute by com.stationly.app.ui.util.rememberMinuteTick()
+    LaunchedEffect(minute) {
+        if (com.stationly.core.config.FeatureFlags.isOn(com.stationly.core.config.FeatureFlags.STATION_STATUS)) {
+            // As the first load does: whichever finishes last is then right.
+            runCatching { com.stationly.core.repository.UserSettings.ensureLoaded() }
+            com.stationly.core.repository.StationNoticeStore.ensureLoaded()
             snapshot = withContext(Dispatchers.Default) { loadDreamSnapshot(preferredStation) }
         }
     }

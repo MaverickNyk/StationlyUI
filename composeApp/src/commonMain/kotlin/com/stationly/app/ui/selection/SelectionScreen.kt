@@ -1232,10 +1232,14 @@ private fun OptRow(
                             // Muted onSurfaceVariant so it reads as supporting text
                             // in both themes (the old primary tint vanished on light).
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.NearMe, null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(11.dp))
-                                Spacer(Modifier.width(4.dp))
+                                // The arrow is for a distance, which starts with a number;
+                                // "Closed now" may come instead or first.
+                                if (secondary.firstOrNull()?.isDigit() == true || secondary.startsWith("<")) {
+                                    Icon(Icons.Rounded.NearMe, null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(11.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                }
                                 Text(secondary,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 12.sp)

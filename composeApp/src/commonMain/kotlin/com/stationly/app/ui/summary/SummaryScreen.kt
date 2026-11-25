@@ -145,6 +145,7 @@ fun SummaryScreen(
     val selections by viewModel.selections.collectAsStateWithLifecycle()
     val predictions by viewModel.predictions.collectAsStateWithLifecycle()
     val lineStatuses by viewModel.lineStatuses.collectAsStateWithLifecycle()
+    val stationNotices by viewModel.stationNotices.collectAsStateWithLifecycle()
     val failedLineStatusKeys by viewModel.failedLineStatusKeys.collectAsStateWithLifecycle()
     val stationUpdates by viewModel.stationUpdates.collectAsStateWithLifecycle()
     val announcement by viewModel.announcement.collectAsStateWithLifecycle()
@@ -535,12 +536,18 @@ fun SummaryScreen(
                       // briefly, and can never under-reserve and push the board
                       // off screen.
                       val collapsedLegCount = remember(
-                          stationIds, expandedIds, selectionsByStation, predictions, isCarousel,
+                          stationIds, expandedIds, selectionsByStation, predictions, isCarousel, stationNotices, homeConfig,
                       ) {
                           if (isCarousel) 0 else {
                               stationIds.filterNot { it in expandedIds }.sumOf { id ->
                                   val group = selectionsByStation[id].orEmpty()
-                                  if (group.isEmpty()) 0 else MultiLineBoardProcessor.blockCount(
+                                  // A row for each thing closed here, or about to be.
+                                  val closed = group.mapNotNull { s ->
+                                      com.stationly.core.repository.StationNoticeStore
+                                          .forBoard(stationNotices, s, kotlinx.datetime.Clock.System.now().toEpochMilliseconds())
+                                          ?.title?.takeIf { it.isNotBlank() }?.let { s.station to it }
+                                  }.distinct().size
+                                  if (group.isEmpty()) 0 else closed + MultiLineBoardProcessor.blockCount(
                                       feeds = group.map { selection ->
                                           MultiLineBoardProcessor.Feed(
                                               stationId = selection.station,
@@ -744,6 +751,7 @@ fun SummaryScreen(
                                         stationName = primary.stationName,
                                         mode = primary.mode,
                                         sections = sections,
+                                        notices = stationNotices,
                                         homeConfig = homeConfig,
                                         isOnline = uiState.isOnline,
                                         maxHeight = cardMaxHeight,

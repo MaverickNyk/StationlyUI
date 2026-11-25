@@ -39,6 +39,7 @@ object SduiConfig {
         BoardPolicyStore.refresh(strings)
         LinePaletteStore.refresh(strings)
         NotificationPolicyStore.refresh(strings)
+        FeatureFlags.refresh(strings)
         adopted = true
     }
 

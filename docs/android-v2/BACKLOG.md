@@ -163,6 +163,8 @@ roughly one focused hour.
 | AV2-11.38 | Seen on the Redmi walk (2026-11-25): "Dlr" for "DLR" and "Find a Overground station" in Set up a Board; the mode step flashes when editing a station's lines; a white screen on a cold start in dark mode; "0:00 ago" on a board that has never had departures | S | open |
 | AV2-11.39 | Boards could be lost when a screen loaded while a push was saving: the list is written in one transaction, and loads and writes share a lock | H | fixed in shared code, `ColdProcessSaveTest` |
 | AV2-11.40 | A board edit can be undone by the route backfill or the filter save: both write back rows read before waiting for the lock (`StationSettingsViewModel` ~406, `SelectionViewModel` ~1313) | S | open · shared, pre-existing |
+| AV2-11.42 | Station closures on home, widget, screensaver and when adding a station, behind `flag.stationStatus.show` (off): S024. How it works: `stationly-backend/docs/STATION_STATUS.md` | H | built, on staging · see "Tested" there |
+| AV2-11.43 | A departure push with a null destId ("Check Front of Train", Earl's Court) loses the whole push: Gson ignores Kotlin's default | M | open · found 2026-11-25 |
 | AV2-11.41 | Crash when sign-in finished as the phone was folded, unfolded, rotated or re-themed: the view model navigated the destroyed screen. It now publishes a step the current screen takes | H | fixed in shared code · found on a Pixel 10 Pro Fold 2026-11-25 · the fix NOT re-run there, and not reviewed a second time |
 | AV2-11.10 | Landscape board and staging banner (#11) | M | open · device check first |
 | AV2-11.11 | Store prices in the buyer's currency (#13) | M | open · **iOS needs Swift** |

@@ -16,6 +16,18 @@ import com.stationly.mobile.service.StationlyNotificationChannels
 import com.stationly.mobile.widget.DepartureWidgetProvider
 import com.stationly.mobile.widget.V1WidgetAdoption
 import com.stationly.mobile.widget.WidgetDefaultSize
+import com.stationly.core.config.FeatureFlags
+import com.stationly.core.config.SduiConfig
+import com.stationly.core.repository.StationNoticeStore
+import com.stationly.core.service.NetworkModule
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
+import com.stationly.mobile.util.FreshDataNotifier
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class StationlyApplication : Application() {
     private val screenReceiver = object : BroadcastReceiver() {
@@ -66,7 +78,38 @@ class StationlyApplication : Application() {
             addAction(Intent.ACTION_USER_PRESENT)
         }
         registerReceiver(screenReceiver, filter)
+        redrawOnStationNotices()
         // Last: it can redraw every widget, which needs all of the above.
         WidgetDefaultSize.onAppStart(this)
+    }
+
+    /**
+     * A closure reaches the widget and the screensaver however it was learned: a
+     * push, or the app asking. The home screen watches the store itself.
+     *
+     * What is stored is read first, so that a process starting does not redraw
+     * every widget for what they already show.
+     */
+    private fun redrawOnStationNotices() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        scope.launch {
+            SduiConfig.ensureLoaded()
+            StationNoticeStore.ensureLoaded()
+            launch {
+                FeatureFlags.on.map { FeatureFlags.STATION_STATUS in it }.distinctUntilChanged().drop(1).collect {
+                    // Just switched on: ask, rather than wait for the next open.
+                    StationNoticeStore.refresh(Platform.sqlStorage.getAllSelections()) { NetworkModule.tflApi.getStationNotices(it) }
+                    FreshDataNotifier.notifyAll(this@StationlyApplication)
+                }
+            }
+            var before = StationNoticeStore.all.value
+            StationNoticeStore.all.collect { now ->
+                val changed = (before.keys + now.keys).filter { before[it] != now[it] }
+                before = now
+                if (FeatureFlags.isOn(FeatureFlags.STATION_STATUS)) {
+                    changed.forEach { FreshDataNotifier.notifyPredictions(this@StationlyApplication, it) }
+                }
+            }
+        }
     }
 }

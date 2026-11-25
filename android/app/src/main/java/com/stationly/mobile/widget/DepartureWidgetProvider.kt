@@ -545,6 +545,8 @@ class DepartureWidgetProvider : AppWidgetProvider() {
 
         /** Text inset inside every row and platform header. */
         private const val ROW_TEXT_INSET_DP = 12f
+        /** The empty time column's 8dp beside a message, and a little for the launcher's own type. */
+        private const val MESSAGE_SLACK_DP = 14f
 
         // ── The pager bar ────────────────────────────────────────────────
         //
@@ -1111,7 +1113,10 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // padded with blanks when the data is thinner. See
             // PlatformPages.bodyPadded, and the owner's call on 2026-09-12.
             val rowCap = ROWS_PER_PLATFORM
-            val tickedGroups = tickedGroupsFor(boardSelections, selection, widgetPin, rowCap, nowMs)
+            val notices = noticesFor(boardSelections, nowMs)
+            val stationNotice = notices.values.sortedByDescending { it.hides }.firstOrNull()
+            val openSelections = boardSelections.filterNot { notices[it]?.hides == true }
+            val tickedGroups = tickedGroupsFor(openSelections, selection, widgetPin, rowCap, nowMs)
             val boardRows = com.stationly.core.util.MultiLineBoardProcessor.rowsFrom(tickedGroups, rowCap = rowCap)
 
             // Still the flat list, for the three things that are not rows: has
@@ -1133,7 +1138,8 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             // spoken entry when everything is healthy — "Good Service" four
             // times tells you nothing four times. The widget has room for one,
             // so it takes the first, which is the worst.
-            val statusEntries = boardSelections.distinctBy { it.mode to it.line }.mapNotNull { sel ->
+            // Of the boards still open, if any is: a closed one's line is not the story.
+            val statusEntries = openSelections.ifEmpty { boardSelections }.distinctBy { it.mode to it.line }.mapNotNull { sel ->
                 com.stationly.core.platform.Platform.sqlStorage
                     .getLineStatus(sel.mode, sel.line)
                     ?.let {
@@ -1145,10 +1151,11 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     }
             }
             val worst = com.stationly.core.util.LineStatusRanker.rotation(statusEntries).firstOrNull()
-            val lineStatusSeverity: String? = worst?.let {
-                com.stationly.core.util.LineStatusRanker.label(it)
-            }
+            val lineStatusSeverity: String? = worst?.let { com.stationly.core.util.LineStatusRanker.label(it) }
             val lineStatusReason: String? = worst?.reason
+            val stationStrip = stationNotice?.stripWith(
+                lineStatusSeverity?.let { it to lineStatusReason.orEmpty() }?.takeIf { openSelections.isNotEmpty() },
+            )
 
             // Pull the SQL row timestamp so the chronometer reflects when
             // FCM/REST last gave us this data — not when this redraw fired.
@@ -1190,6 +1197,8 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 predictions = predictions,
                 lineStatusSeverity = lineStatusSeverity,
                 lineStatusReason = lineStatusReason,
+                closedNotice = stationNotice.takeIf { openSelections.isEmpty() },
+                stationStrip = stationStrip,
                 sduiPayload = sduiPayload,
                 hasLoadedData = predictions.isNotEmpty(),
                 lastUpdatedMs = lastUpdatedMs,
@@ -1275,6 +1284,24 @@ class DepartureWidgetProvider : AppWidgetProvider() {
         }
 
         /**
+         * What TfL says about these boards' stations, for those it says anything of.
+         * One that hides is left out of the board, by the render and by the chevrons.
+         * `runBlocking` for the reason given where the render reads the board's config.
+         */
+        private fun noticesFor(
+            boards: List<com.stationly.core.model.UserSelection>,
+            nowMs: Long,
+        ): Map<com.stationly.core.model.UserSelection, com.stationly.core.model.BoardNotice> {
+            if (!com.stationly.core.config.FeatureFlags.isOn(com.stationly.core.config.FeatureFlags.STATION_STATUS)) return emptyMap()
+            kotlinx.coroutines.runBlocking { com.stationly.core.repository.StationNoticeStore.ensureLoaded() }
+            val sql = com.stationly.core.platform.Platform.sqlStorage
+            return boards.mapNotNull { sel ->
+                val platforms = sql.getPredictions(sel.station, sel.line, sel.direction).map { it.platform }
+                com.stationly.core.repository.StationNoticeStore.forBoard(sel, nowMs, platforms)?.let { sel to it }
+            }.toMap()
+        }
+
+        /**
          * This station's board, as the widget draws it.
          *
          * Extracted because [stepPlatform] has to count the platforms before it
@@ -1290,9 +1317,12 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             rowCap: Int,
             pin: com.stationly.core.model.user.BoardPin? = null,
         ): List<com.stationly.core.util.MultiLineBoardProcessor.Row> {
-            val boards = selections.filter { it.groupingId == boundTo }
+            val nowMs = System.currentTimeMillis()
+            val all = selections.filter { it.groupingId == boundTo }
+            val notices = noticesFor(all, nowMs)
+            val boards = all.filterNot { notices[it]?.hides == true }
             return com.stationly.core.util.MultiLineBoardProcessor.rowsFrom(
-                tickedGroupsFor(boards, selection, pin, rowCap, System.currentTimeMillis()),
+                tickedGroupsFor(boards, selection, pin, rowCap, nowMs),
                 rowCap = rowCap,
             )
         }
@@ -1475,6 +1505,10 @@ class DepartureWidgetProvider : AppWidgetProvider() {
             predictions: List<PredictionDisplay> = emptyList(),
             lineStatusSeverity: String? = null,
             lineStatusReason: String? = null,
+            /** What TfL says closes every board here: the message in place of the rows. */
+            closedNotice: com.stationly.core.model.BoardNotice? = null,
+            /** The status row in place of the line's, severity to reason. Only the row: an empty board's reason is the line's own. */
+            stationStrip: Pair<String, String>? = null,
             sduiPayload: com.stationly.core.model.sdui.SduiWidgetPayload? = null,
             hasLoadedData: Boolean = true,
             /**
@@ -1764,9 +1798,14 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                 views.setViewVisibility(R.id.status_container, android.view.View.GONE)
             } else {
                 views.setViewVisibility(R.id.status_container, android.view.View.VISIBLE)
-                if (lineStatusSeverity != null) {
-                    views.setTextViewText(R.id.status_severity, lineStatusSeverity)
-                    views.setTextViewText(R.id.status_reason, StationlyFormatters.formatStatusReason(lineStatusReason ?: ""))
+                val rowSeverity = stationStrip?.first ?: lineStatusSeverity
+                views.setTextViewCompoundDrawablesRelative(
+                    R.id.status_severity, if (stationStrip != null) R.drawable.ic_board_warning else 0, 0, 0, 0,
+                )
+                views.setInt(R.id.status_severity, "setMaxLines", if (stationStrip != null) 1 else Int.MAX_VALUE)
+                if (rowSeverity != null) {
+                    views.setTextViewText(R.id.status_severity, rowSeverity)
+                    views.setTextViewText(R.id.status_reason, StationlyFormatters.formatStatusReason(stationStrip?.second ?: lineStatusReason ?: ""))
                 } else {
                     views.setTextViewText(R.id.status_severity, "Good Service")
                     views.setTextViewText(R.id.status_reason, "")
@@ -2200,6 +2239,13 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                     BoardFallbackState(
                         BoardFallbackKind.CONNECTING, 0L
                     )
+                } else if (closedNotice != null && predictions.isEmpty()) {
+                    BoardFallbackState(
+                        BoardFallbackKind.DISRUPTED,
+                        message = closedNotice.title to closedNotice.rows(com.stationly.mobile.ui.util.BOARD_FALLBACK_ROW_COUNT - 1) {
+                            widgetWidthDp > 0 && WidgetText.widthDp(context, it, messageSp, bold = false) <= widgetWidthDp - 2 * ROW_TEXT_INSET_DP - MESSAGE_SLACK_DP
+                        },
+                    )
                 } else {
                     computeBoardFallbackState(
                         hasPredictions = predictions.isNotEmpty(),
@@ -2227,6 +2273,7 @@ class DepartureWidgetProvider : AppWidgetProvider() {
                         context, fallbackState, widgetStrings,
                         rowLayout = R.layout.widget_departure_row_fill,
                         textSizeSp = messageSp,
+                        compact = !widgetSize.showsClock,
                     )
                 } else if (rowViews.isEmpty()) {
                     // Edge case: hasSelection && hasPredictions logically true, but

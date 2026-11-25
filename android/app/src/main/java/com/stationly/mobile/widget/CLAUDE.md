@@ -488,3 +488,13 @@ helpers, or document why this surface needs to diverge.
   SDUI template (`sdui_layout_<stationId>` SharedPref), we bind it
   with the ticked predictions and render through that path instead
   of `prepareLegacyRows`. Both paths produce identical ETAs.
+
+## Station closures
+
+`noticesFor` is what TfL says about the boards' stations (`StationNoticeStore`, off
+unless `flag.stationStatus.show`). A board a notice HIDES is left out by the render and
+by `boardRowsFor` alike, or the chevrons would count pages that are not drawn. With none
+left the message replaces the rows; the strip is `BoardNotice.stripWith`.
+The title row is `widget_warning_row_fill` (an amber sign either side, one on a 2x2) and the
+strip wears one. The rows are TfL's own words if they all fit, else the short details
+(`rowsThatFit`; owner, 2026-11-25).

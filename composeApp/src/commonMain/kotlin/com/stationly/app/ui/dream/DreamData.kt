@@ -1,7 +1,9 @@
 package com.stationly.app.ui.dream
 
 import com.stationly.core.model.LineStatus
+import com.stationly.core.model.BoardNotice
 import com.stationly.core.model.PredictionDisplay
+import com.stationly.core.repository.StationNoticeStore
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.user.BoardConfig
 import com.stationly.core.repository.UserSettings
@@ -32,18 +34,24 @@ data class DreamSnapshot(
     val rowCap: Int = BoardConfig.DEFAULT_ROWS_PER_PLATFORM,
     /** Wall-clock millis at which the data was last synced — drives the "X ago" timer. */
     val lastUpdatedMs: Long = Clock.System.now().toEpochMilliseconds(),
+    /** What TfL says about the station; the one that hides departures if any does. */
+    val notice: BoardNotice? = null,
+    /** Whether any board here is still open. */
+    val someOpen: Boolean = true,
 ) {
     val hasData: Boolean get() = selection != null
 
     /** Headline that goes in the status strip. */
     val statusLine: String get() {
         val sel = selection ?: return ""
+        notice?.let { return "${sel.line.replaceFirstChar { c -> c.uppercase() }} · ${it.strip}" }
         val status = lineStatus?.statusSeverityDescription?.takeIf { it.isNotBlank() }
             ?: "Good Service"
         return "${sel.line.replaceFirstChar { it.uppercase() }} · $status"
     }
 
     val isDisrupted: Boolean get() {
+        if (notice != null) return true
         val s = lineStatus?.statusSeverityDescription?.lowercase()?.trim()
         return s != null && !s.startsWith("good service")
     }
@@ -101,6 +109,16 @@ fun loadDreamSnapshot(preferredStationId: String?): DreamSnapshot {
     // One feed per board at this station, the way the widget and the home
     // screen build them. The dream used to read the FIRST board's predictions
     // and render those alone; see dreamBoardsFor.
+    // What TfL says about the station itself; see BoardNotice. A board it closes
+    // has no departures, and the board below says why.
+    val now = Clock.System.now().toEpochMilliseconds()
+    val stored = boards.associateWith { b ->
+        runCatching { Platform.sqlStorage.getPredictions(b.station, b.line, b.direction) }.getOrNull().orEmpty()
+    }
+    val notices = boards.mapNotNull { b ->
+        StationNoticeStore.forBoard(b, now, stored[b].orEmpty().map { it.platform })?.let { b to it }
+    }.toMap()
+
     val feeds = boards.map { b ->
         MultiLineBoardProcessor.Feed(
             stationId = b.station,
@@ -108,9 +126,7 @@ fun loadDreamSnapshot(preferredStationId: String?): DreamSnapshot {
             direction = b.direction,
             terminus = b.singleTerminus,
             nextStop = b.directionTowards,
-            predictions = runCatching {
-                Platform.sqlStorage.getPredictions(b.station, b.line, b.direction)
-            }.getOrNull().orEmpty(),
+            predictions = if (notices[b]?.hides == true) emptyList() else stored[b].orEmpty(),
         )
     }
 
@@ -119,7 +135,9 @@ fun loadDreamSnapshot(preferredStationId: String?): DreamSnapshot {
     // this, and judging it by one board put that message over a board that had
     // trains on three other platforms.
     val predictions = feeds.flatMap { it.predictions }
-    val lineStatus  = Platform.sqlStorage.getLineStatus(selection.mode, selection.line)
+    // Of a board still open, if any is: a closed one's line is not the story.
+    val spoken = boards.firstOrNull { notices[it]?.hides != true } ?: selection
+    val lineStatus  = Platform.sqlStorage.getLineStatus(spoken.mode, spoken.line)
 
     // The station's own "Show up to N per platform", default 3 — the same
     // setting the home screen and the widget obey, read the same way.
@@ -128,7 +146,11 @@ fun loadDreamSnapshot(preferredStationId: String?): DreamSnapshot {
     // (FCM landed / REST returned), NOT when this snapshot was loaded from SQL.
     val lastUpdatedMs = Platform.sqlStorage.getLastUpdatedTimestamp(selection.station, selection.line, selection.direction)
         ?: Clock.System.now().toEpochMilliseconds()
-    return DreamSnapshot(selection, predictions, lineStatus, feeds, rowCap, lastUpdatedMs)
+    return DreamSnapshot(
+        selection, predictions, lineStatus, feeds, rowCap, lastUpdatedMs,
+        notice = notices.values.sortedByDescending { it.hides }.firstOrNull(),
+        someOpen = boards.any { notices[it]?.hides != true },
+    )
 }
 
 /**
