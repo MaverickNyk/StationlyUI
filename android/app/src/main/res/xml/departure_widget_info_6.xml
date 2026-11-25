@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Android 12+ provider for a 6 column home screen (a Redmi's 6x7). Switched to
+     by WidgetDefaultSize; the same as xml-v31/departure_widget_info but for the 6. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:initialKeyguardLayout="@layout/widget_departure_board"
+    android:initialLayout="@layout/widget_departure_board"
+    android:minWidth="340dp"
+    android:minHeight="130dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="110dp"
+    android:targetCellWidth="6"
+    android:targetCellHeight="2"
+    android:previewImage="@mipmap/ic_launcher"
+    android:previewLayout="@layout/widget_preview"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="86400000"
+    android:widgetCategory="home_screen"
+    android:configure="com.stationly.mobile.widget.WidgetConfigureActivity"
+    android:widgetFeatures="reconfigurable" />

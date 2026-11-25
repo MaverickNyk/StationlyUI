@@ -15,6 +15,7 @@ import com.stationly.mobile.service.FcmTokenRegistrar
 import com.stationly.mobile.service.StationlyNotificationChannels
 import com.stationly.mobile.widget.DepartureWidgetProvider
 import com.stationly.mobile.widget.V1WidgetAdoption
+import com.stationly.mobile.widget.WidgetDefaultSize
 
 class StationlyApplication : Application() {
     private val screenReceiver = object : BroadcastReceiver() {
@@ -65,5 +66,7 @@ class StationlyApplication : Application() {
             addAction(Intent.ACTION_USER_PRESENT)
         }
         registerReceiver(screenReceiver, filter)
+        // Last: it can redraw every widget, which needs all of the above.
+        WidgetDefaultSize.onAppStart(this)
     }
 }

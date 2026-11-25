@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Android 8 to 11. A new widget starts at the full width and 2 rows (owner,
      2026-11-24). These launchers take as many cells as min* needs: 320dp is every
-     column of a 4 or 5 column phone. Android 12+ reads xml-v31, which must match
+     column of a 4, 5 or 6 column phone. Android 12+ reads xml-v31, which must match
      this file in everything but the default size. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:initialKeyguardLayout="@layout/widget_departure_board"

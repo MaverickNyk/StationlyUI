@@ -2,13 +2,16 @@
 <!-- Android 12+. A new widget starts at the full width and 2 rows (owner,
      2026-11-24). AOSP's launcher (LauncherAppWidgetProviderInfo.initSpans) uses
      targetCell* only when it FITS the grid, else the cells min* needs, capped at
-     the grid. So 5 columns is exactly 5x2; on 4 the target is refused and 320dp
-     caps at 4; 130dp is 2 rows of the taller cells such a grid has. A target of 4
-     left a column empty on 5 (Pixel 11 Pro). xml/ is the older twin. -->
+     the grid. So 5 columns, the Pixel default, is exactly 5x2 whatever its cells
+     measure; 4 refuse it, 340dp fills them and 130dp is their 2 rows. 6 columns
+     would stop at 5: where the app can tell, WidgetDefaultSize switches to
+     departure_widget_info_6. A target of 6 for everyone would leave 5 column
+     phones to the fallback, whose rows depend on their cells. xml/ is the older
+     twin. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:initialKeyguardLayout="@layout/widget_departure_board"
     android:initialLayout="@layout/widget_departure_board"
-    android:minWidth="320dp"
+    android:minWidth="340dp"
     android:minHeight="130dp"
     android:minResizeWidth="180dp"
     android:minResizeHeight="110dp"

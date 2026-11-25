@@ -369,8 +369,9 @@ helpers, or document why this surface needs to diverge.
   spacer must be a FrameLayout, or every widget shows "Can't load widget".
 - **A new widget starts at the FULL WIDTH and 2 rows** (owner, 2026-11-24), by
   `departure_widget_info.xml` alone: the picker and `requestPinAppWidget` both read
-  it. Two copies, `xml-v31` (Android 12+) and `xml` (8 to 11), alike in everything
-  but the default size. No attribute means "full width"; the XML comments say how
+  it. Three copies, `xml-v31` (Android 12+), `xml` (8 to 11) and `_6` (a 6 column
+  home screen the app can recognise, `WidgetDefaultSize`), alike in everything but
+  the default size. No attribute means "full width"; the XML comments say how
   the launcher arrives at it, and `WidgetDefaultSizeTest` runs its rule.
 - **A new widget starts on SCROLL, every station** (owner, 2026-11-23). It used
   to start on STEP when a station had several platforms. Arrows ("Buttons") are
@@ -387,8 +388,11 @@ helpers, or document why this surface needs to diverge.
   else "Bus 39, 639 towards Church Road" from `Feed.nextStop` (=
   `directionTowards`, which is the NEXT stop despite its name). Every
   `Feed(...)` builder must pass both, or both sides of the road read "Bus 39".
-- **Type follows the size class** (`WidgetSize`: COMPACT / MEDIUM / LARGE, the
-  iOS families). Medium is the XML defaults. Headers pick a rung of
+- **Type follows the size class** (`WidgetSize`: COMPACT / SHORT / MEDIUM / LARGE,
+  the iOS families). Chosen by FIT (`WidgetSize.of`): SHORT and COMPACT_SHORT (tight
+  padding; iOS medium's type) only where the ordinary class cannot hold three
+  departures under a platform, as two rows of a Xiaomi 6x7 (158dp) cannot. The
+  user's text size shrinks only what cannot scroll: the arrows board and messages. Medium is the XML defaults. Headers pick a rung of
   `headerVariants` that fits (`WidgetText`); never let a header wrap.
 - **Tapping a bound widget opens the app on ITS station** via
   `<scheme>://home?station=<groupingId>` (the iOS widget's link) and

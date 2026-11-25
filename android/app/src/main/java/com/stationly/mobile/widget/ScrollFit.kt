@@ -43,11 +43,16 @@ object ScrollFit {
         fontScale: Float = 1f,
         rowScale: Float = 1f,
         headerCount: Int = 0,
+        size: WidgetSize = WidgetSize.MEDIUM,
+        sdk: Int = WidgetSize.ANDROID_12,
     ): Boolean {
         if (rowCount <= 0 || widgetHeightDp <= 0) return false
         val scale = fontScale.coerceAtLeast(0.5f) * rowScale.coerceAtLeast(0.5f)
         val headers = headerCount.coerceIn(0, rowCount)
         val content = (rowCount - headers) * ROW_PITCH_DP + headers * HEADER_PITCH_DP
-        return content * scale <= widgetHeightDp - FIXED_DP * scale
+        // The short classes' fixed rows are not MEDIUM's scaled down: the refresh
+        // button and the logo in them keep their size.
+        val fixed = if (size.isTight) size.fixedDp(fontScale.coerceAtLeast(0.5f), pager = false, sdk = sdk) else FIXED_DP * scale
+        return content * scale <= widgetHeightDp - fixed
     }
 }

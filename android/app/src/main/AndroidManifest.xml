@@ -143,6 +143,10 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/departure_widget_info" />
+            <!-- The same widget, 6 columns wide. See WidgetDefaultSize. -->
+            <meta-data
+                android:name="com.stationly.mobile.widget.SIX_COLUMNS"
+                android:resource="@xml/departure_widget_info_6" />
         </receiver>
 
         <!-- Which station a given widget is for.

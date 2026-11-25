@@ -293,6 +293,7 @@ tasks.withType<Test>().configureEach {
         // Read off disk by `WidgetDefaultSizeTest`, for the same reason.
         rootProject.file("android/app/src/main/res/xml/departure_widget_info.xml"),
         rootProject.file("android/app/src/main/res/xml-v31/departure_widget_info.xml"),
+        rootProject.file("android/app/src/main/res/xml/departure_widget_info_6.xml"),
     )
         .withPropertyName("userFacingCopySources")
         .withPathSensitivity(PathSensitivity.RELATIVE)

@@ -96,11 +96,12 @@ object BoardProportions {
         fun line(sp: Float) = sp * fs * LINE
 
         // What each row needs for its own content: the floors.
-        val stationBase = maxOf(line(size.station), 26f) + 12f          // 7dp + 5dp padding
+        val stationBase = maxOf(line(size.station), WidgetSize.HEADER_BOX_DP) + size.headerPadTopDp + size.headerPadBottomDp
         val pagerBase = line(size.platform) + 4f
-        val statusBase = line(size.status) + 6f                          // 3dp + 3dp padding
-        val footerBase = maxOf(line(if (size.showsClock) size.clock else size.ago), 20f) + 5f
-        val rowBase = maxOf(line(size.row), 22f)
+        val statusBase = line(size.status) + 2 * size.statusPadDp
+        val footerBase = maxOf(line(if (size.showsClock) size.clock else size.ago), 20f) +
+            size.footerPadTopDp + size.footerPadBottomDp
+        val rowBase = maxOf(line(size.row), size.rowFloorDp)
 
         val gaps = GAP_DP * (rows + headers +
             (if (pager) 1 else 0) + (if (status) 1 else 0) + 1)          // +1: footer
