@@ -302,7 +302,7 @@ data class LineStatus(
 @Serializable
 data class PredictionsPayload(
     val lines: Map<String, LineData> = emptyMap(),
-    val id: String,
+    val id: String = "",
     /**
      * Station name, DEFAULTED because the backend sends `null` for it.
      *
@@ -337,7 +337,7 @@ data class PredictionsPayload(
  */
 @Serializable
 data class LineData(
-    val id: String,
+    val id: String = "",
     /** Defaulted for the same reason as [PredictionsPayload.name] — a null here would
      *  reject the whole payload, and one unnamed line must not blank a board. */
     val name: String = "",
@@ -350,7 +350,7 @@ data class LineData(
  */
 @Serializable
 data class DirectionPredictions(
-    val preds: List<PredictionItem>
+    val preds: List<PredictionItem> = emptyList()
 )
 
 /**

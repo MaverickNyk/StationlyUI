@@ -88,6 +88,7 @@ roughly one focused hour.
 | AV2-8.1 | Release build integrity | L | 🔄 S016, needs a phone |
 | AV2-8.2 | Upgrade verification on hardware | M | AV2-2.2, AV2-8.1 |
 | AV2-8.3 | Ship | M | AV2-8.2 |
+| AV2-8.4 | Turn station closures on in production (= AV2-11.44) | S | AV2-8.3 |
 
 ## EPIC-09 — The widget is the app's to run · [detail](epics/EPIC-09-widget-ownership.md)
 
@@ -164,7 +165,9 @@ roughly one focused hour.
 | AV2-11.39 | Boards could be lost when a screen loaded while a push was saving: the list is written in one transaction, and loads and writes share a lock | H | fixed in shared code, `ColdProcessSaveTest` |
 | AV2-11.40 | A board edit can be undone by the route backfill or the filter save: both write back rows read before waiting for the lock (`StationSettingsViewModel` ~406, `SelectionViewModel` ~1313) | S | open · shared, pre-existing |
 | AV2-11.42 | Station closures on home, widget, screensaver and when adding a station, behind `flag.stationStatus.show` (off): S024. How it works: `stationly-backend/docs/STATION_STATUS.md` | H | built, on staging · see "Tested" there |
-| AV2-11.43 | A departure push with a null destId ("Check Front of Train", Earl's Court) loses the whole push: Gson ignores Kotlin's default | M | open · found 2026-11-25 |
+| AV2-11.44 | **Turn station closures on in production** once v2 is out: AV2-8.4 has the steps. Server half live since 2026-11-25, flag off | H | open · **owner** · after AV2-8.3 |
+| AV2-11.43 | A push with a null destId ("Check Front of Train", Earl's Court, Southfields) lost that board's whole update, and the "ago" clock reset anyway: pushes are now decoded as REST is, and the clock is stamped after the rows; the Syncer sends blank | H | fixed, `PredictionSyncCharacterizationTest` · S025 · two minutes of pushes clean on the Fold |
+| AV2-11.45 | Southfields and Wimbledon Park eastbound: TfL's feed lists no train that has left Wimbledon, only ones that will turn round there ("Check Front of Train", 20 to 30 min). Options and measurements in S025 | M | **parked by the owner** 2026-11-25 · backend |
 | AV2-11.41 | Crash when sign-in finished as the phone was folded, unfolded, rotated or re-themed: the view model navigated the destroyed screen. It now publishes a step the current screen takes | H | fixed in shared code · found on a Pixel 10 Pro Fold 2026-11-25 · the fix NOT re-run there, and not reviewed a second time |
 | AV2-11.10 | Landscape board and staging banner (#11) | M | open · device check first |
 | AV2-11.11 | Store prices in the buyer's currency (#13) | M | open · **iOS needs Swift** |

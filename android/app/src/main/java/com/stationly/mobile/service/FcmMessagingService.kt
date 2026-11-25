@@ -298,7 +298,10 @@ class FcmMessagingService : FirebaseMessagingService() {
             val stationIdFromTopic = remoteMessage.from?.replace("/topics/Station_", "") ?: ""
             
             // Parse FCM payload using KMP model
-            val payload = gson.fromJson(payloadJson, PredictionsPayload::class.java)
+            // As REST and the stream do. Gson puts a null into a property that cannot
+            // hold one ("Check Front of Train" has a null destId), which then failed
+            // the whole board's update.
+            val payload = com.stationly.core.service.NetworkModule.json.decodeFromString(PredictionsPayload.serializer(), payloadJson)
             
             // Get all selections
             val allSelections = getAllSelections()

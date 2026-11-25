@@ -417,3 +417,39 @@ kotlinx.serialization models, the Compose UI, the `DreamService`, the
 **One thing a preview still cannot prove**, and it is the same gap the dream has
 in AV2-6.2: the app running for hours under R8 with real pushes landing. That
 needs the phone left alone, not another walk.
+
+---
+
+## AV2-8.4 — Turn station closures on in production · `S` · Backlog — **owner, after 8.3**
+
+The server half has been live in production since 2026-11-25 (backend #160, Syncer #82),
+with `stationStatus.show` OFF. The app half is on `dev_android_bring_to_v2` (`e00e10d`):
+until a release has it, turning the flag on shows nothing. v1 and iOS never show it.
+
+### Tasks
+- [ ] Android v2 released with `e00e10d` or later (AV2-8.3).
+- [ ] Read production's log for a few days and check every rail `closed` against tfl.gov.uk:
+      `GET https://api.stationly.co.uk/api/v1/admin/station-status/report?days=7`.
+      Add the wordings worth reading (`unclear`); known: "X line trains are not stopping on
+      this station while ..." (Peckham Rye, 2026-11-25). Syncer only, no app release.
+- [ ] Before or on a staged rollout, see a v1 phone ignore a closure push.
+- [ ] Turn it on. The key is `STATIONLY_ADMIN_KEY` (GitHub production secrets, or the
+      server's `.env`). A 403 about Cloudflare means it must go through the admin site.
+
+      ```bash
+      read -s KEY
+      curl -X PUT https://api.stationly.co.uk/api/v1/admin/flags \
+        -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+        -d '{"set":{"stationStatus.show":{"android":true}},"reason":"Turn on closures","by":"<name>"}'
+      ```
+
+- [ ] `GET /api/v1/admin/flags` says android on. Phones follow at their next cold start, or
+      in minutes with `"push":true` (which reaches every install).
+- [ ] Look at one closed stop and one open one on a production phone.
+
+**Off again:** the same call with `false`. **Stop the pushes too:**
+`STATION_NOTICES_ENABLED=false` on the Syncer, and restart it.
+
+### Acceptance criteria
+A closed stop says so on a released v2 app; an open one is as before; no "closed" that
+tfl.gov.uk does not agree with.

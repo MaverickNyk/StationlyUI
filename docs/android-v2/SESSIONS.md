@@ -18,6 +18,43 @@ Template:
 
 ---
 
+## S025 — 2026-11-25 — AV2-11.43 · **a train with no destination id**
+
+**Outcome:** DONE. Syncer half in StationlySyncer (branch `dev_blank_dest_id`, not deployed).
+**Gate:** GREEN, with both iOS compiles (851 app tests, 207 Syncer tests; no Swift changed).
+**The problem:** TfL names no destination for some trains ("Check Front of Train"), so a
+push carries `"destId": null`. Android decoded pushes with Gson, which puts a null into a
+Kotlin property that cannot hold one; building the row then threw, and that BOARD's whole
+update was lost, good trains included. Other directions and lines carried on. The "ago"
+clock was stamped before the rows were saved, so the board looked fresh over old rows.
+Seen at Earl's Court and Southfields on the Fold: at 23:28 the widget counted down an
+eastbound train TfL had dropped (11 min) and lacked the one it listed (22 min).
+v1 does not use the id. REST and the iOS stream decode with `coerceInputValues`, so a null
+is blank there (read in the code; not tried on an iPhone).
+**Did:**
+- Pushes are decoded with `NetworkModule.json`, as REST is. Three model properties that had
+  no default got one, so this is no stricter than Gson was.
+- `SyncPredictionsUseCase` stamps the clock after the rows (and on a 0-row update, as before).
+- Syncer sends `""`, not null. NOT "unknown": a board filtered by destination hides an id it
+  does not know and shows a blank one (`SqlStorage.matchesFilter`). Covers 2.0 test builds
+  already on phones once deployed.
+- `PredictionSyncCharacterizationTest` holds Southfields' real payload;
+  `PredictionSourceParityTest` the Syncer half.
+**Learned (parked by the owner, AV2-11.45):** Southfields and Wimbledon Park eastbound have
+almost nothing to show because TfL's feed does not list trains that have left Wimbledon,
+only ones that will turn round there, 20 to 30 min away and with no destination. Measured
+2026-11-25, District on Good Service: 19 polls over 8 min, no eastbound train with a
+destination, while the timetable has one every 3 to 5 min. We drop nothing. Probably the
+signalling boundary at East Putney (new signalling reported live June or August 2026;
+Network Rail south of it): NOT proven. Options: TfL's timetable, marked as scheduled and
+only on Good Service; predicting returns from trains reaching Wimbledon; TrackerNet (our
+key is refused); reporting it to TfL. A photo of the platform board with the time would
+say whether it shows live or scheduled trains.
+**Next agent needs to know:** at a terminus the Syncer and backend still send "unknown"
+for a train turning round, which a filtered board hides. Not looked into.
+
+---
+
 ## S024 — 2026-11-25 — AV2-11.42 · **a closed station says so**
 
 **Outcome:** DONE behind `flag.stationStatus.show` (off in production, on for staging

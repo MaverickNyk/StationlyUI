@@ -9,7 +9,9 @@
 ```
 SPRINT:            5-6 — release surfaces + rollout (sprints 1-4 complete)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project
-LAST SESSION:      S024 (2026-11-25) — station closures (AV2-11.42), behind a
+LAST SESSION:      S025 (2026-11-25) — a train with no destination id no
+                   longer costs its board the update (AV2-11.43).
+                   S024 (2026-11-25) — station closures (AV2-11.42), behind a
                    served flag that is off; on staging, device-verified.
                    S023 (2026-11-23) — widget at full bleed with
                    proportional rows and an iOS-style pager (fdd0708,
@@ -118,7 +120,9 @@ DEVICE:            ✅ RUN ON THE PIXEL 7 PRO, 2026-09-12 — including a full
                    BEFORE the swap.
                    STILL OWED: nothing a session can reach. Hours of runtime
                    under R8 with real pushes needs the phone left alone.
-BLOCKED ON OWNER:  Q5 is PARKED for merge time (S020, owner: focus is
+BLOCKED ON OWNER:  AV2-8.4: turn station closures on in production, after v2
+                   ships (server live, flag off; steps in EPIC-08).
+                   Q5 is PARKED for merge time (S020, owner: focus is
                    Android only). It cannot affect the Android release: it only
                    bites when an iOS build is cut from code containing the
                    .sqm files, i.e. after this branch merges to master. Resolve

@@ -384,6 +384,48 @@ class PredictionSyncCharacterizationTest {
         assertEquals("3 min", row.eta)
     }
 
+    // ── a train TfL names no destination for (AV2-11.43) ─────────────────────
+
+    /** Southfields as it was pushed on 2026-11-25, when the eastbound board lost every update. */
+    private val southfields = """{"lines":{"district":{"id":"district","name":"District","dirs":{
+        "inbound":{"preds":[{"displayName":"Wimbledon","destId":"940GZZLUWIM","platform":"Platform 2 (Westbound)","eta":"2026-11-25T17:55:30.289Z"}]},
+        "outbound":{"preds":[{"displayName":"Check Front of Train","destId":null,"platform":"Platform 1 (Eastbound)","eta":"2026-11-25T18:09:30.273Z"},
+                             {"displayName":"Upminster","destId":"940GZZLUUPM","platform":"Platform 1 (Eastbound)","eta":null}]}}}},
+        "id":"940GZZLUSFS","name":null,"lut":"2026-11-25T17:50:10.984922527"}"""
+
+    @Test
+    fun `a train with no destination id does not cost its board the update`() = withStorage { storage ->
+        val payload = com.stationly.core.service.NetworkModule.json.decodeFromString(PredictionsPayload.serializer(), southfields)
+        val east = selection("940GZZLUSFS", "district", "outbound")
+        runBlocking { SyncPredictionsUseCase(storage).execute(payload, east) }
+        assertEquals(
+            setOf("Check Front of Train", "Upminster"),
+            storage.getPredictions(east.station, east.line, east.direction).map { it.destination }.toSet(),
+        )
+        assertNotNull(storage.getSyncTimestamp(east.station, east.line, east.direction))
+    }
+
+    /** It is kept on a filtered board too: nobody knows it is NOT going there. */
+    @Test
+    fun `a train with no destination id shows on a filtered board`() = withStorage { storage ->
+        val payload = com.stationly.core.service.NetworkModule.json.decodeFromString(PredictionsPayload.serializer(), southfields)
+        val east = selection("940GZZLUSFS", "district", "outbound").copy(destinations = listOf("Barking"), destinationIds = listOf("940GZZLUBKG"), filterMode = FilterMode.DESTINATIONS)
+        runBlocking { SyncPredictionsUseCase(storage).execute(payload, east) }
+        assertEquals(listOf("Check Front of Train"), storage.getPredictions(east.station, east.line, east.direction).filter { it.matchesFilter }.map { it.destination })
+    }
+
+    @Test
+    fun `an update that fails does not look fresh`() = withStorage { storage ->
+        val east = selection("940GZZLUSFS", "district", "outbound")
+        val broken = pred("Check Front of Train", "Platform 1 (Eastbound)", in5min)
+        PredictionItem::class.java.getDeclaredField("destId").apply { isAccessible = true }.set(broken, null)
+        val failed = runCatching {
+            runBlocking { SyncPredictionsUseCase(storage).execute(payload("940GZZLUSFS", "district", mapOf("outbound" to listOf(broken))), east) }
+        }
+        assertTrue(failed.isFailure)
+        assertEquals(null, storage.getSyncTimestamp(east.station, east.line, east.direction))
+    }
+
     // ── fixtures ─────────────────────────────────────────────────────────────
 
     /**
