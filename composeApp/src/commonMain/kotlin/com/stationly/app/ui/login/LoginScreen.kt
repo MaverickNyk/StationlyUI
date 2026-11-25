@@ -989,6 +989,16 @@ fun LoginScreen(
     viewModel: LoginViewModel = viewModel { LoginViewModel(authProvider) }
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val step by viewModel.step.collectAsStateWithLifecycle()
+    LaunchedEffect(step) {
+        val next = step ?: return@LaunchedEffect
+        viewModel.stepTaken()
+        when (next) {
+            LoginStep.SIGNED_IN     -> onNavigateToSummary()
+            LoginStep.VERIFY_EMAIL  -> onNeedsEmailVerification()
+            LoginStep.BACK_TO_LOGIN -> onNavigateToLogin()
+        }
+    }
     val overlayMessage = when (screenType) {
         "register"        -> "Creating your account…"
         "forgot-password" -> "Sending reset link…"
@@ -1005,7 +1015,7 @@ fun LoginScreen(
 
     fun launchGoogle() {
         if (onGoogleSignIn != null) onGoogleSignIn.invoke()
-        else viewModel.onGoogleSignInInteractive(onNavigateToSummary)
+        else viewModel.onGoogleSignInInteractive()
     }
 
     // Sign in with Apple — mirrors launchGoogle: hosts may override via
@@ -1015,7 +1025,7 @@ fun LoginScreen(
     // the `applesignin` entitlement landed with the Stationly Limited team.
     fun launchApple() {
         if (onAppleSignIn != null) onAppleSignIn.invoke()
-        else viewModel.onAppleSignInInteractive(onNavigateToSummary)
+        else viewModel.onAppleSignInInteractive()
     }
 
     // Map SDUI navigation action ids to the nav callbacks.
@@ -1045,7 +1055,7 @@ fun LoginScreen(
                                 viewModel.onInputChanged(id, value)
                                 if (uiState.error != null) viewModel.clearError()
                             },
-                            onSubmit = { viewModel.onSubmit("login", onNavigateToSummary, onNeedsEmailVerification) },
+                            onSubmit = { viewModel.onSubmit("login") },
                             onGoogle = ::launchGoogle,
                             onForgot = onNavigateToForgotPassword,
                             onNavigate = ::onNavigate,
@@ -1082,7 +1092,7 @@ fun LoginScreen(
                     viewModel.onInputChanged(id, value)
                     if (uiState.error != null) viewModel.clearError()
                 },
-                onSubmit = { viewModel.onSubmit("register", onNavigateToSummary, onNeedsEmailVerification) },
+                onSubmit = { viewModel.onSubmit("register") },
                 onGoogle = ::launchGoogle,
                 onForgot = onNavigateToForgotPassword,
                 onNavigate = ::onNavigate,
@@ -1107,7 +1117,7 @@ fun LoginScreen(
                     viewModel.onInputChanged(id, value)
                     if (uiState.error != null) viewModel.clearError()
                 },
-                onSubmit = { viewModel.confirmPasswordReset(onNavigateToLogin) },
+                onSubmit = { viewModel.confirmPasswordReset() },
                 onBack = { viewModel.clearFormState(); onNavigateToLogin() },
                 passwordMinLength = viewModel.passwordMinLength,
                 passwordTooShort = viewModel.passwordTooShortMessage

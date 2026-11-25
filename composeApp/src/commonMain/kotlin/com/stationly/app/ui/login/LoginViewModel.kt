@@ -24,6 +24,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+/** Where the auth flow goes next. */
+enum class LoginStep { SIGNED_IN, VERIFY_EMAIL, BACK_TO_LOGIN }
+
 class LoginViewModel(
     private val authProvider: PlatformAuthProvider
 ) : ViewModel() {
@@ -51,6 +54,15 @@ class LoginViewModel(
 
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
+
+    private val _step = MutableStateFlow<LoginStep?>(null)
+
+    /** Where to go next, until the screen says [stepTaken]. See [goTo]. */
+    val step: StateFlow<LoginStep?> = _step.asStateFlow()
+
+    fun stepTaken() {
+        _step.value = null
+    }
 
     /**
      * The words this flow uses, from the SDUI config map — see [AuthStrings].
@@ -230,8 +242,6 @@ class LoginViewModel(
 
     fun onSubmit(
         screenType: String,
-        onSuccess: () -> Unit,
-        onNeedsEmailVerification: () -> Unit,
         resetOobCode: String? = null
     ) {
         val inputs = _uiState.value.inputs
@@ -268,16 +278,16 @@ class LoginViewModel(
                                     .onFailure { runCatching { authProvider.sendEmailVerification() } }
                             }
                             _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                            navigateIfLive(onNeedsEmailVerification)
+                            goTo(LoginStep.VERIFY_EMAIL)
                             return@fold
                         }
                         if (syncUserAndSetupData(provider = "email")) {
                             _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                            navigateIfLive(onSuccess)
+                            goTo(LoginStep.SIGNED_IN)
                         }
                     } else {
                         _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                        navigateIfLive(onSuccess)
+                        goTo(LoginStep.SIGNED_IN)
                     }
                 },
                 onFailure = { e ->
@@ -290,14 +300,14 @@ class LoginViewModel(
         }
     }
 
-    fun onGoogleSignIn(idToken: String, onSuccess: () -> Unit) {
+    fun onGoogleSignIn(idToken: String) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isAuthenticating = true, error = null)
             authProvider.signInWithGoogle(idToken).fold(
                 onSuccess = {
                     if (syncUserAndSetupData(provider = "google")) {
                         _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                        navigateIfLive(onSuccess)
+                        goTo(LoginStep.SIGNED_IN)
                     }
                 },
                 onFailure = { e ->
@@ -310,14 +320,14 @@ class LoginViewModel(
         }
     }
 
-    fun onGoogleSignInInteractive(onSuccess: () -> Unit) {
+    fun onGoogleSignInInteractive() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isAuthenticating = true, error = null)
             authProvider.signInWithGoogleInteractive().fold(
                 onSuccess = {
                     if (syncUserAndSetupData(provider = "google")) {
                         _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                        navigateIfLive(onSuccess)
+                        goTo(LoginStep.SIGNED_IN)
                     }
                 },
                 onFailure = { e ->
@@ -330,14 +340,14 @@ class LoginViewModel(
         }
     }
 
-    fun onAppleSignInInteractive(onSuccess: () -> Unit) {
+    fun onAppleSignInInteractive() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isAuthenticating = true, error = null)
             authProvider.signInWithAppleInteractive().fold(
                 onSuccess = {
                     if (syncUserAndSetupData(provider = "apple")) {
                         _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                        navigateIfLive(onSuccess)
+                        goTo(LoginStep.SIGNED_IN)
                     }
                 },
                 onFailure = { e ->
@@ -519,7 +529,7 @@ class LoginViewModel(
         }
     }
 
-    fun confirmPasswordReset(onSuccess: () -> Unit) {
+    fun confirmPasswordReset() {
         val oobCode  = _uiState.value.resetOobCode ?: return
         val password = _uiState.value.inputs["newPassword"] ?: ""
         if (password.length < strings.passwordMinLength) {
@@ -534,7 +544,7 @@ class LoginViewModel(
                         isAuthenticating = false, passwordResetConfirmed = true,
                         resetOobCode = null, inputs = emptyMap()
                     )
-                    navigateIfLive(onSuccess)
+                    goTo(LoginStep.BACK_TO_LOGIN)
                 },
                 onFailure = { e ->
                     val msg = when {
@@ -564,8 +574,13 @@ class LoginViewModel(
      * already worked out.
      */
     /**
-     * Run a navigation callback, unless this coroutine has already been
-     * cancelled — which on Android means the screen it would navigate is gone.
+     * Ask the screen to navigate, unless this coroutine has already been
+     * cancelled — which on Android means there is no screen to come.
+     *
+     * A STEP the screen collects, never a callback it passed in: this view model
+     * outlives the screen when the phone is rotated, folded or re-themed, and a
+     * callback then navigated the destroyed one (Pixel 10 Pro Fold, unfolded as
+     * Google sign-in finished, 2026-11-25). The screen there now takes the step.
      *
      * ## The crash this exists to stop
      * Observed on a Pixel 7 Pro, 2026-09-06, backing out of the shared login
@@ -590,8 +605,8 @@ class LoginViewModel(
      * iOS is unaffected either way: nothing there destroys the view model
      * mid-flow, so `isActive` is true and this is the call it always was.
      */
-    private fun CoroutineScope.navigateIfLive(go: () -> Unit) {
-        if (isActive) go()
+    private fun CoroutineScope.goTo(step: LoginStep) {
+        if (isActive) _step.value = step
     }
 
     private fun friendlyAuthError(raw: String): String = when {
@@ -611,7 +626,7 @@ class LoginViewModel(
         _uiState.value = _uiState.value.copy(passwordVisible = current)
     }
 
-    fun confirmEmailVerified(onAuthSuccess: () -> Unit) {
+    fun confirmEmailVerified() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isAuthenticating = true, error = null)
             if (!authProvider.isLoggedIn()) {
@@ -629,7 +644,7 @@ class LoginViewModel(
             if (authProvider.isEmailVerified()) {
                 if (syncUserAndSetupData(provider = "email")) {
                     _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                    navigateIfLive(onAuthSuccess)
+                    goTo(LoginStep.SIGNED_IN)
                 }
             } else {
                 _uiState.value = _uiState.value.copy(
@@ -640,7 +655,7 @@ class LoginViewModel(
         }
     }
 
-    fun silentlyCheckEmailVerified(onAuthSuccess: () -> Unit) {
+    fun silentlyCheckEmailVerified() {
         viewModelScope.launch {
             if (!authProvider.isLoggedIn()) return@launch
             try {
@@ -651,7 +666,7 @@ class LoginViewModel(
             if (authProvider.isEmailVerified()) {
                 if (syncUserAndSetupData(provider = "email")) {
                     _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                    navigateIfLive(onAuthSuccess)
+                    goTo(LoginStep.SIGNED_IN)
                 }
             }
         }
@@ -675,10 +690,10 @@ class LoginViewModel(
         }
     }
 
-    fun signOutAfterVerificationFlow(onSignedOut: () -> Unit) {
+    fun signOutAfterVerificationFlow() {
         viewModelScope.launch {
             authProvider.signOut()
-            onSignedOut()
+            goTo(LoginStep.BACK_TO_LOGIN)
         }
     }
 

@@ -68,9 +68,8 @@ class UserSyncRepository(
             // `parentStationId` was worth carrying. Two of them dropped it, and
             // a restore without it groups bus boards per POLE — one stop coming
             // back as several identically-named cards.
-            profile.effectiveBoards()
-                .flatMap { it.toSelections() }
-                .forEach { sqlStorage.saveSelection(it) }
+            // In one transaction, so nothing reads a half-restored list.
+            sqlStorage.replaceSelections(profile.effectiveBoards().flatMap { it.toSelections() })
 
             profile.stations
         } catch (e: Exception) {

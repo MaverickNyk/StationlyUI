@@ -186,6 +186,14 @@ class SqlStorage(private val database: StationlyDatabase) {
         queries.clearSelections()
     }
 
+    /** The whole list, in one transaction: no reader can see it half written. */
+    fun replaceSelections(selections: List<UserSelection>) {
+        queries.transaction {
+            queries.clearSelections()
+            selections.forEach { saveSelection(it) }
+        }
+    }
+
     fun savePredictions(
         stationId: String,
         lineId: String,

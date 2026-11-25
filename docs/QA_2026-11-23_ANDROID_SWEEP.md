@@ -255,8 +255,10 @@ cache must be loaded before any of them. `saveSelection` and
 edit or delete on that iPhone: it would push its short list over the account. Open
 the app, leave it on its home screen, and change a board on the other phone.
 
-**Shipping it on iOS:** branch from the 1.1 source (`fab76d6`), take only the two
-`loadIfEmpty()` calls and the function, release as 1.2. Not from this branch (Q5).
+**Shipping it on iOS:** branch from the 1.1 source (`fab76d6`), take the
+`SelectionRepository` of commit `400c7b0` (`loadIfEmpty()` and its two calls), release
+as 1.2. Do not mix it with the later version that holds a `Mutex`: there
+`loadIfEmpty()` takes the lock, and calling it from a save would hang. Not from this branch (Q5).
 `BackgroundSyncReplayTest` uses a JVM database driver 1.1 does not have: run it there
 by adding `androidUnitTest` with `sqlite-driver:2.0.2` to `core/build.gradle.kts`,
 which is how it was reproduced.

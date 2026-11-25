@@ -4,7 +4,10 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.stationly.core.model.UserSelection
 import com.stationly.core.platform.AndroidStorageManager
 import com.stationly.db.StationlyDatabase
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -53,6 +56,18 @@ class ColdProcessSaveTest {
         coldProcess()
         repository(disk).saveSelection(row("FIRST"), null)
         assertEquals(setOf("FIRST"), disk.stations())
+    }
+
+    @Test
+    fun `screens loading while pushes save lose nothing`() = runBlocking {
+        val disk = storage()
+        coldProcess()
+        val added = (1..40).map { "S$it" }
+        withContext(Dispatchers.Default) {
+            added.forEach { launch { repository(disk).saveSelection(row(it), null) } }
+            repeat(40) { launch { repository(disk).initialize() } }
+        }
+        assertEquals(added.toSet(), disk.stations())
     }
 
     @Test

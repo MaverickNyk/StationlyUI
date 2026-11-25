@@ -86,6 +86,16 @@ fun VerifyEmailScreen(
     viewModel: LoginViewModel = viewModel { LoginViewModel(authProvider) }
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val step by viewModel.step.collectAsStateWithLifecycle()
+    LaunchedEffect(step) {
+        val next = step ?: return@LaunchedEffect
+        viewModel.stepTaken()
+        when (next) {
+            LoginStep.SIGNED_IN     -> onVerified()
+            LoginStep.BACK_TO_LOGIN -> onUseDifferentEmail()
+            LoginStep.VERIFY_EMAIL  -> Unit // already here
+        }
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     val scopeForPersist = rememberCoroutineScope()
     val openUrl = LocalOpenUrl.current
@@ -128,7 +138,7 @@ fun VerifyEmailScreen(
     // resume poll runs — it syncs, then navigates — so a link tapped while the
     // app is already open lands on the summary rather than on this screen.
     LaunchedEffect(recheckSignal) {
-        if (recheckSignal != null) viewModel.silentlyCheckEmailVerified(onVerified)
+        if (recheckSignal != null) viewModel.silentlyCheckEmailVerified()
     }
 
     // Auto-detect verification when the user returns to the app from their email.
@@ -136,7 +146,7 @@ fun VerifyEmailScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.silentlyCheckEmailVerified(onVerified)
+                viewModel.silentlyCheckEmailVerified()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -255,7 +265,7 @@ fun VerifyEmailScreen(
 
             // SECONDARY action: manual "I've verified" check.
             OutlinedButton(
-                onClick = { viewModel.confirmEmailVerified(onVerified) },
+                onClick = { viewModel.confirmEmailVerified() },
                 enabled = !uiState.isAuthenticating,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(14.dp),
@@ -301,7 +311,7 @@ fun VerifyEmailScreen(
                 str("auth.verify.different_email", "Use a different email"),
                 color = White50, fontSize = 13.sp,
                 modifier = Modifier
-                    .clickable { viewModel.signOutAfterVerificationFlow(onUseDifferentEmail) }
+                    .clickable { viewModel.signOutAfterVerificationFlow() }
                     .padding(8.dp)
             )
 

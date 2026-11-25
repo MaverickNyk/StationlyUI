@@ -125,8 +125,15 @@ class StationlyDreamService : DreamService(),
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        // Only ever downwards. Android can destroy the service BEFORE its window
+        // goes, and ON_PAUSE then asks a DESTROYED lifecycle for STARTED, which
+        // throws (Pixel 11 Pro, 2026-11-24).
+        if (lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+        }
+        if (lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        }
     }
 
     override fun onDestroy() {
