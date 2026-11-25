@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -122,6 +121,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -636,10 +639,10 @@ private fun ModeScreen(
             Text(layout?.sdText("screen_mode_subtitle") ?: "Pick a transport mode to track.",
                 color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp))
             Spacer(Modifier.height(20.dp))
-            // Adaptive grid — auto-grows columns as the screen gets wider. 170dp
-            // min gives 2 columns on a phone and 4-5 on a tablet.
+            // Grows columns as the screen gets wider; two on a phone.
+            val fontScale = LocalDensity.current.fontScale
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 170.dp),
+                columns = remember(fontScale) { ModeColumns(fontScale) },
                 modifier = Modifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -651,15 +654,48 @@ private fun ModeScreen(
     }
 }
 
+/**
+ * [GridCells.Adaptive] at 170dp, but two columns wherever two names fit: below
+ * 392dp of screen that was one, and each mode filled a 360dp Redmi edge to edge.
+ * One still, when the text is too large for "Elizabeth Line" in half the width.
+ */
+private data class ModeColumns(val fontScale: Float) : GridCells {
+    override fun Density.calculateCrossAxisCellSizes(availableSize: Int, spacing: Int): List<Int> {
+        val count = modeColumnCount(
+            availableSize, spacing,
+            minCell = 170.dp.roundToPx(), minHalf = (MODE_NAME_CELL_DP * fontScale.coerceAtLeast(1f)).dp.roundToPx(),
+        )
+        val room = availableSize - spacing * (count - 1)
+        return List(count) { room / count + if (it < room % count) 1 else 0 }
+    }
+}
+
+/** Pure; see [ModeColumns]. */
+internal fun modeColumnCount(available: Int, spacing: Int, minCell: Int, minHalf: Int): Int {
+    val adaptive = maxOf(1, (available + spacing) / (minCell + spacing))
+    return if (adaptive == 1 && (available - spacing) / 2 >= minHalf) 2 else adaptive
+}
+
+/** The narrowest card that holds "Elizabeth Line" on one line at normal text. */
+internal const val MODE_NAME_CELL_DP = 132f
+
+/** Past this a card is no taller, so one that has a whole row is not a screenful. */
+private val MODE_CARD_MAX_HEIGHT = 230.dp
+
 @Composable
 private fun ModeCard(mode: SduiDropdownOption, primary: Color, onClick: () -> Unit) {
     Surface(
         onClick = onClick, color = Surface1, shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, White08),
-        modifier = Modifier.fillMaxWidth().aspectRatio(0.92f)
+        modifier = Modifier.fillMaxWidth().layout { measurable, constraints ->
+            // 0.92 wide to tall, as ever, up to the cap, and taller only for text.
+            val height = (constraints.maxWidth / 0.92f).toInt().coerceAtMost(MODE_CARD_MAX_HEIGHT.roundToPx())
+            val placeable = measurable.measure(constraints.copy(minHeight = height, maxHeight = Constraints.Infinity))
+            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+        }
     ) {
         Column(
-            Modifier.fillMaxSize().padding(16.dp),
+            Modifier.fillMaxWidth().padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
         ) {
             // White roundel container — always white because TfL line icons are
@@ -683,7 +719,7 @@ private fun ModeCard(mode: SduiDropdownOption, primary: Color, onClick: () -> Un
             }
             Spacer(Modifier.height(14.dp))
             Text(mode.label, color = White90, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
-                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                lineHeight = 18.sp, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }

@@ -554,7 +554,12 @@ private fun AboutCard(card: SduiAppComponent.Card) {
             Text(card.body ?: "", color = White55, fontSize = 13.sp, lineHeight = 19.sp)
             if (card.style == "brand") {
                 Spacer(Modifier.height(14.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Wraps chip by chip: in a Row, a narrow phone (360dp) squeezed the
+                // last one until its words broke onto two lines.
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     // Read once. It cannot change while the process is
                     // alive, and this sits inside a list item that recomposes
                     // with the rest of the About card.
@@ -667,7 +672,7 @@ private fun SignOutButton(label: String, isSigningOut: Boolean, onClick: () -> U
 @Composable
 private fun InfoChip(text: String) {
     Surface(color = White08, shape = RoundedCornerShape(6.dp)) {
-        Text(text, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp), color = White55, fontSize = 11.sp)
+        Text(text, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp), color = White55, fontSize = 11.sp, maxLines = 1, softWrap = false)
     }
 }
 
