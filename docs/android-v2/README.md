@@ -1,5 +1,9 @@
 # Android v2 — project workspace
 
+> **Start here for the release:** [`../ANDROID_2.0_RELEASE_RECORD.md`](../ANDROID_2.0_RELEASE_RECORD.md)
+> is the whole story of 2.0 (state, journey, what shipped, builds, testing,
+> open items, owner actions). This workspace is the programme behind it.
+
 Bringing the live Android app (`versionCode 2`, frozen since launch) up to what
 iOS v2 does, plus the things only Android can do.
 
