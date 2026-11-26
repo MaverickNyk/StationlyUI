@@ -80,4 +80,18 @@ class ColdProcessSaveTest {
         repo.loadIfEmpty()
         assertEquals(listOf("V1"), repo.selections.value.map { it.station })
     }
+
+    @Test
+    fun `an edit worked out from an old row keeps what changed since`() = runBlocking {
+        val disk = storage().apply { saveSelection(row("V1")); saveSelection(row("V1B")) }
+        coldProcess()
+        val repo = repository(disk)
+        // The network answer is for V1; meanwhile the person gave it a filter and deleted V1B.
+        repo.updateSelectionInPlace(row("V1").copy(destinationIds = listOf("BRX")))
+        repo.deleteSelection(row("V1B"))
+        repo.editInPlace { if (it.station == "V1" || it.station == "V1B") it.copy(directionTowards = "Brixton") else null }
+        val v1 = disk.getAllSelections().single()
+        assertEquals("V1" to "Brixton", v1.station to v1.directionTowards)
+        assertEquals(listOf("BRX"), v1.destinationIds)
+    }
 }

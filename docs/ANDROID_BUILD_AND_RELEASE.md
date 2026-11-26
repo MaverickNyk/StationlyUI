@@ -60,6 +60,9 @@ sign-in against the production backend. `android-dev.sh` refuses that switch
 too (it reads `-staging` in the installed version name) unless you pass
 `--switch`.
 
+## Before a build leaves internal testing
+Run [`RELEASE_REGRESSION.md`](RELEASE_REGRESSION.md): smoke for every build, full for every production release.
+
 ## Internal testing on Play
 
 1. `scripts/android-release.sh production --version-code N`. Play rejects any

@@ -1,4 +1,5 @@
 package com.stationly.app.ui.profile
+import com.stationly.app.sync.SessionEnd
 import com.stationly.core.session.SessionStore
 
 import androidx.lifecycle.ViewModel
@@ -215,7 +216,7 @@ class ProfileViewModel(
     }
 
     fun signOut(onSuccess: () -> Unit) {
-        viewModelScope.launch {
+        viewModelScope.launch { SessionEnd.deliberately {
             _uiState.value = _uiState.value.copy(isSigningOut = true, error = null)
             try {
                 // ── Backend teardown FIRST — both calls are auth-gated and the
@@ -327,16 +328,16 @@ class ProfileViewModel(
                     error = "Sign out failed. Please try again."
                 )
             }
-        }
+        } }
     }
 
     fun deleteAccount(onSuccess: () -> Unit) {
-        viewModelScope.launch {
+        viewModelScope.launch { SessionEnd.deliberately {
             _uiState.value = _uiState.value.copy(isDeletingAccount = true, error = null)
             try {
                 val uid = SessionStore.uid() ?: run {
                     _uiState.value = _uiState.value.copy(isDeletingAccount = false, error = "Not authenticated")
-                    return@launch
+                    return@deliberately
                 }
                 runCatching {
                     ActivityLog.recordBlocking(ActivityEvents.AUTH_ACCOUNT_DELETED)
@@ -381,7 +382,7 @@ class ProfileViewModel(
                     error = "Could not delete account. Please try again."
                 )
             }
-        }
+        } }
     }
 
     fun clearError() {

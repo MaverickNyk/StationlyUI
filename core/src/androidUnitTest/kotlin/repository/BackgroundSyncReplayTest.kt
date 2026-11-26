@@ -16,6 +16,9 @@ import com.stationly.db.StationlyDatabase
 import kotlinx.coroutines.runBlocking
 import java.lang.reflect.Proxy
 import kotlin.test.Test
+import kotlin.test.BeforeTest
+import kotlin.test.AfterTest
+import com.stationly.core.config.BoardQuota
 import kotlin.test.assertEquals
 
 /**
@@ -69,9 +72,9 @@ class BackgroundSyncReplayTest {
     )
     private val sync = UserSyncRepository(api, sql, storage)
 
-    private fun push(vararg boards: String) = runBlocking {
+    private fun push(vararg boards: String, fromV1: Boolean = false) = runBlocking {
         cloud = boards.toList(); rev++
-        sync.reconcileBoards("u", lifecycle, rev)
+        sync.reconcileBoards("u", lifecycle, rev, keepLocalBoards = fromV1)
     }
 
     private fun onPhone() = sql.getAllSelections().map { it.station }.toSet()
@@ -120,5 +123,77 @@ class BackgroundSyncReplayTest {
         backgroundProcess("A")
         push()
         assertEquals(emptySet(), onPhone())
+    }
+
+    // ── The first launch after a v1 → v2 upgrade (2026-11-26) ──
+    //
+    // An account used on iOS (or a v2 phone) holds a real board list; the v1
+    // phone holds what v1 let it add, which the board list has never seen. The
+    // upgrade must MERGE: keep the phone's board and bring in the account's.
+
+    // The served limit, as the merge must have one before it leaves anything out.
+    private val served = BoardQuota.servedLimit
+    @BeforeTest fun servedLimit() { BoardQuota.servedLimit = { 4 } }
+    @AfterTest fun reset() { BoardQuota.servedLimit = served }
+
+    @Test
+    fun `the first launch after a v1 upgrade keeps the phone's board and adds the account's`() {
+        backgroundProcess("V1")
+        push("A", "B", "C", fromV1 = true)
+        assertEquals(setOf("V1", "A", "B", "C"), onPhone())
+    }
+
+    @Test
+    fun `but not past the station limit - the Pixel's five`() {
+        backgroundProcess("V1")
+        push("A", "B", "C", "D", fromV1 = true)
+        assertEquals(setOf("V1", "A", "B", "C"), onPhone())
+    }
+
+    @Test
+    fun `with no served limit to go by it leaves nothing out`() {
+        BoardQuota.servedLimit = { null } // no fresh answer from the server
+        backgroundProcess("V1")
+        push("A", "B", "C", "D", fromV1 = true)
+        assertEquals(setOf("V1", "A", "B", "C", "D"), onPhone())
+    }
+
+    @Test
+    fun `an ordinary sync is never cut, so a lowered limit removes nothing`() {
+        backgroundProcess("A", "B", "C", "D", "E")
+        push("A", "B", "C", "D", "E")
+        assertEquals(setOf("A", "B", "C", "D", "E"), onPhone())
+    }
+
+    @Test
+    fun `and a board both sides have is not set up twice`() {
+        backgroundProcess("A")
+        push("A", "B", fromV1 = true)
+        assertEquals(listOf("A", "B"), sql.getAllSelections().map { it.station }.sorted())
+    }
+
+    @Test
+    fun `after the upgrade the account is the truth again`() {
+        backgroundProcess("V1")
+        push("A", "B", fromV1 = true)
+        push("A", "B", "V1") // the merged list, as the upgrade publishes it
+        push("A", "V1") // B deleted on the other device
+        assertEquals(setOf("A", "V1"), onPhone())
+    }
+
+    @Test
+    fun `boards brought in by a merge keep the account's order`() {
+        backgroundProcess("V1")
+        push("A", "B", "C", fromV1 = true)
+        assertEquals(listOf("A", "B", "C", "V1"), sql.getAllSelections().map { it.station })
+    }
+
+    @Test
+    fun `a reconcile says whether it applied the account, which a full save depends on`() {
+        backgroundProcess("A")
+        push("A", "B")
+        assertEquals(true, sync.lastReconcileApplied)
+        runBlocking { sync.reconcileBoards("u", lifecycle, rev) } // same rev: the gate stays shut
+        assertEquals(false, sync.lastReconcileApplied)
     }
 }

@@ -361,4 +361,30 @@ class BoardTest {
             json.decodeFromString(BoardConfig.serializer(), stored).platformNav,
         )
     }
+
+    // ── Order: what the account keeps, and how a sign-in puts it back (2026-11-26) ──
+
+    private fun stationsOf(vararg spec: Pair<String, List<String>>) =
+        spec.flatMap { (hub, lines) -> lines.map { sel(hub, hub, it, "inbound", name = hub) } }
+
+    @Test
+    fun `the account keeps the home screen's order, dragged or not`() {
+        val boards = Board.fromSelections(stationsOf("A" to listOf("1"), "B" to listOf("2"), "C" to listOf("3")))
+        assertEquals(listOf("A", "B", "C"), Board.inOrder(boards) { it }.map { it.id })
+        // Dragged: C first. A board the order does not name goes last.
+        assertEquals(listOf("C", "A", "B"), Board.inOrder(boards) { listOf("C", "A", "B") }.map { it.id })
+        assertEquals(listOf("C", "A", "B"), Board.inOrder(boards) { listOf("C", "A") }.map { it.id })
+    }
+
+    @Test
+    fun `a sign-in puts stations and their lines back in the account's order`() {
+        // The phone before: Penton Street (214, 205, 73), Southfields, Brentwood (608, 498), Epping.
+        val before = stationsOf("PENTON" to listOf("214", "205", "73"), "SOUTHFIELDS" to listOf("district"),
+            "BRENTWOOD" to listOf("608", "498"), "EPPING" to listOf("central"))
+        val account = Board.inOrder(Board.fromSelections(before)) { it }
+        // As the restore does it: every setup puts its board at the top.
+        val restored = mutableListOf<UserSelection>()
+        Board.setupOrder(account).forEach { restored.add(0, it) }
+        assertEquals(before.map { it.groupingId to it.line }, restored.map { it.groupingId to it.line })
+    }
 }

@@ -4,6 +4,9 @@ import com.stationly.core.model.sdui.*
 import com.stationly.core.service.SduiApiService
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.user.effectiveBoards
+import com.stationly.core.config.BoardQuota
+import com.stationly.core.activity.ActivityEvents
+import com.stationly.core.activity.ActivityLog
 import com.stationly.core.platform.StorageManager
 import com.stationly.core.platform.WidgetRestore
 import com.stationly.core.usecase.StationLifecycleUseCase
@@ -138,12 +141,24 @@ class UserSyncRepository(
      *   device has not adopted the cloud's list; the push that publishes the
      *   union stamps it. False everywhere else, including all of iOS.
      */
+    /**
+     * Whether the last [reconcileBoards] APPLIED the account to this device, as
+     * opposed to returning early (rev gate, another account, a list with nothing
+     * usable, an account with no list yet). A caller about to make a full-replace
+     * save must know: from a device that did not apply, it deletes what the device
+     * does not have. A flag rather than a new return type, so the iOS bridge's
+     * calls stay as they are.
+     */
+    var lastReconcileApplied: Boolean = false
+        private set
+
     suspend fun reconcileBoards(
         uid: String,
         lifecycle: StationLifecycleUseCase,
         observedRev: Long? = null,
         keepLocalBoards: Boolean = false,
     ): UserProfileResponse? {
+        lastReconcileApplied = false
         val rev = observedRev ?: apiService.getUserStateRev(uid)
         if (!LocalRevStore.shouldFetch(storageManager, uid, rev)) return null
 
@@ -156,8 +171,17 @@ class UserSyncRepository(
         // what a truncated or superseded payload decodes to, and dropping those
         // makes the guard below treat the account as having no board list, which
         // is what stops this deleting every board on the device.
-        val cloud = profile.boards.filter { it.isUsable }
+        val usable = profile.boards.filter { it.isUsable }
         val local = sqlStorage.getAllSelections()
+        // The first launch after a v1 upgrade MERGES, so it is the one reconcile
+        // that can take the phone past the station limit. Everything below sees
+        // only what fits; see [BoardQuota.fit].
+        val cloud = if (!keepLocalBoards) usable else BoardQuota.fitMerge(local, usable).also { fit ->
+            if (fit.left.isNotEmpty()) {
+                ActivityLog.record(ActivityEvents.SYNC_OVER_LIMIT, "left", fit.left.size.toString())
+                println("[UserSyncRepository] v1 merge over the station limit; not set up: ${fit.left.map { it.name }}")
+            }
+        }.kept
 
         // ── The one case where the cloud is NOT the truth ──
         //
@@ -180,7 +204,7 @@ class UserSyncRepository(
         // usability filter. Deliberately NOT "cloud is empty" — a genuinely
         // empty cloud list is the user deleting their last board on another
         // device, and that must still propagate here.
-        val servedUnusableBoards = profile.boards.isNotEmpty() && cloud.isEmpty()
+        val servedUnusableBoards = profile.boards.isNotEmpty() && usable.isEmpty()
         if ((profile.boardsUpdatedAt == 0L || servedUnusableBoards) && local.isNotEmpty()) return profile
 
         // Flattened to the same (naptan, line, direction) rows the app runs on,
@@ -216,12 +240,17 @@ class UserSyncRepository(
             lifecycle.discardStation(sel, clearSelectionInRepo = true, remaining = remaining)
         }
 
-        cloudSelections.forEach { restored ->
-            val existing = localByKey[key(restored.station, restored.line, restored.direction)]
-            if (existing == null) {
-                lifecycle.setupStation(restored, isFirstTime = false)
-                return@forEach
-            }
+        // New boards LAST FIRST: each setup puts its row at the top of the list,
+        // so going in the account's order would leave them reversed (the order
+        // bug AV2-11.47 fixed for sign-in; this is the same thing mid-session
+        // and on the first launch after a v1 upgrade). See [Board.setupOrder].
+        val (present, missing) = cloudSelections.partition {
+            localByKey[key(it.station, it.line, it.direction)] != null
+        }
+        missing.asReversed().forEach { lifecycle.setupStation(it, isFirstTime = false) }
+
+        present.forEach { restored ->
+            val existing = localByKey.getValue(key(restored.station, restored.line, restored.direction))
             // A board present on both sides can still have CHANGED — the user
             // edited its filter on another device. Comparing only the identity
             // triple (as the legacy path does) makes that edit invisible: the
@@ -259,6 +288,7 @@ class UserSyncRepository(
         // From the profile, never from the rev that opened the gate: the
         // observed rev may have been an undershoot (a concurrent write), while
         // the profile carries what the document actually said when it was read.
+        lastReconcileApplied = true
         if (!keepLocalBoards) LocalRevStore.store(storageManager, uid, profile.stateRev)
 
         return profile

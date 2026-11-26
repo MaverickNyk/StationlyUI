@@ -61,6 +61,11 @@ object UserStateSync {
      */
     const val ACCOUNT_REMOVED_FLAG = "account_removed_notice"
 
+    /** Whether this device's station order is in the account: [ORDER_SAVED], or not yet. */
+    private const val ORDER_KEY = "board_order_in_account"
+    private const val ORDER_PENDING = "pending"
+    private const val ORDER_SAVED = "saved"
+
     val repository: UserStateRepository by lazy {
         UserStateRepository(
             NetworkModule.sduiApi,
@@ -106,6 +111,51 @@ object UserStateSync {
      * the user's last change left the device before the session did.
      */
     suspend fun flushNow() = repository.flushNow()
+
+    /**
+     * The user dragged their stations into a new order: save it to the account,
+     * if that is safe now, else at the next sync that catches up (AV2-11.47).
+     *
+     * A save is a full replace of the account's list, so it is sent only from a
+     * device that is up to date ([UserStateRepository.caughtUp]). From one that
+     * missed a board added elsewhere, it would delete that board.
+     */
+    suspend fun orderChanged() {
+        val storage = Platform.storageManager
+        runCatching { storage.saveDurable(ORDER_KEY, ORDER_PENDING) }
+        if (repository.caughtUp()) {
+            boardsChanged()
+            flushNow()
+            // Saved only once the server took it; else the next caught-up sync retries.
+            if (repository.allPushed()) runCatching { storage.saveDurable(ORDER_KEY, ORDER_SAVED) }
+        }
+    }
+
+    /**
+     * Save the stations' order to the account if it has not been yet: after a
+     * drag that could not be sent ([orderChanged]), and once on the first sync
+     * after updating to a build that keeps the order there.
+     *
+     * Builds before this wrote the account's list oldest first, so until the
+     * first save from this one, signing in elsewhere brought the stations back in
+     * that order: seen on the Fold on 2026-11-26, Southfields moving from first to
+     * last.
+     *
+     * Call ONLY right after a sync that left this device caught up with the
+     * account; the save is a full replace. Marked saved only once the server has
+     * accepted it.
+     */
+    suspend fun publishOrderIfPending() {
+        val storage = Platform.storageManager
+        if (runCatching { storage.loadDurable(ORDER_KEY) }.getOrNull() == ORDER_SAVED) return
+        if (Platform.sqlStorage.getAllSelections().isNotEmpty()) {
+            boardsChanged()
+            flushNow()
+            // Not accepted (offline, refused): stays pending for the next sync.
+            if (!repository.allPushed()) return
+        }
+        runCatching { storage.saveDurable(ORDER_KEY, ORDER_SAVED) }
+    }
 
     /**
      * Drop everything held for the session that is ending.
@@ -205,29 +255,16 @@ object UserStateSync {
         // at the defaults.
         UserSettings.ensureLoaded()
 
-        // Oldest first, so the restored home screen is in the order the user
-        // built it.
-        //
-        // `config.sortKey` is in the comparator for symmetry with `buildBoards`,
-        // where it IS live — but on THIS path it can never decide anything.
-        // `Board.config` is `@Transient`, so every board deserialised from the
-        // profile carries a default `BoardConfig`, every `sortKey` is
-        // `Int.MAX_VALUE`, and the sort falls entirely to `addedAt`. (An earlier
-        // version of this comment claimed position overrode it here. It cannot:
-        // drag order is device-local and does not travel — see
-        // USER_STATE_AND_ACTIVITY.md §2b.)
-        //
-        // Which is correct rather than merely harmless: this ordering only
-        // decides SETUP order. The home screen renders from `UserSettings`,
-        // which does hold the positions on a device that has them.
+        // In the account's order, which is the home screen's (see
+        // `Board.inOrder`). Each setup puts its board at the TOP, so they are set up
+        // last first. They used to be sorted oldest first and so came back reversed,
+        // stations and lines alike, whatever order the user had.
         //
         // Set up per (line, direction): that is the level a topic subscription
         // and a prediction table live at, so one station with four lines is four
         // calls, not one.
-        boards.sortedWith(compareBy({ it.config.sortKey }, { it.addedAt })).forEach { board ->
-            board.toSelections().forEach { selection ->
-                runCatching { lifecycle.setupStation(selection, isFirstTime = false) }
-            }
+        Board.setupOrder(boards).forEach { selection ->
+            runCatching { lifecycle.setupStation(selection, isFirstTime = false) }
         }
         ActivityLog.record(ActivityEvents.SYNC_RESTORED, "boards", boards.size.toString())
 

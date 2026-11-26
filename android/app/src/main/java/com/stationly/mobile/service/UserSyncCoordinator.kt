@@ -175,6 +175,9 @@ object UserSyncCoordinator {
                     if (profile == null) {
                         Log.d("UserSync", "Reconcile skipped — account unchanged (rev gate)")
                         if (fromV1) publishV1Boards(context, uid, null)
+                        // Caught up (the account has not changed since the
+                        // last sync that applied), so a full save loses nothing.
+                        UserStateSync.publishOrderIfPending()
                         return@withLock
                     }
 
@@ -206,6 +209,12 @@ object UserSyncCoordinator {
                     // Last: it is network, and a failure must not keep the
                     // screens from showing what the reconcile already changed.
                     if (fromV1) publishV1Boards(context, uid, profile)
+                    // Only when the reconcile APPLIED the account, which is when it
+                    // stamps the account's revision. It can return without
+                    // applying (a truncated list, an account with no list yet),
+                    // and a full save from here would then delete what the
+                    // device does not have. See publishOrderIfPending.
+                    if (repo.lastReconcileApplied) UserStateSync.publishOrderIfPending()
                 } catch (e: com.stationly.core.service.UserNotFoundException) {
                     // The account was deleted (here or on another device) and we
                     // missed / never got the `user_sync` deleted push. Treat the
@@ -283,7 +292,19 @@ object UserSyncCoordinator {
      * written to those would be erased by the very sequence it exists to
      * outlive. `stationly_durable_prefs` is a different file and survives.
      */
+    /**
+     * True while [forceLogout] is signing the device out, and for a few seconds
+     * after: MainActivity's auth listener sees the same sign-out (it rechecks
+     * after a second) and must not run a second teardown over this one.
+     */
+    @Volatile
+    private var forcedLogoutAt = 0L
+    val forcingLogout: Boolean
+        get() = System.currentTimeMillis() - forcedLogoutAt < FORCED_LOGOUT_WINDOW_MS
+    private const val FORCED_LOGOUT_WINDOW_MS = 10_000L
+
     private fun forceLogout(context: Context) {
+        forcedLogoutAt = System.currentTimeMillis()
         scope.launch {
             try {
                 Platform.storageManager.saveDurable(

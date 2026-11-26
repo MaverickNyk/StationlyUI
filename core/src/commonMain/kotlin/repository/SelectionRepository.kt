@@ -134,6 +134,16 @@ class SelectionRepository(
         lock.withLock { updateLocked(selections) }
     }
 
+    /**
+     * Edit boards from what they are NOW: [edit] gets each row under the lock and returns
+     * its replacement, or null to leave it. For a change worked out before waiting (a
+     * network answer), which as finished rows would undo an edit made meanwhile.
+     */
+    suspend fun editInPlace(edit: (UserSelection) -> UserSelection?) = lock.withLock {
+        ensureLoaded()
+        updateLocked(_selections.value.mapNotNull(edit))
+    }
+
     private fun updateLocked(selections: List<UserSelection>) {
         ensureLoaded()
         val current = _selections.value.toMutableList()

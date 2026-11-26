@@ -21,6 +21,7 @@ import com.stationly.app.ui.dream.DreamHost
 import com.stationly.app.ui.dream.DreamSettingsScreen
 import com.stationly.app.ui.summary.BoardFocus
 import com.stationly.app.ui.support.SupportMoment
+import com.stationly.app.sync.SessionEnd
 import com.stationly.app.ui.login.LoginScreen
 import com.stationly.app.ui.login.PlatformAuthProvider
 import com.stationly.app.ui.profile.ProfileScreen
@@ -30,6 +31,7 @@ import com.stationly.app.ui.station.StationSettingsScreen
 import com.stationly.app.ui.widgets.WidgetGuideScreen
 import com.stationly.app.ui.summary.SummaryScreen
 import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.flow.first
 
 @Composable
 fun AppNavigation(
@@ -56,8 +58,27 @@ fun AppNavigation(
     onAddWidgetForStation: ((String) -> Unit)? = null,
     /** Open the settings of the widget already showing this station. */
     onOpenWidgetSettingsForStation: ((String) -> Unit)? = null,
+    /**
+     * The account went while the app was running: deleted on another device, or the
+     * server refused it. [onSessionEnded] tears down what is left; then the login screen,
+     * with nothing behind it. Zero means it has not. iOS rebuilds its host instead.
+     */
+    sessionEndedSignal: Int = 0,
+    onSessionEnded: suspend () -> Unit = {},
 ) {
     val navController = rememberNavController()
+
+    LaunchedEffect(sessionEndedSignal) {
+        if (sessionEndedSignal == 0 || SessionEnd.deliberate) return@LaunchedEffect
+        // Waits for the graph: this can be true from the first frame after a restore.
+        val route = navController.currentBackStackEntryFlow.first().destination.route
+        if (route == null || route.startsWith("auth/")) return@LaunchedEffect
+        onSessionEnded()
+        navController.navigate("auth/login") {
+            popUpTo(0) { inclusive = true }
+            launchSingleTop = true
+        }
+    }
 
     /**
      * SAVED, not recomputed — and the saving has to be here rather than in the

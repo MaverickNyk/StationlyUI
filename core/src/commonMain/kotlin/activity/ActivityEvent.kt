@@ -155,6 +155,9 @@ object ActivityEvents {
     /** Props: `boards` — how many were restored. */
     const val SYNC_RESTORED = "sync.restored"
 
+    /** Boards the account held that did not fit under the station limit; see `BoardQuota.fit`. */
+    const val SYNC_OVER_LIMIT = "sync.over_limit"
+
     // ── Boards ──────────────────────────────────────────────────────────────
     /** Props: `station`, `line`, `mode`, `direction`. */
     const val BOARD_ADDED = "board.added"

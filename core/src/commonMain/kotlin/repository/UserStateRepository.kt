@@ -189,6 +189,25 @@ class UserStateRepository(
     }
 
     /**
+     * Whether this device has seen the account's latest state: the server's
+     * revision is no newer than the one this device last applied (or wrote).
+     *
+     * For a push that is safe only from a device that is up to date. A push is a
+     * full replace, so one from a device that missed a change elsewhere (offline,
+     * a dropped user_sync push) deletes what it missed. One small request; false
+     * on any doubt (no account, no network).
+     */
+    /** Whether every board change so far has been accepted by the server. */
+    fun allPushed(): Boolean = gate.pending() == null
+
+    suspend fun caughtUp(): Boolean {
+        val uid = Platform.storageManager.loadString(UID_KEY)
+        if (uid.isNullOrBlank()) return false
+        val rev = runCatching { api.getUserStateRev(uid) }.getOrNull() ?: return false
+        return rev > 0L && !LocalRevStore.shouldFetch(Platform.storageManager, uid, rev)
+    }
+
+    /**
      * Send anything pending right now, skipping the debounce.
      *
      * For the moments where the process may not survive the wait: the app going
@@ -248,14 +267,14 @@ class UserStateRepository(
     private suspend fun buildBoards(): List<Board> {
         UserSettings.ensureLoaded()
         val now = Clock.System.now().toEpochMilliseconds()
-        return Board.fromSelections(
+        val boards = Board.fromSelections(
             selections = sqlStorage.getAllSelections(),
             config = UserSettings::configOf,
             addedAt = { id -> addedAt.getOrPut(id) { now } },
         )
-            // Sorted so the array's order and `config.position` always agree,
-            // and a reader that honours either gets the same home screen.
-            .sortedWith(compareBy({ it.config.sortKey }, { it.addedAt }))
+        // In the home screen's order, dragged or not: the one thing about the
+        // arrangement the account keeps, so a sign-in elsewhere shows the same order.
+        return Board.inOrder(boards, UserSettings::ordered)
     }
 
     private suspend fun pushBoards() = mutex.withLock {

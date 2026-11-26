@@ -16,6 +16,14 @@ import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import com.stationly.app.AndroidPlatformAuthProvider
+import com.stationly.app.ui.summary.BoardExpansion
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.NonCancellable
+import com.stationly.mobile.service.FirebaseAuthManager
+import com.stationly.app.sync.UserStateSync
+import com.stationly.app.sync.SessionEnd
+import com.google.firebase.auth.FirebaseAuth
 import com.stationly.app.App
 import com.stationly.app.ui.summary.BoardFocus
 import com.stationly.core.model.deeplink.DeepLinkRoute
@@ -94,6 +102,11 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var authProvider: AndroidPlatformAuthProvider
 
+    /** How many times the account has gone while this Activity had one. See [watchSession]. */
+    private var sessionEnded by mutableIntStateOf(0)
+    private var hasSession = false
+    private val authListener = FirebaseAuth.AuthStateListener { watchSession(it) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         installSplashScreen()
@@ -126,6 +139,8 @@ class MainActivity : ComponentActivity() {
         } else {
             authProvider.isLoggedIn()
         }
+        hasSession = startLoggedIn
+        FirebaseAuth.getInstance().addAuthStateListener(authListener)
 
         if (savedInstanceState == null) recordNotificationOpened(intent)
         handleDeepLink(intent)
@@ -139,6 +154,8 @@ class MainActivity : ComponentActivity() {
                     emailVerifiedSignal        = emailVerifiedSignal,
                     showPasswordResetSuccess   = passwordResetComplete,
                     onPasswordResetBannerShown = { passwordResetComplete = false },
+                    sessionEndedSignal         = sessionEnded,
+                    onSessionEnded             = ::tearDownEndedSession,
                     // Home settings → "Widget stations". No `appWidgetId`, so
                     // the screen opens in manager mode: every placed widget and
                     // the station it shows. Null on iOS, where an app cannot
@@ -193,6 +210,47 @@ class MainActivity : ComponentActivity() {
                 StagingBanner(Modifier.align(Alignment.BottomCenter))
             }
         }
+    }
+
+    /**
+     * v1's auth observer, which the cutover dropped: without it an account deleted on
+     * another device was signed out underneath a screen that went on showing its boards.
+     *
+     * Asked again a moment later, because right after a start Firebase can say "nobody"
+     * before it has read who was signed in.
+     */
+    private fun watchSession(auth: FirebaseAuth) {
+        if (auth.currentUser != null) {
+            hasSession = true
+            return
+        }
+        if (!hasSession) return
+        lifecycleScope.launch {
+            delay(SESSION_RECHECK_MS)
+            if (auth.currentUser == null && hasSession && !SessionEnd.deliberate) {
+                hasSession = false
+                sessionEnded++
+            }
+        }
+    }
+
+    /** What a sign-out leaves behind when nobody asked for it. Every step can be repeated. */
+    private suspend fun tearDownEndedSession() = withContext(NonCancellable) {
+        // An account deleted elsewhere is torn down by UserSyncCoordinator's
+        // forceLogout, which also leaves the "account removed" notice; a second
+        // teardown alongside it would race it.
+        if (!UserSyncCoordinator.forcingLogout) {
+            runCatching { FirebaseAuthManager(applicationContext).logout() }
+        }
+        BoardExpansion.clear()
+        BoardFocus.clear()
+        runCatching { UserStateSync.resetForNewSession() }
+        Unit
+    }
+
+    override fun onDestroy() {
+        FirebaseAuth.getInstance().removeAuthStateListener(authListener)
+        super.onDestroy()
     }
 
     /**
@@ -352,5 +410,6 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val KEY_START_LOGGED_IN = "start_logged_in"
+        private const val SESSION_RECHECK_MS = 1_000L
     }
 }

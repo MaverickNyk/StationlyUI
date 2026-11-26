@@ -148,6 +148,8 @@ fun HomeSettingsScreen(
     // can see them (see [StationOrderCard]); this is the second lock, and the
     // one that also stops a fling started elsewhere from carrying on mid-drag.
     var reordering by remember { mutableStateOf(false) }
+    // Whether the current drag moved anything, so a tap-and-release sends nothing.
+    var orderMoved by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -221,14 +223,24 @@ fun HomeSettingsScreen(
                 val reorder: (List<HomeStation>) -> Unit = { reordered ->
                     stations = reordered
                     scope.launch { UserSettings.reorder(reordered.map { it.id }) }
-                    // Fires per drag step, and the upload behind it is debounced
-                    // — so a drag across four positions is four events and one
-                    // request. The events are the cheap half and worth keeping
-                    // at that grain; the request is the one that had to be
-                    // collapsed.
+                    // Saved to the account when the drag ENDS (below), not per step.
+                    orderMoved = true
+                    // Fires per drag step. The events are the cheap half and
+                    // worth keeping at that grain.
                     ActivityLog.record(
                         ActivityEvents.SETTINGS_HOME_REORDERED, "count", reordered.size.toString()
                     )
+                }
+                // The account keeps the stations' ORDER (not the rest of the
+                // arrangement), so a sign-in elsewhere shows it too. Once per
+                // drag, at its end; see UserStateSync.orderChanged for when it
+                // is safe to send.
+                val draggingChange: (Boolean) -> Unit = { dragging ->
+                    reordering = dragging
+                    if (!dragging && orderMoved) {
+                        orderMoved = false
+                        scope.launch { com.stationly.app.sync.UserStateSync.orderChanged() }
+                    }
                 }
                 val openStation: (HomeStation) -> Unit = { s ->
                     performHaptic(HapticType.TAP)
@@ -239,7 +251,7 @@ fun HomeSettingsScreen(
                         stations = stations,
                         onReorder = reorder,
                         onOpen = openStation,
-                        onDraggingChange = { reordering = it },
+                        onDraggingChange = draggingChange,
                     )
                     SettingsCaption("Hold and drag a page left or right. Tap for settings.")
                 } else {
@@ -247,7 +259,7 @@ fun HomeSettingsScreen(
                         stations = stations,
                         onReorder = reorder,
                         onOpen = openStation,
-                        onDraggingChange = { reordering = it },
+                        onDraggingChange = draggingChange,
                     )
                     SettingsCaption("Hold and drag to reorder. Tap for settings.")
                 }

@@ -151,7 +151,7 @@ The split is drawn by **consequence**, not by convenience.
 | State | Where it lives | Why |
 |---|---|---|
 | Boards, lines, directions, filters | **Backend** (`users/{uid}.boards`) | The subscription registry is derived from them. A station missing from it is never polled, so losing a board loses departures. Changes are rare. |
-| Expanded, view, rowsPerPlatform, pin, position, home layout, screensaver | **Device**, per account | Appearance. Changes on every touch, and is worth nothing to any device but this one. |
+| Expanded, view, rowsPerPlatform, pin, position, home layout, screensaver (the stations' ORDER does travel: see below) | **Device**, per account | Appearance. Changes on every touch, and is worth nothing to any device but this one. |
 
 ### This reverses the earlier decision, on purpose
 An earlier version synced everything, so that signing in anywhere restored the
@@ -164,6 +164,31 @@ write quota on.
 
 The debounce (2.5 s) hid the worst of it and did not fix it: it collapsed a
 slider drag into one write, but every distinct change was still a round trip.
+
+### Except the order of the stations (2026-11-26)
+The account's board list is kept in the home screen's order, the user's drag
+included (`Board.inOrder`), and a sign-in sets the boards up in that order
+(`Board.setupOrder`). A drag in Home settings sends one write when it ends, but
+only from a device that has caught up with the account (its last applied revision
+is the server's): a write is a full replace, and one from a device that missed a
+board added elsewhere would delete it. Otherwise the order is marked pending and
+sent after the next sync that catches up. The first sync on this build also sends
+it once, because older builds left the account's list oldest first. `position` itself still stays on the device: the order travels as the order
+of the list, not as a setting. Before this, a sign-in brought stations back oldest
+first and each station's lines reversed, whatever the user had. A change of order
+on another device is applied at the next sign-in, not live.
+
+### The station limit on the v1 upgrade merge (2026-11-26)
+The first launch after a v1 upgrade is the one sync that MERGES (the phone's v1
+board plus the account's), so it is the one that can pass the station limit. It
+goes through `BoardQuota.fitMerge` (AV2-11.49): the phone's boards stay, the
+account's fill the free slots in its order, and the rest are not set up. The
+upgrade then saves the list, a full replace, so those leave the account. It acts
+only on a limit the server states in a fresh fetch; without one nothing is cut.
+
+A sign-in and ordinary syncs are deliberately NOT cut: any cut is followed by a
+save that deletes the cut boards from the account, and an account can be over
+the limit for innocent reasons (the limit was lowered).
 
 ### The cost, stated plainly
 **A brand-new device gets default appearance.** The boards come back — every

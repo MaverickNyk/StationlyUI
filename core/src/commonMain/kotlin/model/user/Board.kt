@@ -144,6 +144,25 @@ data class Board(
          * `groupBy` preserves first-seen order, so a board's selections come
          * back in the order the user added them.
          */
+        /**
+         * [boards] in the order [ordered] gives their ids: the home screen's own,
+         * `UserSettings.ordered`. The account's list is kept in this order, which is
+         * how the order of the stations, the user's dragged order included, survives
+         * a sign-in on any device (2026-11-26).
+         */
+        fun inOrder(boards: List<Board>, ordered: (List<String>) -> List<String>): List<Board> {
+            val rank = ordered(boards.map { it.id }).withIndex().associate { (i, id) -> id to i }
+            return boards.sortedBy { rank[it.id] ?: Int.MAX_VALUE }
+        }
+
+        /**
+         * The order to set [boards] up in when each is put at the TOP of the list, as
+         * `SelectionRepository.saveSelection` does: last first, so the list ends up in
+         * [boards]' own order, stations and their lines alike.
+         */
+        fun setupOrder(boards: List<Board>): List<UserSelection> =
+            boards.flatMap { it.toSelections() }.asReversed()
+
         fun fromSelections(
             selections: List<UserSelection>,
             config: (String) -> BoardConfig = { BoardConfig() },

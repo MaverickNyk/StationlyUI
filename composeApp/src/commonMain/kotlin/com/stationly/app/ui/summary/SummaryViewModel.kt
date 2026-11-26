@@ -18,6 +18,8 @@ import com.stationly.core.config.BoardQuota
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.core.model.StationNotice
 import com.stationly.core.repository.StationNoticeStore
+import com.stationly.app.ui.station.RouteTextBackfill
+import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.FreshData
 import com.stationly.core.util.FreshDataNotifier
 import com.stationly.core.util.GlobalBoardProcessor
@@ -188,6 +190,10 @@ class SummaryViewModel(
             // overlaps with the screen composing, so it is deliberately the
             // first thing after the selections are known.
             refreshStaleBoards(selectionRepository.selections.value)
+            // After the departures. Both sides of an unlettered stop read "Bus 498" without it.
+            runCatching {
+                RouteTextBackfill.run(selectionRepository, oncePerProcess = true) { MultiLineBoardProcessor.isBus(it.mode) && RouteTextBackfill.lacksText(it) }
+            }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
         }
         viewModelScope.launch {
             selectionRepository.selections.collect { newSelections ->

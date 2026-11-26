@@ -92,6 +92,9 @@ fun App(
      */
     onAddWidgetForStation: ((String) -> Unit)? = null,
     onOpenWidgetSettingsForStation: ((String) -> Unit)? = null,
+    /** Bumped by the host when the account goes while the app is running. See [AppNavigation]. */
+    sessionEndedSignal: Int = 0,
+    onSessionEnded: suspend () -> Unit = {},
 ) {
     val uriHandler = LocalUriHandler.current
 
@@ -227,6 +230,8 @@ fun App(
                     onManageWidgets            = onManageWidgets,
                     onAddWidgetForStation      = onAddWidgetForStation,
                     onOpenWidgetSettingsForStation = onOpenWidgetSettingsForStation,
+                    sessionEndedSignal         = sessionEndedSignal,
+                    onSessionEnded             = onSessionEnded,
                 )
                 LoadingOverlay(visible = busyLabel != null, label = busyLabel)
 

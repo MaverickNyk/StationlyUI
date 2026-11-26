@@ -171,10 +171,26 @@ private fun SduiAppScreen.sdText(id: String, vars: Map<String, String?> = emptyM
     components.filterIsInstance<SduiAppComponent.Text>().find { it.id == id }?.text
         ?.let { interpolate(it, vars) }
 
-private fun interpolate(template: String, vars: Map<String, String?>): String {
+private val VOWELS = setOf('a', 'e', 'i', 'o', 'u')
+
+/** Vowel letters that SOUND like a consonant: "a Uber Boat pier", "a one-stop line". */
+private val CONSONANT_SOUNDS = listOf("uber", "uni", "use", "eu", "one")
+
+/** Whether [word] takes "an": by sound, near enough for the names of modes. */
+private fun takesAn(word: String): Boolean {
+    val w = word.lowercase()
+    return w.firstOrNull() in VOWELS && CONSONANT_SOUNDS.none { w.startsWith(it) }
+}
+
+internal fun interpolate(template: String, vars: Map<String, String?>): String {
     if (!template.contains('{')) return template
     var out = template
-    vars.forEach { (k, v) -> out = out.replace("{$k}", v ?: "") }
+    vars.forEach { (k, v) ->
+        // The template says "a {mode}": "Find an Overground station". Only the
+        // mode: other served templates say what they mean.
+        if (k == "mode" && v != null && takesAn(v)) out = out.replace(Regex("\\b([Aa]) \\{mode\\}"), "$1n {mode}")
+        out = out.replace("{$k}", v ?: "")
+    }
     return out.replace(Regex("\\s{2,}"), " ").trim()
 }
 
@@ -778,7 +794,7 @@ private fun StationScreen(
     val noun = stopNounSingular(mode)
     val vars = mapOf("mode" to modeLabel, "stop" to noun)
     val titleFallback =
-        if (!modeLabel.isNullOrBlank()) "Find a $modeLabel $noun" else "Find your $noun"
+        if (!modeLabel.isNullOrBlank()) interpolate("Find a {mode} {stop}", vars) else "Find your $noun"
     val subtitleFallback =
         if (noNearby) "Search by name."
         else "Nearby ${noun}s first, or search for another."
