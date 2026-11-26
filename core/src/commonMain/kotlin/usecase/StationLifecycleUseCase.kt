@@ -84,12 +84,7 @@ class StationLifecycleUseCase(
         subscribeTopics: Boolean = true,
     ) {
         if (subscribeTopics) {
-            notificationManager.subscribeToTopics(
-                listOf(
-                    "Station_${selection.station}",
-                    "LineStatus_${selection.mode}_${selection.line}"
-                )
-            )
+            notificationManager.subscribeToTopics(topicsFor(selection))
         }
         val now = Clock.System.now().toEpochMilliseconds()
         val preds = sqlStorage.getPredictions(selection.station, selection.line, selection.direction)
@@ -154,14 +149,7 @@ class StationLifecycleUseCase(
         remaining: List<UserSelection> = emptyList(),
     ) {
         // 1. Unsubscribe from FCM topics — but only those no survivor still needs.
-        val topics = buildList {
-            if (remaining.none { it.station == selection.station }) {
-                add("Station_${selection.station}")
-            }
-            if (remaining.none { it.mode == selection.mode && it.line == selection.line }) {
-                add("LineStatus_${selection.mode}_${selection.line}")
-            }
-        }
+        val topics = topicsToRelease(selection, remaining)
         if (topics.isNotEmpty()) notificationManager.unsubscribeFromTopics(topics)
 
         // 2. Clear local data (Predictions and Status). Only THIS direction —
@@ -195,25 +183,116 @@ class StationLifecycleUseCase(
     }
 
     /**
-     * Cleanup everything (Logout/Clear All)
+     * Cleanup everything: logout, account deletion, forced sign-out.
      *
-     * Topic collection must happen before clearAll() so the unsubscription
-     * queue written by unsubscribeFromTopics() is not immediately wiped.
+     * ## The topics go FIRST, and off the platform's own record
+     * This used to derive the list from `getAllSelections()` and unsubscribe it
+     * *after* the wipe, with a comment explaining that the ordering protected an
+     * "unsubscription queue" written into storage for a Swift bridge to flush.
+     * That queue is gone — iOS no longer links FirebaseMessaging and its topics
+     * are live stream subscriptions now — so the ordering was protecting a
+     * mechanism that no longer exists, while costing the one that does:
+     * Android's ledger lives in the prefs file `storageManager.clearAll()`
+     * wipes, so by the time the old code asked, the only record of anything not
+     * derivable from the selections was already gone.
+     *
+     * [NotificationManager.clearAllTopics] asks the platform what it is actually
+     * subscribed to, which is the same set on a healthy device and a strictly
+     * larger one on a device that has been running for a year. The rows that
+     * differ are exactly the ones that must not be left behind on a phone
+     * somebody else is about to sign into.
      */
     suspend fun cleanupAll() {
-        val allSelections = sqlStorage.getAllSelections()
-        val allTopics = allSelections.flatMap { sel ->
-            listOf("Station_${sel.station}", "LineStatus_${sel.mode}_${sel.line}")
-        }.distinct()
+        notificationManager.clearAllTopics()
 
         selectionRepository.clearAll()
         sqlStorage.clearAllData()
         widgetManager.clearWidgetData()
         storageManager.clearAll()
+    }
 
-        // Re-queue unsubscriptions after clearAll so they survive the wipe
-        if (allTopics.isNotEmpty()) {
-            notificationManager.unsubscribeFromTopics(allTopics)
+    /**
+     * Subscribe a batch of boards in ONE call, the distinct topics only.
+     *
+     * Several boards routinely share a topic: two bus routes at one pole, four
+     * lines at one interchange, both directions of anything. Subscribing per
+     * board re-sends the same topic once per board, and on FCM that is also one
+     * wake-up per board for a single message.
+     *
+     * Here rather than at the call site because a topic name spelled anywhere
+     * else is a second vocabulary — see [topicsFor].
+     */
+    suspend fun subscribeTopicsFor(selections: List<UserSelection>) {
+        val topics = topicsFor(selections)
+        if (topics.isNotEmpty()) notificationManager.subscribeToTopics(topics)
+    }
+
+    /**
+     * State the whole subscription set from what is actually on this device.
+     *
+     * The counterpart to the per-board edits: those are correct and they leak,
+     * because a device is not present for every change made to it. Call this
+     * where the full list is known and settled — app foreground, the tail of a
+     * cross-device reconcile — and the platform repairs the difference. What
+     * that means per platform, and why an empty list is never a delete, is on
+     * [com.stationly.core.platform.NotificationManager.reconcileTopics].
+     */
+    suspend fun reconcileTopics() {
+        notificationManager.reconcileTopics(topicsFor(sqlStorage.getAllSelections()))
+    }
+
+    /**
+     * The topic vocabulary, in one place.
+     *
+     * `Station_{naptan}` and `LineStatus_{mode}_{line}`, unchanged since v1 and
+     * shared with the backend's fan-out — the names are a wire contract, not an
+     * implementation detail, and `V1GoldenTest` pins their shape against
+     * fixtures captured from the shipped app. They were spelled out at six call
+     * sites across three modules; a subscribe that disagrees with an
+     * unsubscribe by one character is a board that never stops receiving, or
+     * never starts, and neither says anything.
+     *
+     * The station id here is [UserSelection.station] — the naptan departures are
+     * FETCHED from, which on a bus route is the pole and not the hub the user
+     * picked. That is what the backend publishes to, so it is what a device
+     * subscribes to.
+     */
+    companion object {
+        fun stationTopic(selection: UserSelection) = "Station_${selection.station}"
+
+        fun lineStatusTopic(selection: UserSelection) =
+            "LineStatus_${selection.mode}_${selection.line}"
+
+        fun topicsFor(selection: UserSelection) =
+            listOf(stationTopic(selection), lineStatusTopic(selection))
+
+        fun topicsFor(selections: List<UserSelection>): List<String> =
+            selections.flatMap(::topicsFor).distinct()
+
+        /**
+         * Which of a removed board's topics are now genuinely unused.
+         *
+         * A station topic is shared by every line tracked at that station, and a
+         * line-status topic by every station on that line. Deleting the
+         * Piccadilly board at King's Cross must not unsubscribe
+         * `Station_940GZZLUKSX` out from under the Victoria board still sitting
+         * there, which would then go quiet with nothing on screen saying why.
+         *
+         * Here rather than inline in [discardStation] so the golden fixtures
+         * captured from the shipped v1 app can assert against THIS function
+         * instead of against a restatement of it in a test file. A rule with two
+         * implementations has no pinned behaviour, only two opinions.
+         *
+         * @param remaining the selections that will still exist after the delete.
+         */
+        fun topicsToRelease(
+            removed: UserSelection,
+            remaining: List<UserSelection>,
+        ): List<String> = buildList {
+            if (remaining.none { it.station == removed.station }) add(stationTopic(removed))
+            if (remaining.none { it.mode == removed.mode && it.line == removed.line }) {
+                add(lineStatusTopic(removed))
+            }
         }
     }
 }

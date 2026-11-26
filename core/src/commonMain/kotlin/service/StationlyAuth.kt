@@ -60,18 +60,41 @@ object StationlyAuth {
     /** The version both `Platform.appVersion()` actuals fall back to. */
     private const val UNREADABLE_VERSION = "0"
 
-    val Plugin = createClientPlugin("StationlyAuthPlugin") {
+    /**
+     * Whether the backend route at [path] sits behind `validateUserToken`.
+     *
+     * Everything under `/user/`, and the one route outside it this client calls.
+     * Missing that one meant every Play purchase was refused with a 401, so it
+     * was never recorded and Google refunded it. The backend has others
+     * (`/sdui/app/profile/:uid`, `/device/register`): add a route here when a
+     * shared call to it is added.
+     */
+    internal fun needsUserToken(path: String): Boolean =
+        path.contains("/user/") || path.endsWith("/support-money/verify-play")
+
+    val Plugin = plugin(
+        apiKey = { Platform.getApiKey() },
+        identity = { clientIdentity() },
+        userToken = { Platform.getAuthToken() },
+    )
+
+    /** [Plugin] with its three values passed in, so a test can look at a real request. */
+    internal fun plugin(
+        apiKey: () -> String,
+        identity: () -> String,
+        userToken: suspend () -> String?,
+    ) = createClientPlugin("StationlyAuthPlugin") {
         onRequest { request, _ ->
             // LAYER 1: Global API Key
-            request.headers.append("X-Stationly-Key", Platform.getApiKey())
+            request.headers.append("X-Stationly-Key", apiKey())
 
             // LAYER 2: Which build is asking. Read by the server-side version
             // gate; see `clientIdentity`.
-            request.headers.append("X-Stationly-Client", clientIdentity())
+            request.headers.append("X-Stationly-Client", identity())
 
-            // LAYER 3: Firebase Auth (Only for User routes)
-            if (request.url.encodedPath.contains("/user/")) {
-                val token = Platform.getAuthToken()
+            // LAYER 3: Firebase Auth (only where the backend asks for it)
+            if (needsUserToken(request.url.encodedPath)) {
+                val token = userToken()
                 if (token != null) {
                     request.headers.append(HttpHeaders.Authorization, "Bearer $token")
                 }

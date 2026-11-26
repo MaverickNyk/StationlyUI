@@ -148,6 +148,23 @@ object MultiLineBoardProcessor {
         /** "Eastbound" / "Inbound". May be blank. */
         val direction: String,
         val predictions: List<PredictionDisplay>,
+        /**
+         * Where this direction ENDS: its one terminus, "Putney Bridge Station"
+         * ([com.stationly.core.model.UserSelection.directionDestinations] when it
+         * holds exactly one). Blank when the direction divides or is unknown.
+         *
+         * Read only by a BUS header with no stop letter, which otherwise said
+         * just "Bus 39" for both sides of the road (QA 2026-11-23, finding #9).
+         */
+        val terminus: String = "",
+        /**
+         * The NEXT stop, "Levana Close"
+         * ([com.stationly.core.model.UserSelection.directionTowards]; despite
+         * its name, the picker stores the next stop there). The header's
+         * fallback when the routes at one pole end in different places: it is
+         * what TfL prints on the stop flag ("towards Levana Close").
+         */
+        val nextStop: String = "",
     )
 
     /**
@@ -183,7 +200,16 @@ object MultiLineBoardProcessor {
 
     sealed class Row {
         /** "Platform 2 (Eastbound)" for rail, "Stop W" for buses. */
-        data class PlatformHeader(val title: String) : Row()
+        data class PlatformHeader(
+            val title: String,
+            /**
+             * [Group.key]: the platform on rail, the pole naptan on bus. Stable
+             * where [title] may not be unique or may be reworded, so a consumer
+             * that has to come back to "the same block" (the widget's remembered
+             * page) holds on to this, not to a position or a title.
+             */
+            val key: String = "",
+        ) : Row()
         /**
          * [linePrefix] is blank unless the group mixes lines — see
          * [buildRows]. Blank [destination] + [eta] is a padding row.
@@ -242,7 +268,36 @@ object MultiLineBoardProcessor {
         prediction: PredictionDisplay,
         feed: Feed,
         isBus: Boolean,
-    ): String = if (isBus) feed.stationId else prediction.platform
+    ): String = if (isBus) feed.stationId else platformKey(prediction.platform)
+
+    /**
+     * One physical platform, whatever the backend called it this time.
+     *
+     * ## The bug this fixes, seen at King's Cross on 2026-09-12
+     * The key was `prediction.platform` RAW while [groupLabelFor] returned
+     * `prediction.platform.trim()`. So two feeds reporting the same platform
+     * with different whitespace got different KEYS and an identical LABEL: two
+     * blocks, one header, and nothing on screen to explain why. The widget paged
+     * to four and pages 1 and 2 were both "Piccadilly Platform 6 (Eastbound)".
+     *
+     * A station tracked in both directions is fetched with two separate calls,
+     * and TfL does not pad its platform strings consistently between them, so
+     * this is the ordinary case rather than the awkward one.
+     *
+     * ## Normalising the KEY does not license normalising the LABEL
+     * The platform string is backend-owned and shown verbatim — the consistency
+     * contract in BOARD_AND_DREAM_UI.md. This decides only which departures
+     * belong together; [groupLabelFor] still shows whichever spelling arrived
+     * first, untouched.
+     *
+     * Case and inner whitespace as well as the ends, because "Platform 6",
+     * "platform 6" and "Platform  6" are one place a passenger can stand, and a
+     * board that splits them is wrong in a way the reader cannot diagnose.
+     */
+    private fun platformKey(platform: String): String =
+        platform.trim().lowercase().replace(WHITESPACE_RUN, " ")
+
+    private val WHITESPACE_RUN = Regex("\\s+")
 
     /**
      * Every departure across every feed, each still paired with the feed it came
@@ -333,6 +388,8 @@ object MultiLineBoardProcessor {
         lines: List<String>,
         directions: Set<String>,
         isBus: Boolean,
+        termini: Set<String> = emptySet(),
+        nextStops: Set<String> = emptySet(),
     ): String {
         val label = platformLabel.trim()
         // Buses: "Bus 39", "Bus 39, 34, 33", "Bus 39, 34 Stop N".
@@ -346,7 +403,16 @@ object MultiLineBoardProcessor {
         // "Stop N Outbound" is noise.
         if (isBus) {
             val routes = busRouteList(lines)
-            return listOf(routes, label).filter { it.isNotBlank() }.joinToString(" ")
+            // An unlettered stop has nothing to tell its two sides of the road
+            // apart, so both read "Bus 39" (QA 2026-11-23, finding #9). Name
+            // where this side GOES: its terminus when every route at the pole
+            // shares one ("Bus 39 → Putney Bridge Station"), else the next stop
+            // as the stop flag says it ("Bus 39, 639 towards Levana Close").
+            // A lettered stop keeps its letter alone; that is what is on the pole.
+            val heading = if (label.isNotBlank()) null else
+                termini.singleOrNull()?.let { "$BUS_TOWARDS_MARK $it" }
+                    ?: nextStops.singleOrNull()?.let { "$BUS_NEXT_STOP_WORD $it" }
+            return listOf(routes, label, heading.orEmpty()).filter { it.isNotBlank() }.joinToString(" ")
         }
         // Only when every feed in the group agrees — a platform worked in both
         // directions gets no suffix rather than an arbitrary one.
@@ -368,7 +434,9 @@ object MultiLineBoardProcessor {
      * burying the departures it sits above.
      */
     private fun busRouteList(lines: List<String>): String {
-        val routes = lines.filter { it.isNotBlank() }.distinct()
+        // By route number, not by which bus is due first: the header must not
+        // reorder itself ("639, 39" then "39, 639") as departures move.
+        val routes = BusRouteOrder.sorted(lines.filter { it.isNotBlank() }.distinct()) { it }
         if (routes.isEmpty()) return ""
         val shown = routes.take(MAX_BUS_ROUTES).joinToString(", ")
         val overflow = routes.size - MAX_BUS_ROUTES
@@ -382,7 +450,57 @@ object MultiLineBoardProcessor {
      */
     private const val BUS_PREFIX = "Bus"
 
+    /**
+     * The distinct, non-blank place names [of] gives for [feeds], with TfL's
+     * stray double spaces collapsed ("Clapham Junction Stn  / the Falcon"), so
+     * two boards naming one place one space apart count as one place.
+     */
+    private fun placeNames(feeds: List<Feed>, of: (Feed) -> String): Set<String> =
+        feeds.mapNotNullTo(mutableSetOf()) { feed ->
+            of(feed).replace(WHITESPACE_RUN, " ").trim().takeIf { it.isNotEmpty() }
+        }
+
+    /** Joins a bus header to where it ends: "Bus 39 → Putney Bridge Station". */
+    private const val BUS_TOWARDS_MARK = "→"
+
+    /** Joins a bus header to its next stop, as a stop flag does: "towards Levana Close". */
+    private const val BUS_NEXT_STOP_WORD = "towards"
+
     private const val MAX_BUS_ROUTES = 4
+
+    /**
+     * The shortest form of a header that still says everything.
+     *
+     * Rung 3 of [headerVariants] on its own, for surfaces that cannot measure
+     * and so cannot walk the ladder. Two substitutions, both lossless:
+     *
+     *  - **"Platform" becomes "Plat."** The number is the fact and the word is
+     *    boilerplate. Case-sensitive, so a backend label that spells it any other
+     *    way is left exactly as it arrived rather than half-rewritten.
+     *  - **Line names become their short forms.** "Hammersmith City" becomes
+     *    "H&C", "Piccadilly" becomes "Picc." — what the roundel, the map key and
+     *    the station signage already say, and increasingly what the backend says:
+     *    [LineNameStore] holds a `shortName` per line from the lines API and
+     *    [LineShortNames] prefers it over its own table.
+     *
+     * The compass direction stays. Dropping it is the one rung that loses
+     * information and it belongs at the end of a measured ladder, not in a
+     * fixed choice.
+     *
+     * ## Where this is the right answer rather than the ladder
+     * A `RemoteViews` cannot measure text, so the widget cannot take "the widest
+     * rung that fits" — it has to commit. It commits to this one, which is also
+     * what the in-app board's row prefixes already show ("DLR Plat. 9",
+     * "Picc. Plat. 5 (Westbound)"), so the widget's pager and the board it
+     * mirrors finally say the same words. A widget pager spends most of its
+     * width on two arrows and a page marker before the text gets any, which is
+     * the surface this exists for.
+     */
+    fun compactHeader(title: String): String {
+        val full = title.trim()
+        if (full.isEmpty()) return ""
+        return LineShortNames.abbreviate(full.replace("Platform", "Plat.", ignoreCase = false))
+    }
 
     /**
      * Progressively shorter forms of a platform header, widest first.
@@ -410,7 +528,7 @@ object MultiLineBoardProcessor {
         val full = title.trim()
         if (full.isEmpty()) return listOf("")
         val abbreviated = full.replace("Platform", "Plat.", ignoreCase = false)
-        val shortLines = LineShortNames.abbreviate(abbreviated)
+        val shortLines = compactHeader(full)
         // BOTH forms of the direction, because they arrive by different routes.
         // [headerFor] appends a bare "Westbound"; the backend's own platform
         // label frequently arrives already carrying "(Westbound)", and on the
@@ -422,7 +540,14 @@ object MultiLineBoardProcessor {
             val Cased = d.replaceFirstChar { it.uppercase() }
             acc.replace(" ($Cased)", "").replace(" $Cased", "")
         }.trim()
-        return listOf(full, abbreviated, shortLines, noDirection).distinct()
+        // Last resort on a narrow widget: a bus header's "→ terminus" or
+        // "towards next stop" goes, leaving the routes. Only after every rung
+        // that keeps it, and only on a bus header: rail headers never carry
+        // either, and must not be cut at a station name that happens to.
+        val noTowards = if (!noDirection.startsWith("$BUS_PREFIX ")) noDirection
+            else noDirection.substringBefore(" $BUS_TOWARDS_MARK ")
+                .substringBefore(" $BUS_NEXT_STOP_WORD ").trim()
+        return listOf(full, abbreviated, shortLines, noDirection, noTowards).distinct()
     }
 
     /**
@@ -439,14 +564,43 @@ object MultiLineBoardProcessor {
      *     the board. (A pinned PLATFORM never collides with this — an unassigned
      *     block has no label for the picker to have offered.)
      *  2. **The pin** — one block, or every block carrying a pinned line.
-     *  3. **The soonest train.** The soonest ABSOLUTE arrival, never the `eta`
+     *  3. **Nothing left to catch, last.** A block whose every train has already
+     *     gone is a block you cannot act on, which puts it in the same class as
+     *     an unassigned platform rather than in the running order. Below the pin,
+     *     because a platform somebody chose still exists; above the name,
+     *     because a name is not a reason to lead with a dead block.
+     *  4. **The platform's own name**, so Platform 1 comes before Platform 2 and
+     *     Platform 10 comes after Platform 9. See [byPlatformName].
+     *  5. **The soonest train**, to break a tie between two blocks that really do
+     *     carry the same label. The soonest ABSOLUTE arrival, never the `eta`
      *     label: the label is rounded AND deliberately bumped so same-platform
      *     trains don't collide, so it does not round-trip back to a sortable
      *     number. And the soonest train that has not ALREADY LEFT — see
      *     [soonestArrival].
      *
-     * There is no user-chosen sort in here any more, and [BoardConfig]
-     * carries the argument for why not.
+     * ## Key 3 used to be key 4, and the board moved under people
+     * The board was ordered by whichever platform had the next train, on the
+     * argument that it is read at a glance and the soonest departure is what you
+     * came for. It is a good argument and it is wrong, because a board that
+     * reorders itself is a board you have to re-read every time you look at it.
+     *
+     * It shows worst on a paged surface, where only one block is visible. Two
+     * captures of the same widget a minute apart, on the owner's phone:
+     *
+     *   06:06   < DLR Platform 9    1/2 >
+     *   06:07   < DLR Platform 10   1/2 >
+     *
+     * Nobody touched it. Page 1 is a different platform now, so the thing the
+     * widget was placed for — "what is leaving from MY platform" — is behind an
+     * arrow that was not there a minute ago, and pressing it lands somewhere
+     * else again on the next push.
+     *
+     * A name never moves. The soonest train is still the FIRST ROW of whichever
+     * block you are looking at, which is where a departure board has always put
+     * it; what changes is that the blocks hold still while it does.
+     *
+     * There is no user-chosen sort in here, and [BoardConfig] carries the
+     * argument for why not.
      */
     private fun groupOrder(
         isBus: Boolean,
@@ -456,7 +610,60 @@ object MultiLineBoardProcessor {
     ): Comparator<Block> =
         unassignedLast(isBus)
             .thenBy { if (isPinned(it, isBus, prefs.pin)) 0 else 1 }
+            .thenBy { block -> if (hasSomethingToCatch(block, nowMs, policy)) 0 else 1 }
+            .then(byPlatformName(isBus))
             .thenBy { block -> soonestArrival(block, nowMs, policy) }
+
+    /**
+     * Whether there is still a train on this platform you could get on.
+     *
+     * The half of the old soonest-train ordering that was never a preference.
+     * Departed rows reach the grouping on purpose — [BoardTicker] holds them so
+     * the board can show "Gone" and shift up rather than blink — so a platform
+     * whose last train left five minutes ago still has rows, and under a name
+     * ordering it would sit wherever its number puts it. Leading a board with a
+     * block nobody can act on is the defect `BoardTicker` was given this
+     * threading of [nowMs] to prevent, and it survives the change to name order
+     * as its own key.
+     *
+     * [nowMs] null means "do not judge", the pre-[BoardTicker] behaviour for
+     * callers that have already shed their departed rows: with no clock every
+     * block answers the same way and the key cancels out.
+     */
+    private fun hasSomethingToCatch(block: Block, nowMs: Long?, policy: BoardPolicy): Boolean =
+        nowMs == null || soonestArrival(block, nowMs, policy) != Long.MAX_VALUE
+
+    /**
+     * A block's own name, ordered the way a person reads platform names.
+     *
+     * Numerically first, so 10 follows 9 rather than 1 — a plain string sort
+     * puts "Platform 10" between "Platform 1" and "Platform 2", which is wrong
+     * on any interchange with more than nine platforms.
+     *
+     * ## It has to work for things that are not platforms
+     * "Platform" is the tube word. The same board renders bus poles ("Stop C"),
+     * rail platforms ("Platform 4a"), and blocks with no label at all, and this
+     * is the only ordering they get — so it keys off what every label has rather
+     * than off a pattern only one mode uses:
+     *
+     *  - the first run of DIGITS anywhere in the label, whatever wraps it, so
+     *    "Platform 4" and "Westbound Platform 4" and "4" all sort as 4;
+     *  - then the label itself, case-insensitively, which orders the lettered
+     *    ones ("Stop A" before "Stop C") and is also what separates "4a" from
+     *    "4b" once the number has tied them.
+     *
+     * Labels with no number sort AFTER every numbered one rather than at zero:
+     * "Stop C" belongs at the end of a numeric list, not the head of it.
+     *
+     * The same two keys the "show first" picker has always used — see
+     * [pickerOrder], which is now the board's own order below the pin. They were
+     * split because the board and the picker answered different questions; they
+     * give the same answer now, and the picker's chips no longer rearrange
+     * themselves relative to the board they are choosing from.
+     */
+    private fun byPlatformName(isBus: Boolean): Comparator<Block> =
+        compareBy<Block> { platformNumber(labelOf(it, isBus)) }
+            .thenBy { labelOf(it, isBus).lowercase() }
 
     /**
      * When this block's next train arrives, for ordering — ignoring the ones
@@ -509,22 +716,19 @@ object MultiLineBoardProcessor {
         compareBy { if (!isBus && isUnassigned(labelOf(it, isBus))) 1 else 0 }
 
     /**
-     * The order the "show first" PICKER lists blocks in — by platform number, so
+     * The order the "show first" PICKER lists blocks in — by platform name, so
      * that 10 follows 9.
      *
-     * Separate from [groupOrder] because it answers a different question. The
-     * board is ordered by whichever train is soonest, which is right for
-     * something you read at a glance and wrong for a list you pick from: ordered
-     * that way the chips would rearrange themselves under the user's finger
-     * every time the board refreshed.
+     * It used to differ from [groupOrder] and no longer does below the pin: the
+     * reason the picker was ordered by name was that chips rearranging under the
+     * user's finger are unusable, and that turned out to be just as true of the
+     * board itself. Kept as its own function because the two still differ ABOVE
+     * that line — the picker has no pin to honour, since the pin is what it is
+     * being used to choose.
      */
     private fun pickerOrder(isBus: Boolean): Comparator<Block> =
         unassignedLast(isBus)
-            .thenBy { platformNumber(labelOf(it, isBus)) }
-            // Lettered and unnumbered blocks ("Stop C") have no number to order
-            // by and would otherwise sit in map order, which is arbitrary and
-            // changes as departures arrive.
-            .thenBy { labelOf(it, isBus).lowercase() }
+            .then(byPlatformName(isBus))
 
     /**
      * Whether [pin] names this block — by its platform label, by its pole, or by
@@ -631,7 +835,7 @@ object MultiLineBoardProcessor {
             // An empty strip reads as a rendering bug. The station strip above
             // already names the stop, so with one group the header adds nothing
             // anyway — the rows simply start.
-            if (group.header.isNotBlank()) rows.add(Row.PlatformHeader(group.header))
+            if (group.header.isNotBlank()) rows.add(Row.PlatformHeader(group.header, group.key))
 
             val shown =
                 if (rowCap > 0) group.departures.take(rowCap) else group.departures
@@ -828,7 +1032,15 @@ object MultiLineBoardProcessor {
         val all = feeds.withFeeds()
         if (all.isEmpty()) return emptyList()
 
+        // Grouped on the NORMALISED key so one platform is one block whatever
+        // the backend called it this time, then keyed back to the spelling that
+        // arrived — `key` is read as a bus pole's naptan by the STOP pin and is
+        // not ours to lowercase. See [platformKey].
         return all.groupBy { (prediction, feed) -> groupKeyFor(prediction, feed, isBus) }
+            .mapKeys { (_, entries) ->
+                if (isBus) entries.first().second.stationId
+                else entries.first().first.platform.trim()
+            }
             .entries
             .sortedWith(groupOrder(isBus, prefs, nowMs, policy))
             .map { (key, entries) ->
@@ -857,7 +1069,12 @@ object MultiLineBoardProcessor {
                 // depth here and still wants the user's pin from prefs.
                 val shown = sorted.take(rowCap)
 
-                val header = headerFor(label, lines, directions, isBus)
+                // Every feed with a departure in this block, not only the ones in
+                // the rows shown, so the header does not flip as the cap moves.
+                val blockFeeds = entries.map { it.second }.distinct()
+                val termini = placeNames(blockFeeds) { it.terminus }
+                val nextStops = placeNames(blockFeeds) { it.nextStop }
+                val header = headerFor(label, lines, directions, isBus, termini, nextStops)
                 Group(
                     key = key,
                     header = header,
@@ -1016,9 +1233,18 @@ object MultiLineBoardProcessor {
      * the way I am going" is answered without a direction special case. One leg
      * would answer it for half the users of the card.
      *
-     * Ordered on [StationlyFormatters.arrivalSortKey] and never on the `eta`
-     * label — the label is rounded and deliberately bumped, so ordering by it
-     * would put the wrong train first exactly when two are close.
+     * Ordered by PLATFORM NAME below the pin, exactly like the board it
+     * summarises — see [groupOrder] for the measurement that changed this from
+     * soonest-first. A card whose legs reshuffle on every push is one the user
+     * has to re-read every time they glance at it, and this card is the only
+     * thing a collapsed station says.
+     *
+     * The soonest train breaks a tie and is read from
+     * [StationlyFormatters.arrivalSortKey], never from the `eta` label — the
+     * label is rounded and deliberately bumped, so ordering by it would put the
+     * wrong train first exactly when two are close. It is still what picks WHICH
+     * departure each leg shows; what it no longer does is decide where the leg
+     * sits.
      *
      * ## What [prefs] does and does not reach here
      * Only [BoardPin], which now decides ORDER alone rather than survival: with
@@ -1049,7 +1275,12 @@ object MultiLineBoardProcessor {
             .sortedWith(
                 compareBy<Pair<Block, Pair<PredictionDisplay, Feed>>> { (block, _) ->
                     if (isPinned(block, isBus, prefs.pin)) 0 else 1
-                }.thenBy { (_, soonest) -> StationlyFormatters.arrivalSortKey(soonest.first) }
+                }
+                    // "Platform not assigned" has no number, so it lands after
+                    // every numbered platform without needing a rule of its own.
+                    .thenBy { (block, _) -> platformNumber(labelOf(block, isBus)) }
+                    .thenBy { (block, _) -> labelOf(block, isBus).lowercase() }
+                    .thenBy { (_, soonest) -> StationlyFormatters.arrivalSortKey(soonest.first) }
             )
             .map { (_, soonest) -> soonest }
             .map { (prediction, feed) ->

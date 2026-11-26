@@ -155,6 +155,9 @@ object ActivityEvents {
     /** Props: `boards` — how many were restored. */
     const val SYNC_RESTORED = "sync.restored"
 
+    /** Boards the account held that did not fit under the station limit; see `BoardQuota.fit`. */
+    const val SYNC_OVER_LIMIT = "sync.over_limit"
+
     // ── Boards ──────────────────────────────────────────────────────────────
     /** Props: `station`, `line`, `mode`, `direction`. */
     const val BOARD_ADDED = "board.added"
@@ -198,5 +201,54 @@ object ActivityEvents {
      * with a count above zero are a different question being asked, usually why
      * the board looks stale, and should not be averaged in with the first.
      */
+    // ── Notifications ───────────────────────────────────────────────────────
+    // What makes the served policy tunable on evidence: how many are shown,
+    // opened and muted, and why the rest were not shown. `type` and `reason`
+    // only, plus the line for a line alert. Never the text.
+    const val NOTIFICATION_POSTED = "notification.posted"
+    const val NOTIFICATION_OPENED = "notification.opened"
+    const val NOTIFICATION_SUPPRESSED = "notification.suppressed"
+    const val NOTIFICATION_MUTED = "notification.muted"
+
     const val WIDGET_GUIDE_OPENED = "widget.guide_opened"
+
+    // ── Support ─────────────────────────────────────────────────────────────
+    // The funnel from being asked to paying, one row per step, so "nobody has
+    // ever contributed" can be answered with WHERE people stop: never asked,
+    // asked and declined, opened the amounts and left, tapped and the store
+    // refused, or paid and our server never credited it.
+    // `stationly-backend/src/scripts/support_funnel.cjs` reads these names; keep
+    // the two in step. Never the price paid beyond the tier, never anything a
+    // store returns about the person.
+
+    /** The banner was raised. Props: `trigger` (board_added | on_open). */
+    const val SUPPORT_ASKED = "support.asked"
+    /** "Maybe later" on the banner. Props: `trigger`. */
+    const val SUPPORT_ASK_DISMISSED = "support.ask_dismissed"
+    /** The amounts sheet opened. Props: `from` (banner | profile | whats_new), `progress` (true | false). */
+    const val SUPPORT_SHEET_OPENED = "support.sheet_opened"
+    /** The amounts sheet closed without a thank-you. */
+    const val SUPPORT_SHEET_CLOSED = "support.sheet_closed"
+    /** An amount was tapped. Props: `tier`, `started` (true | false, whether a store sheet opened). */
+    const val SUPPORT_TIER_TAPPED = "support.tier_tapped"
+    /**
+     * What the store said. Props: `result` (purchased | pending | cancelled |
+     * unavailable | failed | already_owned), `product`, `code` on failures.
+     * Android only: iOS's StoreKit flow lives in Swift and is left as it is.
+     */
+    const val SUPPORT_PURCHASE = "support.purchase"
+    /**
+     * What OUR server said about a store purchase. Props: `outcome`, `product`.
+     * The row that catches a payment Google took and we never credited, which
+     * Google then refunds: the shape of the 2026-11-24 bug.
+     */
+    const val SUPPORT_VERIFIED = "support.verified"
+    /** The thank-you played. Props: `tier` when known. */
+    const val SUPPORT_THANKS_SHOWN = "support.thanks_shown"
+
+    // ── What's new (Android v1 → 2.0, once) ─────────────────────────────────
+    const val WHATS_NEW_SHOWN = "whats_new.shown"
+    /** Props: `via` (button | back). */
+    const val WHATS_NEW_DISMISSED = "whats_new.dismissed"
+    const val WHATS_NEW_SUPPORT_TAPPED = "whats_new.support_tapped"
 }

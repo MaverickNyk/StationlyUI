@@ -42,15 +42,25 @@ object BoardPolicyStore {
     var current: BoardPolicy = BoardPolicy.DEFAULT
         private set
 
+    /**
+     * The station limit as the LAST adopted map stated it, or null where that map
+     * did not mention it (so [current] holds the compiled default). For a caller
+     * that must not act on an assumed limit: `BoardQuota.fitMerge`.
+     */
+    var servedMaxBoards: Int? = null
+        private set
+
     /** Reset policy back to default for test isolation. */
     fun resetForTest() {
         current = BoardPolicy.DEFAULT
+        servedMaxBoards = null
     }
 
     /** Adopt a freshly-fetched config map. Called after the home-config sync. */
     fun refresh(strings: Map<String, String>) {
         if (strings.isEmpty()) return
         current = resolve(strings)
+        servedMaxBoards = if (BoardPolicy.KEY_BOARDS_MAX in strings) current.maxBoards else null
     }
 
     /**

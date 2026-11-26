@@ -43,6 +43,7 @@ import com.stationly.app.platform.KeepScreenAwake
 import com.stationly.app.ui.theme.AppTheme
 import com.stationly.app.ui.theme.LocalAppTheme
 import com.stationly.app.ui.util.HomeConfigCache
+import com.stationly.core.config.SduiConfig
 import com.stationly.app.ui.util.rememberTickedPredictions
 import com.stationly.core.service.NetworkModule
 import com.stationly.core.util.FreshDataNotifier
@@ -50,6 +51,7 @@ import com.stationly.core.util.StationlyFormatters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import com.stationly.core.model.user.PlatformNav
 
 /**
  * Top-level dream composable — port of Android `dream/DreamHost.kt`, hosted
@@ -59,7 +61,10 @@ import kotlinx.coroutines.withContext
  *
  * Refresh model — event-driven, no polling: FCM/refresh writes SQL then
  * emits [FreshDataNotifier]; we re-read SQL on each emission (plus once on
- * entry). Matches Android's ACTION_DREAM_REFRESH broadcast semantics.
+ * entry). **This is Android's refresh path too, since AV2-6.2** — its
+ * `StationlyDreamService` hosts this composable, in the same process the FCM
+ * service emits from, so the `ACTION_DREAM_REFRESH` broadcast this comment used
+ * to point at is deleted. One signal, one delivery.
  */
 @Composable
 fun DreamHost(onExit: () -> Unit) {
@@ -69,6 +74,7 @@ fun DreamHost(onExit: () -> Unit) {
     val theme by remember { mutableStateOf(DreamSettings.getTheme()) }
     val clockStyle by remember { mutableStateOf(DreamSettings.getClockStyle()) }
     val preferredStation by remember { mutableStateOf(DreamSettings.getStationId()) }
+    val platformNav by remember { mutableStateOf(DreamSettings.getPlatformNav()) }
 
     var snapshot by remember { mutableStateOf(DreamSnapshot(null, emptyList(), null)) }
 
@@ -77,15 +83,44 @@ fun DreamHost(onExit: () -> Unit) {
     // network refresh; hardcoded fallbacks keep every label functional offline.
     var sduiStrings by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     LaunchedEffect(Unit) {
-        HomeConfigCache.load().takeIf { it.isNotEmpty() }?.let { sduiStrings = it }
+        // ── The strings AND the rules ───────────────────────────────────────
+        //
+        // `sduiStrings` is the copy this screen prints. The same payload also
+        // carries how the board BEHAVES — how long a departed train stays up and
+        // what it says while it does, when a timestamp starts going amber, which
+        // line status counts as the worst — and until now the dream took the
+        // copy and left the rules, so a screensaver ran on compiled values while
+        // the app in front of it ran on served ones. `SduiConfig.refresh` is the
+        // one place a map is adopted; it takes both stores with it.
+        HomeConfigCache.load().takeIf { it.isNotEmpty() }?.let {
+            sduiStrings = it
+            SduiConfig.refresh(it)
+        }
         runCatching { NetworkModule.sduiApi.getHomeConfig().strings }
-            .onSuccess { sduiStrings = it; HomeConfigCache.save(it) }
+            .onSuccess { sduiStrings = it; HomeConfigCache.save(it); SduiConfig.refresh(it) }
     }
 
     // Initial load + reload on every fresh-data signal.
     LaunchedEffect(preferredStation) {
+        // Before the first snapshot: it reads the station's "Show up to N per
+        // platform", and an unloaded store answers with defaults for every
+        // board. A dream runs in the app's process but not necessarily after
+        // any screen has opened, so nothing else here has done this.
+        runCatching { com.stationly.core.repository.UserSettings.ensureLoaded() }
+        com.stationly.core.repository.StationNoticeStore.ensureLoaded()
         snapshot = withContext(Dispatchers.Default) { loadDreamSnapshot(preferredStation) }
         FreshDataNotifier.events.collect {
+            snapshot = withContext(Dispatchers.Default) { loadDreamSnapshot(preferredStation) }
+        }
+    }
+
+    // A closure starts, ends and expires by the clock, with no signal to wait for.
+    val minute by com.stationly.app.ui.util.rememberMinuteTick()
+    LaunchedEffect(minute) {
+        if (com.stationly.core.config.FeatureFlags.isOn(com.stationly.core.config.FeatureFlags.STATION_STATUS)) {
+            // As the first load does: whichever finishes last is then right.
+            runCatching { com.stationly.core.repository.UserSettings.ensureLoaded() }
+            com.stationly.core.repository.StationNoticeStore.ensureLoaded()
             snapshot = withContext(Dispatchers.Default) { loadDreamSnapshot(preferredStation) }
         }
     }
@@ -126,8 +161,8 @@ fun DreamHost(onExit: () -> Unit) {
                 ) { showExit = !showExit }
         ) {
             when (layout) {
-                DreamLayout.FULLSCREEN_BOARD -> FullscreenBoardLayout(snapshot, sduiStrings)
-                DreamLayout.CLOCK_AND_BOARD  -> ClockAndBoardHost(snapshot, clockStyle, sduiStrings)
+                DreamLayout.FULLSCREEN_BOARD -> FullscreenBoardLayout(snapshot, sduiStrings, platformNav)
+                DreamLayout.CLOCK_AND_BOARD  -> ClockAndBoardHost(snapshot, clockStyle, sduiStrings, platformNav)
             }
 
             AnimatedVisibility(
@@ -161,6 +196,7 @@ private fun ClockAndBoardHost(
     snapshot: DreamSnapshot,
     clockStyle: ClockStyle,
     sduiStrings: Map<String, String>,
+    platformNav: PlatformNav,
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -194,9 +230,9 @@ private fun ClockAndBoardHost(
                 .fillMaxHeight()
         ) {
             if (isLandscape) {
-                LandscapeLayout(snapshot, clockStyle, dim, sduiStrings)
+                LandscapeLayout(snapshot, clockStyle, dim, sduiStrings, platformNav)
             } else {
-                PortraitLayout(snapshot, clockStyle, dim, sduiStrings)
+                PortraitLayout(snapshot, clockStyle, dim, sduiStrings, platformNav)
             }
         }
     }
@@ -256,6 +292,7 @@ private fun LandscapeLayout(
     clockStyle: ClockStyle,
     dim: DreamDims,
     sduiStrings: Map<String, String>,
+    platformNav: PlatformNav,
 ) {
     val lineColor = lineColorOf(snapshot.selection?.line)
     // Hero through the shared tick layer, sorted by ETA AFTER ticking so it
@@ -312,6 +349,7 @@ private fun LandscapeLayout(
                     }
                     DreamBoard(
                         snapshot = snapshot,
+                        platformNav = platformNav,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = boardMaxHeight),
@@ -333,6 +371,7 @@ private fun PortraitLayout(
     clockStyle: ClockStyle,
     dim: DreamDims,
     sduiStrings: Map<String, String>,
+    platformNav: PlatformNav,
 ) {
     val lineColor = lineColorOf(snapshot.selection?.line)
     val tickedNextDeparture = StationlyFormatters
@@ -382,6 +421,7 @@ private fun PortraitLayout(
                     }
                     DreamBoard(
                         snapshot = snapshot,
+                        platformNav = platformNav,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = boardMaxHeight),

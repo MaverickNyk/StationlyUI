@@ -389,7 +389,7 @@ internal fun authExpiryGuard(
         //
         // Only for a request that actually carried a bearer. `/auth/*` and the
         // login layouts are token-less by design (see `StationlyAuth`, which
-        // attaches one only under `/user/`), so a 401 there is the server
+        // attaches one only where `needsUserToken`), so a 401 there is the server
         // talking about something else and a retry would just repeat it.
         if (bearer == null || retryable == null) return@on settled
 

@@ -18,6 +18,9 @@ interface TflApiService {
     suspend fun getRoute(lineId: String): LineRouteResponse
     suspend fun getLineStatuses(lineId: String?, mode: String? = null): List<LineStatus>
     suspend fun getPredictions(naptanId: String): PredictionsPayload
+
+    /** Closures at these stops. Defaulted: a test double without it knows nothing. */
+    suspend fun getStationNotices(ids: List<String>): StationNotices = StationNotices()
 }
 
 /**
@@ -54,6 +57,12 @@ class TflApiServiceImpl(private val client: HttpClient) : TflApiService {
     
     override suspend fun getPredictions(naptanId: String): PredictionsPayload {
         return client.get("$baseUrl/stations/predictions/$naptanId").body()
+    }
+
+    override suspend fun getStationNotices(ids: List<String>): StationNotices {
+        return client.get("$baseUrl/stations/status") {
+            parameter("ids", ids.joinToString(","))
+        }.body()
     }
 }
 

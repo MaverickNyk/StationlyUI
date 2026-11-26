@@ -7,438 +7,427 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.runtime.*
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
+import androidx.lifecycle.lifecycleScope
+import com.stationly.app.AndroidPlatformAuthProvider
+import com.stationly.app.ui.summary.BoardExpansion
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.NonCancellable
+import com.stationly.mobile.service.FirebaseAuthManager
+import com.stationly.app.sync.UserStateSync
+import com.stationly.app.sync.SessionEnd
+import com.google.firebase.auth.FirebaseAuth
+import com.stationly.app.App
+import com.stationly.app.ui.summary.BoardFocus
+import com.stationly.core.model.deeplink.DeepLinkRoute
+import com.stationly.core.model.deeplink.parseDeepLink
+import com.stationly.core.activity.ActivityEvents
+import com.stationly.core.activity.ActivityLog
+import com.stationly.mobile.service.ActivityUploadWorker
+import com.stationly.mobile.service.NotificationDispatcher
+import com.stationly.mobile.service.UserSyncCoordinator
 import com.stationly.mobile.ui.common.StagingBanner
-import com.stationly.mobile.ui.common.rememberFirebaseAuthState
-import com.stationly.mobile.ui.selection.SelectionScreen
-import com.stationly.mobile.ui.summary.SummaryScreen
-import com.stationly.mobile.ui.theme.StationlyThemeHost
+import com.stationly.mobile.widget.WidgetConfigureActivity
+import com.stationly.mobile.widget.WidgetPlacementProbe
+import com.stationly.mobile.widget.WidgetPinner
+import kotlinx.coroutines.launch
+import com.stationly.mobile.widget.WidgetBindingStore
 
 /**
- * MainActivity - Android Entry Point
- * 
- * This is the main activity for the Android app.
- * It mirrors the MindTheTimeAndroid MainActivity but uses KMP core.
- * 
- * Key features:
- * - Compose Navigation for screen flow
- * - ViewModel integration with KMP use cases
- * - Splash screen integration
- * - Edge-to-edge UI
+ * The Android host: the Android half of a contract that is one function
+ * signature.
+ *
+ * iOS's half is `MainViewController.kt` — twenty lines that build a
+ * `PlatformAuthProvider` and hand it to `App()`. This is those twenty lines with
+ * an Activity around them, plus the three extra deep links only Android
+ * registers. Everything the user sees below `setContent` lives in `:composeApp`
+ * and is the identical code iOS runs.
+ *
+ * ## What this file replaced (AV2-3.5)
+ * Until the cutover this class was v1's own UI: a 460-line `NavHost` over
+ * `com.stationly.mobile.ui.{summary,selection,profile,login}`, and the shared UI
+ * lived one icon away in a staging-only `V2MainActivity`. That second door is
+ * gone and this is the one left.
+ *
+ * **The class NAME is load-bearing and must not change.** Home-screen pins and
+ * launcher shortcuts reference the component
+ * (`com.stationly.mobile/.MainActivity`), not the package, so promoting
+ * `.v2.V2MainActivity` and deleting this name would have greyed out the icon of
+ * every v1 user who had pinned one. Moving the host INTO the old name costs
+ * nothing and needs no `<activity-alias>`.
  */
 class MainActivity : ComponentActivity() {
-    private val passwordResetComplete = mutableStateOf(false)
-    private val pendingResetOobCode   = mutableStateOf<String?>(null)
-    // oobCode for an inbound stationly://verified deep link — set by handleDeepLink,
-    // consumed by AppNavigation which applies the code via Firebase client SDK
-    // (LoginViewModel.applyVerificationCode) and routes the user past the verify gate.
-    private val pendingVerifyOobCode  = mutableStateOf<String?>(null)
+
+    /**
+     * Whether the user was signed in when this Activity was FIRST created, held
+     * across process death rather than recomputed.
+     *
+     * `AppNavigation` turns this into its `startDestination`, and a NavHost can
+     * only restore a saved back stack onto the same start destination it was
+     * built with. Recomputing `isLoggedIn()` on a restore asks Firebase a
+     * question it may not have rehydrated the answer to yet: it says "no user",
+     * the start destination flips to `auth/login`, and a back stack rooted at
+     * `summary` has nowhere to land — a blank screen.
+     *
+     * That is not hypothetical. v1 shipped this bug and fixed it with a
+     * `rememberSaveable` around the same decision. `AppNavigation` now saves the
+     * resolved destination itself, which closes the two branches this cannot
+     * reach (they ask the auth provider, not the host) — but it still has to be
+     * told the same answer twice in a row, so the saving stays here too.
+     */
+    private var startLoggedIn: Boolean = false
+
+    /** The `oobCode` from an inbound `…://reset` link. */
+    private var pendingResetOobCode by mutableStateOf<String?>(null)
+
+    /** A `…://auth` link landed: a password reset completed in the browser. */
+    private var passwordResetComplete by mutableStateOf(false)
+
+    /**
+     * How many `…://verified` codes this Activity has applied.
+     *
+     * A counter and not a flag, because the second link has to be as visible as
+     * the first: a user who taps an expired link, gets a new mail and taps again
+     * would otherwise set an already-true boolean and change nothing. Read by
+     * the shared verify screen, which re-runs its own check on every new value.
+     */
+    private var emailVerifiedSignal by mutableIntStateOf(0)
+
+    private lateinit var authProvider: AndroidPlatformAuthProvider
+
+    /** How many times the account has gone while this Activity had one. See [watchSession]. */
+    private var sessionEnded by mutableIntStateOf(0)
+    private var hasSession = false
+    private val authListener = FirebaseAuth.AuthStateListener { watchSession(it) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         installSplashScreen()
         enableEdgeToEdge()
+
+        // `Platform.initialize` is NOT called here on purpose. It runs in
+        // StationlyApplication.onCreate, which Android guarantees to complete
+        // before any component of the process starts — including this one.
+        // (Asserted statically by HostManifestTest, since there is no runtime
+        // flag on Platform to check.)
+        //
+        // The Activity, not the application context: interactive Google sign-in
+        // launches the account chooser for a result and needs one. Held only by
+        // this Activity and by the composition, which die together, so there is
+        // nothing here to leak.
+        //
+        // `default_web_client_id` is generated by the google-services plugin
+        // from THIS flavour's google-services.json, so a staging build signs in
+        // against the staging OAuth client and prod against prod's. It is read
+        // here, in the module that has the generated `R`, rather than looked up
+        // by name inside `:composeApp` — see the provider's KDoc for why that
+        // matters to a release build specifically.
+        authProvider = AndroidPlatformAuthProvider(
+            context           = this,
+            googleWebClientId = getString(R.string.default_web_client_id),
+        )
+
+        startLoggedIn = if (savedInstanceState?.containsKey(KEY_START_LOGGED_IN) == true) {
+            savedInstanceState.getBoolean(KEY_START_LOGGED_IN)
+        } else {
+            authProvider.isLoggedIn()
+        }
+        hasSession = startLoggedIn
+        FirebaseAuth.getInstance().addAuthStateListener(authListener)
+
+        if (savedInstanceState == null) recordNotificationOpened(intent)
         handleDeepLink(intent)
+
         setContent {
-            StationlyThemeHost {
-                Box(Modifier.fillMaxSize()) {
-                    AppNavigation(
-                        passwordResetComplete = passwordResetComplete,
-                        pendingResetOobCode   = pendingResetOobCode,
-                        pendingVerifyOobCode  = pendingVerifyOobCode
-                    )
-                    StagingBanner(Modifier.align(Alignment.BottomCenter))
-                }
+            Box(Modifier.fillMaxSize()) {
+                App(
+                    authProvider               = authProvider,
+                    startLoggedIn              = startLoggedIn,
+                    deepLinkOobCode            = pendingResetOobCode,
+                    emailVerifiedSignal        = emailVerifiedSignal,
+                    showPasswordResetSuccess   = passwordResetComplete,
+                    onPasswordResetBannerShown = { passwordResetComplete = false },
+                    sessionEndedSignal         = sessionEnded,
+                    onSessionEnded             = ::tearDownEndedSession,
+                    // Home settings → "Widget stations". No `appWidgetId`, so
+                    // the screen opens in manager mode: every placed widget and
+                    // the station it shows. Null on iOS, where an app cannot
+                    // read a widget's configuration at all — the row is hidden
+                    // rather than shown and broken.
+                    onManageWidgets = {
+                        // `this@MainActivity`: inside `setContent` the receiver
+                        // is the composable scope, not the Activity.
+                        startActivity(WidgetConfigureActivity.managerIntent(this@MainActivity))
+                    },
+                    // The Android front door: ask the LAUNCHER to place a widget
+                    // already bound to this station, so the user confirms one
+                    // dialog instead of hunting through the widget gallery and
+                    // then answering a picker. Null where the launcher refuses
+                    // pin requests, which hides the row rather than showing one
+                    // that does nothing — `canPin` is read at composition, not
+                    // cached, because a launcher can be swapped.
+                    onAddWidgetForStation = if (WidgetPinner.canPin(this@MainActivity)) {
+                        { groupingId -> WidgetPinner.pin(this@MainActivity, groupingId) }
+                    } else {
+                        null
+                    },
+                    // The station already HAS a widget, so this opens that
+                    // widget's own settings rather than offering to make a
+                    // second one.
+                    //
+                    // The id comes from the binding store, which is the app's
+                    // own record of which widget shows what — the same map the
+                    // manager lists from. `firstOrNull` because a station can
+                    // legitimately have two widgets and the row has to open
+                    // ONE: the first is the one the manager lists first, and the
+                    // page it opens lists the rest a tap away.
+                    onOpenWidgetSettingsForStation = { groupingId ->
+                        val id = WidgetBindingStore.all(this@MainActivity, WidgetBindingStore.currentUid())
+                            .entries.firstOrNull { it.value == groupingId }?.key
+                        startActivity(
+                            if (id != null) {
+                                WidgetConfigureActivity.reconfigureIntent(this@MainActivity, id)
+                            } else {
+                                // The probe said there was one and the store
+                                // disagrees — a widget removed since the last
+                                // look. The manager is the honest destination:
+                                // it lists what is actually there.
+                                WidgetConfigureActivity.managerIntent(this@MainActivity)
+                            }
+                        )
+                    },
+                )
+                // Outside `App` because it is the one thing on screen the shared
+                // UI cannot know: `BuildConfig.FLAVOR` belongs to this module.
+                // One implementation, in the module that has the fact.
+                StagingBanner(Modifier.align(Alignment.BottomCenter))
             }
         }
     }
 
+    /**
+     * v1's auth observer, which the cutover dropped: without it an account deleted on
+     * another device was signed out underneath a screen that went on showing its boards.
+     *
+     * Asked again a moment later, because right after a start Firebase can say "nobody"
+     * before it has read who was signed in.
+     */
+    private fun watchSession(auth: FirebaseAuth) {
+        if (auth.currentUser != null) {
+            hasSession = true
+            return
+        }
+        if (!hasSession) return
+        lifecycleScope.launch {
+            delay(SESSION_RECHECK_MS)
+            if (auth.currentUser == null && hasSession && !SessionEnd.deliberate) {
+                hasSession = false
+                sessionEnded++
+            }
+        }
+    }
+
+    /** What a sign-out leaves behind when nobody asked for it. Every step can be repeated. */
+    private suspend fun tearDownEndedSession() = withContext(NonCancellable) {
+        // An account deleted elsewhere is torn down by UserSyncCoordinator's
+        // forceLogout, which also leaves the "account removed" notice; a second
+        // teardown alongside it would race it.
+        if (!UserSyncCoordinator.forcingLogout) {
+            runCatching { FirebaseAuthManager(applicationContext).logout() }
+        }
+        BoardExpansion.clear()
+        BoardFocus.clear()
+        runCatching { UserStateSync.resetForNewSession() }
+        Unit
+    }
+
+    override fun onDestroy() {
+        FirebaseAuth.getInstance().removeAuthStateListener(authListener)
+        super.onDestroy()
+    }
+
+    /**
+     * The foreground fallback for a `user_sync` push this device missed.
+     *
+     * ## Why this is on the Activity and not in the shared resume hook
+     * AV2-4.1 asked for it in `SummaryScreen`'s `ON_RESUME` observer, where iOS
+     * would get it too. It cannot go there yet: `UserSyncCoordinator` lives in
+     * `:android:app` and `:composeApp` cannot import it — the dependency runs
+     * the other way. The alternatives were a second reconcile implementation in
+     * `composeApp/androidMain`, which is the divergence this codebase keeps
+     * paying for, or lifting the coordinator up a module, which is AV2-4.3's
+     * job and is where it is going anyway. So this is v1's arrangement,
+     * restored exactly, until the coordinator moves.
+     *
+     * `MainActivity.onResume` is also the more faithful trigger: it fires on app
+     * foreground, where the screen's observer fires on every screen resume too.
+     * The coordinator debounces at 15 minutes either way, and a push-triggered
+     * reconcile passes `force = true` and bypasses it.
+     *
+     * ## Why it was gone, and why that was survivable
+     * AV2-3.5 deleted v1's `MainActivity`, and this call with it, leaving
+     * `reconcile` with no caller at all. Nothing broke visibly, because the push
+     * it backs up did not reach the v2 board model either — a fallback for
+     * nothing. AV2-4.1 fixes both halves in one change, which is the only order
+     * in which either is testable.
+     */
+    override fun onResume() {
+        super.onResume()
+        UserSyncCoordinator.reconcile(this)
+        // Cheap, and deliberately NOT inside the reconcile above: that one costs
+        // a Firestore read and is debounced to 15 minutes, this one costs a
+        // prefs read and answers a different question — does FCM still think
+        // this device wants what it is being sent? See its KDoc.
+        UserSyncCoordinator.reconcileTopics()
+        // The activity queue's safety net for a device whose nightly work never
+        // runs — an OEM battery manager, or a phone that is never on a network
+        // during the flex window. Reads one integer out of SQLite on a healthy
+        // device and returns. See `ActivityUploadWorker`.
+        ActivityUploadWorker.flushIfStaleOnForeground()
+        // What is on the home screen right now. Device-local, re-derived every
+        // time the app comes forward, never synced — a widget added or removed
+        // while the app was closed leaves no other trace. See the probe's KDoc
+        // for why Android can answer this exactly and iOS cannot.
+        WidgetPlacementProbe.observe(this)
+    }
+
+    /**
+     * Get the user's last board change off the device before it stops being
+     * running.
+     *
+     * Board pushes are debounced by 2.5 seconds to collapse a burst — ticking
+     * four lines at one station is one save and one write — and an app killed
+     * inside that window loses it. iOS flushes on `scenePhase` leaving active
+     * (`ActivityBridge`); Android had nothing, so a user who added a board and
+     * immediately swiped the app away kept it locally and never told the
+     * account. It would come back on the next EDIT, because the payload is a
+     * full replacement — and until then their other device does not have it.
+     *
+     * Free when there is nothing pending: `BoardPushGate` counts user changes
+     * against the last accepted write, so a flush with an empty gate makes no
+     * request at all. Which is why this can sit on `onStop`, where it also fires
+     * for the widget configuration Activity opening in front of this one.
+     */
+    override fun onStop() {
+        super.onStop()
+        UserSyncCoordinator.flushPendingBoardWrite()
+    }
+
+    /**
+     * `app.opened`, the baseline every other number in the activity trail is a
+     * share of ("how many people opened the app"). iOS has always logged it
+     * (`ActivityBridge.appOpened`); Android never did, so the support funnel
+     * read 0 Android openers next to dozens of Android asks.
+     *
+     * onStart, not onResume: Play's purchase sheet and other translucent
+     * screens pause this Activity without stopping it, and returning from them
+     * is not opening the app.
+     */
+    override fun onStart() {
+        super.onStart()
+        ActivityLog.record(ActivityEvents.APP_OPENED, "cold", (!openedThisProcess).toString())
+        openedThisProcess = true
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_START_LOGGED_IN, startLoggedIn)
+    }
+
+    /**
+     * Every launch of this Activity arrives here rather than building a second
+     * instance, because the manifest declares `launchMode="singleTask"`.
+     *
+     * That is load-bearing: under the default "standard" mode a relaunch spawned
+     * a NEW task with a fresh Activity, the tasks piled up (three observed at
+     * once), and returning to a freshly-restored instance found the NavHost back
+     * stack empty — a blank screen. v1 shipped it.
+     */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        recordNotificationOpened(intent)
         handleDeepLink(intent)
     }
 
-    override fun onResume() {
-        super.onResume()
-        // Foreground re-sync fallback (#5): if the device missed a `user_sync`
-        // FCM push (e.g. was offline), reconcile local state with the cloud
-        // profile when the app comes back to the foreground. Debounced + a
-        // no-op when signed out, inside the coordinator.
-        com.stationly.mobile.service.UserSyncCoordinator.reconcile(this)
+    /** A tap that came from a notification, counted once (the extra is spent). */
+    private fun recordNotificationOpened(intent: Intent?) {
+        val type = intent?.getStringExtra(NotificationDispatcher.EXTRA_OPENED_TYPE) ?: return
+        intent.removeExtra(NotificationDispatcher.EXTRA_OPENED_TYPE)
+        ActivityLog.record(ActivityEvents.NOTIFICATION_OPENED, "type", type)
     }
 
+    /**
+     * Route an inbound link, against the scheme THIS build answers to.
+     *
+     * The routing itself lives in `core` as [parseDeepLink]; this turns a route
+     * into Compose state. Two reasons it is not a `when` over `uri.scheme`:
+     *
+     * 1. **The scheme is per-flavour.** Prod answers `stationly://`, staging
+     *    `stationly-staging://`. A literal here would match neither on staging:
+     *    the link would arrive (the manifest filter uses the same placeholder)
+     *    and be dropped, silently. That is the bug iOS shipped, and it cost two
+     *    days because nothing errors and taps simply do nothing.
+     *    `BuildConfig.DEEP_LINK_SCHEME` and the manifest's `${deepLinkScheme}`
+     *    are set from one argument in build.gradle.kts, so what we register and
+     *    what we accept cannot disagree.
+     * 2. One table, in `core`, tested against the recorded v1 behaviour in
+     *    `docs/android-v2/fixtures/v1/deeplinks.json`.
+     */
     private fun handleDeepLink(intent: Intent?) {
         val uri = intent?.data ?: return
-        when {
-            uri.scheme == "stationly" && uri.host == "auth"  -> passwordResetComplete.value = true
-            uri.scheme == "stationly" && uri.host == "home"  -> { /* just opens the app — no-op */ }
-            uri.scheme == "stationly" && uri.host == "verified" -> {
-                val code = uri.getQueryParameter("oobCode")
-                if (!code.isNullOrBlank()) pendingVerifyOobCode.value = code
-            }
-            uri.scheme == "stationly" && uri.host == "reset" -> {
-                val code = uri.getQueryParameter("oobCode")
-                if (!code.isNullOrBlank()) pendingResetOobCode.value = code
-            }
-        }
-    }
-}
-
-/**
- * App Navigation Composable
- * 
- * Handles navigation between screens:
- * 1. SummaryScreen (main dashboard)
- * 2. SelectionScreen (station selection flow)
- */
-@Composable
-fun AppNavigation(
-    modifier: Modifier = Modifier,
-    passwordResetComplete: MutableState<Boolean> = mutableStateOf(false),
-    pendingResetOobCode: MutableState<String?> = mutableStateOf(null),
-    pendingVerifyOobCode: MutableState<String?> = mutableStateOf(null)
-) {
-    val navController = rememberNavController()
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val authManager = remember { com.stationly.mobile.service.FirebaseAuthManager(context) }
-
-    val firebaseUser by rememberFirebaseAuthState()
-    // Initial routing decision — re-evaluated only on cold start (rememberSaveable isn't
-    // needed since the NavHost preserves its own state across recompositions).
-    //
-    // Three buckets:
-    //   - No user        → auth/login
-    //   - User exists but is email-provider AND not yet verified → auth/verify-email
-    //     (closes the cold-start verify-bypass: previously a user who signed up via
-    //      email then killed the app could re-open straight into summary)
-    //   - Anyone else (Google, Apple, verified email) → summary
-    // rememberSaveable (NOT remember): the NavHost saves/restores its back stack
-    // across process death, and that restore requires the SAME startDestination it
-    // was created with. Plain remember re-evaluates authManager.currentUser on
-    // recreation — if Firebase hasn't rehydrated the user yet it would flip to
-    // "auth/login", mismatching the saved "summary"-rooted stack and leaving the
-    // NavHost unable to restore → blank. Persisting the original value keeps the
-    // start destination stable so the back stack always restores cleanly.
-    val startDestination = rememberSaveable {
-        val u = authManager.currentUser
-        when {
-            u == null -> "auth/login"
-            isUnverifiedEmailUser(u) -> "auth/verify-email"
-            else -> "summary"
+        when (val route = parseDeepLink(uri.toString(), BuildConfig.DEEP_LINK_SCHEME)) {
+            is DeepLinkRoute.PasswordResetComplete -> passwordResetComplete = true
+            // A widget tap carries `?station=<groupingId>` (the iOS widget's
+            // link format); slide the home screen to it via the shared
+            // BoardFocus, as iOS's ContentView does. Without one, just open.
+            is DeepLinkRoute.Home                  ->
+                uri.getQueryParameter("station")?.takeIf { it.isNotBlank() }
+                    ?.let { BoardFocus.request(it) }
+            is DeepLinkRoute.VerifyEmail           -> applyVerification(route.oobCode)
+            is DeepLinkRoute.ResetPassword         -> pendingResetOobCode = route.oobCode
+            // Includes a known host arriving WITHOUT its code: v1 checked
+            // isNullOrBlank and did nothing rather than opening a reset screen
+            // that cannot complete. `parseDeepLink` keeps that.
+            is DeepLinkRoute.Unhandled             -> Unit
         }
     }
 
-    // ALSO react to subsequent auth-state changes — e.g. token rotated mid-session
-    // and Firebase decided the cached profile is stale. If a user becomes unverified
-    // (rare but possible after admin action), bounce them to verify-email.
-    //
-    // Critically, this only fires when the user is on a NON-auth route (e.g. summary).
-    // During signup the LoginViewModel owns navigation via onNeedsEmailVerification
-    // — if we navigate here first, we clear the register ViewModel mid-coroutine
-    // and cancel the in-flight branded-email backend call, which silently falls
-    // back to Firebase's default email.
-    LaunchedEffect(firebaseUser) {
-        val u = firebaseUser
-        if (u != null && isUnverifiedEmailUser(u)) {
-            val currentRoute = navController.currentDestination?.route
-            val onAuthScreen = currentRoute?.startsWith("auth/") == true
-            if (!onAuthScreen) {
-                navController.navigate("auth/verify-email") {
-                    popUpTo(0) { inclusive = true }
-                    launchSingleTop = true
-                }
-            }
+    /**
+     * Apply a verification code, then tell the composition to look again.
+     *
+     * The apply is a network call and cannot be awaited before `setContent` —
+     * blocking the launcher on Firebase is worse than any screen this can show.
+     * So a cold start composes at `auth/verify-email` (correct: at that instant
+     * the account is not verified yet) and [emailVerifiedSignal] moves it on
+     * when the call returns. A warm start is already resumed, so the verify
+     * screen's own ON_RESUME poll has been and gone — the signal is the only
+     * edge it will see.
+     *
+     * **A failure deliberately shows nothing.** The user lands on the verify
+     * screen, which is where an expired link should leave them: it explains the
+     * situation and carries the "Resend email" button. v1 raised its own error
+     * banner from the view model; the host has no channel into the shared
+     * screen's state, and widening one for this would be a poor trade.
+     */
+    private fun applyVerification(oobCode: String) {
+        lifecycleScope.launch {
+            authProvider.applyEmailVerificationCode(oobCode)
+                .onSuccess { emailVerifiedSignal += 1 }
         }
     }
 
-    // Reactive eviction: the moment Firebase reports no user (sign-out, token revoked,
-    // account deleted, 401 from backend), jump back to login and clear the back stack
-    // so the previous user's data can't be revealed by pressing Back. Also runs a
-    // backup cleanup pass in case the sign-out bypassed FirebaseAuthManager.logout()
-    // (e.g. came from the 401 interceptor). All clears are idempotent.
-    LaunchedEffect(firebaseUser) {
-        if (firebaseUser == null) {
-            val sqlStorage = com.stationly.core.platform.Platform.sqlStorage
-            if (sqlStorage.getAllSelections().isNotEmpty()) {
-                com.stationly.core.platform.Platform.notificationManager.clearAllTopics()
-                sqlStorage.clearAllData()
-                com.stationly.core.platform.Platform.storageManager.clearAll()
-                com.stationly.core.platform.Platform.widgetManager.clearWidgetData()
-            }
-            val currentRoute = navController.currentDestination?.route
-            if (currentRoute == null || !currentRoute.startsWith("auth/")) {
-                navController.navigate("auth/login") {
-                    popUpTo(0) { inclusive = true }
-                    launchSingleTop = true
-                }
-            }
-
-            // If this sign-out was triggered by a remote account deletion
-            // (another device deleted the account → user_sync push), show a
-            // brief notice so the user understands why they're back at login.
-            if (com.stationly.mobile.service.UserSyncCoordinator.consumeAccountRemovedFlag(context)) {
-                android.widget.Toast.makeText(
-                    context,
-                    "Your account was removed.",
-                    android.widget.Toast.LENGTH_LONG
-                ).show()
-            }
-        }
+    private companion object {
+        /** Has this process opened the UI before? Makes `app.opened`'s `cold` prop. */
+        var openedThisProcess = false
+        const val KEY_START_LOGGED_IN = "start_logged_in"
+        private const val SESSION_RECHECK_MS = 1_000L
     }
-
-    // When a stationly://reset deep link arrives, navigate to the confirm screen
-    LaunchedEffect(pendingResetOobCode.value) {
-        val code = pendingResetOobCode.value ?: return@LaunchedEffect
-        navController.navigate("auth/reset-confirm/$code") {
-            popUpTo("auth/login") { inclusive = false }
-        }
-        pendingResetOobCode.value = null
-    }
-
-    // When a stationly://verified deep link arrives (user tapped the verify link in
-    // their email and the OS routed it to us instead of the browser), apply the
-    // code via Firebase client SDK and bounce them to the summary. The user might
-    // be on the verify-email screen or on a cold-start LoginScreen — either way,
-    // applyVerificationCode handles reload + token refresh + sync + nav.
-    val verifyVm: com.stationly.mobile.ui.login.LoginViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-    LaunchedEffect(pendingVerifyOobCode.value) {
-        val code = pendingVerifyOobCode.value ?: return@LaunchedEffect
-        pendingVerifyOobCode.value = null
-        verifyVm.applyVerificationCode(code) {
-            navController.navigate("summary") {
-                popUpTo(0) { inclusive = true }
-                launchSingleTop = true
-            }
-        }
-    }
-
-    // Provide an in-app WebView opener for every screen below — SDUI link
-    // rows, profile "Visit Website", announcement CTAs, etc. all route
-    // through `LocalOpenUrl` and end up at the in-app WebViewScreen
-    // instead of bouncing the user out to Chrome. Falls back to the
-    // external opener if the URL is non-HTTP (mailto:, tel:, market:).
-    androidx.compose.runtime.CompositionLocalProvider(
-        com.stationly.mobile.ui.common.LocalOpenUrl provides { url, title ->
-            val isWeb = url.startsWith("http://", ignoreCase = true) ||
-                        url.startsWith("https://", ignoreCase = true)
-            if (isWeb) {
-                val encodedUrl = java.net.URLEncoder.encode(url, "UTF-8")
-                val route = if (title.isNullOrBlank()) {
-                    "webview/$encodedUrl"
-                } else {
-                    val encodedTitle = java.net.URLEncoder.encode(title, "UTF-8")
-                    "webview/$encodedUrl?title=$encodedTitle"
-                }
-                navController.navigate(route) { launchSingleTop = true }
-            } else {
-                com.stationly.mobile.ui.common.defaultExternalOpener(context).invoke(url, title)
-            }
-        }
-    ) {
-    NavHost(
-        navController = navController,
-        startDestination = startDestination,
-        modifier = modifier
-    ) {
-        // --- Authentication Flow ---
-        
-        // Sign In Screen
-        composable("auth/login") {
-            com.stationly.mobile.ui.login.LoginScreen(
-                screenType = "login",
-                onNavigateToSummary = {
-                    navController.navigate("summary") {
-                        popUpTo("auth/login") { inclusive = true }
-                    }
-                },
-                onNeedsEmailVerification = {
-                    navController.navigate("auth/verify-email") {
-                        launchSingleTop = true
-                    }
-                },
-                onNavigateToRegister = { navController.navigate("auth/register") },
-                onNavigateToForgotPassword = { navController.navigate("auth/forgot-password") },
-                showPasswordResetSuccess = passwordResetComplete.value,
-                onPasswordResetBannerShown = { passwordResetComplete.value = false }
-            )
-        }
-
-        // Sign Up Screen
-        composable("auth/register") {
-            com.stationly.mobile.ui.login.LoginScreen(
-                screenType = "register",
-                onNavigateToSummary = {
-                    navController.navigate("summary") {
-                        popUpTo("auth/login") { inclusive = true }
-                    }
-                },
-                onNeedsEmailVerification = {
-                    navController.navigate("auth/verify-email") {
-                        // Replace register on the back stack so back goes to landing.
-                        popUpTo("auth/login") { inclusive = false }
-                        launchSingleTop = true
-                    }
-                },
-                onNavigateToLogin = { navController.popBackStack() }, // Standard back
-                onNavigateToRegister = {}, // Already here
-                onNavigateToForgotPassword = { navController.navigate("auth/forgot-password") }
-            )
-        }
-
-        // Verify Email — hard gate after email signup or for an unverified email login.
-        composable("auth/verify-email") {
-            com.stationly.mobile.ui.login.VerifyEmailScreen(
-                onVerified = {
-                    navController.navigate("summary") {
-                        popUpTo("auth/login") { inclusive = true }
-                    }
-                },
-                onUseDifferentEmail = {
-                    navController.navigate("auth/login") {
-                        popUpTo("auth/login") { inclusive = true }
-                    }
-                }
-            )
-        }
-        
-        // Reset Password Confirm (from deep link stationly://reset?oobCode=XXX)
-        composable("auth/reset-confirm/{oobCode}") { backStackEntry ->
-            val oobCode = backStackEntry.arguments?.getString("oobCode") ?: ""
-            com.stationly.mobile.ui.login.LoginScreen(
-                screenType          = "reset-confirm",
-                resetOobCode        = oobCode,
-                onNavigateToSummary = {},
-                onNavigateToLogin   = {
-                    navController.navigate("auth/login") {
-                        popUpTo("auth/reset-confirm/$oobCode") { inclusive = true }
-                    }
-                }
-            )
-        }
-
-        // Forgot Password Screen
-        composable("auth/forgot-password") {
-            com.stationly.mobile.ui.login.LoginScreen(
-                screenType = "forgot-password",
-                onNavigateToSummary = {}, // Not applicable directly
-                onNavigateToLogin = { navController.popBackStack() }, // Standard back
-                onNavigateToRegister = { navController.navigate("auth/register") },
-                onNavigateToForgotPassword = {} // Already here
-            )
-        }
-
-        // --- Main App Logic ---
-        
-        // Profile Screen
-        composable("profile") {
-            com.stationly.mobile.ui.profile.ProfileScreen(
-                onNavigateBack = { navController.popBackStack() },
-                onLoggedOut = {
-                    navController.navigate("auth/login") {
-                        popUpTo("summary") { inclusive = true }
-                    }
-                },
-                authManager = authManager
-            )
-        }
-
-        // Summary Screen - Main Dashboard
-        composable("summary") {
-            SummaryScreen(
-                onNavigateToSelection = {
-                    navController.navigate("selection") {
-                        launchSingleTop = true
-                    }
-                },
-                onNavigateToProfile = {
-                    navController.navigate("profile") {
-                        launchSingleTop = true
-                    }
-                }
-            )
-        }
-        
-        // In-app WebView — first-party links open inside Stationly instead of
-        // bouncing the user out to Chrome. URL is path-encoded so query
-        // strings / fragments survive the round-trip. Title is an optional
-        // query-style nav arg; if omitted the screen falls back to the
-        // WebView's own resolved <title>.
-        composable(
-            route = "webview/{url}?title={title}",
-            arguments = listOf(
-                androidx.navigation.navArgument("url") { type = androidx.navigation.NavType.StringType },
-                androidx.navigation.navArgument("title") {
-                    type = androidx.navigation.NavType.StringType
-                    nullable = true
-                    defaultValue = null
-                },
-            ),
-        ) { entry ->
-            val rawUrl   = entry.arguments?.getString("url").orEmpty()
-            val rawTitle = entry.arguments?.getString("title")
-            val url   = runCatching { java.net.URLDecoder.decode(rawUrl, "UTF-8") }
-                .getOrDefault(rawUrl)
-            val title = rawTitle
-                ?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it) }
-                ?.takeIf { it.isNotBlank() }
-            com.stationly.mobile.ui.common.WebViewScreen(
-                url = url,
-                title = title,
-                onClose = { navController.popBackStack() },
-                // First-party stationly.co.uk pages (marketing site, privacy,
-                // terms) are JS-driven: scroll-reveal sections start at
-                // opacity:0 and an IntersectionObserver flips them to .visible.
-                // With JS off the page renders full-height but blank. These are
-                // trusted first-party URLs, so JS is safe to enable here.
-                enableJavaScript = true,
-            )
-        }
-
-        // Selection Screen - Station Selection Flow.
-        // popUpTo("selection") { inclusive = true } so that after a save, the
-        // selection screen is removed from the back stack. Previously it was
-        // inclusive=false which left selection lingering — pressing back from
-        // summary later (post profile-visit, etc.) would unexpectedly return
-        // the user to the selection flow they thought they'd finished.
-        // launchSingleTop ensures we don't stack a duplicate summary on top
-        // when there's already one underneath.
-        composable("selection") {
-            SelectionScreen(
-                onNavigateToSummary = {
-                    navController.navigate("summary") {
-                        popUpTo("selection") { inclusive = true }
-                        launchSingleTop = true
-                    }
-                }
-            )
-        }
-    }
-    } // close CompositionLocalProvider for LocalOpenUrl
-}
-
-/**
- * True when the user signed up with email/password AND hasn't verified yet. Google
- * and Apple emails are pre-verified by the provider so they always return false
- * even with isEmailVerified == false at the very first instant. Used to gate the
- * summary screen at cold start so a half-completed signup can't sneak past the
- * verify-email screen by killing and reopening the app.
- */
-private fun isUnverifiedEmailUser(user: com.google.firebase.auth.FirebaseUser): Boolean {
-    if (user.isEmailVerified) return false
-    // providerData includes "firebase" pseudo-provider plus the real ones — we only
-    // care whether "password" is among them, which means email/password is at least
-    // one of the user's sign-in methods.
-    return user.providerData.any { it.providerId == "password" }
 }

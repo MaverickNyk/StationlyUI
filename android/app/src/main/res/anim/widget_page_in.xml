@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Arriving platform, moving FORWARD (the right chevron).
+
+     A full-width slide in from the right, no fade. The board is one surface
+     sliding sideways, the way every pager on the phone behaves, so the motion
+     says "the next platform" rather than "something changed".
+
+     ## How a directional slide is possible at all
+     `setInAnimation` is not a @RemotableViewMethod, so a ViewFlipper's
+     animation pair is fixed when the layout is inflated and cannot be chosen
+     per tap. This file used to be a fade-and-rise for exactly that reason: one
+     flipper can only have one animation, and a slide that travelled the same
+     way whichever arrow you pressed was worse than not sliding.
+
+     The answer is not one flipper but three, one per motion, stacked in the
+     same slot with one visible — see widget_departure_board.xml. Each carries
+     its own pair here, and the update picks a motion by picking a flipper.
+
+     200ms: long enough to read as travel, short enough that pressing the arrow
+     twice does not queue up a wait.
+-->
+<translate xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="200"
+    android:fromXDelta="100%p"
+    android:interpolator="@android:interpolator/decelerate_quad"
+    android:toXDelta="0" />

@@ -9,6 +9,7 @@ import com.stationly.core.activity.ActivityLog
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.sdui.UserProfileResponse
 import com.stationly.core.model.user.Board
+import com.stationly.core.model.user.effectiveBoards
 import com.stationly.core.model.user.WidgetPlacement
 import com.stationly.app.platform.DeviceIdentity
 import com.stationly.core.platform.Platform
@@ -30,12 +31,21 @@ import kotlinx.datetime.Clock
  * to any device but this one. They are kept per account on the device and
  * restored when the same person signs back in.
  *
- * ## iOS only, deliberately
- * Everything here writes the board list, which Android does not read yet. Wiring
- * Android to this would put both platforms on one list and reintroduce the
- * cross-platform wipe the split exists to fix — Android's own save path calls
- * `cleanupAll()` first, so the "full list" it posts is always a single board.
- * Android moves over by adopting this, not by both writing at once.
+ * ## Both platforms, since AV2-4.3
+ * This used to say "iOS only, deliberately", and it was already untrue when it
+ * was read: the cutover made the shared `SelectionViewModel` the Android save
+ * path, so Android has been calling [boardsChanged] since AV2-3.5. What Android
+ * had NOT done was read the same list back — its reconcile still diffed against
+ * the legacy `stations` array, which nothing had written since v1. So a board
+ * saved here left no trace in the array the next foreground compared against,
+ * and that foreground deleted it.
+ *
+ * The warning the old note carried is still real and now points the other way:
+ * the two lists must stay two lists. `boards` is the authority on both
+ * platforms; `stations` is a lossy projection written beside it (see
+ * `UserStateRepository.pushBoards`) so a v1 Android device on the same account
+ * reads something degraded but correct instead of something stale. The
+ * subscription registry reads the UNION, which is what makes that safe.
  */
 object UserStateSync {
 
@@ -50,6 +60,11 @@ object UserStateSync {
      * which is exactly the silence this is meant to break.
      */
     const val ACCOUNT_REMOVED_FLAG = "account_removed_notice"
+
+    /** Whether this device's station order is in the account: [ORDER_SAVED], or not yet. */
+    private const val ORDER_KEY = "board_order_in_account"
+    private const val ORDER_PENDING = "pending"
+    private const val ORDER_SAVED = "saved"
 
     val repository: UserStateRepository by lazy {
         UserStateRepository(
@@ -96,6 +111,51 @@ object UserStateSync {
      * the user's last change left the device before the session did.
      */
     suspend fun flushNow() = repository.flushNow()
+
+    /**
+     * The user dragged their stations into a new order: save it to the account,
+     * if that is safe now, else at the next sync that catches up (AV2-11.47).
+     *
+     * A save is a full replace of the account's list, so it is sent only from a
+     * device that is up to date ([UserStateRepository.caughtUp]). From one that
+     * missed a board added elsewhere, it would delete that board.
+     */
+    suspend fun orderChanged() {
+        val storage = Platform.storageManager
+        runCatching { storage.saveDurable(ORDER_KEY, ORDER_PENDING) }
+        if (repository.caughtUp()) {
+            boardsChanged()
+            flushNow()
+            // Saved only once the server took it; else the next caught-up sync retries.
+            if (repository.allPushed()) runCatching { storage.saveDurable(ORDER_KEY, ORDER_SAVED) }
+        }
+    }
+
+    /**
+     * Save the stations' order to the account if it has not been yet: after a
+     * drag that could not be sent ([orderChanged]), and once on the first sync
+     * after updating to a build that keeps the order there.
+     *
+     * Builds before this wrote the account's list oldest first, so until the
+     * first save from this one, signing in elsewhere brought the stations back in
+     * that order: seen on the Fold on 2026-11-26, Southfields moving from first to
+     * last.
+     *
+     * Call ONLY right after a sync that left this device caught up with the
+     * account; the save is a full replace. Marked saved only once the server has
+     * accepted it.
+     */
+    suspend fun publishOrderIfPending() {
+        val storage = Platform.storageManager
+        if (runCatching { storage.loadDurable(ORDER_KEY) }.getOrNull() == ORDER_SAVED) return
+        if (Platform.sqlStorage.getAllSelections().isNotEmpty()) {
+            boardsChanged()
+            flushNow()
+            // Not accepted (offline, refused): stays pending for the next sync.
+            if (!repository.allPushed()) return
+        }
+        runCatching { storage.saveDurable(ORDER_KEY, ORDER_SAVED) }
+    }
 
     /**
      * Drop everything held for the session that is ending.
@@ -181,37 +241,12 @@ object UserStateSync {
      * diffs because the user may be looking at a board while it runs.
      */
     suspend fun restoreBoards(profile: UserProfileResponse, lifecycle: StationLifecycleUseCase) {
-        // `isUsable` drops boards that say nothing — a truncated payload, or a
-        // response from a backend that predates this shape. Without it they
-        // would suppress the legacy fallback below and restore nothing at all.
-        val usable = profile.boards.filter { it.isUsable }
-        val boards = usable.ifEmpty {
-            // Fall back to the LEGACY list when the response carries no boards
-            // but does carry stations.
-            //
-            // A current backend always derives `boards` from `stations`, so the
-            // two can only disagree this way when the backend PREDATES the
-            // field — the ordinary state of affairs for any client that ships
-            // ahead of a deploy, including this one on the day it lands. Without
-            // this the login restore silently does nothing: the selections reach
-            // SQLite (core writes them from `stations`) but no board is ever set
-            // up, so none subscribes, fetches, or reaches the widget. The user
-            // sees a home screen of boards that never populate.
-            Board.fromSelections(
-                profile.stations.map { station ->
-                    UserSelection(
-                        mode = station.mode,
-                        line = station.line,
-                        station = station.id,
-                        parentStationId = station.parentStationId.orEmpty(),
-                        stationName = station.name,
-                        direction = station.direction,
-                        destinations = emptyList(),
-                        destinationIds = emptyList(),
-                    )
-                },
-            )
-        }
+        // `boards` if it says anything, else the legacy `stations` list — the
+        // rule and the reasons are on [effectiveBoards], which is where the
+        // restore in `UserSyncRepository` reads it from too. This half used to
+        // hand-build `UserSelection` from `SubscribedStation` inline, which was
+        // a fifth copy of a conversion that has one definition.
+        val boards = profile.effectiveBoards()
         if (boards.isEmpty()) return
 
         // The arrangement is already loaded — `resetForNewSession` re-read it for
@@ -220,29 +255,16 @@ object UserStateSync {
         // at the defaults.
         UserSettings.ensureLoaded()
 
-        // Oldest first, so the restored home screen is in the order the user
-        // built it.
-        //
-        // `config.sortKey` is in the comparator for symmetry with `buildBoards`,
-        // where it IS live — but on THIS path it can never decide anything.
-        // `Board.config` is `@Transient`, so every board deserialised from the
-        // profile carries a default `BoardConfig`, every `sortKey` is
-        // `Int.MAX_VALUE`, and the sort falls entirely to `addedAt`. (An earlier
-        // version of this comment claimed position overrode it here. It cannot:
-        // drag order is device-local and does not travel — see
-        // USER_STATE_AND_ACTIVITY.md §2b.)
-        //
-        // Which is correct rather than merely harmless: this ordering only
-        // decides SETUP order. The home screen renders from `UserSettings`,
-        // which does hold the positions on a device that has them.
+        // In the account's order, which is the home screen's (see
+        // `Board.inOrder`). Each setup puts its board at the TOP, so they are set up
+        // last first. They used to be sorted oldest first and so came back reversed,
+        // stations and lines alike, whatever order the user had.
         //
         // Set up per (line, direction): that is the level a topic subscription
         // and a prediction table live at, so one station with four lines is four
         // calls, not one.
-        boards.sortedWith(compareBy({ it.config.sortKey }, { it.addedAt })).forEach { board ->
-            board.toSelections().forEach { selection ->
-                runCatching { lifecycle.setupStation(selection, isFirstTime = false) }
-            }
+        Board.setupOrder(boards).forEach { selection ->
+            runCatching { lifecycle.setupStation(selection, isFirstTime = false) }
         }
         ActivityLog.record(ActivityEvents.SYNC_RESTORED, "boards", boards.size.toString())
 
@@ -251,7 +273,7 @@ object UserStateSync {
         // user's next device restores what they are looking at now rather than
         // going round the same fallback. One push: the write makes the list
         // usable, so this cannot repeat.
-        if (usable.isEmpty()) repository.boardsChanged()
+        if (profile.boards.none { it.isUsable }) repository.boardsChanged()
     }
 
     // ── Widget placement ────────────────────────────────────────────────────

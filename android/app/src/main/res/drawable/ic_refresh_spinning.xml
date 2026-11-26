@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The refresh arrow ITSELF turning, while a refresh is in flight.
+
+     Used as the progress view's indeterminate drawable, so the system runs the
+     rotation (a RemoteViews widget cannot animate a view from code). The owner
+     asked for the icon to rotate rather than be swapped for a generic circle
+     (2026-11-21). Same glyph and colour as ic_refresh, so it reads as the button
+     you pressed, working.
+
+     A `rotate`, NOT an `animated-rotate` (owner, 2026-11-23: "slow, works like
+     stop and motion"). `animated-rotate` ticks in 12 jumps of 30 degrees every
+     150ms, about 7 frames a second and 1.8s a turn, and its frame count and
+     timing are private attributes an app cannot change. A plain `rotate` is
+     level-driven, so the ProgressBar animates it itself, every frame, at the
+     `indeterminateDuration` and interpolator set on the view. -->
+<rotate xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_refresh"
+    android:fromDegrees="0"
+    android:toDegrees="360"
+    android:pivotX="50%"
+    android:pivotY="50%" />

@@ -26,21 +26,20 @@ class SyncPredictionsUseCase(
      * @return Formatted predictions for display
      */
     suspend fun execute(payload: PredictionsPayload, selection: UserSelection): List<PredictionDisplay> {
-        // ONE timestamp for this whole sync. We stamp the board's "last
-        // backend update" time the moment the payload lands — BEFORE we know
-        // whether it even contains rows for this line/direction — so a 0-row
-        // update still resets the "X ago" timer. The same value is later
-        // handed to savePredictions, so the sync stamp and the prediction
-        // rows agree to the millisecond and all three surfaces (home, widget,
-        // dream) read one consistent time via getLastUpdatedTimestamp.
+        // ONE timestamp for this whole sync, stamped on a 0-row update too, so
+        // that it still resets the "X ago" timer. The same value is handed to
+        // savePredictions, so the sync stamp and the prediction rows agree to
+        // the millisecond and all three surfaces (home, widget, dream) read one
+        // consistent time via getLastUpdatedTimestamp. Stamped only once the
+        // rows are saved: "0:00 ago" over rows a failure left behind is a lie.
         val syncMs = Clock.System.now().toEpochMilliseconds()
-        sqlStorage.saveSyncTimestamp(selection.station, selection.line, selection.direction, syncMs)
+        fun stamp() = sqlStorage.saveSyncTimestamp(selection.station, selection.line, selection.direction, syncMs)
 
         // 1. Extract line data (Loose matching for casing)
         val lineIdLower = selection.line.lowercase()
         val lineData = payload.lines[lineIdLower]
             ?: payload.lines.entries.find { it.key.lowercase() == lineIdLower }?.value
-            ?: return emptyList()
+            ?: run { stamp(); return emptyList() }
         
         // 2. Get predictions for the direction (Loose matching for casing)
         val dirIdLower = selection.direction.lowercase()
@@ -136,8 +135,9 @@ class SyncPredictionsUseCase(
         }
 
         // 6. Save to SQL storage — same `syncMs` so the row timestamps match
-        //    the sync stamp recorded above.
+        //    the sync stamp.
         sqlStorage.savePredictions(selection.station, selection.line, selection.direction, processedPredictions, syncMs)
+        stamp()
 
         return processedPredictions
     }

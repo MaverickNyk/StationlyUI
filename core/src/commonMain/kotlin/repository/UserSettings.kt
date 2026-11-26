@@ -100,7 +100,7 @@ object UserSettings {
     private val ALL_KEYS = listOf(CONFIGS_KEY, LAYOUT_KEY)
 
     /** Signed out, or not yet loaded. Keys are namespaced by this. */
-    private const val NO_USER = "anon"
+    const val NO_USER = "anon"
 
     private var uid: String = NO_USER
 
@@ -203,9 +203,65 @@ object UserSettings {
         load()
     }
 
+    /**
+     * The value an account should inherit from the `anon` namespace, or null.
+     *
+     * ## Why anything inherits anything
+     * These keys are namespaced by uid, read from `SessionStore.Key.UID`. On
+     * iOS `AuthBridge.swift` writes that key. On Android, until 2026-09-12,
+     * NOTHING did — so [load] resolved [NO_USER] on every launch and every
+     * arrangement any Android user ever made went to `…::anon`. It worked
+     * silently and consistently, because one namespace used forever is
+     * indistinguishable from the right one.
+     *
+     * Publishing the identity (`AuthIdentityPublisher`) made this resolve a
+     * real uid for the first time, pointing it at a namespace that has never
+     * existed. Without adoption, upgrading hands every Android user their
+     * boards in default order, nothing pinned, and their home layout reset.
+     *
+     * ## The rule this must not become
+     * "A signed-in account with no settings inherits anon" would mean the
+     * SECOND person to sign in on a shared phone inherits the first person's
+     * arrangement — precisely what the namespacing exists to prevent. So
+     * adoption happens once and consumes the anon namespace; after that there
+     * is nothing left to inherit.
+     *
+     * An empty-but-present namespace (`"{}"`, every row pruned because every
+     * setting is at its default) is an ANSWER and is never overwritten. Only an
+     * absent one is a gap.
+     */
+    fun adoptionSource(uid: String, perUid: String?, anon: String?): String? {
+        if (uid.isBlank() || uid == NO_USER) return null
+        if (perUid != null) return null
+        return anon?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Move any orphaned `anon` values onto this account, once.
+     *
+     * Read → write → remove, per key, and the remove is what makes it once:
+     * a second account signing in later finds nothing. Each key is independent,
+     * so a device that somehow has an adopted layout but an orphaned config
+     * still rescues the config.
+     */
+    private suspend fun adoptAnonNamespace() {
+        ALL_KEYS.forEach { base ->
+            val perUid = runCatching { Platform.storageManager.loadDurable(key(base)) }.getOrNull()
+            val anon = runCatching { Platform.storageManager.loadDurable("$base::$NO_USER") }.getOrNull()
+            val adopt = adoptionSource(uid, perUid, anon) ?: return@forEach
+            runCatching {
+                Platform.storageManager.saveDurable(key(base), adopt)
+                Platform.storageManager.removeDurable("$base::$NO_USER")
+            }
+        }
+    }
+
     private suspend fun load() {
         uid = runCatching { Platform.storageManager.loadString(UID_KEY) }
             .getOrNull()?.takeIf { it.isNotBlank() } ?: NO_USER
+        // Before the reads below, or they see the empty namespace rather than
+        // the values about to be moved into it.
+        adoptAnonNamespace()
         _configs.value = runCatching {
             Platform.storageManager.loadDurable(key(CONFIGS_KEY))
                 ?.let { json.decodeFromString(configsSerializer, it) }
@@ -214,8 +270,26 @@ object UserSettings {
             Platform.storageManager.loadDurable(key(LAYOUT_KEY))
                 ?.let { name -> HomeLayout.entries.firstOrNull { it.name == name } }
         }.getOrNull() ?: HomeLayout.LIST
-        _widgets.value = emptyMap()
-        _widgetTotal.value = 0
+        // ── Widget placement is NOT cleared here, and that is the fix ──
+        //
+        // It is a fact about the DEVICE — which widgets are on this home screen
+        // — not about the account, and it is never read from disk, so there is
+        // nothing here to load and nothing to invalidate. Clearing it made this
+        // function silently destroy an answer that something else had just
+        // measured.
+        //
+        // Observed on a Pixel: the placement probe runs from the host's
+        // `onResume` and reported `observed 2 widget(s) across 2 board(s)`; the
+        // first screen to call `ensureLoaded()` then ran this and emptied the
+        // map. So the station screen's delete confirmation stopped warning that
+        // a widget was showing the station about to be deleted — the exact
+        // warning the probe exists to enable — depending purely on which of the
+        // two ran last. It worked when navigating back into an already-loaded
+        // session and failed on a cold start.
+        //
+        // The session boundaries that SHOULD forget it still do: `reset()` at
+        // logout and `forgetAccount()` at deletion. Both are followed by a
+        // foreground, and the probe replaces the map wholesale on every one.
         _loaded.value = true
     }
 

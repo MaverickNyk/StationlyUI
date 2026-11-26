@@ -69,9 +69,33 @@ fun VerifyEmailScreen(
     authProvider: PlatformAuthProvider,
     onVerified: () -> Unit,
     onUseDifferentEmail: () -> Unit,
+    /**
+     * A new value here means "the account may have just become verified by
+     * something outside this screen — look again".
+     *
+     * Android's `…://verified?oobCode=…` link is applied by the HOST, using the
+     * Firebase SDK it already holds, because applying an action code is a
+     * platform call and iOS reaches Firebase through a Swift bridge instead.
+     * That leaves the host with an answer and no way to say so: the apply
+     * finishes while the Activity is already resumed, so the ON_RESUME poll
+     * below has been and gone. This is that missing edge.
+     *
+     * Null on iOS, where nothing applies codes behind the screen's back.
+     */
+    recheckSignal: Any? = null,
     viewModel: LoginViewModel = viewModel { LoginViewModel(authProvider) }
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val step by viewModel.step.collectAsStateWithLifecycle()
+    LaunchedEffect(step) {
+        val next = step ?: return@LaunchedEffect
+        viewModel.stepTaken()
+        when (next) {
+            LoginStep.SIGNED_IN     -> onVerified()
+            LoginStep.BACK_TO_LOGIN -> onUseDifferentEmail()
+            LoginStep.VERIFY_EMAIL  -> Unit // already here
+        }
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     val scopeForPersist = rememberCoroutineScope()
     val openUrl = LocalOpenUrl.current
@@ -110,12 +134,19 @@ fun VerifyEmailScreen(
         }
     }
 
+    // The host applied a verification code from a deep link. Same check the
+    // resume poll runs — it syncs, then navigates — so a link tapped while the
+    // app is already open lands on the summary rather than on this screen.
+    LaunchedEffect(recheckSignal) {
+        if (recheckSignal != null) viewModel.silentlyCheckEmailVerified()
+    }
+
     // Auto-detect verification when the user returns to the app from their email.
     // Polling on ON_RESUME catches their return seamlessly.
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.silentlyCheckEmailVerified(onVerified)
+                viewModel.silentlyCheckEmailVerified()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -234,7 +265,7 @@ fun VerifyEmailScreen(
 
             // SECONDARY action: manual "I've verified" check.
             OutlinedButton(
-                onClick = { viewModel.confirmEmailVerified(onVerified) },
+                onClick = { viewModel.confirmEmailVerified() },
                 enabled = !uiState.isAuthenticating,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(14.dp),
@@ -280,7 +311,7 @@ fun VerifyEmailScreen(
                 str("auth.verify.different_email", "Use a different email"),
                 color = White50, fontSize = 13.sp,
                 modifier = Modifier
-                    .clickable { viewModel.signOutAfterVerificationFlow(onUseDifferentEmail) }
+                    .clickable { viewModel.signOutAfterVerificationFlow() }
                     .padding(8.dp)
             )
 

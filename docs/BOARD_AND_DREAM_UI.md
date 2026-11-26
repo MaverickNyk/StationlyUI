@@ -946,6 +946,20 @@ Two rules that fall out of this and are worth keeping:
   these layouts do I want", because what differs between layouts is what the
   content does in them (§12, and the screensaver preview in
   `DreamSettingsScreen.PreviewBoard`).
+- **One maker mark, bottom-left, on every board** (owner, 2026-11-23). The home
+  board footer, the screensaver footer and the Android widget footer all show the
+  real Stationly logo in the same corner: `StationlyLogo` in Compose (the single
+  source, which owns the no-resources fallback) and `@drawable/stationly_logo` in
+  the widget XML. The screensaver once drew its own red "S" disc and nobody
+  noticed because each surface inlined its own copy. Never draw a stand-in.
+- **A bus header says where that side of the road goes** when the stop has no
+  letter: "Bus 39 → Putney Bridge Station" (one terminus at the pole) or
+  "Bus 39, 639 towards Church Road" (the next stop, as the stop flag reads).
+  Routes in a header are in route-number order, so it never reorders as buses
+  move. Termini come from `UserSelection.directionDestinations`;
+  `directionTowards` is the NEXT stop (QA 2026-11-23).
+- **A stepping surface remembers a block by its key** (`PlatformHeader.key`),
+  never by its position: blocks re-sort as departures move (QA 2026-11-23).
 
 ## iOS launch screen
 `iosApp/project.yml` → `UILaunchScreen` (`UIColorName: LaunchBackground`,

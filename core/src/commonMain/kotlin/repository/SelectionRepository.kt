@@ -5,6 +5,8 @@ import com.stationly.core.platform.StorageManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Selection Repository
@@ -48,9 +50,26 @@ class SelectionRepository(
     /**
      * Initialize repository by loading from storage
      */
-    suspend fun initialize() {
-        val savedSelections = sqlStorage.getAllSelections()
-        _selections.value = savedSelections
+    suspend fun initialize() = lock.withLock { load() }
+
+    private fun load() {
+        _selections.value = sqlStorage.getAllSelections()
+    }
+
+    /**
+     * [initialize], for a process no screen has started (a push, a widget).
+     *
+     * Every write below rewrites the whole table from the cache, so saving ONE
+     * board while the cache is empty deleted every other board on the device.
+     * The live iOS 1.1 does this when a silent `user.sync` push adds a board.
+     * Only when empty: re-reading under a screen that is mid-write could cache
+     * a half-written table.
+     */
+    suspend fun loadIfEmpty() = lock.withLock { ensureLoaded() }
+
+    /** [loadIfEmpty] for a caller already holding [lock], which is not reentrant. */
+    private fun ensureLoaded() {
+        if (_selections.value.isEmpty()) load()
     }
     
     /**
@@ -58,7 +77,8 @@ class SelectionRepository(
      * @param newSelection The selection to save
      * @param oldSelection Optional old selection to replace (for edits)
      */
-    suspend fun saveSelection(newSelection: UserSelection, oldSelection: UserSelection?) {
+    suspend fun saveSelection(newSelection: UserSelection, oldSelection: UserSelection?) = lock.withLock {
+        ensureLoaded()
         val currentSelections = _selections.value.toMutableList()
         
         // Remove old selection if provided
@@ -77,8 +97,7 @@ class SelectionRepository(
         _selections.value = currentSelections
         
         // Persist to SQL
-        sqlStorage.clearSelections()
-        currentSelections.forEach { sqlStorage.saveSelection(it) }
+        sqlStorage.replaceSelections(currentSelections)
     }
     
     /**
@@ -112,6 +131,21 @@ class SelectionRepository(
      */
     suspend fun updateSelectionsInPlace(selections: List<UserSelection>) {
         if (selections.isEmpty()) return
+        lock.withLock { updateLocked(selections) }
+    }
+
+    /**
+     * Edit boards from what they are NOW: [edit] gets each row under the lock and returns
+     * its replacement, or null to leave it. For a change worked out before waiting (a
+     * network answer), which as finished rows would undo an edit made meanwhile.
+     */
+    suspend fun editInPlace(edit: (UserSelection) -> UserSelection?) = lock.withLock {
+        ensureLoaded()
+        updateLocked(_selections.value.mapNotNull(edit))
+    }
+
+    private fun updateLocked(selections: List<UserSelection>) {
+        ensureLoaded()
         val current = _selections.value.toMutableList()
         var changed = false
         for (selection in selections) {
@@ -127,15 +161,14 @@ class SelectionRepository(
         if (!changed) return
         _selections.value = current
 
-        sqlStorage.clearSelections()
-        current.forEach { sqlStorage.saveSelection(it) }
+        sqlStorage.replaceSelections(current)
     }
 
     /**
      * Delete a selection
      * @param selection The selection to delete
      */
-    suspend fun deleteSelection(selection: UserSelection) {
+    suspend fun deleteSelection(selection: UserSelection) = lock.withLock {
         val currentSelections = _selections.value.toMutableList()
         // Direction is part of a board's identity: both directions of one line
         // can be tracked at the same station, and removing one must leave the
@@ -163,13 +196,37 @@ class SelectionRepository(
      * Clear all selections
      */
     suspend fun clearAll() {
-        _selections.value = emptyList()
-        sqlStorage.clearSelections()
+        lock.withLock {
+            _selections.value = emptyList()
+            sqlStorage.clearSelections()
+        }
         storageManager.clearCache()
     }
 
     companion object {
         /** The one cache. See the note on [_selections]. */
         private val shared = MutableStateFlow<List<UserSelection>>(emptyList())
+
+        /**
+         * One writer or loader at a time, across every instance. A screen loading
+         * while a push saves used to be able to cache a half-written list, which
+         * the next save made permanent.
+         */
+        private val lock = Mutex()
+
+        /**
+         * The board rows this process is holding, for a reader that cannot
+         * suspend and must not touch the disk.
+         *
+         * One caller: `SduiFacts`, which resolves a server-authored condition
+         * during composition and so can do neither. It is the same cache every
+         * instance already shares, so this adds no second record of anything —
+         * it only makes the existing one readable without constructing a
+         * repository to ask.
+         *
+         * Empty before `initialize()` has run, which is honest: a fact computed
+         * that early is describing a process that does not yet know.
+         */
+        val currentSelections: List<UserSelection> get() = shared.value
     }
 }

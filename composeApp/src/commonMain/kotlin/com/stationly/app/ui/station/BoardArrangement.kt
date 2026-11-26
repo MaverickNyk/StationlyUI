@@ -165,10 +165,9 @@ fun BoardArrangementSection(
             platforms = platforms,
             stops = stops,
             lines = lines,
-            onPin = { next ->
-                performHaptic(HapticType.TAP)
-                onPin(next)
-            },
+            // No haptic here any more: `PinChip` presses through `pressScale`,
+            // which fires it. Doing both gave one tap two buzzes.
+            onPin = onPin,
         )
         // Two reserved lines rather than the measured overload: these sentences
         // are built from live data — a line's display name, a pole's
@@ -472,8 +471,17 @@ private fun DepthSlider(rows: Int, label: String, onChange: (Int) -> Unit) {
  * changed nothing.
  */
 @OptIn(ExperimentalLayoutApi::class)
+/**
+ * Public because TWO surfaces pin now, and they pin different things.
+ *
+ * The station's settings screen pins on the board; the widget configuration
+ * screen pins on the WIDGET, because a widget's settings are its own (owner,
+ * 2026-09-12). They are the same control over the same vocabulary, so they are
+ * the same composable — a second copy would drift the moment one of them
+ * learned a new pin kind.
+ */
 @Composable
-private fun PinPicker(
+fun PinPicker(
     pin: BoardPin?,
     platforms: List<String>,
     stops: List<StopOption>,
@@ -543,7 +551,10 @@ private fun PinChip(
             .clip(RoundedCornerShape(11.dp))
             .background(accent.copy(alpha = fill))
             .border(BorderStroke(1.dp, border), RoundedCornerShape(11.dp))
-            .pressScale(onClick = onClick, scale = 0.94f)
+            // SELECTION, not TAP: these chips are one exclusive choice and the
+            // message is "you are on that one now", which is lighter and drier
+            // than "that registered". Same call the amount ladder makes.
+            .pressScale(onClick = onClick, scale = 0.94f, haptic = HapticType.SELECTION)
             // Selection is carried by colour and weight alone, which VoiceOver
             // cannot see. These chips are one exclusive choice, so they are
             // announced as what they are.

@@ -3,7 +3,11 @@ package com.stationly.mobile.service
 import android.content.Context
 import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
+import com.stationly.app.sync.UserStateSync
+import com.stationly.core.model.sdui.UserProfileResponse
+import com.stationly.core.model.user.hasBoardsFor
 import com.stationly.core.platform.Platform
+import com.stationly.core.platform.V1Upgrade
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.repository.UserSyncRepository
@@ -12,7 +16,7 @@ import com.stationly.core.service.TflApiServiceFactory
 import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.mobile.util.FreshDataNotifier
-import com.stationly.mobile.widget.DepartureWidgetProvider
+import com.stationly.mobile.widget.V1WidgetAdoption
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -38,15 +42,36 @@ import kotlinx.coroutines.tasks.await
  *
  * All work runs on a detached app-level scope — these are triggered from
  * a background service / lifecycle callback with no ViewModel to host them.
+ *
+ * ## AV2-4.3: this reconciles against `boards`, and until now it did not
+ * The account holds two lists. `boards` is the v2 model, carrying each board's
+ * filter and its resolved hub; `stations` is v1's flat rows. They are separate
+ * fields on purpose and the backend never derives one from the other on write —
+ * verified, because the whole plan rests on it (`UserService.syncStations` and
+ * `syncBoards` each touch only their own array; only a MISSING `boards` is
+ * derived, and only on read).
+ *
+ * Since the cutover this device has **written** `boards` — the shared
+ * `SelectionViewModel` calls `UserStateSync.boardsChanged()` — and **read**
+ * `stations`. Saving a board therefore left no trace in the array this class
+ * diffed against, so the next foreground found a local selection the cloud did
+ * not have and deleted it. On an account whose `stations` was empty, that is
+ * every board the user had just added, silently, within fifteen minutes. It
+ * survived to here because the test device's local boards happened to match the
+ * array v1 had last written.
+ *
+ * Reading `boards` also restores what the flat list cannot carry: filters, and
+ * the hub a bus board is grouped on.
  */
 object UserSyncCoordinator {
 
-    private const val STORAGE_PREFS = "StationlyPrefs"
-    // Deliberately a SEPARATE prefs file: FirebaseAuthManager.logout()
-    // clears all of "StationlyPrefs", which would erase a notice flag
-    // stored there before the login screen could read it.
-    private const val FLAGS_PREFS = "StationlySyncFlags"
-    private const val FLAG_ACCOUNT_REMOVED = "pending_account_removed"
+    // `StationlySyncFlags` / `pending_account_removed` used to live here: a
+    // separate prefs file, because `FirebaseAuthManager.logout()` clears all of
+    // `StationlyPrefs` and would have erased the notice before the login screen
+    // could read it. The shared UI solves the same problem the same way, one
+    // layer up — `UserStateSync.ACCOUNT_REMOVED_FLAG` in DURABLE storage — and
+    // its login screen is the only login screen now. Two files for one flag is
+    // how the two stop agreeing, so this one is gone. See [forceLogout].
 
     // Foreground reconcile is only a FALLBACK for a missed `user_sync` push, so
     // it's deliberately infrequent: each run costs one Firestore read of the
@@ -75,20 +100,25 @@ object UserSyncCoordinator {
      * on a device that has since signed in as someone else (or out), and acting
      * on it would reconcile/log-out the wrong account.
      */
-    fun handleUserSync(context: Context, reason: String?, pushUid: String?) {
+    fun handleUserSync(context: Context, reason: String?, pushUid: String?, pushRev: Long? = null) {
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid
         if (pushUid != null && currentUid != null && pushUid != currentUid) {
             Log.w("UserSync", "Ignoring user_sync for $pushUid — current user is $currentUid")
             return
         }
-        Log.d("UserSync", "user_sync push received, reason=$reason")
+        Log.d("UserSync", "user_sync push received, reason=$reason rev=$pushRev")
         when (reason) {
             "deleted" -> {
                 // Only force-logout if the deleted account is the one signed in
                 // here (or the push omitted a uid — legacy/safety).
                 if (pushUid == null || pushUid == currentUid) forceLogout(context)
             }
-            else -> reconcile(context, force = true)   // "stations" / "profile" / null
+            // "stations" / "boards" / "profile" / null. The reason is not
+            // branched on: all three mean the account document moved, and the
+            // reconcile below diffs whatever it finds. Branching would mean
+            // trusting a reason string to be complete, and a reason this client
+            // does not recognise must still be acted on.
+            else -> reconcile(context, force = true, observedRev = pushRev)
         }
     }
 
@@ -97,7 +127,7 @@ object UserSyncCoordinator {
      * set of changes. [force] bypasses the foreground debounce (used for
      * push-triggered syncs, which are precise and should always run).
      */
-    fun reconcile(context: Context, force: Boolean = false) {
+    fun reconcile(context: Context, force: Boolean = false, observedRev: Long? = null) {
         val user = FirebaseAuth.getInstance().currentUser ?: return
         val uid = user.uid
 
@@ -123,20 +153,68 @@ object UserSyncCoordinator {
 
                     val sdui = SduiApiServiceFactory.create()
                     val repo = UserSyncRepository(sdui, Platform.sqlStorage, Platform.storageManager)
-                    val profile = repo.reconcile(uid, buildLifecycle())
+                    val lifecycle = buildLifecycle()
+
+                    // ── BOARDS, not stations. See the class KDoc. ──
+                    //
+                    // Null means the revision gate was closed: nothing was
+                    // fetched, nothing changed, and there is nothing to announce.
+                    //
+                    // The read of the table comes first: it is what opens, and so
+                    // migrates, the database that leaves the v1 note.
+                    val before = Platform.sqlStorage.getAllSelections()
+                    // A push can start this process with no screen to have
+                    // loaded the boards, and the restore below would then
+                    // write its boards over the whole table.
+                    SelectionRepository(Platform.storageManager, Platform.sqlStorage).loadIfEmpty()
+                    val fromV1 = V1Upgrade.boardsPending(context)
+                    val profile = repo.reconcileBoards(uid, lifecycle, observedRev, keepLocalBoards = fromV1)
+                    // A bus stop may have just gained its hub, which is what a
+                    // widget is bound to. Before anything below redraws it.
+                    if (fromV1) V1WidgetAdoption.followHubs(context, before, Platform.sqlStorage.getAllSelections())
+                    if (profile == null) {
+                        Log.d("UserSync", "Reconcile skipped — account unchanged (rev gate)")
+                        if (fromV1) publishV1Boards(context, uid, null)
+                        // Caught up (the account has not changed since the
+                        // last sync that applied), so a full save loses nothing.
+                        UserStateSync.publishOrderIfPending()
+                        return@withLock
+                    }
 
                     // Surface a display-name change made on another device.
                     try { FirebaseAuth.getInstance().currentUser?.reload()?.await() } catch (_: Exception) {}
 
-                    // Nudge the home board to re-read selections from SQL
-                    // (SummaryViewModel listens for the "selections" key), then
-                    // redraw the widget + dream.
-                    context.getSharedPreferences(STORAGE_PREFS, Context.MODE_PRIVATE)
-                        .edit().putString("selections", now.toString()).apply()
+                    // A reconcile can rewrite the whole board list, so the scope
+                    // is genuinely All — every collector reloads everything.
+                    // (The `SharedPreferences.putString("selections", …)` ping
+                    // that used to precede this was read by v1's SummaryViewModel
+                    // and by nothing since AV2-3.5; the explicit
+                    // `updateWidgetFromStorage` that followed it is inside
+                    // notifyAll.)
+                    //
+                    // Now only on a reconcile that actually READ something. It
+                    // used to run on every pass, so every foreground reloaded
+                    // every board on the phone to discover that nothing had
+                    // changed. The screen's own ON_RESUME reload covers the
+                    // ordinary case.
                     FreshDataNotifier.notifyAll(context)
-                    DepartureWidgetProvider.updateFromStorage(context)
 
-                    Log.d("UserSync", "Reconcile complete: ${profile.stations.size} station(s)")
+                    // The board list may have just been rewritten from the
+                    // cloud, and a board that arrived or left here did so
+                    // without anybody subscribing or unsubscribing for it.
+                    runCatching { lifecycle.reconcileTopics() }
+
+                    Log.d("UserSync", "Reconcile complete: ${profile.boards.size} board(s), rev ${profile.stateRev}")
+
+                    // Last: it is network, and a failure must not keep the
+                    // screens from showing what the reconcile already changed.
+                    if (fromV1) publishV1Boards(context, uid, profile)
+                    // Only when the reconcile APPLIED the account, which is when it
+                    // stamps the account's revision. It can return without
+                    // applying (a truncated list, an account with no list yet),
+                    // and a full save from here would then delete what the
+                    // device does not have. See publishOrderIfPending.
+                    if (repo.lastReconcileApplied) UserStateSync.publishOrderIfPending()
                 } catch (e: com.stationly.core.service.UserNotFoundException) {
                     // The account was deleted (here or on another device) and we
                     // missed / never got the `user_sync` deleted push. Treat the
@@ -151,15 +229,88 @@ object UserSyncCoordinator {
     }
 
     /**
-     * Account was deleted elsewhere — wipe and bounce to login. Sets a
-     * one-shot flag (in a prefs file that survives the logout wipe) so the
-     * login screen can show a brief "account removed" notice.
+     * Put the boards a v1 install was holding into the account's board list.
+     *
+     * v1 saved only to `stations`. Where the account also has an iPhone it has a
+     * `boards` list without them, so [UserSyncRepository.reconcileBoards] keeps
+     * them once (`keepLocalBoards`) and this publishes the union.
+     *
+     * The note is cleared only when the account is SEEN to hold them, by reading
+     * it back: a push can be dropped (offline) or declined (another device's
+     * clock is ahead) and neither is reported here. Until then every reconcile
+     * tries again, up to [V1Upgrade.mayRetryBoards]'s limit.
      */
+    private suspend fun publishV1Boards(
+        context: Context,
+        uid: String,
+        profile: UserProfileResponse?,
+    ) {
+        // Somebody else's account: the reconcile applied nothing, and neither
+        // does this.
+        if (profile != null && profile.uid != uid) return
+
+        val local = Platform.sqlStorage.getAllSelections()
+        if (local.isEmpty() || profile?.hasBoardsFor(local) == true) {
+            V1Upgrade.boardsDone(context)
+            return
+        }
+        UserStateSync.boardsChanged()
+        UserStateSync.flushNow()
+
+        val saved = SduiApiServiceFactory.create().getUserProfile(uid)
+        when {
+            saved.uid == uid && saved.hasBoardsFor(local) -> {
+                Log.d("UserSync", "v1 boards are in the account's list: ${local.size} row(s)")
+                V1Upgrade.boardsDone(context)
+            }
+            !V1Upgrade.mayRetryBoards(context) -> {
+                Log.w("UserSync", "v1 boards still not in the account's list; giving up")
+                V1Upgrade.boardsDone(context)
+            }
+            else -> Log.w("UserSync", "v1 boards not in the account's list yet; will retry")
+        }
+    }
+
+    /**
+     * Account was deleted elsewhere — wipe and bounce to login, and leave behind
+     * the one-shot notice that explains it.
+     *
+     * ## The flag has to be one the LOGIN SCREEN reads
+     * This used to write `pending_account_removed` into a private prefs file and
+     * v1's `MainActivity` read it back and raised a Toast. AV2-3.5 deleted that
+     * Activity, so from the cutover until now Android signed the user out and
+     * dropped them on the login screen **with no explanation at all** — the most
+     * alarming thing an app can do silently.
+     *
+     * The shared login screen has carried the receiving end the whole time
+     * (`LoginViewModel` reads `UserStateSync.ACCOUNT_REMOVED_FLAG` from durable
+     * storage and renders `strings.accountRemoved`); the only writer was iOS's
+     * `UserSyncBridge`. This is Android's writer.
+     *
+     * Durable rather than ordinary storage for the same reason the old private
+     * file existed: the teardown below wipes the app's own defaults, so a flag
+     * written to those would be erased by the very sequence it exists to
+     * outlive. `stationly_durable_prefs` is a different file and survives.
+     */
+    /**
+     * True while [forceLogout] is signing the device out, and for a few seconds
+     * after: MainActivity's auth listener sees the same sign-out (it rechecks
+     * after a second) and must not run a second teardown over this one.
+     */
+    @Volatile
+    private var forcedLogoutAt = 0L
+    val forcingLogout: Boolean
+        get() = System.currentTimeMillis() - forcedLogoutAt < FORCED_LOGOUT_WINDOW_MS
+    private const val FORCED_LOGOUT_WINDOW_MS = 10_000L
+
     private fun forceLogout(context: Context) {
+        forcedLogoutAt = System.currentTimeMillis()
         scope.launch {
             try {
-                context.getSharedPreferences(FLAGS_PREFS, Context.MODE_PRIVATE)
-                    .edit().putBoolean(FLAG_ACCOUNT_REMOVED, true).apply()
+                Platform.storageManager.saveDurable(
+                    UserStateSync.ACCOUNT_REMOVED_FLAG,
+                    "1",
+                )
                 // Full local teardown + Firebase sign-out. MainActivity's
                 // auth-state observer evicts to the login screen the moment
                 // currentUser becomes null.
@@ -171,12 +322,81 @@ object UserSyncCoordinator {
         }
     }
 
-    /** Read-and-clear the "account removed" notice flag (called from MainActivity). */
-    fun consumeAccountRemovedFlag(context: Context): Boolean {
-        val prefs = context.getSharedPreferences(FLAGS_PREFS, Context.MODE_PRIVATE)
-        val flag = prefs.getBoolean(FLAG_ACCOUNT_REMOVED, false)
-        if (flag) prefs.edit().putBoolean(FLAG_ACCOUNT_REMOVED, false).apply()
-        return flag
+    // `consumeAccountRemovedFlag` lived here and was called by v1's
+    // MainActivity. The shared `LoginViewModel` consumes the flag itself now,
+    // read-once-and-clear, on the screen the user is actually looking at when
+    // it matters — see [forceLogout].
+
+    /**
+     * Make FCM's subscriptions match the boards on this device.
+     *
+     * Called on every foreground, and again at the tail of a profile reconcile.
+     * Free when there is nothing to do — a `SharedPreferences` read and two set
+     * differences, no FCM call — which is what lets it run on a hook this hot.
+     *
+     * ## Why it is not enough for add and remove to be correct
+     * They are correct. They are also the only record, and a device is not
+     * present for every change made to it: a board deleted on another phone
+     * while this one was off, a wipe that landed between an unsubscribe and its
+     * ledger write, a v1-era path that removed a selection and told nobody. Each
+     * leaves a live subscription with no board behind it — the device keeps
+     * taking pushes for a station the user stopped caring about weeks ago, which
+     * is what AV2-4.1 found on the Pixel, and there is no FCM call that can
+     * enumerate them. The ledger is the only place they are still named.
+     *
+     * Deliberately separate from [reconcile]: that one costs a Firestore read
+     * and is debounced to 15 minutes for it. This one costs nothing and is about
+     * local state, so it runs whenever the app comes forward.
+     */
+    fun reconcileTopics() {
+        scope.launch {
+            // ── UNDER THE SAME LOCK, and this was found on hardware ──
+            //
+            // Without it this races [reconcile], and the race is not theoretical:
+            // on a Pixel 7 Pro running the release build it unsubscribed a LIVE
+            // board. The sequence, from one app open:
+            //
+            //   43.076  reconcile: +0 -6          (plan computed from a snapshot)
+            //   44.398  subscribed Station_940GZZDLRVC    ← the board reconcile,
+            //   44.882  subscribed LineStatus_dlr_dlr        restoring a board
+            //   45.965  unsubscribed Station_940GZZDLRVC  ← THIS, executing a
+            //   46.924  unsubscribed LineStatus_dlr_dlr      four-second-old plan
+            //
+            // The plan was correct when it was made and wrong by the time it
+            // ran: each FCM call takes a few hundred milliseconds, so a six-topic
+            // plan takes four seconds to execute, and the board reconcile
+            // subscribed two of those topics in the middle of it. The DLR board
+            // ended up with no subscription and would have stopped receiving
+            // departures, silently, until something re-subscribed it.
+            //
+            // This is the hazard AV2-4.2's own task (b) names — "two systems
+            // subscribing to the same topics is how a topic gets unsubscribed out
+            // from under a board that still needs it" — reintroduced in a new
+            // shape by the reconcile added to fix it. The mutex already exists
+            // for exactly this and says so; the new call site simply was not
+            // under it.
+            reconcileMutex.withLock {
+                runCatching { buildLifecycle().reconcileTopics() }
+                    .onFailure { Log.w("UserSync", "Topic reconcile failed (retries next foreground)", it) }
+            }
+        }
+    }
+
+    /**
+     * Push any board change still sitting in the debounce window.
+     *
+     * The counterpart to [reconcile]: that one pulls, this one pushes what this
+     * device has not managed to say yet. Called from the host's `onStop`, which
+     * is the last moment Android reliably gives an app before it may be killed.
+     *
+     * On the app-level scope rather than the Activity's, deliberately — the
+     * whole point is to outlive the thing that triggered it.
+     */
+    fun flushPendingBoardWrite() {
+        scope.launch {
+            runCatching { UserStateSync.flushNow() }
+                .onFailure { Log.w("UserSync", "Board flush on background failed (retries on next change)", it) }
+        }
     }
 
     private fun buildLifecycle(): StationLifecycleUseCase {

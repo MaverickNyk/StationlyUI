@@ -46,11 +46,34 @@ object NotificationDispatcher {
 
     private const val TAG = "NotifDispatcher"
 
-    fun dispatch(context: Context, payload: NotificationPayload) {
+    /**
+     * Remove a notification we posted. The one other call that touches the
+     * shade, kept here so every post AND every removal goes through this
+     * object (invariant 1 in service/CLAUDE.md).
+     */
+    fun cancel(context: Context, notificationId: Int) {
+        runCatching { NotificationManagerCompat.from(context).cancel(notificationId) }
+    }
+
+    /** Posts it. False when the user has blocked the app or the channel. */
+    fun dispatch(context: Context, payload: NotificationPayload): Boolean {
+        // FIRST: no image is worth fetching for a notification nobody will see.
+        val manager = NotificationManagerCompat.from(context)
+        if (!manager.areNotificationsEnabled()) {
+            Log.d(TAG, "Notifications blocked, skipping type=${payload.type}")
+            return false
+        }
         // Channel: payload override wins; else type default. Ensure the
         // channel exists (cheap on re-entry).
         StationlyNotificationChannels.ensureCreated(context)
-        val channelId = payload.channel ?: NotificationChannelIds.defaultFor(payload.type)
+        // An unknown channel shows NOTHING on Android 8+, with no error: a
+        // sender's typo, or a channel this build does not have yet. Fall back.
+        val channelId = payload.channel?.takeIf { manager.getNotificationChannel(it) != null }
+            ?: NotificationChannelIds.defaultFor(payload.type)
+        if (manager.getNotificationChannel(channelId)?.importance == NotificationManagerCompat.IMPORTANCE_NONE) {
+            Log.d(TAG, "Channel $channelId is off, skipping type=${payload.type}")
+            return false
+        }
 
         val priority = when (payload.priority.lowercase()) {
             "max"     -> NotificationCompat.PRIORITY_MAX
@@ -61,7 +84,7 @@ object NotificationDispatcher {
             else      -> NotificationCompat.PRIORITY_HIGH
         }
 
-        val contentIntent = buildContentIntent(context, payload.deepLink)
+        val contentIntent = buildContentIntent(context, payload.deepLink, openedType = payload.type)
 
         // Severity cue is rendered as a small coloured dot emoji
         // glyph in front of the title (e.g. "🔴 Piccadilly · Severe
@@ -94,6 +117,13 @@ object NotificationDispatcher {
             .setPriority(priority)
             .setAutoCancel(true)
             .setContentIntent(contentIntent)
+            // Silent: into the shade without sound, vibration or a heads-up,
+            // whatever the channel's importance (line alerts in quiet hours,
+            // recovery updates). setSilent beats the channel, which cannot be
+            // lowered once created.
+            .setSilent(payload.silent)
+
+        payload.timeoutAfterMs?.takeIf { it > 0 }?.let { builder.setTimeoutAfter(it) }
 
         payload.subtitle?.takeIf { it.isNotBlank() }?.let { builder.setSubText(it) }
 
@@ -112,7 +142,7 @@ object NotificationDispatcher {
             ?.takeIf { it.startsWith("https://", ignoreCase = true) }
             ?.let { url ->
                 runCatching {
-                    URL(url).openStream().use { BitmapFactory.decodeStream(it) }
+                    loadImage(url)
                 }.onSuccess { bitmap ->
                     if (bitmap != null) builder.setLargeIcon(bitmap)
                 }.onFailure { Log.w(TAG, "largeIcon fetch failed for $url", it) }
@@ -120,7 +150,8 @@ object NotificationDispatcher {
 
         // Inline actions — max 3 to match Android's collapsed view.
         payload.actions.take(3).forEach { action ->
-            val actionIntent = buildContentIntent(context, action.deepLink, requestCodeSalt = action.label.hashCode())
+            val actionIntent = action.action?.let { NotificationActionReceiver.intent(context, it) }
+                ?: buildContentIntent(context, action.deepLink, requestCodeSalt = action.label.hashCode(), openedType = payload.type)
             builder.addAction(0, action.label, actionIntent)
         }
 
@@ -134,7 +165,7 @@ object NotificationDispatcher {
                     ?.takeIf { it.startsWith("https://", ignoreCase = true) }
                     ?.let { url ->
                         runCatching {
-                            URL(url).openStream().use { BitmapFactory.decodeStream(it) }
+                            loadImage(url)
                         }.onFailure { Log.w(TAG, "bigPicture image fetch failed", it) }
                             .getOrNull()
                     }
@@ -167,16 +198,14 @@ object NotificationDispatcher {
 
         val id = payload.notificationId ?: (payload.type + "::" + payload.title).hashCode()
 
-        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) {
-            Log.d(TAG, "Notifications disabled — skipping post id=$id type=${payload.type}")
-            return
-        }
 
         try {
-            NotificationManagerCompat.from(context).notify(id, builder.build())
+            manager.notify(id, builder.build())
+            return true
         } catch (sec: SecurityException) {
             // Missing POST_NOTIFICATIONS (API 33+). Silent no-op.
             Log.d(TAG, "POST_NOTIFICATIONS not granted, skipping", sec)
+            return false
         }
     }
 
@@ -187,6 +216,37 @@ object NotificationDispatcher {
      * title renders without a prefix, which is the right behaviour
      * for "system" / "neutral" notifications.
      */
+    /** Set on the tap intent; MainActivity records that this type was opened. */
+    const val EXTRA_OPENED_TYPE = "com.stationly.mobile.NOTIFICATION_TYPE"
+
+    private const val IMAGE_TIMEOUT_MS = 4_000
+    private const val IMAGE_MAX_BYTES = 2 * 1024 * 1024
+
+    /**
+     * An image, or an exception the caller turns into "no image". Bounded in
+     * time and size because this runs inside the push handler: a slow host used
+     * to be able to lose the whole notification.
+     */
+    private fun loadImage(url: String): android.graphics.Bitmap? {
+        val connection = URL(url).openConnection().apply {
+            connectTimeout = IMAGE_TIMEOUT_MS
+            readTimeout = IMAGE_TIMEOUT_MS
+        }
+        val deadline = android.os.SystemClock.elapsedRealtime() + IMAGE_TIMEOUT_MS
+        val out = java.io.ByteArrayOutputStream()
+        connection.getInputStream().use { input ->
+            val buffer = ByteArray(16 * 1024)
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                out.write(buffer, 0, n)
+                if (out.size() > IMAGE_MAX_BYTES) throw java.io.IOException("image too large")
+                if (android.os.SystemClock.elapsedRealtime() > deadline) throw java.io.IOException("image too slow")
+            }
+        }
+        return BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
+    }
+
     private object SeverityGlyphs {
         private val map: Map<String, String> = mapOf(
             "danger"  to "🔴", // 🔴 red circle
@@ -209,12 +269,14 @@ object NotificationDispatcher {
         context: Context,
         deepLink: String?,
         requestCodeSalt: Int = 0,
+        openedType: String,
     ): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            deepLink?.let { data = Uri.parse(it) }
+            deepLink?.takeIf { it.isNotBlank() }?.let { data = Uri.parse(it) }
+            putExtra(EXTRA_OPENED_TYPE, openedType)
         }
-        val requestCode = (deepLink.orEmpty() + requestCodeSalt).hashCode()
+        val requestCode = (deepLink.orEmpty() + requestCodeSalt + openedType).hashCode()
         return PendingIntent.getActivity(
             context,
             requestCode,

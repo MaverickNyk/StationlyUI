@@ -13,6 +13,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import com.stationly.core.model.user.PlatformNav
 
 /**
  * The board is one per STATION and the fetch naptan hangs off the SELECTION.
@@ -318,5 +319,72 @@ class BoardTest {
     fun `a selection key matches the key the app runs on`() {
         val selection = sel("490008805N", "490012211N", "39", "inbound")
         assertEquals(selection.boardKey, BoardSelection.from(selection).key)
+    }
+
+    // ── how platforms are navigated ─────────────────────────────────────────
+
+    /**
+     * Scrolling is the default, because it is what every surface did before
+     * this setting existed. A stored config written by an older build has no
+     * `platformNav` key at all, and that has to keep meaning "the way it
+     * already behaves" rather than silently switching somebody's widget to a
+     * mode they never chose.
+     */
+    @Test
+    fun `platform navigation defaults to scrolling`() {
+        assertEquals(PlatformNav.SCROLL, BoardConfig().platformNav)
+    }
+
+    @Test
+    fun `a stored navigation mode survives a round trip`() {
+        val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
+        val encoded = json.encodeToString(
+            BoardConfig.serializer(),
+            BoardConfig(platformNav = PlatformNav.STEP),
+        )
+        assertEquals(PlatformNav.STEP, json.decodeFromString(BoardConfig.serializer(), encoded).platformNav)
+    }
+
+    /**
+     * A value this build has never heard of decodes to the DEFAULT rather than
+     * throwing — `coerceInputValues` is what makes that true, and it is the
+     * same protection `BoardView` relies on for the `NEXT_ONLY` case it
+     * dropped. A config written by a future build with a third mode must not
+     * make an older build unable to read the whole map.
+     */
+    @Test
+    fun `an unknown navigation mode falls back to scrolling`() {
+        val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
+        val stored = """{"platformNav":"CAROUSEL_OF_WONDERS"}"""
+        assertEquals(
+            PlatformNav.SCROLL,
+            json.decodeFromString(BoardConfig.serializer(), stored).platformNav,
+        )
+    }
+
+    // ── Order: what the account keeps, and how a sign-in puts it back (2026-11-26) ──
+
+    private fun stationsOf(vararg spec: Pair<String, List<String>>) =
+        spec.flatMap { (hub, lines) -> lines.map { sel(hub, hub, it, "inbound", name = hub) } }
+
+    @Test
+    fun `the account keeps the home screen's order, dragged or not`() {
+        val boards = Board.fromSelections(stationsOf("A" to listOf("1"), "B" to listOf("2"), "C" to listOf("3")))
+        assertEquals(listOf("A", "B", "C"), Board.inOrder(boards) { it }.map { it.id })
+        // Dragged: C first. A board the order does not name goes last.
+        assertEquals(listOf("C", "A", "B"), Board.inOrder(boards) { listOf("C", "A", "B") }.map { it.id })
+        assertEquals(listOf("C", "A", "B"), Board.inOrder(boards) { listOf("C", "A") }.map { it.id })
+    }
+
+    @Test
+    fun `a sign-in puts stations and their lines back in the account's order`() {
+        // The phone before: Penton Street (214, 205, 73), Southfields, Brentwood (608, 498), Epping.
+        val before = stationsOf("PENTON" to listOf("214", "205", "73"), "SOUTHFIELDS" to listOf("district"),
+            "BRENTWOOD" to listOf("608", "498"), "EPPING" to listOf("central"))
+        val account = Board.inOrder(Board.fromSelections(before)) { it }
+        // As the restore does it: every setup puts its board at the top.
+        val restored = mutableListOf<UserSelection>()
+        Board.setupOrder(account).forEach { restored.add(0, it) }
+        assertEquals(before.map { it.groupingId to it.line }, restored.map { it.groupingId to it.line })
     }
 }

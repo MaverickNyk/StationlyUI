@@ -12,6 +12,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
@@ -22,6 +23,9 @@ import com.stationly.app.ui.common.LoadingOverlay
 import com.stationly.app.ui.common.LocalOpenUrl
 import com.stationly.app.ui.common.OpenUrl
 import com.stationly.app.ui.login.PlatformAuthProvider
+import com.stationly.app.ui.support.SheetSource
+import com.stationly.app.ui.whatsnew.WhatsNew
+import com.stationly.app.ui.whatsnew.WhatsNewScreen
 import com.stationly.app.ui.support.SupportReturn
 import com.stationly.app.ui.support.dismissCheckout
 import com.stationly.app.ui.support.SupportSheet
@@ -34,6 +38,8 @@ import androidx.compose.runtime.LaunchedEffect
 import com.stationly.core.config.ReleaseGate
 import com.stationly.core.service.NetworkModule
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
+
 
 /**
  * A link open in Stationly's own browser.
@@ -65,7 +71,36 @@ private fun isWebUrl(url: String): Boolean {
 fun App(
     authProvider: PlatformAuthProvider,
     startLoggedIn: Boolean = false,
-    deepLinkOobCode: String? = null
+    deepLinkOobCode: String? = null,
+    /**
+     * The host has applied an email-verification code this many times.
+     *
+     * Android registers four deep links and iOS one, so the two hosts hand
+     * different amounts of work to the same `App`. Both extra parameters below
+     * default to the value that means "nothing happened", which is what iOS
+     * passes by not passing them at all.
+     */
+    emailVerifiedSignal: Int = 0,
+    /** A `…://auth` link landed: a password reset completed in the browser. */
+    showPasswordResetSuccess: Boolean = false,
+    onPasswordResetBannerShown: () -> Unit = {},
+    /**
+     * Open the platform's widget manager, or null where the platform has none.
+     *
+     * Android can list its placed widgets and rewrite their bindings; iOS
+     * cannot read a widget's configuration at all. The row is hidden rather
+     * than shown-and-broken — see [com.stationly.app.ui.station.HomeSettingsScreen].
+     */
+    onManageWidgets: (() -> Unit)? = null,
+    /**
+     * Put a widget for one station on the home screen. Null on iOS, which
+     * cannot place widgets from inside the app at all.
+     */
+    onAddWidgetForStation: ((String) -> Unit)? = null,
+    onOpenWidgetSettingsForStation: ((String) -> Unit)? = null,
+    /** Bumped by the host when the account goes while the app is running. See [AppNavigation]. */
+    sessionEndedSignal: Int = 0,
+    onSessionEnded: suspend () -> Unit = {},
 ) {
     val uriHandler = LocalUriHandler.current
 
@@ -149,6 +184,8 @@ fun App(
         SupportViewModel(uidProvider = { authProvider.currentUserUid() })
     }
     val support by supportViewModel.uiState.collectAsState()
+    val whatsNew by WhatsNew.content.collectAsState()
+    val rootScope = rememberCoroutineScope()
 
     /**
      * Resolve the update verdict, from the ROOT rather than from a screen.
@@ -192,9 +229,17 @@ fun App(
         ) {
             Box(Modifier.fillMaxSize()) {
                 AppNavigation(
-                    authProvider    = authProvider,
-                    startLoggedIn   = startLoggedIn,
-                    deepLinkOobCode = deepLinkOobCode
+                    authProvider               = authProvider,
+                    startLoggedIn              = startLoggedIn,
+                    deepLinkOobCode            = deepLinkOobCode,
+                    emailVerifiedSignal        = emailVerifiedSignal,
+                    showPasswordResetSuccess   = showPasswordResetSuccess,
+                    onPasswordResetBannerShown = onPasswordResetBannerShown,
+                    onManageWidgets            = onManageWidgets,
+                    onAddWidgetForStation      = onAddWidgetForStation,
+                    onOpenWidgetSettingsForStation = onOpenWidgetSettingsForStation,
+                    sessionEndedSignal         = sessionEndedSignal,
+                    onSessionEnded             = onSessionEnded,
                 )
                 LoadingOverlay(visible = busyLabel != null, label = busyLabel)
 
@@ -216,6 +261,22 @@ fun App(
                     }
                 }
 
+                // ── What's new, once, after the Android v1 update ─────────
+                //
+                // Under the support sheet, so its Support button opens the
+                // sheet on top of it; the screen closes as the sheet opens.
+                whatsNew?.let { content ->
+                    WhatsNewScreen(
+                        content = content,
+                        showSupport = support.config.isOfferable,
+                        onDone = { via -> rootScope.launch { WhatsNew.dismiss(via) } },
+                        onSupport = {
+                            rootScope.launch { WhatsNew.dismiss("support") }
+                            supportViewModel.openSheet(SheetSource.WHATS_NEW)
+                        },
+                    )
+                }
+
                 // ── Support ──────────────────────────────────────────────
                 //
                 // Both live at the root, above every screen and above the
@@ -230,6 +291,8 @@ fun App(
                         contributionCount = support.contributionCount,
                         onPay = { tier -> supportViewModel.payTier(tier) },
                         onDismiss = { supportViewModel.closeSheet() },
+                        storeNotice = support.storeNotice,
+                        progress = support.progress,
                     )
                 }
 

@@ -149,6 +149,9 @@ class ProcessPredictionsUseCase(
                 lastUpdated = tsMs / 1000,
                 direction = primary.direction,
                 mode = primary.mode,
+                // So the Android receiver can redraw the widgets showing THIS
+                // board instead of every widget on the home screen.
+                stationId = primary.station,
             )
         )
     }

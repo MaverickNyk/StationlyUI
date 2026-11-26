@@ -1,0 +1,155 @@
+# Notifications: served, quiet by default, shared across platforms
+
+Covers line alerts (decided on the phone) AND notifications the backend sends.
+Every rule is served as a `notify.*` key and can be changed live, with no app
+release, deploy or restart.
+
+## Why (the v1 complaint)
+
+"A notification every day." v1's rule was compiled in: any move off or back to
+Good Service alerted and "Service Closed" was severe, so every line made a loud
+pair every night; plus bus roadworks and Minor Delays flapping, with no cooldown
+or quiet hours. It could not be changed without a release. Live v1 users keep it
+until they update. iOS shows no line alerts.
+
+## How a line alert is decided
+
+**The backend decides WHEN, the phone decides WHETHER FOR THIS PERSON**
+(`notify.line.decider` = `server`, the default).
+
+1. **Backend** (`lineAlertService.ts`). Every new line status goes through
+   `advance`: becoming alert-worthy starts a wait of `confirmAfterMs`; moving
+   between two disruptions keeps it; clearing ends it. First sighting never
+   alerts. At the deadline `claimDue` checks it is still alert-worthy by the rules
+   in force THEN, and sends `line_alert` to `LineStatus_<mode>_<line>`.
+   Two tiers, `severe` and `all`, each with its own wait. State is one Firestore
+   document per line, changed in transactions: a restart loses nothing and
+   several workers send one push. Alert pushes live 1 h; a newer one replaces a
+   waiting one.
+2. **Phone** (`LineAlertCoordinator.onServerAlert`). Needs no network. Ignores a
+   tier that is not its level; then mute, rollout, cooldown, daily cap, quiet
+   hours, same severity.
+3. **How it ends.** The status push, or the backend's `clear` for a phone that
+   missed it. Recovery updates OUR alert quietly (or per `recovery`), only if it
+   is still showing. Closing for the night, Off, the kill switch, a muted line:
+   taken down without a word. It also expires by itself.
+
+Lines are seeded at startup and refreshed every 5 minutes, and again at the
+deadline. The kill switch, modes, severities and wait apply on the backend at
+once, with no phone refresh. Older app builds ignore `line_alert`.
+
+**Why not on the phone.** It used to wait and re-check itself (WorkManager). About
+four minutes after the screen goes off on battery, Android cuts background network
+and defers jobs (`blocked=DOZE|APP_BACKGROUND`): measured 2026-11-24, no alert in
+15 minutes. An allow-while-idle alarm fired but still had no network. Every earlier
+test had been on a charger with the screen on. **Test alerts on a sleeping phone**:
+`dumpsys battery unplug`, screen off, `dumpsys deviceidle force-idle`, app killed.
+`decider` = `device` restores the old way, as a fallback only; change it with
+`"push": true`, or phones on an older copy wait for a backend that is not sending.
+
+Blocked by the user (app or channel)? Not shown, so nothing is spent or counted.
+A muted line (Mute button) and a device outside `rolloutPercent` count as Off.
+
+## Notifications the backend sends
+
+`RemoteNotifications` (core) applies expiry, app-version range, kill switch,
+stopped types, daily cap and quiet hours to everything sent; `exemptTypes` skip
+the last four. In-place actions are stripped from anything sent.
+Sending: `POST /admin/notifications/send`; `ttlSeconds` (default 24 h) sets both
+how long FCM tries and `expiresAtMs`. Audience `line` now goes to
+`LineStatus_<mode>_<line>`, the topic phones subscribe to (it used to omit the
+mode and reach nobody).
+
+## Changing a rule
+
+`GET /admin/notifications/policy` lists every rule, its value, source and limits.
+
+```
+PUT /admin/notifications/policy
+{ "set": { "notify.line.maxPerDay": "2" }, "reason": "why", "by": "who", "push": true }
+```
+
+Validated, all or nothing, kept with history (`app_config/notification_policy`),
+followed by every worker. `null` removes an override. `push` tells phones to
+refetch within `notify.config.jitterMs`. Order: live, then environment
+(`NOTIFY_LINE_MAX_PER_DAY`), then default. Per-mode severities:
+`notify.line.alertSeverities.bus`.
+
+**Emergency:** set `notify.line.enabled` (or `notify.remote.enabled`) to `"false"`
+with `"push": true`.
+
+| Key | Default | What it does |
+|---|---|---|
+| `notify.line.enabled` | true | Kill switch for every line alert |
+| `notify.line.decider` | server | Who waits and re-checks: the backend, or the phone (unreliable asleep) |
+| `notify.line.rolloutPercent` | 100 | Share of devices that alert at all; a device keeps its place |
+| `notify.line.defaultLevel` | severe | Level of a user who never chose one |
+| `notify.line.alertSeverities` | Severe Delays,Suspended,Part Suspended | Severities that alert at "Severe only" |
+| `notify.line.allSeverities` | Severe Delays,Suspended,Part Suspended,Minor Delays,Reduced Service,Part Closure | Severities that alert at "All changes" |
+| `notify.line.modes` | tube,overground,elizabeth-line,dlr,tram | Modes that may alert |
+| `notify.line.confirmAfterMs` | 600000 | A disruption must still be there this long after it appeared |
+| `notify.line.confirmRetries` | 5 | Tries to learn the status at the re-check before giving up |
+| `notify.line.cooldownMs` | 7200000 | At most one alert per line in this window |
+| `notify.line.maxPerDay` | 3 | Line alerts per device per day, all lines |
+| `notify.line.recovery` | silent | When a line recovers: update quietly, notify, or just clear |
+| `notify.line.expireAfterMs` | 14400000 | An alert removes itself after this long (0 never) |
+| `notify.line.muteMs` | 43200000 | What the Mute button on an alert does (0 hides it) |
+| `notify.quiet.start` | 22:30 | Quiet hours start |
+| `notify.quiet.end` | 06:30 | Quiet hours end (same as start: no quiet hours) |
+| `notify.quiet.mode` | silent | During quiet hours: no sound, or nothing at all |
+| `notify.quiet.zone` | device | Whose clock: the phone's, or a named zone |
+| `notify.remote.enabled` | true | Kill switch for sent notifications (exempt types still arrive) |
+| `notify.remote.disabledTypes` | - | Types the app drops on arrival, to stop a campaign already sent |
+| `notify.remote.maxPerDay` | 3 | Sent notifications per device per day |
+| `notify.remote.exemptTypes` | system | Types never capped, quietened or switched off |
+| `notify.config.maxAgeMs` | 21600000 | Background refetch when the phone's copy is older than this |
+| `notify.config.jitterMs` | 120000 | A refresh push is spread over this long |
+| `notify.copy.alertTitle` | {line} · {severity} | Alert title |
+| `notify.copy.alertBody` | {reason} | Alert body when TfL gives a reason |
+| `notify.copy.alertBodyNoReason` | Tap to see your board. | Alert body otherwise |
+| `notify.copy.recoveredTitle` | {line} · {severity} | Recovery title |
+| `notify.copy.recoveredBody` | Easing off. Earlier: {previous}. | Recovery body, still some disruption |
+| `notify.copy.recoveredBodyGood` | Back to normal. Earlier: {previous}. | Recovery body, Good Service |
+| `notify.copy.muteAction` | Mute for 12 hours | Mute button; keep in step with notify.line.muteMs |
+| `notify.copy.levelSevere` | Only severe delays and suspensions on your lines. Quiet overnight. | Caption under Severe |
+| `notify.copy.levelAll` | Minor delays and part closures too. Quiet overnight. | Caption under All |
+| `notify.copy.levelOff` | No line alerts. Your boards still show every change. | Caption under Off |
+
+App defaults equal backend defaults (`NotificationPolicyTest`), so losing or
+deploying the backend changes nothing.
+
+## Measuring it
+
+`notification.posted`, `.opened`, `.muted`, `.suppressed` (with the reason:
+recheck, blocked, cap, quiet, type, off, expired, version) go through the existing
+activity log. Type, reason and line only, never the text.
+
+## iOS
+
+Not built. **Do not port the push and re-check flow: iOS cannot run it reliably.**
+The backend must decide and send a visible APNs push, using these same rules and
+keys. Design, traps, order of work and test list: `IOS_NOTIFICATIONS.md`.
+
+## Verified (2026-11-23/24, Pixel 10 Pro Fold, staging)
+
+Sound is Android's `notification_alert` (buzz / beep). **Earlier runs used
+`NOTIFICATION_INTERRUPTION`, which is not sound**; that also explains the "one
+unexplained loud notification" reported then. 63 unit tests (core), 8 backend,
+plus the cases below on a phone. A true positive is made by serving "Good
+Service" as alert-worthy, so the re-check reads a real status from the backend.
+
+**Overnight, real data, default settings (00:27 to 07:20):** Piccadilly and
+Mildmay went to Service Closed at 06:45:41. Pushes arrived, both statuses were
+stored, the stale config refetched itself at 06:47:11, nothing was shown or
+sounded. Outside quiet hours on the phone's clock, so it was the severity rule.
+From the phone's records: the Mac slept and its logs were lost. Not Doze
+(charging, screen on), and it ended before the morning reopening.
+
+**Backend-decided, on a deeply sleeping phone (2026-11-24, staging):** on battery,
+app killed, deep idle: alert with sound 48 s after the status (wait set to 45);
+silent recovery in 2 s; a 20 s blip said nothing; backend reloaded mid-wait, exactly
+one alert; kill switch mid-wait, nothing sent. Live edits were made against real
+Firestore the same day.
+
+Not covered: iOS; a genuine TfL disruption through the Syncer from start to end;
+light (not forced) sleep; signing out and in; several backend workers at once.

@@ -18,6 +18,8 @@
     <color name="stationly_surface">#FFFFFF</color>
     <color name="stationly_error">#B42318</color>
     <color name="tfl_amber">#FFC819</color>
+    <!-- iOS WidgetTheme.amberDim (0.72, 0.56, 0.10): the pager's "1/2" marker. -->
+    <color name="tfl_amber_dim">#B88F1A</color>
 
     <!-- Splash screen background (light variant — values-night/ defines
          the dark variant). System dark-mode users see the dark splash;

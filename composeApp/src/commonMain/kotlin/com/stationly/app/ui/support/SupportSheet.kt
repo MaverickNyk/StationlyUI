@@ -75,6 +75,10 @@ fun SupportSheet(
     contributionCount: Int,
     onPay: (SupportTier?) -> Boolean,
     onDismiss: () -> Unit,
+    /** The store's answer to the last payment, if it did not end in one. See [StoreNotice]. */
+    storeNotice: StoreNotice? = null,
+    /** The running-costs line, when the server has switched it on. */
+    progress: SupportProgress? = null,
 ) {
     val t = LocalThemeTokens.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -138,6 +142,13 @@ fun SupportSheet(
                     Spacer(Modifier.width(10.dp))
                     Text(config.impactLine, color = t.textPrimary, fontSize = 13.sp, lineHeight = 18.sp)
                 }
+            }
+
+            // What the month costs and what has come in, under the sentence
+            // that says why it costs anything.
+            if (progress != null) {
+                Spacer(Modifier.height(16.dp))
+                SupportProgressBar(progress)
             }
 
             // Only ever from the count, never a list. There is no history here
@@ -259,7 +270,9 @@ fun SupportSheet(
                     border = BorderStroke(1.dp, if (custom) t.primary else t.borderSubtle),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .pressScale(onClick = {
+                        // See the tier card: conditional on it being a real
+                        // change, which the modifier cannot see.
+                        .pressScale(haptic = null, onClick = {
                         if (!custom) performHaptic(HapticType.SELECTION)
                         custom = true; failed = false
                     }),
@@ -308,17 +321,22 @@ fun SupportSheet(
             // the app") directly under the button, so a sentence about plumbing
             // was the last thing read before the tap. It earns its space when a
             // checkout actually fails to open, and not otherwise.
-            val footer = if (failed) {
-                strings["support_money.sheet.error"]
-                    ?: "Couldn't open checkout. Make sure you're signed in and try again."
-            } else {
-                config.cta.note
+            //
+            // Three things can fill it, most urgent first: this tap opened
+            // nothing; the store answered the last payment with something other
+            // than a payment (asynchronously, so after `failed` was decided);
+            // or the operator's note.
+            val (footer, isError) = when {
+                failed -> (strings["support_money.sheet.error"]
+                    ?: "Couldn't open checkout. Make sure you're signed in and try again.") to true
+                storeNotice != null -> storeNotice.text(strings) to storeNotice.isError
+                else -> config.cta.note to false
             }
             if (footer.isNotBlank()) {
                 Spacer(Modifier.height(10.dp))
                 Text(
                     footer,
-                    color = if (failed) t.error else t.textSubtle,
+                    color = if (isError) t.error else t.textSubtle,
                     fontSize = 11.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(),
@@ -350,7 +368,10 @@ private fun TierChip(
         color = if (selected) t.primary.copy(alpha = 0.14f) else t.card,
         shape = RoundedCornerShape(14.dp),
         border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) t.primary else t.borderSubtle),
-        modifier = modifier.pressScale(onClick = onClick),
+        // `haptic = null`: the caller fires SELECTION, but only when the
+        // selection actually CHANGES. That condition is invisible from here, and
+        // a chip re-tapped at its current value should not buzz.
+        modifier = modifier.pressScale(onClick = onClick, haptic = null),
     ) {
         Column(
             Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 4.dp),

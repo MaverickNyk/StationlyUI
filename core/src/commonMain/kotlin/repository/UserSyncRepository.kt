@@ -3,7 +3,12 @@ package com.stationly.core.repository
 import com.stationly.core.model.sdui.*
 import com.stationly.core.service.SduiApiService
 import com.stationly.core.model.UserSelection
+import com.stationly.core.model.user.effectiveBoards
+import com.stationly.core.config.BoardQuota
+import com.stationly.core.activity.ActivityEvents
+import com.stationly.core.activity.ActivityLog
 import com.stationly.core.platform.StorageManager
+import com.stationly.core.platform.WidgetRestore
 import com.stationly.core.usecase.StationLifecycleUseCase
 import kotlinx.coroutines.flow.first
 
@@ -45,24 +50,30 @@ class UserSyncRepository(
             sqlStorage.clearAllData()
             storageManager.clearCache()
             
-            // 3. Restore local selections from the cloud profile
-            profile.stations.forEach { station ->
-                sqlStorage.saveSelection(
-                    UserSelection(
-                        mode = station.mode,
-                        line = station.line,
-                        station = station.id,
-                        // Without this a restore groups bus boards per POLE, so
-                        // one stop comes back as several identically-named cards.
-                        parentStationId = station.parentStationId.orEmpty(),
-                        stationName = station.name,
-                        direction = station.direction,
-                        destinations = emptyList(),
-                        destinationIds = emptyList()
-                    )
-                )
-            }
-            
+            // 3. Restore local selections from the cloud profile — from the
+            //    BOARD list where there is one.
+            //
+            // The two arrays can disagree, and when they do the board list is
+            // the account: a board deleted on a v2 device leaves `boards`
+            // immediately and leaves `stations` only when a v2 client gets round
+            // to writing the projection. Restoring from `stations` regardless is
+            // how a board the user deleted comes back at the next sign-in —
+            // observed on the Pixel in AV2-4.1, where three rows returned after
+            // a restore with their ids jumped, in the same shape they had before.
+            //
+            // `isUsable` drops boards that say nothing (a truncated payload, a
+            // response from a backend that predates the field), because those
+            // must degrade to the legacy list rather than suppress it.
+            //
+            // The unpacking lives in `toUserSelections` rather than here: it is
+            // one half of a pair with `toSubscribedStations`, and the two were
+            // previously four hand-written copies that disagreed about whether
+            // `parentStationId` was worth carrying. Two of them dropped it, and
+            // a restore without it groups bus boards per POLE — one stop coming
+            // back as several identically-named cards.
+            // In one transaction, so nothing reads a half-restored list.
+            sqlStorage.replaceSelections(profile.effectiveBoards().flatMap { it.toSelections() })
+
             profile.stations
         } catch (e: Exception) {
             println("[UserSyncRepository] Profile sync failed: ${e.message}")
@@ -123,12 +134,31 @@ class UserSyncRepository(
      *   payload today, a socket frame after P4. Null means "go and ask", which
      *   is what the foreground path does. Passing a rev that is already known
      *   saves the round trip entirely.
+     * @param keepLocalBoards union instead of replace: a board only this device
+     *   has is kept. For the one Android reconcile after a v1 upgrade, whose
+     *   boards were only ever saved to the legacy `stations` list and so cannot
+     *   be in a list an iPhone wrote. The revision is NOT stamped, because the
+     *   device has not adopted the cloud's list; the push that publishes the
+     *   union stamps it. False everywhere else, including all of iOS.
      */
+    /**
+     * Whether the last [reconcileBoards] APPLIED the account to this device, as
+     * opposed to returning early (rev gate, another account, a list with nothing
+     * usable, an account with no list yet). A caller about to make a full-replace
+     * save must know: from a device that did not apply, it deletes what the device
+     * does not have. A flag rather than a new return type, so the iOS bridge's
+     * calls stay as they are.
+     */
+    var lastReconcileApplied: Boolean = false
+        private set
+
     suspend fun reconcileBoards(
         uid: String,
         lifecycle: StationLifecycleUseCase,
         observedRev: Long? = null,
+        keepLocalBoards: Boolean = false,
     ): UserProfileResponse? {
+        lastReconcileApplied = false
         val rev = observedRev ?: apiService.getUserStateRev(uid)
         if (!LocalRevStore.shouldFetch(storageManager, uid, rev)) return null
 
@@ -141,8 +171,17 @@ class UserSyncRepository(
         // what a truncated or superseded payload decodes to, and dropping those
         // makes the guard below treat the account as having no board list, which
         // is what stops this deleting every board on the device.
-        val cloud = profile.boards.filter { it.isUsable }
+        val usable = profile.boards.filter { it.isUsable }
         val local = sqlStorage.getAllSelections()
+        // The first launch after a v1 upgrade MERGES, so it is the one reconcile
+        // that can take the phone past the station limit. Everything below sees
+        // only what fits; see [BoardQuota.fit].
+        val cloud = if (!keepLocalBoards) usable else BoardQuota.fitMerge(local, usable).also { fit ->
+            if (fit.left.isNotEmpty()) {
+                ActivityLog.record(ActivityEvents.SYNC_OVER_LIMIT, "left", fit.left.size.toString())
+                println("[UserSyncRepository] v1 merge over the station limit; not set up: ${fit.left.map { it.name }}")
+            }
+        }.kept
 
         // ── The one case where the cloud is NOT the truth ──
         //
@@ -165,7 +204,7 @@ class UserSyncRepository(
         // usability filter. Deliberately NOT "cloud is empty" — a genuinely
         // empty cloud list is the user deleting their last board on another
         // device, and that must still propagate here.
-        val servedUnusableBoards = profile.boards.isNotEmpty() && cloud.isEmpty()
+        val servedUnusableBoards = profile.boards.isNotEmpty() && usable.isEmpty()
         if ((profile.boardsUpdatedAt == 0L || servedUnusableBoards) && local.isNotEmpty()) return profile
 
         // Flattened to the same (naptan, line, direction) rows the app runs on,
@@ -177,19 +216,41 @@ class UserSyncRepository(
         val cloudKeys = cloudSelections.map { key(it.station, it.line, it.direction) }.toSet()
         val localByKey = local.associateBy { key(it.station, it.line, it.direction) }
 
-        local.filter { key(it.station, it.line, it.direction) !in cloudKeys }.forEach { sel ->
+        // ── The whole rewrite, declared as one ──
+        //
+        // Everything below runs with the selection table in an intermediate
+        // state: a board is discarded, then another is set up, and between those
+        // two calls `getAllSelections()` answers honestly and misleadingly. The
+        // Android widget reads that table on every redraw, and a redraw landing
+        // in the gap drew a BOUND widget as "Choose a station" — observed on a
+        // Pixel 7 Pro, once, in the middle of an otherwise correct reconcile.
+        //
+        // [WidgetRestore] is the existing answer to exactly that question and
+        // the login restore already uses it; this path is the other destructive
+        // one and had been left out. It suppresses one branch — the empty-state
+        // wipe — so boards written DURING the rewrite still publish normally.
+        WidgetRestore.during {
+        val gone = if (keepLocalBoards) emptyList() else {
+            local.filter { key(it.station, it.line, it.direction) !in cloudKeys }
+        }
+        gone.forEach { sel ->
             val remaining = sqlStorage.getAllSelections().filterNot {
                 it.station == sel.station && it.line == sel.line && it.direction == sel.direction
             }
             lifecycle.discardStation(sel, clearSelectionInRepo = true, remaining = remaining)
         }
 
-        cloudSelections.forEach { restored ->
-            val existing = localByKey[key(restored.station, restored.line, restored.direction)]
-            if (existing == null) {
-                lifecycle.setupStation(restored, isFirstTime = false)
-                return@forEach
-            }
+        // New boards LAST FIRST: each setup puts its row at the top of the list,
+        // so going in the account's order would leave them reversed (the order
+        // bug AV2-11.47 fixed for sign-in; this is the same thing mid-session
+        // and on the first launch after a v1 upgrade). See [Board.setupOrder].
+        val (present, missing) = cloudSelections.partition {
+            localByKey[key(it.station, it.line, it.direction)] != null
+        }
+        missing.asReversed().forEach { lifecycle.setupStation(it, isFirstTime = false) }
+
+        present.forEach { restored ->
+            val existing = localByKey.getValue(key(restored.station, restored.line, restored.direction))
             // A board present on both sides can still have CHANGED — the user
             // edited its filter on another device. Comparing only the identity
             // triple (as the legacy path does) makes that edit invisible: the
@@ -206,8 +267,13 @@ class UserSyncRepository(
                 existing.viaStationIds != restored.viaStationIds ||
                 existing.viaKeys != restored.viaKeys ||
                 existing.patternIds != restored.patternIds
-            if (filterChanged) lifecycle.updateBoardFilter(restored)
+            // A v1 row has no hub ("same as station"). Publishing it that way
+            // would pull this pole out of the hub board the other device built,
+            // splitting one bus stop into two boards on every device.
+            val hubMissing = keepLocalBoards && existing.groupingId != restored.groupingId
+            if (filterChanged || hubMissing) lifecycle.updateBoardFilter(restored)
         }
+        } // WidgetRestore.during
 
         // No configuration is adopted here. Appearance is device-local — see
         // UserSettings — so a board arriving from another device keeps whatever
@@ -222,68 +288,26 @@ class UserSyncRepository(
         // From the profile, never from the rev that opened the gate: the
         // observed rev may have been an undershoot (a concurrent write), while
         // the profile carries what the document actually said when it was read.
-        LocalRevStore.store(storageManager, uid, profile.stateRev)
+        lastReconcileApplied = true
+        if (!keepLocalBoards) LocalRevStore.store(storageManager, uid, profile.stateRev)
 
         return profile
     }
 
-    /**
-     * Non-destructive reconcile against the **legacy** `stations` list.
+    /*
+     * `reconcile(uid, lifecycle)` — the LEGACY `stations` diff — used to live
+     * here, and it was Android's only reconcile until AV2-4.3.
      *
-     * Android's path, unchanged. iOS uses [reconcileBoards] — pointing it here
-     * would diff against a list Android replaces wholesale, so an iPhone would
-     * delete its own boards the first time the account's Android device saved
-     * one.
+     * Deleted rather than deprecated. It read the array the app had stopped
+     * writing at the cutover, so on every foreground it compared the boards on
+     * the device against a list nothing had updated since v1 and deleted the
+     * difference. Left in place it would have been a correctly-named,
+     * obviously-useful function that quietly destroys the user's boards — the
+     * same shape as `updateWidgetContent` in AV2-5.1, and deleted for the same
+     * reason.
+     *
+     * `reconcileBoards` above is the one reconcile now, on both platforms. The
+     * `stations` array is still written (see `UserStateRepository.pushBoards`)
+     * and still read — by a v1 device, which is the only client that can.
      */
-    suspend fun reconcile(uid: String, lifecycle: StationLifecycleUseCase): UserProfileResponse {
-        val profile = apiService.getUserProfile(uid)
-
-        // Safety: only reconcile against the profile we actually asked for. If
-        // the response doesn't match (shouldn't happen — getUserProfile throws
-        // on non-200), leave local state untouched rather than risk wiping a
-        // board the user is watching.
-        if (profile.uid != uid) return profile
-
-        // Identity = station id + line (matches the uniqueness UserService
-        // uses when adding/removing a station server-side).
-        // DIRECTION is part of the key. Without it, both directions of one line
-        // that resolve to the SAME naptan (the normal case on tube) collapse to
-        // one key, and a restore silently drops one of them.
-        fun key(id: String, line: String, direction: String) = "$id|$line|$direction"
-
-        val cloud = profile.stations
-        val local = sqlStorage.getAllSelections()
-        val cloudKeys = cloud.map { key(it.id, it.line, it.direction) }.toSet()
-        val localKeys = local.map { key(it.station, it.line, it.direction) }.toSet()
-
-        // Remove local selections no longer present in the cloud.
-        local.filter { key(it.station, it.line, it.direction) !in cloudKeys }.forEach { sel ->
-            // Pass the survivors so shared topics are not torn down: several
-            // boards can sit on one naptan (two routes at one bus pole, several
-            // lines at one station).
-            val remaining = sqlStorage.getAllSelections().filterNot {
-                it.station == sel.station && it.line == sel.line && it.direction == sel.direction
-            }
-            lifecycle.discardStation(sel, clearSelectionInRepo = true, remaining = remaining)
-        }
-
-        // Add cloud stations missing locally.
-        cloud.filter { key(it.id, it.line, it.direction) !in localKeys }.forEach { st ->
-            lifecycle.setupStation(
-                UserSelection(
-                    mode = st.mode,
-                    line = st.line,
-                    station = st.id,
-                    parentStationId = st.parentStationId.orEmpty(),
-                    stationName = st.name,
-                    direction = st.direction,
-                    destinations = emptyList(),
-                    destinationIds = emptyList()
-                ),
-                isFirstTime = false
-            )
-        }
-
-        return profile
-    }
 }

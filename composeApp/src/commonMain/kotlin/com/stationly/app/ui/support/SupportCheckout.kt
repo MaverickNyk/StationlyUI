@@ -1,31 +1,55 @@
 package com.stationly.app.ui.support
 
 /**
+ * How a contribution is taken, per platform. Read this first.
+ *
+ * | Platform | Route                         | Entry point                |
+ * |----------|-------------------------------|----------------------------|
+ * | iOS      | StoreKit 2 (App Store)        | [startNativePurchase]      |
+ * | Android  | Play Billing (Google Play)    | [startNativePurchase]      |
+ * | Website  | Stripe Payment Links (JS)     | not this code              |
+ *
+ * Both store apps MUST take tips through their store (App Store 3.1.1, Play's
+ * payments policy; decision D11), so the web-checkout seam below is dormant in
+ * both apps: the backend serves them no Stripe links, and both actuals of
+ * [openCheckout] are no-ops. It stays because [SupportViewModel.payTier] falls
+ * back to it for a client that names no platform, and because a third client
+ * without a store would use it.
+ *
  * Open a checkout page in a real browser.
  *
  * ## Why this is not [com.stationly.app.ui.common.LocalOpenUrl]
  * Every other link in the app goes through `LocalOpenUrl`, which keeps http(s)
- * inside Stationly's own `InAppBrowserScreen` — a WKWebView. That is the right
- * home for an article or a fares page and the wrong one for this: **Apple Pay
- * does not render in an embedded web view.** A checkout opened there degrades
- * silently to card-entry-by-hand, which turns a one-tap contribution into a
- * form, at the exact moment the user has decided to give money.
- *
- * So this seam exists to say "a real browser, with the platform's own payment
- * sheet available" — `SFSafariViewController` on iOS, Custom Tabs on Android, a
- * new tab on web. It is one call rather than a general-purpose opener because
- * one call is all the money path needs, and a wider seam would eventually get
- * used for something that should have stayed in the app.
+ * inside Stationly's own `InAppBrowserScreen`, a web view. That is the right
+ * home for an article and the wrong one for a checkout: Apple Pay and Google
+ * Pay do not render in an embedded web view, so a one-tap contribution would
+ * degrade into a card form.
  *
  * ## Attribution
  * The URL arrives with `?client_reference_id={uid}` already on it, from the
  * server. [checkoutUrlFor] does the substitution. Opening a checkout without it
  * still takes the money and reaches the webhook with nobody to credit, which
- * can only be undone by a human reading the Stripe dashboard — so the
+ * can only be undone by a human reading the Stripe dashboard, so the
  * substitution is not optional and [checkoutUrlFor] refuses to produce a URL
  * that still contains the placeholder.
  */
 expect fun openCheckout(url: String)
+
+/**
+ * Whether this platform can actually complete a payment.
+ *
+ * ## Why a capability and not just a config flag
+ * `SupportMoneyConfig.enabled` comes from the BACKEND, so it can be turned on
+ * for every client at once with no release. Gating only on it would let one
+ * config change put a tier ladder in front of a platform with nothing behind
+ * its button. So the surfaces gate on `SupportMoneyConfig.isOfferable`, which
+ * is the config AND this: an operator's switch and a platform that can honour
+ * it (decision D8).
+ *
+ * True on iOS (StoreKit) and on Android (Play Billing, since AV2-7.4). On
+ * Android the backend switch is `SUPPORT_MONEY_ANDROID_ENABLED`.
+ */
+expect val checkoutSupported: Boolean
 
 /**
  * Close the checkout browser, if one is open.
@@ -46,10 +70,32 @@ expect fun openCheckout(url: String)
 expect fun dismissCheckout()
 
 /**
- * Attempt a native platform in-app purchase (e.g. StoreKit 2 on iOS).
- * Returns true if the native sheet was launched, or false to fall back to web checkout.
+ * Start a purchase in the platform store: StoreKit 2 on iOS, Play Billing on
+ * Android.
+ *
+ * Returns true when the store took over. The store's own sheet, and on Android
+ * any [StoreNotice] it raises, are the answer from there. False means it could
+ * not even start (no store, nobody signed in), and the sheet says so at once.
  */
 expect fun startNativePurchase(productId: String, amountMinor: Int, tierId: String): Boolean
+
+/**
+ * This platform's store product for [tier]: the App Store id on iOS, the Play id
+ * on Android. Blank when the server sent none, which [startNativePurchase] is
+ * then never asked about.
+ */
+expect fun nativeProductId(tier: SupportTier): String
+
+/**
+ * Finish any store purchase a previous run left unfinished.
+ *
+ * Android only in practice: a Play purchase is not credited until our server
+ * has verified it, and the app can die between Play's sheet closing and that
+ * call. Play keeps such a purchase unconsumed, and this sends it again. iOS
+ * already does the same from StoreKit's `Transaction.updates` in Swift.
+ * Idempotent and cheap to call more than once.
+ */
+expect fun resumeNativePurchases()
 
 /**
  * Fill a checkout template with the signed-in account id.
