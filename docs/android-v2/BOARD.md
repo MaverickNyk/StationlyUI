@@ -8,8 +8,9 @@
 
 > **2026-11-26: Android 2.0 build 9 on internal testing, upgrade run passed.**
 > Read [`../ANDROID_2.0_RELEASE_RECORD.md`](../ANDROID_2.0_RELEASE_RECORD.md).
-> **Q5 (iOS database) is deferred by the owner and BLOCKS merging this branch
-> into `master` or cutting any iOS build from it:** release record §12.1.
+> **Q5 (iOS database) is deferred by the owner.** The branch is merged into
+> `master` with `scripts/ios-q5-guard.sh` refusing every scripted iOS build
+> until the fix (with its `Q5_FIXED` marker) lands: release record §12.1.
 
 ```
 SPRINT:            5-6 — release surfaces + rollout (sprints 1-4 complete)

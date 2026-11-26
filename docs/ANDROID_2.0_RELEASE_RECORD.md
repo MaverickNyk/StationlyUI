@@ -41,7 +41,7 @@ than repeating them; where it summarises, the linked document is the authority.
 | Live iOS app | 1.1 (build 3). Unchanged by any of this; see §12. |
 | Backend | PR #163 (DLR label + support reach) merged and **deployed to production** 2026-11-26 by the owner. Production serves the on-open ask (Android only), the running-costs line (£600 a month) and What's new copy. |
 | Syncer | PR #85 (blank destination id) merged 2026-11-25. |
-| App branch | `dev_android_bring_to_v2`, pushed. 103 commits ahead of `master`, 0 behind (a clean merge). **Not merged, on purpose**: merging brings Q5 (§12.1) onto `master`, and any iOS build from `master` after that breaks every updating iPhone user. Owner, 2026-11-26: no iOS fix now; document it and look later. |
+| App branch | `dev_android_bring_to_v2` merged into `master` 2026-11-26 (owner's call, no iOS release planned), with the Q5 guard in front of every scripted iOS build (§12.1). Owner: no iOS fix now; look later. 2.0.x Android hotfixes can come from `master` or the branch. |
 | Play support products | Live in production (`SUPPORT_MONEY_ANDROID_ENABLED` on). Server crediting not yet proven with a real purchase (§14). |
 | Test phones | Pixel 11 Pro (production, owner's phone; now signed in as the test account Njk Hhj with two Stationly widgets). Pixel 10 Pro Fold (staging debug). Redmi 13C 5G (staging, seen 2026-11-25). |
 
@@ -381,11 +381,20 @@ example, `ActivityEventEntity` exists) and stamp it as version 2
 device or build 1.1 and seed it), then upgrade to the new build: boards,
 settings and the activity queue must survive.
 
-**Until then, the rules:**
-- Do not merge `dev_android_bring_to_v2` into `master` without this fix, or
-  merge it and make sure nobody builds iOS from `master` until it lands.
-- Do not cut an iOS release from this branch.
-- Android releases (2.0.x hotfixes) are unaffected and come from this branch.
+**The guard (2026-11-26).** The owner chose to merge the branch into `master`
+now (no iOS release is planned) with a tripwire in front of every scripted iOS
+build: `scripts/ios-q5-guard.sh`, sourced by `scripts/ios-testflight.sh` and
+`scripts/ios-dev.sh`. It exits 3 with a message pointing here unless
+`core/src/iosMain/kotlin/platform/Database.ios.kt` contains the marker
+`Q5_FIXED`. `STATIONLY_IGNORE_Q5=1` lets a build through with a warning, for
+building and testing the fix itself, never for a release.
+
+**Until the fix lands, the rules:**
+- No iOS release, and no iOS archive from Xcode directly (Xcode does not run
+  the guard).
+- The fix must add the `Q5_FIXED` marker beside it; the guard then lifts by
+  itself. Delete the guard and its two `source` lines afterwards.
+- Android releases are unaffected.
 
 ---
 

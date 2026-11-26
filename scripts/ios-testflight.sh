@@ -39,6 +39,10 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ROOT="$PWD"
 
+# Q5: no iOS build while the database migration bug is unfixed.
+# See scripts/ios-q5-guard.sh and docs/ANDROID_2.0_RELEASE_RECORD.md §12.1.
+source "$ROOT/scripts/ios-q5-guard.sh"
+
 ENVIRONMENT=""
 BUILD_NUMBER=""
 DRY_RUN=0
