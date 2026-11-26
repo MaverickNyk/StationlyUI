@@ -17,6 +17,9 @@ import android.content.Context
  *    not contain them, and the first reconcile would delete them. Spent by
  *    `UserSyncCoordinator`.
  *
+ * Also leaves [WhatsNewMarker] for the one-time What's new screen, which is
+ * the only other thing that must happen on a v1 device and on no other.
+ *
  * Written from the migration itself ([DriverFactory]) because it is the only
  * code that runs on every v1 device and on no other: not on a fresh install,
  * and not on a v2 → v2 update. The database opens lazily, so a reader must
@@ -46,6 +49,8 @@ object V1Upgrade {
         prefs(context).edit()
             .putBoolean(WIDGETS, true)
             .putBoolean(BOARDS, true)
+            // Read by shared code through loadDurable, hence a string. See WhatsNewMarker.
+            .putString(WhatsNewMarker.KEY, WhatsNewMarker.PENDING)
             .remove(BOARD_ATTEMPTS)
             .commit()
     }

@@ -16,6 +16,8 @@ import com.android.billingclient.api.queryPurchasesAsync
 import com.google.firebase.auth.FirebaseAuth
 import com.stationly.app.platform.AndroidAppContext
 import com.stationly.app.platform.currentActivity
+import com.stationly.core.activity.ActivityEvents
+import com.stationly.core.activity.ActivityLog
 import com.stationly.core.service.NetworkModule
 import com.stationly.core.service.PlayVerifyOutcome
 import kotlinx.coroutines.CoroutineScope
@@ -60,6 +62,9 @@ internal object PlayBilling : PurchasesUpdatedListener {
 
     /** What the user tapped last, so the thank-you can name the amount. */
     private var lastLaunch: Launch? = null
+
+    /** A purchase is between the tap and Play's sheet appearing. Main thread only. */
+    private var launching = false
     private data class Launch(val productId: String, val amountMinor: Int, val tierId: String)
 
     /** Purchase tokens being sent right now, so a resume racing a live purchase sends once. */
@@ -85,23 +90,42 @@ internal object PlayBilling : PurchasesUpdatedListener {
     fun purchase(productId: String, amountMinor: Int, tierId: String): Boolean {
         val activity = currentActivity() ?: return false
         val uid = currentUid() ?: return false
+        // Play's sheet takes a moment to appear, and in that moment people tap
+        // again. Seen on 2026-11-26: seventeen taps in five seconds, seventeen
+        // concurrent launches, every one refused with DEVELOPER_ERROR. One
+        // launch at a time; later taps while it is opening are absorbed.
+        if (launching) return true
+        launching = true
         lastLaunch = Launch(productId, amountMinor, tierId)
 
         scope.launch {
+          try {
             val billing = connection.client()
             val product = billing?.productDetails(productId)
             if (billing == null || product == null) {
                 // No Play, or a product Play does not know: not set up in Play
                 // Console yet, or not visible to this account.
+                logPurchase("unavailable", productId, if (billing == null) "no_billing" else "no_product")
                 StoreNotices.post(StoreNotice.UNAVAILABLE)
                 return@launch
             }
             val result = billing.launchBillingFlow(activity, flowParams(product, uid))
             when (result.responseCode) {
                 BillingResponseCode.OK -> Unit // Play's sheet is up; onPurchasesUpdated takes over.
-                BillingResponseCode.ITEM_ALREADY_OWNED -> finishPreviousPurchase()
-                else -> StoreNotices.post(StoreNotice.UNAVAILABLE)
+                BillingResponseCode.ITEM_ALREADY_OWNED -> {
+                    logPurchase("already_owned", productId)
+                    finishPreviousPurchase()
+                }
+                else -> {
+                    logPurchase("unavailable", productId, result.responseCode.toString())
+                    StoreNotices.post(StoreNotice.UNAVAILABLE)
+                }
             }
+          } finally {
+            // Play's own sheet now covers the screen (or the launch failed and
+            // the sheet says so), so a new tap is a new, deliberate attempt.
+            launching = false
+          }
         }
         return true
     }
@@ -109,9 +133,16 @@ internal object PlayBilling : PurchasesUpdatedListener {
     override fun onPurchasesUpdated(result: BillingResult, purchases: MutableList<Purchase>?) {
         when (result.responseCode) {
             BillingResponseCode.OK -> purchases.orEmpty().forEach { handle(it, interactive = true) }
-            BillingResponseCode.USER_CANCELED -> Unit // They changed their mind; nothing to say.
-            BillingResponseCode.ITEM_ALREADY_OWNED -> finishPreviousPurchase()
-            else -> StoreNotices.post(StoreNotice.FAILED)
+            // They changed their mind; nothing to say, but worth counting.
+            BillingResponseCode.USER_CANCELED -> logPurchase("cancelled", lastLaunch?.productId)
+            BillingResponseCode.ITEM_ALREADY_OWNED -> {
+                logPurchase("already_owned", lastLaunch?.productId)
+                finishPreviousPurchase()
+            }
+            else -> {
+                logPurchase("failed", lastLaunch?.productId, result.responseCode.toString())
+                StoreNotices.post(StoreNotice.FAILED)
+            }
         }
     }
 
@@ -157,7 +188,10 @@ internal object PlayBilling : PurchasesUpdatedListener {
             Purchase.PurchaseState.PURCHASED -> Unit
             Purchase.PurchaseState.PENDING -> {
                 // Not money yet. resume() sends it once Play says it settled.
-                if (interactive) StoreNotices.post(StoreNotice.PENDING)
+                if (interactive) {
+                    logPurchase("pending", productId)
+                    StoreNotices.post(StoreNotice.PENDING)
+                }
                 return
             }
             else -> return
@@ -175,6 +209,7 @@ internal object PlayBilling : PurchasesUpdatedListener {
         val sessionId = PlayAccount.sessionId(purchase.orderId, token)
 
         if (interactive) {
+            logPurchase("purchased", productId)
             // Celebrate now, as iOS does. Waiting a server round trip to say
             // thank you reads as nothing having happened.
             val tapped = lastLaunch?.takeIf { it.productId == productId }
@@ -187,6 +222,10 @@ internal object PlayBilling : PurchasesUpdatedListener {
                 // The only trace of whether a payment was credited: the thank-you
                 // and the mark show either way. Never the token.
                 Log.i("PlayBilling", "verify $productId: $outcome")
+                ActivityLog.record(
+                    ActivityEvents.SUPPORT_VERIFIED,
+                    mapOf("outcome" to verifyLabel(outcome), "product" to productId),
+                )
                 // A purchase finished from a PREVIOUS run gets its thank-you the
                 // first time the server credits it, and never again: a retry of
                 // one already credited comes back newlyRecorded = false.
@@ -228,5 +267,26 @@ internal object PlayBilling : PurchasesUpdatedListener {
             .setObfuscatedAccountId(PlayAccount.idFor(uid))
             .build()
 
+    /** One `support.purchase` row: what Play answered. See [ActivityEvents.SUPPORT_PURCHASE]. */
+    private fun logPurchase(result: String, productId: String?, code: String? = null) {
+        val props = buildMap {
+            put("result", result)
+            productId?.let { put("product", it) }
+            code?.let { put("code", it) }
+        }
+        ActivityLog.record(ActivityEvents.SUPPORT_PURCHASE, props)
+    }
+
     private fun currentUid(): String? = FirebaseAuth.getInstance().currentUser?.uid
+}
+
+/**
+ * The `outcome` of a `support.verified` row: credited | already_credited |
+ * rejected:<reason> | retry:<status or network>. Never the token.
+ * Top level, not on [PlayBilling], so a test can call it without starting Play.
+ */
+internal fun verifyLabel(outcome: PlayVerifyOutcome): String = when (outcome) {
+    is PlayVerifyOutcome.Credited -> if (outcome.newlyRecorded) "credited" else "already_credited"
+    is PlayVerifyOutcome.Rejected -> "rejected:${outcome.reason}"
+    is PlayVerifyOutcome.RetryLater -> "retry:${outcome.httpStatus ?: "network"}"
 }

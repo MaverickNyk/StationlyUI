@@ -12,6 +12,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
@@ -22,6 +23,9 @@ import com.stationly.app.ui.common.LoadingOverlay
 import com.stationly.app.ui.common.LocalOpenUrl
 import com.stationly.app.ui.common.OpenUrl
 import com.stationly.app.ui.login.PlatformAuthProvider
+import com.stationly.app.ui.support.SheetSource
+import com.stationly.app.ui.whatsnew.WhatsNew
+import com.stationly.app.ui.whatsnew.WhatsNewScreen
 import com.stationly.app.ui.support.SupportReturn
 import com.stationly.app.ui.support.dismissCheckout
 import com.stationly.app.ui.support.SupportSheet
@@ -34,6 +38,8 @@ import androidx.compose.runtime.LaunchedEffect
 import com.stationly.core.config.ReleaseGate
 import com.stationly.core.service.NetworkModule
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
+
 
 /**
  * A link open in Stationly's own browser.
@@ -178,6 +184,8 @@ fun App(
         SupportViewModel(uidProvider = { authProvider.currentUserUid() })
     }
     val support by supportViewModel.uiState.collectAsState()
+    val whatsNew by WhatsNew.content.collectAsState()
+    val rootScope = rememberCoroutineScope()
 
     /**
      * Resolve the update verdict, from the ROOT rather than from a screen.
@@ -253,6 +261,22 @@ fun App(
                     }
                 }
 
+                // ── What's new, once, after the Android v1 update ─────────
+                //
+                // Under the support sheet, so its Support button opens the
+                // sheet on top of it; the screen closes as the sheet opens.
+                whatsNew?.let { content ->
+                    WhatsNewScreen(
+                        content = content,
+                        showSupport = support.config.isOfferable,
+                        onDone = { via -> rootScope.launch { WhatsNew.dismiss(via) } },
+                        onSupport = {
+                            rootScope.launch { WhatsNew.dismiss("support") }
+                            supportViewModel.openSheet(SheetSource.WHATS_NEW)
+                        },
+                    )
+                }
+
                 // ── Support ──────────────────────────────────────────────
                 //
                 // Both live at the root, above every screen and above the
@@ -268,6 +292,7 @@ fun App(
                         onPay = { tier -> supportViewModel.payTier(tier) },
                         onDismiss = { supportViewModel.closeSheet() },
                         storeNotice = support.storeNotice,
+                        progress = support.progress,
                     )
                 }
 

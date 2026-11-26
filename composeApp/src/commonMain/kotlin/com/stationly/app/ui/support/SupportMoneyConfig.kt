@@ -272,3 +272,61 @@ fun String.fillTokens(vararg pairs: Pair<String, String>): String {
     for ((token, value) in pairs) out = out.replace("{$token}", value)
     return out
 }
+
+/**
+ * The running-costs line: what Stationly costs a month and what supporters
+ * have given towards it so far this month, with the sentence to show.
+ *
+ * Served as flat `support_money.progress.*` keys and off unless the server
+ * says `show = true` with a real monthly cost; null means "draw nothing". The
+ * raised figure is gross (before any store's cut), which is why every wording,
+ * the month-met one included, says "given" and never "covered".
+ */
+data class SupportProgress(
+    val costMinor: Int,
+    val raisedMinor: Int,
+    val sentence: String,
+    /** False below `show_raised_from_minor`: the cost sentence alone, no figure, no bar. */
+    val showBar: Boolean = true,
+) {
+    /** How full the bar is, 0..1. */
+    val fraction: Float get() = (raisedMinor.toFloat() / costMinor).coerceIn(0f, 1f)
+
+    companion object {
+        // Fallbacks match the server's copy, and the same voice rules: no
+        // dashes, no "donate", nothing about coffee.
+        internal const val TEXT_FALLBACK =
+            "Stationly costs about {cost} a month to run. Supporters have given {raised} so far in {month}."
+        internal const val EMPTY_FALLBACK =
+            "Stationly costs about {cost} a month to run. Every bit of support goes straight into that."
+        // Gross money, so never "covered": store fees come out of it.
+        internal const val MET_FALLBACK =
+            "Supporters have given more than {cost} in {month}. Thank you. Anything more goes into building new things."
+
+        fun from(strings: Map<String, String>, currency: String = "GBP"): SupportProgress? {
+            if (strings["support_money.progress.show"]?.equals("true", ignoreCase = true) != true) return null
+            val cost = strings["support_money.progress.cost_minor"]?.toIntOrNull()?.takeIf { it > 0 } ?: return null
+            val raised = strings["support_money.progress.raised_minor"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+            val month = strings["support_money.progress.month"].orEmpty().ifBlank { "this month" }
+            // Below this real total the figure is left out, never invented.
+            val showFrom = strings["support_money.progress.show_raised_from_minor"]?.toIntOrNull() ?: 10_000
+            val low = raised == 0 || raised < showFrom
+            val template = when {
+                // Strictly more: the met line says "more than {cost}".
+                raised > cost -> strings["support_money.progress.met"] ?: MET_FALLBACK
+                low -> strings["support_money.progress.empty"] ?: EMPTY_FALLBACK
+                else -> strings["support_money.progress.text"] ?: TEXT_FALLBACK
+            }
+            return SupportProgress(
+                costMinor = cost,
+                raisedMinor = raised,
+                sentence = template.fillTokens(
+                    "cost" to formatMoney(cost, currency),
+                    "raised" to formatMoney(raised, currency),
+                    "month" to month,
+                ),
+                showBar = !low || raised > cost,
+            )
+        }
+    }
+}

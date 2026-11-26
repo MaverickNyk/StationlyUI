@@ -60,4 +60,15 @@ class PlayBillingTest {
         val cfg = card("""{"id":"t4","amount_minor":400,"apple_product_id":"uk.co.stationly.support.t4"}""")
         assertFalse(cfg.isPayable)
     }
+
+    // ── The log row that would have caught the 2026-11-24 bug ─────────────
+
+    @Test
+    fun the_verify_outcome_is_logged_as_a_short_label_that_tells_a_401_apart() {
+        assertEquals("credited", verifyLabel(com.stationly.core.service.PlayVerifyOutcome.Credited(newlyRecorded = true)))
+        assertEquals("already_credited", verifyLabel(com.stationly.core.service.PlayVerifyOutcome.Credited(newlyRecorded = false)))
+        assertEquals("rejected:account_mismatch", verifyLabel(com.stationly.core.service.PlayVerifyOutcome.Rejected("account_mismatch")))
+        assertEquals("retry:401", verifyLabel(com.stationly.core.service.PlayVerifyOutcome.RetryLater(401)))
+        assertEquals("retry:network", verifyLabel(com.stationly.core.service.PlayVerifyOutcome.RetryLater()))
+    }
 }

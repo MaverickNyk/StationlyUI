@@ -360,3 +360,125 @@ diffed:
 | Everyone, About | "DLR, and Overground — all" becomes "DLR and Overground, all" | Text only (house copy rule: no dashes). |
 
 The iOS `verify-iap` route and `appleIAPService.ts` are unchanged.
+
+---
+
+## 9. Reach and measurement (2026-11-26)
+
+**Why.** iOS has taken no money since launch. Production already served
+`min_boards=1` / `min_days=1`, so the old ask did fire once, after someone's
+first board, and then almost never again: a commuter sets up one or two
+stations on day one and never adds another. Nothing was logged, so nobody could
+tell whether people were never asked, said no, or hit a broken payment.
+
+### 9.1 Logging (the funnel)
+Activity events, uploaded with the rest of the trail (`ActivityEvents`, core):
+
+| Event | Props | Where |
+|---|---|---|
+| `support.asked` | `trigger` board_added / on_open | banner raised (`SupportViewModel.evaluateBanner`) |
+| `support.ask_dismissed` | `trigger` | "Maybe later" |
+| `support.sheet_opened` | `from` banner / profile / whats_new, `progress` | sheet opens |
+| `support.sheet_closed` | | sheet closed without a thank-you |
+| `support.tier_tapped` | `tier`, `started` | an amount tapped |
+| `support.purchase` | `result`, `product`, `code` | Play's answer (Android only; iOS StoreKit is Swift and untouched) |
+| `support.verified` | `outcome` credited / already_credited / rejected:x / retry:status | OUR server's answer to a Play purchase |
+| `support.thanks_shown` | `tier` | thank-you played |
+| `whats_new.shown` / `.dismissed` (`via`) / `.support_tapped` | | What's new screen |
+
+Read them with `node src/scripts/support_funnel.cjs --key=<service account> [--days=N]`
+in stationly-backend: per platform, how many times and how many people reached
+each step, the step rates, and the payments the server recorded. Read-only.
+Activity uploads overnight, so leave two days before trusting a week.
+
+### 9.2 The ask on reaching home
+Same banner, second trigger. Raised on reaching the home screen with at least
+one board, once the person has used the app on `ask_min_days` separate days
+(default 7), at most once every `ask_every_days` (default 14) whatever they
+answered (`SupportState.lastAskedMs`). "Maybe later" and a contribution still
+silence it as before. Served per platform: `home.promo.support_money.ask_on_open`
+is `true` only for the platforms in `SUPPORT_MONEY_ASK_ON_OPEN_PLATFORMS`
+(default `android`), so iOS 1.1 and any future iOS build stay off until the
+operator adds iOS. The decision is one pure function, `askTriggerAt`, tested in
+`SupportReachTest`. Days of use are now also counted on every home visit, not
+only on an account change.
+
+### 9.3 Running costs line
+`SUPPORT_MONEY_MONTHLY_COST_MINOR` (pence) turns on `support_money.progress.*`:
+"Stationly costs about £X a month to run. Supporters have given £Y so far in
+<month>." with a bar, in the amounts sheet and on the Profile card. Off when
+unset. Until the month's REAL total reaches `SUPPORT_MONEY_SHOW_RAISED_FROM_MINOR`
+(default 10000, £100), only "Stationly costs about £X a month to run. Every bit
+of support goes straight into that." shows, with no figure and no bar: a £0 line
+read as "nobody cares" (owner, 2026-11-26). The figure is never invented. Owner's
+monthly cost: £600 (60000). £Y is this London month's GBP payments, gross (before store cuts, hence
+"given", never "covered", even once the month is met), summed from
+`support_money_txns/{txnId}`: one row per payment, written after the ledger
+write by `UserService.recordSupportMoney` and `recordWebDonation`
+(`SupportMoneyStatsService`). Keyed by transaction id, so retries cannot count
+twice; cached 10 minutes per process; never on the payment's critical path.
+Rows start from the deploy: payments before it are not in the total.
+
+### 9.4 What's new (Android v1 → 2.0, once)
+`V1Upgrade.mark` (the v1 → 2 database migration) writes the durable string
+`whats_new_v2_pending` (`WhatsNewMarker`). The home screen, once boards have
+loaded, shows `WhatsNewScreen` at the app root; it ends with one honest line
+about support and two buttons, "Support Stationly" (filled, on top) and "Got it"
+(outlined). Either button or back spends the marker. Copy is served
+(`WhatsNewService`, `whats_new.v2.*`, `WHATS_NEW_V2_ENABLED`) with the same
+words compiled in. Fresh installs, later updates and iOS never see it.
+
+### 9.5 iOS safety
+The live iOS 1.1 app is a compiled binary; nothing here changes its code. Its
+only contact is home-config, and a before/after render for `ios` showed zero
+changed or removed keys and 11 added string keys it has no code to read, with
+`ask_on_open = false`. Nothing touches the widget.
+
+### 9.6 Verified
+Backend tests 283/283. App gate green incl. iOS compile. On the Pixel 10 Pro
+Fold (staging, 2026-11-26): What's new shows with the marker, both buttons
+work, the marker is spent, Support opens the sheet on top; every event above
+except `asked`, `verified` and `thanks_shown` seen in the local queue; Play's
+sheet opened and was backed out of (nothing bought), logged as `cancelled`.
+Later the same day, backend on staging (with `ASK_MIN_DAYS=1` for the test,
+then put back to 7): the on-open ask appeared on reaching home, below the board
+without covering it; "Support Stationly" opened the sheet with the £600 cost
+line (no figure, no bar, since nothing raised); the Profile card shows the same
+line; the ask did not come back on returning home or reopening; "Maybe later"
+closed it and set 3 quiet days. Logged: `asked` (on_open), `sheet_opened`
+(banner, progress true), `sheet_closed`, `ask_dismissed`. The test account's
+local support record was restored byte for byte afterwards.
+**Not yet seen on a device:** the bar with a real figure (needs £100+ in a month),
+and `support.verified` / `thanks_shown` (need a real test purchase).
+
+### 9.7 Reviews and what the logging caught (2026-11-26)
+Two xhigh code reviews (backend, app). Fixed before release:
+- **Apple amounts were 1000x too high.** JWS `price` is in milliunits; the
+  service multiplied it by 100. It now credits OUR tier price, as Play does.
+  No real iOS payment existed, so no rows needed correcting.
+- **Test money out of the public total.** `recordSupportMoney({ countInTotal })`:
+  false for Play license testers (`purchaseType 0`), Apple non-Production, and
+  any Apple receipt whose signature did not verify. The ledger row is still written.
+- **A forged purchase date could crash a worker** (`londonMonth` RangeError in an
+  un-awaited promise). `recordTxn` now cannot throw; its caller also catches.
+- **"Covered" with gross money.** The met line is now "Supporters have given more
+  than {cost} in {month}", and only when strictly more.
+- Monthly figure: hidden until summed after a restart (no cached zero), marked
+  stale on a payment instead of bumped (no double count), backs off after a
+  failed read; threshold accepts 0 and is clamped to the cost.
+- Purchase tokens no longer reach server logs (`describePlayError`).
+- Tests no longer write `web_donations` rows or send thank-you emails.
+- App: stale-snapshot state writes after a suspend, thanks logged once per
+  payment, web-route taps logged, What's new and the board-added ask never in
+  one visit, screen readers read the cost line once.
+
+Caught by the new logging on the Fold, not by review: **17 taps on Pay in five
+seconds** (Play's sheet takes a moment to appear) launched 17 purchases, all
+refused with DEVELOPER_ERROR (code 5). `PlayBilling.purchase` now runs one
+launch at a time; verified: 3 rapid taps, one sheet, no error. Also Android
+never logged `app.opened`, so the funnel had no Android baseline; MainActivity
+now logs it in onStart.
+
+Deferred to the next release: AV2-11.52 (unverified Apple receipts still
+credited to the account, refunds, backfill, gross figure). The iOS database
+migration (Q5) must be fixed before the next iOS build from this branch.

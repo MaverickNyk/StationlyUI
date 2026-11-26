@@ -101,6 +101,8 @@ import com.stationly.app.ui.common.AnnouncementBanner
 import com.stationly.app.ui.common.AppBusy
 import com.stationly.app.ui.common.NotificationPermissionEffect
 import com.stationly.app.ui.common.OfflineBanner
+import com.stationly.app.ui.whatsnew.WhatsNew
+import com.stationly.app.ui.support.SheetSource
 import com.stationly.app.ui.support.LocalSupport
 import com.stationly.app.ui.support.SupportBanner
 import com.stationly.app.ui.support.SupportMoment
@@ -847,10 +849,23 @@ fun SummaryScreen(
                 BoardQuota.stationCount(selections.map { it.groupingId })
             }
 
+            // Every entry to home with boards on it: the one-time What's new
+            // for a v1 upgrader first, and otherwise the on-open support ask
+            // (which the view model spaces out; see `onHomeShown`). Never both
+            // in one visit.
+            LaunchedEffect(homeConfig, boardCount > 0) {
+                if (boardCount > 0 && homeConfig.isNotEmpty()) {
+                    WhatsNew.consider(homeConfig)
+                    if (WhatsNew.content.value == null) support?.onHomeShown(boardCount)
+                }
+            }
+
             val boardAdded by SupportMoment.boardAdded.collectAsStateWithLifecycle()
             LaunchedEffect(boardAdded?.nonce) {
                 if (boardAdded != null) {
-                    support?.onBoardAdded(boardCount)
+                    // Never the ask and What's new in one visit: a v1 upgrader
+                    // whose first board brings What's new up skips this ask.
+                    if (WhatsNew.content.value == null) support?.onBoardAdded(boardCount)
                     SupportMoment.consumeBoardAdded()
                 }
             }
@@ -864,7 +879,7 @@ fun SummaryScreen(
                     amountLabel = supportState.config.defaultTier
                         ?.let { formatMoney(it.amountMinor, supportState.config.currency) }
                         ?: "",
-                    onSupport = { support.openSheet() },
+                    onSupport = { support.openSheet(SheetSource.BANNER) },
                     onDismiss = { support.onBannerDismissed() },
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )

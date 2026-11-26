@@ -47,6 +47,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.stationly.app.ui.common.LoadingOverlay
 import com.stationly.app.ui.common.StationlySpinner
 import com.stationly.app.ui.common.LocalOpenUrl
+import com.stationly.app.ui.support.SheetSource
 import com.stationly.app.ui.support.LocalSupport
 import com.stationly.app.ui.support.SupportProfileCard
 import com.stationly.app.ui.support.SupporterAvatarBadge
@@ -233,7 +234,8 @@ fun ProfileScreen(
                             strings = supportState.strings,
                             isSupporter = supportState.isSupporter,
                             contributionCount = supportState.contributionCount,
-                            onOpen = { supportVm.openSheet() },
+                            onOpen = { supportVm.openSheet(SheetSource.PROFILE) },
+                            progress = supportState.progress,
                         )
                     }
                 }

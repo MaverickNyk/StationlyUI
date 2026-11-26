@@ -4,12 +4,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.stationly.app.platform.HapticType
 import com.stationly.app.platform.performHaptic
+import com.stationly.core.activity.ActivityEvents
+import com.stationly.core.activity.ActivityLog
 import com.stationly.core.config.BoardPolicyStore
 import com.stationly.core.model.sdui.SupportMoneyView
 import com.stationly.core.service.NetworkModule
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -125,6 +128,74 @@ data class SupportUiState(
 
     /** Distinct days the app must have been opened before the banner is allowed. */
     val minDays: Int get() = strings["home.promo.support_money.min_days"]?.toIntOrNull() ?: 1
+
+    // ── The ask on reaching the home screen ──────────────────────────────
+    //
+    // Off unless the server says so for THIS platform. The backend serves
+    // `true` to Android only, so a later iOS build that compiles this code does
+    // not start asking until the operator adds iOS to the list.
+
+    /** Raise the banner on reaching home, not only after adding a board? */
+    val askOnOpen: Boolean
+        get() = strings["home.promo.support_money.ask_on_open"]?.equals("true", ignoreCase = true) == true
+
+    /** Separate days of use before the first on-open ask. */
+    val askMinDays: Int get() = strings["home.promo.support_money.ask_min_days"]?.toIntOrNull() ?: 7
+
+    /** Least days between two asks, whatever the answer was. */
+    val askEveryDays: Int get() = strings["home.promo.support_money.ask_every_days"]?.toIntOrNull() ?: 14
+
+    /** The running-costs line, or null when the server has not switched it on. */
+    val progress: SupportProgress? get() = SupportProgress.from(strings)
+}
+
+/** Which moment raised the banner. Logged with the ask and with its dismissal. */
+internal object AskTrigger {
+    const val BOARD_ADDED = "board_added"
+    const val ON_OPEN = "on_open"
+}
+
+/** Where the amounts sheet was opened from. Logged with `support.sheet_opened`. */
+object SheetSource {
+    const val BANNER = "banner"
+    const val PROFILE = "profile"
+    const val WHATS_NEW = "whats_new"
+}
+
+/**
+ * Should the banner be raised now, and for which moment? Null = no.
+ *
+ * The whole decision, pure, so it is tested as the rule the app runs rather
+ * than as a copy of it. [boardMoment] is the board count after a board was
+ * just added; [homeMoment] the board count on reaching the home screen;
+ * either may be null when that moment is not live.
+ */
+internal fun SupportUiState.askTriggerAt(nowMs: Long, boardMoment: Int?, homeMoment: Int?): String? {
+    if (!config.isOfferable) return null
+    if (!bannerEnabled) return null
+    // Never ask an existing supporter, and never ask before we KNOW whether
+    // they are one. `server == null` is "not asked yet", not "no": raising the
+    // banner on it means the one person who has already paid is the one most
+    // likely to be interrupted, because a cold launch reaches the home screen
+    // before the profile request comes back. The caller holds the moment until
+    // the server has answered (see `evaluateBanner`).
+    if (isSupporterAt(nowMs)) return null
+    if (!local.mayAskAgain(nowMs)) return null
+    if (bannerVisible || sheetVisible || thanksAmountMinor != null) return null
+
+    // A board just added wins: it is the original trigger and its thresholds
+    // are the lower ones.
+    return when {
+        boardMoment != null &&
+            boardMoment >= minBoards &&
+            local.activeDays >= minDays -> AskTrigger.BOARD_ADDED
+        homeMoment != null &&
+            askOnOpen &&
+            homeMoment >= 1 &&
+            local.activeDays >= askMinDays &&
+            local.askedLongEnoughAgo(nowMs, askEveryDays) -> AskTrigger.ON_OPEN
+        else -> null
+    }
 }
 
 internal fun nowMs(): Long = Clock.System.now().toEpochMilliseconds()
@@ -158,6 +229,16 @@ class SupportViewModel(
      * would recompose every collector twice per board.
      */
     private var pendingBoardCount: Int? = null
+
+    /**
+     * The home screen was reached with this many boards, and the on-open ask
+     * has not been judged for that visit yet. Held for the same reason as
+     * [pendingBoardCount]: the config and the account can both still be loading.
+     */
+    private var pendingHomeBoardCount: Int? = null
+
+    /** What raised the banner now on screen, for the dismissal's log row. */
+    private var bannerTrigger: String = AskTrigger.BOARD_ADDED
 
     /** The account the state currently describes. Null until auth restores. */
     private var boundUid: String? = null
@@ -345,6 +426,26 @@ class SupportViewModel(
     }
 
     /**
+     * The home screen is showing, with [boardCount] boards.
+     *
+     * Called on every entry to home, which is safe because the ask it may raise
+     * is spaced by `ask_every_days` from the last ask of any kind. Also counts
+     * today as a day of use: [syncAccount] only counts one on an account
+     * change, and an Android process can live for days, so without this a
+     * daily commuter would take weeks to reach `ask_min_days`.
+     */
+    fun onHomeShown(boardCount: Int) {
+        viewModelScope.launch {
+            if (boundUid != null) {
+                val local = SupportStore.recordActiveDay(nowMs())
+                if (local != _uiState.value.local) _uiState.value = _uiState.value.copy(local = local)
+            }
+            pendingHomeBoardCount = boardCount
+            evaluateBanner()
+        }
+    }
+
+    /**
      * The single place that decides whether the banner may be raised.
      *
      * Called from both directions — a board arriving, and the config arriving —
@@ -358,7 +459,7 @@ class SupportViewModel(
      * emission).
      */
     private fun evaluateBanner() {
-        val boardCount = pendingBoardCount ?: return
+        if (pendingBoardCount == null && pendingHomeBoardCount == null) return
         val state = _uiState.value
 
         // NOT YET — two things can still be in flight, and neither is an
@@ -369,25 +470,24 @@ class SupportViewModel(
         if (state.strings.isEmpty()) return
         if (!state.serverAnswered) return
 
-        // NO — settled answers. Clear the moment so a later config emission
+        // NO — settled answers. Clear the moments so a later config emission
         // does not re-litigate a decision already made.
+        val boardMoment = pendingBoardCount
+        val homeMoment = pendingHomeBoardCount
         pendingBoardCount = null
-        if (!state.config.isOfferable) return
-        if (!state.bannerEnabled) return
-        if (boardCount < state.minBoards) return
-        if (state.local.activeDays < state.minDays) return
-        // Never ask an existing supporter, and never ask before we KNOW whether
-        // they are one. `server == null` is "not asked yet", not "no": raising
-        // the banner on it means the one person who has already paid is the one
-        // most likely to be interrupted, because a cold launch reaches the home
-        // screen before the profile request comes back. Waiting costs nothing —
-        // `onHomeConfig` re-evaluates the moment the answer lands.
-        if (state.isSupporter) return
-        if (!state.local.mayAskAgain(nowMs())) return
-        if (state.bannerVisible || state.sheetVisible || state.thanksAmountMinor != null) return
+        pendingHomeBoardCount = null
+        val now = nowMs()
+        val trigger = state.askTriggerAt(now, boardMoment, homeMoment) ?: return
 
+        bannerTrigger = trigger
         _uiState.value = state.copy(bannerVisible = true)
+        ActivityLog.record(ActivityEvents.SUPPORT_ASKED, "trigger", trigger)
+        viewModelScope.launch {
+            val local = SupportStore.recordAsked(now)
+            _uiState.update { it.copy(local = local) }
+        }
     }
+
 
     /**
      * "Maybe later", and now the only way the banner ever leaves.
@@ -405,21 +505,32 @@ class SupportViewModel(
      */
     fun onBannerDismissed() {
         _uiState.value = _uiState.value.copy(bannerVisible = false)
+        ActivityLog.record(ActivityEvents.SUPPORT_ASK_DISMISSED, "trigger", bannerTrigger)
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(local = SupportStore.recordSkip(nowMs()))
+            val local = SupportStore.recordSkip(nowMs())
+            _uiState.update { it.copy(local = local) }
         }
     }
 
     // ── The sheet ─────────────────────────────────────────────────────────
 
-    fun openSheet() {
+    /** @param from where it was opened from, one of [SheetSource]; logged. */
+    fun openSheet(from: String = SheetSource.PROFILE) {
         StoreNotices.clear()
         performHaptic(HapticType.TAP)
-        _uiState.value = _uiState.value.copy(sheetVisible = true, bannerVisible = false)
+        val state = _uiState.value
+        if (!state.sheetVisible) {
+            ActivityLog.record(
+                ActivityEvents.SUPPORT_SHEET_OPENED,
+                mapOf("from" to from, "progress" to (state.progress != null).toString()),
+            )
+        }
+        _uiState.value = state.copy(sheetVisible = true, bannerVisible = false)
     }
 
     fun closeSheet() {
         StoreNotices.clear()
+        if (_uiState.value.sheetVisible) ActivityLog.record(ActivityEvents.SUPPORT_SHEET_CLOSED)
         _uiState.value = _uiState.value.copy(sheetVisible = false)
     }
 
@@ -438,7 +549,12 @@ class SupportViewModel(
         StoreNotices.clear()
         val productId = tier?.let(::nativeProductId).orEmpty()
         if (tier != null && productId.isNotBlank()) {
-            if (startNativePurchase(productId, tier.amountMinor, tier.id)) {
+            val started = startNativePurchase(productId, tier.amountMinor, tier.id)
+            ActivityLog.record(
+                ActivityEvents.SUPPORT_TIER_TAPPED,
+                mapOf("tier" to tier.id, "started" to started.toString()),
+            )
+            if (started) {
                 performHaptic(HapticType.TAP)
                 return true
             }
@@ -448,7 +564,12 @@ class SupportViewModel(
         // (the sheet says it could not open) rather than in a browser.
         val cfg = _uiState.value.config
         val template = tier?.checkoutUrl?.takeIf { it.isNotBlank() } ?: cfg.cta.urlOneoff
-        val url = checkoutUrlFor(template, uidProvider()) ?: return false
+        val url = checkoutUrlFor(template, uidProvider())
+        ActivityLog.record(
+            ActivityEvents.SUPPORT_TIER_TAPPED,
+            mapOf("tier" to (tier?.id ?: "custom"), "started" to (url != null).toString(), "route" to "web"),
+        )
+        if (url == null) return false
         performHaptic(HapticType.TAP)
         openCheckout(url)
         // The sheet is left OPEN behind Safari on purpose. If the user swipes
@@ -470,6 +591,7 @@ class SupportViewModel(
      */
     fun onCheckoutReturned(thanks: SupportReturn.Thanks) {
         viewModelScope.launch {
+            val before = SupportStore.load().contributions.size
             val local = SupportStore.recordContribution(
                 amountMinor = thanks.amountMinor,
                 sessionId = thanks.sessionId,
@@ -481,6 +603,14 @@ class SupportViewModel(
                 bannerVisible = false,
                 thanksAmountMinor = thanks.amountMinor,
             )
+            // Once per payment: iOS has delivered one payment as seven deep
+            // links, and only the first adds an entry.
+            if (local.contributions.size > before) {
+                ActivityLog.record(
+                    ActivityEvents.SUPPORT_THANKS_SHOWN,
+                    if (thanks.tierId.isNotBlank()) mapOf("tier" to thanks.tierId) else emptyMap(),
+                )
+            }
             // The celebration haptics are NOT fired here. They belong to the
             // overlay, which owns the confetti clock: a buzz that lands before
             // the first piece is drawn reads as a notification, and the point of
@@ -502,7 +632,8 @@ class SupportViewModel(
     fun onThanksDismissed() {
         _uiState.value = _uiState.value.copy(thanksAmountMinor = null)
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(local = SupportStore.clearPendingThanks())
+            val local = SupportStore.clearPendingThanks()
+            _uiState.update { it.copy(local = local) }
         }
     }
 }

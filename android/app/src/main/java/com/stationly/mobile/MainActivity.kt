@@ -320,6 +320,22 @@ class MainActivity : ComponentActivity() {
         UserSyncCoordinator.flushPendingBoardWrite()
     }
 
+    /**
+     * `app.opened`, the baseline every other number in the activity trail is a
+     * share of ("how many people opened the app"). iOS has always logged it
+     * (`ActivityBridge.appOpened`); Android never did, so the support funnel
+     * read 0 Android openers next to dozens of Android asks.
+     *
+     * onStart, not onResume: Play's purchase sheet and other translucent
+     * screens pause this Activity without stopping it, and returning from them
+     * is not opening the app.
+     */
+    override fun onStart() {
+        super.onStart()
+        ActivityLog.record(ActivityEvents.APP_OPENED, "cold", (!openedThisProcess).toString())
+        openedThisProcess = true
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean(KEY_START_LOGGED_IN, startLoggedIn)
@@ -409,6 +425,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
+        /** Has this process opened the UI before? Makes `app.opened`'s `cold` prop. */
+        var openedThisProcess = false
         const val KEY_START_LOGGED_IN = "start_logged_in"
         private const val SESSION_RECHECK_MS = 1_000L
     }

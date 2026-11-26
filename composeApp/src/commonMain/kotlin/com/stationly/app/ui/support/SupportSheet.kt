@@ -77,6 +77,8 @@ fun SupportSheet(
     onDismiss: () -> Unit,
     /** The store's answer to the last payment, if it did not end in one. See [StoreNotice]. */
     storeNotice: StoreNotice? = null,
+    /** The running-costs line, when the server has switched it on. */
+    progress: SupportProgress? = null,
 ) {
     val t = LocalThemeTokens.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -140,6 +142,13 @@ fun SupportSheet(
                     Spacer(Modifier.width(10.dp))
                     Text(config.impactLine, color = t.textPrimary, fontSize = 13.sp, lineHeight = 18.sp)
                 }
+            }
+
+            // What the month costs and what has come in, under the sentence
+            // that says why it costs anything.
+            if (progress != null) {
+                Spacer(Modifier.height(16.dp))
+                SupportProgressBar(progress)
             }
 
             // Only ever from the count, never a list. There is no history here
