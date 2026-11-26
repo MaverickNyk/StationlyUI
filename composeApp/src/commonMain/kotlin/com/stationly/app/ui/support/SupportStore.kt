@@ -69,6 +69,16 @@ data class SupportState(
     val activeDays: Int = 0,
     /** The last day counted, as a whole UTC day number. */
     val lastActiveDay: Long = 0L,
+    /**
+     * When the banner was last raised, by either trigger. 0 = never.
+     *
+     * Feeds the on-open ask's spacing (`ask_every_days`), which has to hold
+     * whatever the person answered: someone who opened the amounts and closed
+     * them, or simply never touched the banner, has not said "maybe later" but
+     * has been asked. Defaults to 0 so a record written before this field
+     * existed decodes as "never asked".
+     */
+    val lastAskedMs: Long = 0L,
 )
 
 @Serializable
@@ -264,6 +274,14 @@ object SupportStore {
         return next
     }
 
+    /** The banner was raised. Starts the on-open ask's spacing window. */
+    suspend fun recordAsked(nowMs: Long): SupportState = mutex.withLock {
+        val current = load()
+        val next = current.copy(lastAskedMs = nowMs)
+        save(next)
+        return next
+    }
+
     /** The thank-you has played. It never plays again for that contribution. */
     suspend fun clearPendingThanks(): SupportState = mutex.withLock {
         val current = load()
@@ -349,3 +367,13 @@ fun SupportState.contributedOptimistically(nowMs: Long): Boolean {
  * pile of conditions that later code has to remember to keep in step.
  */
 fun SupportState.mayAskAgain(nowMs: Long): Boolean = nowMs >= quietUntilMs
+
+/**
+ * Has it been at least [everyDays] days since the banner was last raised?
+ *
+ * The on-open ask's own spacing, on top of [mayAskAgain]. A clock that went
+ * backwards (a last ask "in the future") counts as long enough ago rather than
+ * silencing the ask until the clock catches up.
+ */
+fun SupportState.askedLongEnoughAgo(nowMs: Long, everyDays: Int): Boolean =
+    lastAskedMs <= 0L || lastAskedMs > nowMs || nowMs - lastAskedMs >= everyDays * 86_400_000L

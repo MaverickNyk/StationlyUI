@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -119,7 +118,13 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -166,10 +171,26 @@ private fun SduiAppScreen.sdText(id: String, vars: Map<String, String?> = emptyM
     components.filterIsInstance<SduiAppComponent.Text>().find { it.id == id }?.text
         ?.let { interpolate(it, vars) }
 
-private fun interpolate(template: String, vars: Map<String, String?>): String {
+private val VOWELS = setOf('a', 'e', 'i', 'o', 'u')
+
+/** Vowel letters that SOUND like a consonant: "a Uber Boat pier", "a one-stop line". */
+private val CONSONANT_SOUNDS = listOf("uber", "uni", "use", "eu", "one")
+
+/** Whether [word] takes "an": by sound, near enough for the names of modes. */
+private fun takesAn(word: String): Boolean {
+    val w = word.lowercase()
+    return w.firstOrNull() in VOWELS && CONSONANT_SOUNDS.none { w.startsWith(it) }
+}
+
+internal fun interpolate(template: String, vars: Map<String, String?>): String {
     if (!template.contains('{')) return template
     var out = template
-    vars.forEach { (k, v) -> out = out.replace("{$k}", v ?: "") }
+    vars.forEach { (k, v) ->
+        // The template says "a {mode}": "Find an Overground station". Only the
+        // mode: other served templates say what they mean.
+        if (k == "mode" && v != null && takesAn(v)) out = out.replace(Regex("\\b([Aa]) \\{mode\\}"), "$1n {mode}")
+        out = out.replace("{$k}", v ?: "")
+    }
     return out.replace(Regex("\\s{2,}"), " ").trim()
 }
 
@@ -256,7 +277,11 @@ fun SelectionScreen(
     val st by viewModel.uiState.collectAsStateWithLifecycle()
     val selMap by viewModel.selections.collectAsStateWithLifecycle()
     val dropdownData by viewModel.dropdownData.collectAsStateWithLifecycle()
-    val modes by viewModel.modes.collectAsStateWithLifecycle()
+    val loadedModes by viewModel.modes.collectAsStateWithLifecycle()
+    // The same list, fetched by two paths that share one error flag. Either will
+    // do: taking only the first left an endless spinner, and no Retry, when it
+    // failed and the other succeeded.
+    val modes = loadedModes.ifEmpty { dropdownData["mode"].orEmpty() }
     val recentStations by viewModel.recentStations.collectAsStateWithLifecycle()
     val linePicks by viewModel.linePicks.collectAsStateWithLifecycle()
     val existingPicks by viewModel.existingPicks.collectAsStateWithLifecycle()
@@ -322,6 +347,23 @@ fun SelectionScreen(
         }
     }
 
+    // ── System back = the toolbar arrow ─────────────────────────────────
+    //
+    // The arrow steps back one stage (directions → station list → mode list),
+    // but nothing claimed the SYSTEM back, so the NavHost popped the whole
+    // flow: one swipe on the last step threw away the station, lines and
+    // directions with no warning (QA 2026-11-23, finding #3). Enabled exactly
+    // when the arrow would step rather than leave; otherwise the system back
+    // falls through to the NavHost and leaves, as the arrow does.
+    //
+    // iOS: same common code. The iOS host does not route an edge-swipe here
+    // unless back gestures are enabled for its controller, so the arrow stays
+    // the iOS path; this keeps the two in agreement wherever it is delivered.
+    @OptIn(ExperimentalComposeUiApi::class)
+    BackHandler(enabled = editStation == null && "mode" in selMap) {
+        viewModel.popLastSelection()
+    }
+
     Box(
         Modifier.fillMaxSize()
             // Subtle theme-aware fade: surface → background. (Originally a
@@ -374,6 +416,7 @@ fun SelectionScreen(
                         selectedId      = selMap["station"],
                         locating        = st.isLocating,
                         noNearby        = st.isGpsUnavailable,
+                        nearbyProblem   = st.nearbyProblem,
                         searchEmpty     = st.isSearchEmpty,
                         primary         = primary,
                         modeIcon        = mode?.iconUrl,
@@ -393,7 +436,8 @@ fun SelectionScreen(
                         loadingDirections = loadingDirections,
                         failedDirections  = failedDirections,
                         loadingLines      = dropdownData["line"] == null && "line" !in st.failedFetches,
-                        errLines          = "line" in st.failedFetches,
+                        // Only with nothing to show; see ModeScreen.
+                        errLines          = dropdownData["line"] == null && "line" in st.failedFetches,
                         primary           = primary,
                         mode              = selMap["mode"],
                         modeIcon          = mode?.iconUrl,
@@ -596,7 +640,9 @@ private fun ModeScreen(
     onSelect: (SduiDropdownOption) -> Unit, onRetry: () -> Unit
 ) {
     when {
-        err -> Err("Couldn't load modes", primary, onRetry)
+        // Only with nothing to show. Modes are fetched more than once, and one
+        // late failure must not take down a list that has already loaded.
+        modes.isEmpty() && err -> Err("Couldn't load modes", primary, onRetry)
         modes.isEmpty() -> Loader(primary)
         else -> Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.height(24.dp))
@@ -609,10 +655,10 @@ private fun ModeScreen(
             Text(layout?.sdText("screen_mode_subtitle") ?: "Pick a transport mode to track.",
                 color = White55, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp))
             Spacer(Modifier.height(20.dp))
-            // Adaptive grid — auto-grows columns as the screen gets wider. 170dp
-            // min gives 2 columns on a phone and 4-5 on a tablet.
+            // Grows columns as the screen gets wider; two on a phone.
+            val fontScale = LocalDensity.current.fontScale
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 170.dp),
+                columns = remember(fontScale) { ModeColumns(fontScale) },
                 modifier = Modifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -624,15 +670,48 @@ private fun ModeScreen(
     }
 }
 
+/**
+ * [GridCells.Adaptive] at 170dp, but two columns wherever two names fit: below
+ * 392dp of screen that was one, and each mode filled a 360dp Redmi edge to edge.
+ * One still, when the text is too large for "Elizabeth Line" in half the width.
+ */
+private data class ModeColumns(val fontScale: Float) : GridCells {
+    override fun Density.calculateCrossAxisCellSizes(availableSize: Int, spacing: Int): List<Int> {
+        val count = modeColumnCount(
+            availableSize, spacing,
+            minCell = 170.dp.roundToPx(), minHalf = (MODE_NAME_CELL_DP * fontScale.coerceAtLeast(1f)).dp.roundToPx(),
+        )
+        val room = availableSize - spacing * (count - 1)
+        return List(count) { room / count + if (it < room % count) 1 else 0 }
+    }
+}
+
+/** Pure; see [ModeColumns]. */
+internal fun modeColumnCount(available: Int, spacing: Int, minCell: Int, minHalf: Int): Int {
+    val adaptive = maxOf(1, (available + spacing) / (minCell + spacing))
+    return if (adaptive == 1 && (available - spacing) / 2 >= minHalf) 2 else adaptive
+}
+
+/** The narrowest card that holds "Elizabeth Line" on one line at normal text. */
+internal const val MODE_NAME_CELL_DP = 132f
+
+/** Past this a card is no taller, so one that has a whole row is not a screenful. */
+private val MODE_CARD_MAX_HEIGHT = 230.dp
+
 @Composable
 private fun ModeCard(mode: SduiDropdownOption, primary: Color, onClick: () -> Unit) {
     Surface(
         onClick = onClick, color = Surface1, shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, White08),
-        modifier = Modifier.fillMaxWidth().aspectRatio(0.92f)
+        modifier = Modifier.fillMaxWidth().layout { measurable, constraints ->
+            // 0.92 wide to tall, as ever, up to the cap, and taller only for text.
+            val height = (constraints.maxWidth / 0.92f).toInt().coerceAtMost(MODE_CARD_MAX_HEIGHT.roundToPx())
+            val placeable = measurable.measure(constraints.copy(minHeight = height, maxHeight = Constraints.Infinity))
+            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+        }
     ) {
         Column(
-            Modifier.fillMaxSize().padding(16.dp),
+            Modifier.fillMaxWidth().padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
         ) {
             // White roundel container — always white because TfL line icons are
@@ -656,7 +735,7 @@ private fun ModeCard(mode: SduiDropdownOption, primary: Color, onClick: () -> Un
             }
             Spacer(Modifier.height(14.dp))
             Text(mode.label, color = White90, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
-                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                lineHeight = 18.sp, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -671,6 +750,7 @@ private fun StationScreen(
     recentStations: List<SduiDropdownOption>,
     selectedId: String?,
     locating: Boolean, noNearby: Boolean, searchEmpty: Boolean,
+    nearbyProblem: NearbyProblem? = null,
     primary: Color, modeIcon: String?, mode: String?, modeLabel: String?,
     onSelect: (SduiDropdownOption) -> Unit,
     onSearch: (String) -> Unit
@@ -714,10 +794,21 @@ private fun StationScreen(
     val noun = stopNounSingular(mode)
     val vars = mapOf("mode" to modeLabel, "stop" to noun)
     val titleFallback =
-        if (!modeLabel.isNullOrBlank()) "Find a $modeLabel $noun" else "Find your $noun"
+        if (!modeLabel.isNullOrBlank()) interpolate("Find a {mode} {stop}", vars) else "Find your $noun"
     val subtitleFallback =
-        if (noNearby) "Location off. Search by name."
+        if (noNearby) "Search by name."
         else "Nearby ${noun}s first, or search for another."
+    // Why there is no nearby list, in words true to the cause. It used to say
+    // "Location off. Type to find stops" for all of them, on the Tube too
+    // (QA 2026-11-23, finding #1).
+    val noNearbyDetail = when (nearbyProblem) {
+        NearbyProblem.NONE_NEARBY -> "No ${noun}s near you. Type a name to find one"
+        NearbyProblem.UNREACHABLE -> "Couldn't load nearby ${noun}s. Type a name to search"
+        NearbyProblem.NO_LOCATION, null -> "Couldn't find your location. Type a name to search"
+    }
+    // A typed search always wins over the nearby lookup, which can still be
+    // running; the spinner used to sit over the results (finding #2).
+    val searching = searchQuery.isNotBlank()
 
     Column(Modifier.fillMaxSize()) {
         Spacer(Modifier.height(16.dp))
@@ -760,7 +851,7 @@ private fun StationScreen(
         )
 
         when {
-            locating -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+            locating && !searching -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 val p by rememberInfiniteTransition("loc").animateFloat(
                     1f, 1.35f, infiniteRepeatable(tween(900), RepeatMode.Reverse), "lp")
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -791,9 +882,9 @@ private fun StationScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
                     Icon(Icons.Rounded.Search, null, tint = White25, modifier = Modifier.size(40.dp))
                     Spacer(Modifier.height(12.dp))
-                    Text("Search for a station", color = White55, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Search for a $noun", color = White55, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
-                    Text("Location off. Type to find stops", color = White25, fontSize = 12.sp)
+                    Text(noNearbyDetail, color = White25, fontSize = 12.sp, textAlign = TextAlign.Center)
                 }
             }
 
@@ -1039,7 +1130,7 @@ private fun LineDirectionScreen(
                                 }
                                 Spacer(Modifier.height(8.dp))
                                 when {
-                                    line.id in failedDirections ->
+                                    line.id in failedDirections && directionsByLine[line.id] == null ->
                                         InlineErr("Couldn't load directions", primary) {
                                             onRetryDirections(line.id)
                                         }
@@ -1157,10 +1248,14 @@ private fun OptRow(
                             // Muted onSurfaceVariant so it reads as supporting text
                             // in both themes (the old primary tint vanished on light).
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.NearMe, null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(11.dp))
-                                Spacer(Modifier.width(4.dp))
+                                // The arrow is for a distance, which starts with a number;
+                                // "Closed now" may come instead or first.
+                                if (secondary.firstOrNull()?.isDigit() == true || secondary.startsWith("<")) {
+                                    Icon(Icons.Rounded.NearMe, null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(11.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                }
                                 Text(secondary,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 12.sp)
@@ -1781,7 +1876,7 @@ private fun CollapsedLineSummary(
     // raw id so a collapsed line is never blank while its fetch is in flight.
     val parts = picks.map { dirId ->
         val label = directions?.find { it.id == dirId }
-            ?.let { it.directionName ?: it.label }
+            ?.let(::directionSummaryLabel)
             ?: dirId.replaceFirstChar { c -> c.uppercase() }
         val filter = filters[SelectionViewModel.boardFilterKey(lineId, dirId)] ?: BoardFilter()
         if (filter.isActive) "$label (${filter.summary(modeId)})" else label
@@ -1853,4 +1948,36 @@ private fun InlineErr(msg: String, primary: Color, onRetry: () -> Unit) {
             Text("Retry", color = primary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
         }
     }
+}
+
+/**
+ * One direction, in the few words the collapsed line summary has room for.
+ *
+ * A compass direction when the mode has one ("Westbound"). Otherwise where it
+ * GOES, its terminus ("Putney Bridge Station", or "Edgware +1" where it
+ * divides), then the next stop, then the option's own label. It used to take
+ * `directionName` as-is, and every bus stop sends the literal word "Towards"
+ * there, so a two-way bus line summarised as "Towards · Towards" (QA
+ * 2026-11-23, finding #6). The direction card below already refuses a bare
+ * "Towards"; this is the same rule for the summary.
+ *
+ * iOS: shared code; the iOS app uses this same screen.
+ */
+private val WHITESPACE = Regex("\\s+")
+
+internal fun directionSummaryLabel(opt: SduiDropdownOption): String {
+    val compass = opt.directionName?.trim().orEmpty()
+    if (compass.isNotBlank() && !compass.equals("Towards", ignoreCase = true)) return compass
+    // Where it ENDS UP, as the direction card's "→" lines say. Not `towards`:
+    // that is the NEXT STOP ("Levana Close"), which on device made the summary
+    // name two side streets instead of Putney Bridge and Clapham Junction.
+    // TfL stop names carry stray double spaces ("Clapham Junction Stn  / the Falcon").
+    val termini = opt.destinations?.map { it.label.replace(WHITESPACE, " ").trim() }
+        ?.filter { it.isNotBlank() }.orEmpty()
+    if (termini.isNotEmpty()) {
+        return if (termini.size == 1) termini.first() else "${termini.first()} +${termini.size - 1}"
+    }
+    return opt.towards?.trim()?.takeIf { it.isNotBlank() }
+        ?: opt.label.trim().takeIf { it.isNotBlank() }
+        ?: compass
 }

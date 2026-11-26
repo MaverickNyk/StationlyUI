@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     A blank board, drawn for one frame after an APP UPDATE so the launcher has
+     to inflate widget_departure_board afresh. See DepartureWidgetProvider's
+     ACTION_MY_PACKAGE_REPLACED.
+
+     Why it exists: when an update arrives with the same layout id, a launcher
+     may REAPPLY the new actions onto the view tree it inflated from the OLD
+     XML. Every id still exists there, so nothing fails and the old structure
+     stays: seen on a Pixel 10 Pro Fold, 2026-11-21, where a widget placed
+     before the update kept the old header until the launcher restarted.
+     Drawing a different layout first changes the host's layout id, so the next
+     real render inflates from the new XML. Same background as the board, so
+     the frame in between reads as the board itself.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_board_background"
+    android:clipToOutline="true" />

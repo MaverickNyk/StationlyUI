@@ -1,7 +1,5 @@
 package com.stationly.app.ui.summary.components
 
-import com.stationly.app.resources.Res
-import com.stationly.app.resources.stationly_logo
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.scaleIn
@@ -58,11 +56,14 @@ import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -105,6 +106,10 @@ import com.stationly.app.ui.theme.isDarkTheme
 import com.stationly.core.util.BOARD_FALLBACK_ROW_COUNT
 import com.stationly.core.util.BoardFallbackDefaults
 import com.stationly.core.util.BoardFallbackState
+import com.stationly.core.model.BoardNotice
+import com.stationly.core.model.StationNotice
+import com.stationly.core.repository.StationNoticeStore
+import com.stationly.core.util.asFallback
 import com.stationly.core.util.computeBoardFallbackState
 import com.stationly.core.util.parseHHmm
 import com.stationly.core.util.resolveBoardFallbackCopy
@@ -125,6 +130,7 @@ import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import com.stationly.app.ui.common.hapticClick
 
 // Fixed TfL dot-matrix amber — the signage board is locked to this regardless
 // of app theme (matches android `@color/tfl_amber` = #FFC819).
@@ -234,6 +240,8 @@ private fun List<SectionRender>.toFeeds(): List<MultiLineBoardProcessor.Feed> = 
         stationId = r.section.selection.station,
         line = r.section.selection.line,
         direction = r.section.selection.direction,
+        terminus = r.section.selection.singleTerminus,
+        nextStop = r.section.selection.directionTowards,
         predictions = r.ticked,
     )
 }
@@ -253,6 +261,8 @@ private fun List<BoardSection>.toRawFeeds(): List<MultiLineBoardProcessor.Feed> 
         stationId = section.selection.station,
         line = section.selection.line,
         direction = section.selection.direction,
+        terminus = section.selection.singleTerminus,
+        nextStop = section.selection.directionTowards,
         predictions = section.predictions,
     )
 }
@@ -274,6 +284,8 @@ private data class SectionRender(
     val next: PredictionDisplay?,
     val fallbackState: BoardFallbackState?,
     val lineColor: Color,
+    /** What TfL says about the station, where it is about this line. */
+    val notice: BoardNotice? = null,
 )
 
 /**
@@ -292,6 +304,8 @@ fun StationBoard(
     stationName: String,
     mode: String,
     sections: List<BoardSection>,
+    /** What TfL says about each stop, by stop id. */
+    notices: Map<String, StationNotice> = emptyMap(),
     /**
      * Applied to the card's own root.
      *
@@ -377,16 +391,37 @@ fun StationBoard(
      */
     onOpenSettings: () -> Unit = {},
 ) {
-    if (sections.isEmpty()) return
+    val tracked = sections
+    if (tracked.isEmpty()) return
 
     val isDark = isDarkTheme()
-    val isMulti = sections.size > 1
+    val isMulti = tracked.size > 1
 
     // Self-tick ETAs each wall-clock minute so "5 min" drops to "4 min" between
     // stream frames (the 30s SummaryViewModel poll handles fresh data). No
     // refetch is involved and none is needed: every label is re-derived from the
     // absolute arrival time the backend already sent.
     val nowMin by rememberMinuteTick()
+
+    // What TfL says about the station itself. A board it closes has no
+    // departures from here on: every step below then treats it as any other
+    // empty board, and only the words are the notice's.
+    val flags by com.stationly.core.config.FeatureFlags.on.collectAsState()
+    val noticeByBoard: Map<String, BoardNotice> = remember(tracked, notices, nowMin, flags) {
+        val found = tracked.mapNotNull { s ->
+            StationNoticeStore.forBoard(notices, s.selection, nowMin, s.predictions.map { it.platform })?.let { s to it }
+        }.toMap()
+        // A bus card is several stops. With one of them still open, say which is not.
+        val someOpen = tracked.any { found[it]?.hides != true }
+        found.map { (s, n) ->
+            val stop = s.predictions.map { it.platform.trim() }.distinct().singleOrNull()?.takeIf { it.startsWith("Stop ") }
+            s.key to if (n.hides && someOpen && stop != null && MultiLineBoardProcessor.isBus(mode)) n.copy(title = "$stop closed") else n
+        }.toMap()
+    }
+    @Suppress("NAME_SHADOWING")
+    val sections = remember(tracked, noticeByBoard) {
+        tracked.map { if (noticeByBoard[it.key]?.hides == true) it.copy(predictions = emptyList()) else it }
+    }
 
     val londonTime = remember(nowMin) {
         Instant.fromEpochMilliseconds(nowMin)
@@ -472,7 +507,7 @@ fun StationBoard(
     // Everything per-section, derived in ONE remember rather than a remember per
     // loop iteration: the section list is dynamic, and per-iteration remembers
     // would rebuild their slots whenever a line is added or removed.
-    val rendered = remember(sections, liveByBoard, nowMin, isOnline, homeConfig, londonTime, isDark) {
+    val rendered = remember(sections, liveByBoard, nowMin, isOnline, homeConfig, londonTime, isDark, noticeByBoard) {
         sections.map { section ->
             val ticked = liveByBoard[section.selection.boardKey].orEmpty()
             val (sev, reason) = splitLineStatus(section.lineStatus)
@@ -486,7 +521,8 @@ fun StationBoard(
                 // now / …) — parity with Android's Board. Computed PER LINE, since
                 // one line can have ended service for the night while another at
                 // the same station is still running.
-                fallbackState = computeBoardFallbackState(
+                notice = noticeByBoard[section.key],
+                fallbackState = noticeByBoard[section.key]?.takeIf { it.hides }?.asFallback() ?: computeBoardFallbackState(
                     hasPredictions = ticked.isNotEmpty(),
                     isOnline = isOnline,
                     lastUpdatedMs = section.lastUpdated,
@@ -683,6 +719,7 @@ fun StationBoard(
             expanded = expanded,
             startsExpanded = startsExpanded,
             legs = collapsedLegs,
+            closed = rendered.mapNotNull { r -> r.notice?.takeIf { it.hides }?.title }.distinct(),
             legColor = { line -> lineColorForTheme(line, isDark) },
             onToggleExpanded = onToggleExpanded,
             onOpenSettings = onOpenSettings,
@@ -795,7 +832,9 @@ fun StationBoard(
             // has the soonest departure. That keeps the opening frame the same as it
             // has always been while letting a tap pin a specific line. Keyed on
             // `sections` so adding or removing a line drops a stale selection.
+            // A closed station keeps its hero, saying so: without it the board jumped up.
             val activeHeroLine = selectedLine ?: hero?.first?.section?.selection?.line
+                ?: rendered.firstOrNull { it.notice?.hides == true }?.section?.selection?.line
             val allHeroSections = rendered.filter { it.section.selection.line == activeHeroLine }
             // Split into two ONLY when the two directions actually say different
             // things. Both directions of a suspended line report the same closure
@@ -809,7 +848,8 @@ fun StationBoard(
             val heroSections = remember(allHeroSections) {
                 val bothEmpty = allHeroSections.all { it.next == null }
                 val sameStatus = allHeroSections.map { it.section.lineStatus }.distinct().size == 1
-                if (allHeroSections.size >= 2 && bothEmpty && sameStatus) {
+                val sameNotice = allHeroSections.map { it.notice }.distinct().size == 1
+                if (allHeroSections.size >= 2 && bothEmpty && sameStatus && sameNotice) {
                     listOf(allHeroSections.first())
                 } else allHeroSections
             }
@@ -1267,6 +1307,8 @@ private fun StationHeader(
     startsExpanded: Boolean,
     /** Empty when expanded, or when nothing is departing. */
     legs: List<MultiLineBoardProcessor.Leg>,
+    /** What is closed here, said where a closed card would show the next trains. */
+    closed: List<String> = emptyList(),
     legColor: (String) -> Color,
     onToggleExpanded: (() -> Unit)?,
     onOpenSettings: () -> Unit,
@@ -1379,7 +1421,7 @@ private fun StationHeader(
                 }
                 Spacer(Modifier.width(2.dp))
             }
-            IconButton(onClick = onOpenSettings, modifier = Modifier.size(34.dp)) {
+            IconButton(onClick = hapticClick(onClick = onOpenSettings), modifier = Modifier.size(34.dp)) {
                 Icon(
                     Icons.Rounded.Tune,
                     "$stationName settings",
@@ -1396,7 +1438,7 @@ private fun StationHeader(
         // change (see the call site) — animating on emptiness would play the
         // exit over no content at all, i.e. nothing.
         card.AnimatedVisibility(
-            visible = { !it && legs.isNotEmpty() },
+            visible = { !it && (legs.isNotEmpty() || closed.isNotEmpty()) },
             // The legs and the board are the two halves of the same swap, so
             // they run on the one clock and each takes the OTHER's duration:
             // the legs appear over a collapse (COLLAPSE_MS) and leave over an
@@ -1408,6 +1450,14 @@ private fun StationHeader(
                 shrinkVertically(tween(EXPAND_MS, easing = EaseInCubic)),
         ) {
         Column {
+        closed.forEach { text ->
+            Box(Modifier.fillMaxWidth().height(LEG_HEIGHT).padding(start = 6.dp, end = 8.dp), contentAlignment = Alignment.CenterStart) {
+                Text(
+                    text, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                    fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
         legs.forEach { leg ->
             Row(
                 modifier = Modifier.fillMaxWidth().height(LEG_HEIGHT).padding(start = 6.dp, end = 8.dp),
@@ -1472,7 +1522,8 @@ private fun DotMatrixPanel(
     // becomes one.
     val boardFallback = remember(rows, rendered) {
         if (rows.isEmpty() && rendered.isNotEmpty()) {
-            rendered.firstNotNullOfOrNull { it.fallbackState }
+            // A board still open says why it is empty; only with none left is it the closure.
+            (rendered.firstOrNull { it.notice?.hides != true && it.fallbackState != null } ?: rendered.first()).fallbackState
         } else null
     }
 
@@ -1533,6 +1584,13 @@ private fun DotMatrixPanel(
                     // fallback copy replaces the platform blocks entirely.
                     BoardFallbackRows(boardFallback)
                 } else {
+                    // One line or direction closed, the rest running: said first,
+                    // or its missing rows would look like no trains.
+                    rendered.mapNotNull { it.notice?.takeIf { n -> n.hides } }.distinct().forEach { n ->
+                        (listOf(n.title to true) + n.details.take(1).map { it to false }).forEach { (text, bold) ->
+                            BoardMessageRow(text, bold, warn = bold)
+                        }
+                    }
                     UnifiedBoardRows(rows = rows)
                 }
             }
@@ -1669,26 +1727,49 @@ private fun PlatformHeaderText(title: String) {
  */
 @Composable
 private fun BoardFallbackRows(state: BoardFallbackState, homeConfig: Map<String, String> = emptyMap()) {
-    val rows: List<Pair<String, Boolean>> = remember(state, homeConfig) {
-        val copy = resolveBoardFallbackCopy(state, homeConfig)
-        buildList {
-            add(copy.title to true)
-            copy.detailLines.forEach { add(it to false) }
-            while (size < BOARD_FALLBACK_ROW_COUNT) add("" to false)
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val roomPx = with(LocalDensity.current) { (maxWidth - 8.dp).toPx() }
+        val style = LocalTextStyle.current.copy(fontSize = 15.sp)
+        val rows: List<Pair<String, Boolean>> = remember(state, homeConfig, roomPx, style) {
+            val copy = resolveBoardFallbackCopy(state, homeConfig)
+            buildList {
+                add(copy.title to true)
+                copy.rows { measurer.measure(it, style, maxLines = 1).size.width <= roomPx }.forEach { add(it to false) }
+                while (size < BOARD_FALLBACK_ROW_COUNT) add("" to false)
+            }
+        }
+        // Departure-row style (15sp, 4dp horizontal pad, centered);
+        // title bold, details normal — like Android's fallback rows.
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            rows.forEach { (text, bold) -> BoardMessageRow(text, bold, warn = bold && state.message != null) }
         }
     }
-    // Departure-row style (15sp, 4dp horizontal pad, centered);
-    // title bold, details normal — like Android's fallback rows.
-    rows.forEach { (text, bold) ->
-        ActiveStrip {
+}
+
+@Composable
+private fun BoardMessageRow(text: String, bold: Boolean, warn: Boolean = false) {
+    ActiveStrip {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 0.dp),
+            horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (warn) BoardWarning(15.dp, Modifier.padding(end = 8.dp))
             Text(
                 text, color = BoardAmber, fontSize = 15.sp,
                 fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
                 textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 0.dp)
+                modifier = Modifier.weight(1f, fill = false),
             )
+            if (warn) BoardWarning(15.dp, Modifier.padding(start = 8.dp))
         }
     }
+}
+
+/** The sign beside a closure's words (owner, 2026-11-25): amber, like the board, and still. */
+@Composable
+internal fun BoardWarning(size: Dp, modifier: Modifier = Modifier) {
+    Icon(Icons.Rounded.Warning, null, tint = BoardAmber, modifier = modifier.size(size))
 }
 
 /**
@@ -1734,7 +1815,11 @@ private const val STATUS_ROTATION_MS = 8_000L
 @Composable
 private fun BoardStatusStrip(rendered: List<SectionRender>, homeConfig: Map<String, String>) {
     val entries = remember(rendered, homeConfig) {
-        LineStatusRanker.rotation(
+        // The station first. Beside it only what is wrong: "Good Service" next
+        // to "Station closed" is the confusion this exists to end.
+        val station = rendered.mapNotNull { it.notice }.distinct()
+            .map { LineStatusRanker.Entry(lineLabel = "", severity = it.strip, reason = it.reason) }
+        val lines = LineStatusRanker.rotation(
             rendered.map { r ->
                 val (severity, reason) = when {
                     r.section.lineStatus != null -> splitLineStatus(r.section.lineStatus)
@@ -1755,6 +1840,7 @@ private fun BoardStatusStrip(rendered: List<SectionRender>, homeConfig: Map<Stri
                 )
             }
         )
+        if (station.isEmpty()) lines else station + lines.filterNot { LineStatusRanker.isGoodService(it.severity) }
     }
     if (entries.isEmpty()) return
 
@@ -1788,6 +1874,7 @@ private fun BoardStatusStrip(rendered: List<SectionRender>, homeConfig: Map<Stri
 
     ActiveStrip {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 0.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (rendered.any { it.notice?.strip == entry.severity && entry.lineLabel.isEmpty() }) BoardWarning(13.dp, Modifier.padding(end = 4.dp))
             // "Northern Part Closure" — the line is named because on a
             // multi-line board a bare severity does not say WHICH line is shut.
             Text(
@@ -2048,30 +2135,16 @@ private fun BoardFooter(lastUpdated: Long) {
     val ago = remember(nowSec / 1000, lastUpdated) { agoLabel(lastUpdated, nowSec) }
 
     Box(modifier = Modifier.fillMaxWidth().padding(top = 2.dp), contentAlignment = Alignment.Center) {
-        // Stationly maker mark (left) — the REAL brand logo, matching
-        // Android's footer `stationly_logo` ImageView (22dp); red-disc drawn
-        // fallback keeps the board crash-proof when resources aren't bundled.
-        if (com.stationly.app.platform.composeResourcesBundled) {
-            Image(
-                painter = org.jetbrains.compose.resources.painterResource(Res.drawable.stationly_logo),
-                contentDescription = "Stationly",
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(start = 6.dp)
-                    .size(22.dp)
-            )
-        } else {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(start = 6.dp)
-                    .size(22.dp)
-                    .background(StationlyRed, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("S", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Black)
-            }
-        }
+        // Stationly maker mark (left): the REAL brand logo, the same mark in
+        // the same place as the widget footer (`stationly_logo`, 22dp) and the
+        // screensaver. Through [StationlyLogo], the single source, which
+        // carries the fallback for a build without bundled resources; this
+        // footer used to inline its own copy, which is how the screensaver came
+        // to draw a different mark without anyone noticing (2026-11-23).
+        com.stationly.app.ui.common.StationlyLogo(
+            size = 22.dp,
+            modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp),
+        )
         // Live clock (center) on its own lit strip, like Android's TextClock
         // with the active-row background.
         Box(modifier = Modifier.background(ActiveRowBg).padding(horizontal = 6.dp)) {
@@ -2181,7 +2254,14 @@ private fun NextDepartureRow(
     val onSurface = MaterialTheme.colorScheme.onSurface
     val onSurfMute = MaterialTheme.colorScheme.onSurfaceVariant
 
-    val (severity, rawReason) = splitLineStatus(render.section.lineStatus)
+    // Closed is not "no departures yet": the card turns red and wears a warning
+    // where the minutes would be. Same height, no motion of its own.
+    val closure = render.notice?.takeIf { it.hides && prediction == null }
+    val alert = MaterialTheme.colorScheme.error
+    val accent = if (closure != null) alert else lineColor
+
+    val (severity, rawReason) = render.notice?.takeIf { it.hides }?.let { (if (compact) it.strip else it.title) to it.details.firstOrNull() }
+        ?: splitLineStatus(render.section.lineStatus)
     // A Good Service status still carries a reason — TfL uses it for standing
     // advice like "Please offer your seat to anyone who needs it". That is not a
     // disruption, and printing it under "No departures reported yet" implies the
@@ -2208,9 +2288,9 @@ private fun NextDepartureRow(
         modifier = Modifier.fillMaxWidth().height(HERO_HEIGHT),
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, lineColor.copy(alpha = 0.20f)),
+        border = BorderStroke(if (closure != null) 1.5.dp else 1.dp, accent.copy(alpha = if (closure != null) 0.75f else 0.20f)),
     ) {
-        Box(modifier = Modifier.fillMaxWidth().background(lineColor.copy(alpha = 0.05f))) {
+        Box(modifier = Modifier.fillMaxWidth().background(accent.copy(alpha = if (closure != null) 0.16f else 0.05f))) {
             Row(
                 modifier = Modifier.fillMaxWidth()
                     .padding(horizontal = if (compact) 9.dp else 12.dp, vertical = 8.dp),
@@ -2221,7 +2301,7 @@ private fun NextDepartureRow(
                         val livePulse by rememberInfiniteTransition(label = "live_dot").animateFloat(
                             0.4f, 1f, infiniteRepeatable(tween(900, easing = EaseInOut), RepeatMode.Reverse), label = "live_dot_alpha"
                         )
-                        Box(Modifier.size(4.dp).graphicsLayer { alpha = livePulse }.background(lineColor, CircleShape))
+                        Box(Modifier.size(4.dp).graphicsLayer { alpha = if (closure != null) 1f else livePulse }.background(accent, CircleShape))
                         Spacer(Modifier.width(5.dp))
                         Text(
                             if (compact) {
@@ -2239,7 +2319,7 @@ private fun NextDepartureRow(
                                     ?: LineShortNames.displayName(render.section.selection.line).uppercase()
                             } else {
                                 LineShortNames.displayName(render.section.selection.line) +
-                                    " \u00B7 NEXT DEPARTURE"
+                                    if (closure != null) "" else " \u00B7 NEXT DEPARTURE"
                             },
                             color = onSurfMute, fontSize = if (compact) 9.sp else 10.sp,
                             fontWeight = FontWeight.Bold,
@@ -2250,9 +2330,9 @@ private fun NextDepartureRow(
                     Spacer(Modifier.height(3.dp))
                     SplitFlapText(
                         text = headline,
-                        color = onSurface,
+                        color = if (closure != null) alert else onSurface,
                         fontSize = if (compact) 13.sp else 16.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = if (closure != null) FontWeight.Bold else FontWeight.SemiBold,
                     )
                     Spacer(Modifier.height(4.dp))
                     // Reserve this slot's height whether or not it has content,
@@ -2292,7 +2372,7 @@ private fun NextDepartureRow(
                             // own strip at the foot of the panel.
                             prediction == null && !reason.isNullOrBlank() -> Text(
                                 reason,
-                                color = onSurfMute,
+                                color = if (closure != null) onSurface else onSurfMute,
                                 fontSize = if (compact) 10.sp else 11.sp,
                                 fontWeight = FontWeight.Medium,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis
@@ -2315,6 +2395,9 @@ private fun NextDepartureRow(
                     contentAlignment = Alignment.CenterEnd,
                 ) {
                   Column(horizontalAlignment = Alignment.End) {
+                    if (closure != null) {
+                        Icon(Icons.Rounded.Warning, null, tint = alert, modifier = Modifier.size(if (compact) 24.dp else 34.dp))
+                    }
                     if (prediction != null) {
                         SplitFlapText(
                             text = if (isDue) "Due" else "$countdown",

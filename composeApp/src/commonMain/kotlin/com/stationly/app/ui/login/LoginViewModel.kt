@@ -17,10 +17,15 @@ import com.stationly.core.repository.UserSyncRepository
 import com.stationly.core.service.NetworkModule
 import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+
+/** Where the auth flow goes next. */
+enum class LoginStep { SIGNED_IN, VERIFY_EMAIL, BACK_TO_LOGIN }
 
 class LoginViewModel(
     private val authProvider: PlatformAuthProvider
@@ -49,6 +54,15 @@ class LoginViewModel(
 
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
+
+    private val _step = MutableStateFlow<LoginStep?>(null)
+
+    /** Where to go next, until the screen says [stepTaken]. See [goTo]. */
+    val step: StateFlow<LoginStep?> = _step.asStateFlow()
+
+    fun stepTaken() {
+        _step.value = null
+    }
 
     /**
      * The words this flow uses, from the SDUI config map — see [AuthStrings].
@@ -228,8 +242,6 @@ class LoginViewModel(
 
     fun onSubmit(
         screenType: String,
-        onSuccess: () -> Unit,
-        onNeedsEmailVerification: () -> Unit,
         resetOobCode: String? = null
     ) {
         val inputs = _uiState.value.inputs
@@ -266,16 +278,16 @@ class LoginViewModel(
                                     .onFailure { runCatching { authProvider.sendEmailVerification() } }
                             }
                             _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                            onNeedsEmailVerification()
+                            goTo(LoginStep.VERIFY_EMAIL)
                             return@fold
                         }
                         if (syncUserAndSetupData(provider = "email")) {
                             _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                            onSuccess()
+                            goTo(LoginStep.SIGNED_IN)
                         }
                     } else {
                         _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                        onSuccess()
+                        goTo(LoginStep.SIGNED_IN)
                     }
                 },
                 onFailure = { e ->
@@ -288,14 +300,14 @@ class LoginViewModel(
         }
     }
 
-    fun onGoogleSignIn(idToken: String, onSuccess: () -> Unit) {
+    fun onGoogleSignIn(idToken: String) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isAuthenticating = true, error = null)
             authProvider.signInWithGoogle(idToken).fold(
                 onSuccess = {
                     if (syncUserAndSetupData(provider = "google")) {
                         _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                        onSuccess()
+                        goTo(LoginStep.SIGNED_IN)
                     }
                 },
                 onFailure = { e ->
@@ -308,14 +320,14 @@ class LoginViewModel(
         }
     }
 
-    fun onGoogleSignInInteractive(onSuccess: () -> Unit) {
+    fun onGoogleSignInInteractive() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isAuthenticating = true, error = null)
             authProvider.signInWithGoogleInteractive().fold(
                 onSuccess = {
                     if (syncUserAndSetupData(provider = "google")) {
                         _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                        onSuccess()
+                        goTo(LoginStep.SIGNED_IN)
                     }
                 },
                 onFailure = { e ->
@@ -328,14 +340,14 @@ class LoginViewModel(
         }
     }
 
-    fun onAppleSignInInteractive(onSuccess: () -> Unit) {
+    fun onAppleSignInInteractive() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isAuthenticating = true, error = null)
             authProvider.signInWithAppleInteractive().fold(
                 onSuccess = {
                     if (syncUserAndSetupData(provider = "apple")) {
                         _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                        onSuccess()
+                        goTo(LoginStep.SIGNED_IN)
                     }
                 },
                 onFailure = { e ->
@@ -517,7 +529,7 @@ class LoginViewModel(
         }
     }
 
-    fun confirmPasswordReset(onSuccess: () -> Unit) {
+    fun confirmPasswordReset() {
         val oobCode  = _uiState.value.resetOobCode ?: return
         val password = _uiState.value.inputs["newPassword"] ?: ""
         if (password.length < strings.passwordMinLength) {
@@ -532,7 +544,7 @@ class LoginViewModel(
                         isAuthenticating = false, passwordResetConfirmed = true,
                         resetOobCode = null, inputs = emptyMap()
                     )
-                    onSuccess()
+                    goTo(LoginStep.BACK_TO_LOGIN)
                 },
                 onFailure = { e ->
                     val msg = when {
@@ -561,6 +573,42 @@ class LoginViewModel(
      * true, while "Something went wrong" tells a user nothing they had not
      * already worked out.
      */
+    /**
+     * Ask the screen to navigate, unless this coroutine has already been
+     * cancelled — which on Android means there is no screen to come.
+     *
+     * A STEP the screen collects, never a callback it passed in: this view model
+     * outlives the screen when the phone is rotated, folded or re-themed, and a
+     * callback then navigated the destroyed one (Pixel 10 Pro Fold, unfolded as
+     * Google sign-in finished, 2026-11-25). The screen there now takes the step.
+     *
+     * ## The crash this exists to stop
+     * Observed on a Pixel 7 Pro, 2026-09-06, backing out of the shared login
+     * screen while "Signing you in…" was up. Interactive Google sign-in leaves
+     * the app for the account chooser and can take several seconds; press back
+     * in that window and the host Activity is destroyed, which clears the
+     * NavController's `ViewModelStore`, which cancels `viewModelScope`. The
+     * sign-in itself had already succeeded, so its final resumption was sitting
+     * on the dispatcher queue — and cancelling drains that queue, running the
+     * rest of this coroutine synchronously *inside* Activity destruction.
+     * Cancellation is only observed at suspension points, and there are none
+     * left after the last `await`, so the callback fired into a dead NavHost:
+     *
+     *     java.lang.IllegalStateException: State must be at least 'CREATED' to
+     *     be moved to 'DESTROYED' … destination=Destination route=summary
+     *         at NavController.navigate(NavController.android.kt:1003)
+     *         at LoginViewModel${'$'}onGoogleSignInInteractive${'$'}1.invokeSuspend
+     *
+     * The app died and relaunched already signed in, which is a good disguise
+     * for a crash on the primary sign-in path.
+     *
+     * iOS is unaffected either way: nothing there destroys the view model
+     * mid-flow, so `isActive` is true and this is the call it always was.
+     */
+    private fun CoroutineScope.goTo(step: LoginStep) {
+        if (isActive) _step.value = step
+    }
+
     private fun friendlyAuthError(raw: String): String = when {
         raw.containsAny("wrong-password", "invalid-credential", "INVALID_LOGIN_CREDENTIALS") ->
             strings.wrongPassword
@@ -578,7 +626,7 @@ class LoginViewModel(
         _uiState.value = _uiState.value.copy(passwordVisible = current)
     }
 
-    fun confirmEmailVerified(onAuthSuccess: () -> Unit) {
+    fun confirmEmailVerified() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isAuthenticating = true, error = null)
             if (!authProvider.isLoggedIn()) {
@@ -596,7 +644,7 @@ class LoginViewModel(
             if (authProvider.isEmailVerified()) {
                 if (syncUserAndSetupData(provider = "email")) {
                     _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                    onAuthSuccess()
+                    goTo(LoginStep.SIGNED_IN)
                 }
             } else {
                 _uiState.value = _uiState.value.copy(
@@ -607,7 +655,7 @@ class LoginViewModel(
         }
     }
 
-    fun silentlyCheckEmailVerified(onAuthSuccess: () -> Unit) {
+    fun silentlyCheckEmailVerified() {
         viewModelScope.launch {
             if (!authProvider.isLoggedIn()) return@launch
             try {
@@ -618,7 +666,7 @@ class LoginViewModel(
             if (authProvider.isEmailVerified()) {
                 if (syncUserAndSetupData(provider = "email")) {
                     _uiState.value = _uiState.value.copy(isAuthenticating = false)
-                    onAuthSuccess()
+                    goTo(LoginStep.SIGNED_IN)
                 }
             }
         }
@@ -642,10 +690,10 @@ class LoginViewModel(
         }
     }
 
-    fun signOutAfterVerificationFlow(onSignedOut: () -> Unit) {
+    fun signOutAfterVerificationFlow() {
         viewModelScope.launch {
             authProvider.signOut()
-            onSignedOut()
+            goTo(LoginStep.BACK_TO_LOGIN)
         }
     }
 

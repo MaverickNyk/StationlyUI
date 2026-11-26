@@ -88,32 +88,44 @@ interface SduiApiService {
     // User Sync & Firestore
     suspend fun syncProfile(request: SyncProfileRequest): UserProfileResponse
     /**
-     * LEGACY board list — Android's write path. iOS uses [syncBoards].
+     * LEGACY station list — the **projection**, not the authority.
      *
-     * A full replace of `users/{uid}.stations`. Calling it from iOS would put
-     * both platforms back on one array and reintroduce the cross-platform wipe
-     * that splitting the lists exists to fix.
-     */
-    /**
-     * LEGACY station list. **[deviceId] has no producer today, deliberately.**
+     * A full replace of `users/{uid}.stations`, with no staleness check and no
+     * empty guard: the server stores exactly what it is given. That is what it
+     * always did, and it is why this must only ever be called immediately after
+     * [syncBoards] has ACCEPTED the same content — the boards write carries both
+     * guards, so calling in that order borrows them. Calling this on its own is
+     * a way to wipe an account's board list with an empty array nobody checked.
      *
-     * The server accepts it and uses it as `excludeDeviceId`, and the parameter
-     * is here so Android-next gets echo suppression without a wire change. But
-     * the only callers of this endpoint are in the FROZEN APK, which cannot be
-     * rebuilt to send one — and iOS never calls it at all, because it writes
-     * through `syncBoards`. So nothing sends it and nothing can until a new
-     * Android ships.
+     * ## Why a v2 client writes a v1 array at all
+     * Because during the rollout an account can hold a v1 Android device and a
+     * v2 device at once, and this array is the only list a v1 device can read.
+     * A v2 client that wrote only `boards` would leave that phone describing the
+     * world as it was before the upgrade — and the next thing the user does on
+     * it replaces `stations` wholesale from that stale view. Writing both keeps
+     * the old device **degraded but correct**: no filters, which it cannot
+     * render anyway. See [com.stationly.core.model.user.toSubscribedStations].
      *
-     * Said out loud because the alternative is reading the parameter as evidence
-     * that echo suppression works on this path. It does not; it is reserved. No
-     * harm follows from that today: the frozen APK has no revision gate to
-     * suppress, guards on uid, and its reconcile is idempotent.
+     * Retired when Q2 says so — a remaining-v1-install count, not a date.
+     *
+     * ## [deviceId] now has a producer
+     * The server uses it as `excludeDeviceId` so its `user.sync` fan-out skips
+     * the writer. Until AV2-4.3 nothing sent one: the only callers were in the
+     * frozen APK, which cannot be rebuilt to send it, and iOS writes through
+     * [syncBoards]. That comment has been removed rather than corrected because
+     * it said the parameter was reserved, and it is not any more.
+     *
+     * @return the same envelope [syncBoards] returns. The rev matters: this is
+     *   the LAST write of the pair, so its revision is the one that accounts for
+     *   both, and stamping it is what stops the writing device fetching back its
+     *   own echo. The response used to be reduced to a `Boolean` here and the
+     *   rev thrown away — which was harmless while nothing called it.
      */
     suspend fun syncStations(
         uid: String,
         stations: List<SubscribedStation>,
         deviceId: String? = null,
-    ): Boolean
+    ): SyncStateResponse
     /**
      * v2 board list. Full replace, guarded by [SyncBoardsRequest.updatedAt].
      *
@@ -178,6 +190,13 @@ interface SduiApiService {
      * Both calls are idempotent; the client invokes register on cold
      * launch + on token rotation, and unregister on logout.
      */
+    /**
+     * Ask the backend to verify a Google Play purchase with Google, credit it to
+     * the signed-in account, and consume it. See [PlayVerifyOutcome] for why the
+     * answer has three shapes rather than two.
+     */
+    suspend fun verifyPlayPurchase(productId: String, purchaseToken: String): PlayVerifyOutcome
+
     suspend fun registerFcmToken(token: String, platform: String = "android", appVersion: String? = null): Boolean
     suspend fun unregisterFcmToken(token: String): Boolean
 }
@@ -291,12 +310,16 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
         uid: String,
         stations: List<SubscribedStation>,
         deviceId: String?,
-    ): Boolean {
+    ): SyncStateResponse {
         val response = client.post("$baseUrl/user/sync/stations") {
             contentType(ContentType.Application.Json)
             setBody(SyncStationsRequest(uid, stations, deviceId))
         }
-        return response.status == HttpStatusCode.OK
+        // `applied` is absent from this endpoint's body and defaults to true,
+        // which is the right reading: the legacy path has no branch that
+        // succeeds without writing.
+        return if (response.status == HttpStatusCode.OK) response.body()
+        else SyncStateResponse(success = false, applied = false, reason = "http_${response.status.value}")
     }
 
     override suspend fun syncBoards(
@@ -398,6 +421,22 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
         return response.status == HttpStatusCode.OK
     }
 
+    override suspend fun verifyPlayPurchase(productId: String, purchaseToken: String): PlayVerifyOutcome {
+        val response = try {
+            client.post("$baseUrl/support-money/verify-play") {
+                contentType(ContentType.Application.Json)
+                setBody(PlayVerifyRequest(productId, purchaseToken))
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Offline, DNS, timeout: no answer about the purchase at all.
+            return PlayVerifyOutcome.RetryLater()
+        }
+        val body = runCatching { response.body<PlayVerifyResponse>() }.getOrNull()
+        return PlayVerifyOutcome.from(response.status.value, body)
+    }
+
     override suspend fun registerFcmToken(token: String, platform: String, appVersion: String?): Boolean {
         @kotlinx.serialization.Serializable
         data class RegisterFcmTokenRequest(val token: String, val platform: String, val appVersion: String?)
@@ -421,4 +460,54 @@ class SduiApiServiceImpl(private val client: HttpClient) : SduiApiService {
 
 object SduiApiServiceFactory {
     fun create(): SduiApiService = NetworkModule.sduiApi
+}
+
+@kotlinx.serialization.Serializable
+private data class PlayVerifyRequest(val productId: String, val purchaseToken: String)
+
+/** The backend's answer from `POST /support-money/verify-play`. */
+@kotlinx.serialization.Serializable
+data class PlayVerifyResponse(
+    val ok: Boolean = false,
+    /** True only the first time the purchase is credited; false on a retry. */
+    val recorded: Boolean = false,
+    /** Why it was refused, on a 400. `purchase_pending` is "not yet", not "no". */
+    val reason: String? = null,
+)
+
+/**
+ * What the backend said about one Play purchase.
+ *
+ * Three shapes because the client does three different things with them:
+ * - [Credited]: recorded and consumed. Done.
+ * - [Rejected]: the server looked and said no (another account's token, an
+ *   unknown product). Retrying cannot change that.
+ * - [RetryLater]: no answer, or "pending". The purchase stays on the device
+ *   unconsumed and is sent again on the next launch, which is what lets a
+ *   payment survive the app dying between Play's sheet and our server.
+ */
+sealed interface PlayVerifyOutcome {
+    /** [newlyRecorded] is false on a retry of a purchase already credited: no second thank-you. */
+    data class Credited(val newlyRecorded: Boolean) : PlayVerifyOutcome
+    data class Rejected(val reason: String) : PlayVerifyOutcome
+    /** [httpStatus] is for the log only; null when there was no answer at all. */
+    data class RetryLater(val httpStatus: Int? = null) : PlayVerifyOutcome
+
+    companion object {
+        /**
+         * Reads an HTTP answer. Pure, so the mapping is tested without a server.
+         *
+         * Only a 200 with `ok` credits, and only a 400 refuses; a 401 (token
+         * expired), a 5xx (Google unreachable, or not set up yet) or an
+         * unreadable body is a question to ask again, never a "no", because a
+         * "no" lets Google refund a payment that should have been credited.
+         */
+        fun from(httpStatus: Int, body: PlayVerifyResponse?): PlayVerifyOutcome = when {
+            httpStatus == 200 && body?.ok == true -> Credited(newlyRecorded = body.recorded)
+            httpStatus == 400 && body != null && body.reason != PENDING -> Rejected(body.reason ?: "rejected")
+            else -> RetryLater(httpStatus)
+        }
+
+        private const val PENDING = "purchase_pending"
+    }
 }

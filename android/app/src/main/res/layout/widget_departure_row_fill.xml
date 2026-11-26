@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     `widget_departure_row`, but height-flexible: 0dp with weight 1, so every row
+     in a non-scrolling container takes an EQUAL share of the widget's spare
+     height. This is how the iOS widget fills its canvas (every cell
+     `maxHeight: .infinity` at equal priority) and why it never shows an empty
+     band under the last row.
+
+     Used by the stepping pages and by fallback messages, which never scroll.
+     NOT by the scrolling list: a ListView item cannot take weight, and a 0dp
+     item there would have no height at all. Same view ids as the original, so
+     every setter drives both.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/departure_row_root"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:minHeight="22dp"
+    android:layout_marginTop="2dp"
+    android:background="@drawable/departure_board_active_row_background"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp">
+
+    <TextView
+        android:id="@+id/destination_text"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:textColor="@color/tfl_amber"
+        android:textSize="15sp" />
+
+    <TextView
+        android:id="@+id/eta_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:paddingStart="8dp"
+        android:textColor="@color/tfl_amber"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+</LinearLayout>

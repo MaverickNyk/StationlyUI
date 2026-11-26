@@ -28,6 +28,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,6 +72,24 @@ fun InAppBrowserScreen(
     val t = LocalThemeTokens.current
     val uriHandler = LocalUriHandler.current
     val handle = remember(url) { WebViewHandle() }
+
+    // ── The SYSTEM back gesture, same rule as the toolbar arrow ──────────
+    //
+    // This screen is an overlay drawn above the NavHost (App.kt), not a nav
+    // destination, so nothing claimed the system back. It went straight to
+    // the NavHost underneath: the first swipe silently popped Profile out
+    // from under the page, the second closed the app, and the page stayed on
+    // screen throughout (QA 2026-11-23, finding #4). Registered here, inside
+    // the overlay, it is composed after the NavHost's own handler and so is
+    // asked first, and only while the page is showing.
+    //
+    // iOS: the same common code runs there. CMP 1.8 routes the iOS edge-swipe
+    // to this handler only where back gestures are enabled for the host
+    // controller; the toolbar arrow is the iOS path today either way.
+    @OptIn(ExperimentalComposeUiApi::class)
+    BackHandler(enabled = true) {
+        if (handle.canGoBack) handle.goBack() else onClose()
+    }
 
     Scaffold(
         // Opaque, and it swallows taps.

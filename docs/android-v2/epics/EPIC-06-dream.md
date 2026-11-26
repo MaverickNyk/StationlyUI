@@ -1,0 +1,326 @@
+# EPIC-06 — Daydream · 6 pts
+
+> ## Q3 — answered by the reversible choice, S016
+> **Daydream stays**, and the epic was built on a premise worth correcting:
+> *Daydream* (the VR platform) is dead; `DreamService` — the **screen saver** —
+> is not. It is in Settings → Display on current Android, it is not deprecated,
+> and v1 ships it.
+>
+> This was not a guess, it was a choice between a reversible move and an
+> irreversible one. Keeping it and porting is undoable in an hour if the owner
+> says drop it; deleting a feature that is live on real phones is not. So the
+> port happened, and **Q3 is now a cheaper question than it was**: saying no
+> today deletes two files and a settings screen, not a package.
+>
+> The owner should still answer it. If the answer is no, the exit is
+> `StationlyDreamService`, `DreamSettingsActivity`, their manifest entries and
+> `res/xml/stationly_dream_info.xml` — plus the four `DreamPlatform.android.kt`
+> actuals, which would go back to being placeholders.
+
+**Goal.** The screensaver runs the shared UI instead of its own copy.
+
+**Exit.** `StationlyDreamService` hosts `DreamHost`; the v1 `dream` package is
+deleted.
+
+**Done, S016.** The dream package was the reason v1 code was still in the app.
+Ten of its twelve files are deleted; what remains is the two SYSTEM ENTRY POINTS,
+because Android binds a component and not a composable.
+
+What went with it, and what did not:
+
+| v1 package | Now |
+|---|---|
+| `dream/` (the whole screensaver) | **deleted** — `composeApp`'s `DreamHost` renders it |
+| `ui/theme/` (Theme, AppTheme, ThemeTokens, ThemeRepository, Color, LineColors) | **deleted** — the dream was its last reader; `StationlyThemeHost` is the one theme now |
+| `ui/util/` (NetworkState, PredictionTicker, StationStripFitter, BoardFallbackState) | **stays** — every one is on `DepartureWidgetProvider`'s render path. EPIC-05's residue, not this epic's |
+| `util/HomeConfigStore`, `util/ModeIconCache` | **stays** — the widget reads both (EPIC-05) |
+
+The theme carry-over the epic asked to preserve is preserved by having ONE
+reader rather than by keeping two in step: the shared `AppSettings` reads
+`loadDurable("app_theme") ?: loadString("app_theme")`, and on Android the second
+half of that is the file and key v1 wrote. `V1ThemeCarryOverTest` still pins it,
+one-sided now.
+
+---
+
+## AV2-6.1 — Real dream actuals · `M` · Review (S016)
+
+**Depends on:** AV2-3.2, Q3 **Files:** `composeApp/src/androidMain/.../platform/DreamPlatform.android.kt`
+
+All four members are placeholders, and all four have working implementations
+**one package away** in `com.stationly.mobile.dream`.
+
+**They are now placeholders inside the shipped app**, not inside a
+build-verification target — AV2-3.5 changed what that module is. Nothing reaches
+them today only because `openSystemScreensaverSettings()` returns `true` on
+Android and sends the user to Settings → Display → Screen saver instead, which
+is what v1's home-screen promo did. Making these four real is what lets that
+`actual` return `false` and hands the feature back to the app; until then, do
+not route anything else at `dream/settings` on Android.
+
+| Member | Today | Source of the real one |
+|---|---|---|
+| `DreamPrefsBackend` | an in-memory map | `DreamSettings.kt` |
+| `KeepScreenAwake` | no-op | the `DreamService` itself |
+| `fetchMetNoForecast` | returns null | `WeatherStation.kt` |
+| `lastKnownLatLon` | returns null | `WeatherStation.kt` / location stack |
+
+### Tasks
+- [x] **a.–d.** Port the four. *(Delegation was impossible — the dependency runs
+      `:android:app` → `:composeApp`, so `composeApp` cannot call into the app
+      module. Each is the same behaviour written against the same rules, with
+      the reasons carried across rather than rediscovered.)*
+- [x] **e.** `DreamPrefsBackend` must persist. *(`StationlyDreamPrefs`, v1's own
+      file, with v1's four key names — see the findings for why that mattered
+      more than it looks.)*
+
+### Acceptance criteria
+- [x] Dream settings survive a restart. *(They are on disk, in the file v1 wrote.)*
+- [x] The weather strip shows real weather. *(met.no over `HttpURLConnection`,
+      User-Agent included — met.no returns 403 without one, which would have
+      looked like a chip that simply never appears.)*
+- [x] The screen does not sleep during a dream. *(By the DreamService, which is
+      what `isScreenBright` is for — see the finding on `KeepScreenAwake`.)*
+
+### Findings
+
+#### The prefs file name is the whole of the upgrade path
+
+v1 writes `layout`, `theme`, `clock_style` and `station_id` into
+`StationlyDreamPrefs`, and the shared store uses **the same four names**. So
+backing the Android `DreamPrefsBackend` with that file is what makes a v1 user's
+screensaver survive the upgrade — and pointing it anywhere else would have reset
+every one of them, silently, on a surface nobody opens deliberately.
+
+The same shape as `DeviceIdentity` and `ModeIconCache` before it: two
+implementations agreeing by filename because the module boundary will not let
+them agree by code.
+
+**One gap found while checking it.** The shared store namespaces its keys per
+account (`layout:uid`), so a SIGNED-IN v1 user would still have read defaults —
+the carry-over would have worked only while signed out. `DreamSettings` now falls
+back from the scoped key to the unscoped one on READ: an account that has never
+set this inherits whatever the device was set to. That also fixes the same gap on
+iOS for anything written before P3 scoped these keys.
+
+#### `KeepScreenAwake` inside a real dream is a no-op, and should be
+
+`FLAG_KEEP_SCREEN_ON` is set on a WINDOW, and there is no Activity in a
+`DreamService`'s tree. The system keeps the screen on for a bound dream anyway —
+`isScreenBright = true` is what the service already says. So the implementation
+walks the context for an Activity and does nothing when there is none, which
+covers the other host: the shared `DreamHost` rendered inside the app, where the
+flag is the only thing between a docked phone and the display timeout.
+
+Worth writing down because "the keep-awake does nothing" reads like a bug in the
+one place it is correct.
+
+### Handoff notes — S016, 2026-09-11
+
+Nothing here changed what the user sees: until AV2-6.2 the screensaver was still
+v1's. These four are what made 6.2 possible in the same session.
+
+---
+
+## AV2-6.2 — Host the shared dream · `M` · Review (S016) — **VERIFIED ON HARDWARE, S017**
+
+**Depends on:** AV2-6.1 **Files:** `StationlyDreamService`, `DreamSettingsActivity`, `AndroidManifest.xml`
+
+### Tasks
+- [x] **a.** `StationlyDreamService` hosts `DreamHost` from `:composeApp`.
+- [x] **b.** `DreamSettingsActivity` hosts `DreamSettingsScreen`. *(~700 lines of
+      a second settings screen deleted. Both edited the same four values in the
+      same file, and which one the user reached depended on the door.)*
+- [x] **c.** Delete `com.stationly.mobile.dream`. *(Ten files gone; two entry
+      points remain, because the system binds a COMPONENT and not a composable.
+      `com.stationly.mobile.ui.theme` went with them — see the findings.)*
+- [x] **d.** The dream's snapshot loader reads the v2 board model. *(It is the
+      shared `loadDreamSnapshot`, which is what iOS runs.)*
+
+### Watch for
+Keep `DreamSettingsActivity`'s `taskAffinity=""` and `launchMode="singleTask"`.
+The manifest comment explains exactly what breaks without them: system Settings
+stacks the activity onto Stationly's own task, and back-navigation then walks
+through `MainActivity` and the whole app history instead of returning to
+Settings. Also keep `excludeFromRecents="true"`.
+
+### Acceptance criteria
+- [ ] The screensaver renders the shared board. **STILL UNSEEN — see below.**
+- [~] Settings → Display → Screensaver → gear opens the settings screen.
+      **HALF VERIFIED on the Pixel 7 Pro, 2026-09-12:** `DreamSettingsActivity`
+      was started directly, became the resumed activity, and the crash buffer
+      stayed empty — so the shared `DreamSettingsScreen` composes inside it, and
+      the ~700 lines it replaced are genuinely gone rather than merely
+      unreferenced. The BACK behaviour (returning to Settings rather than walking
+      into the app) is the half that needs a person, because it is a gesture.
+- [x] The dream shows a multi-line, filtered board correctly, not just the first
+      selection. *(By construction: it is the shared board renderer.)*
+
+### Findings
+
+#### The hard part was already done, by v1
+
+A `DreamService` is not a `LifecycleOwner`, `ViewModelStoreOwner` or
+`SavedStateRegistryOwner`, and a `ComposeView` without all three crashes at
+runtime with `ViewTreeLifecycleOwner not found` — the classic way this swap goes
+wrong. `StationlyDreamService` has implemented all three since v1 and sets them
+as the view's tree owners. So hosting a different composable is a four-line
+change, and the risk that looked largest here was retired before the session
+started.
+
+#### A broadcast that existed only because v1's dream could not hear the flow
+
+`FreshDataNotifier` fanned out to the dream over its own `ACTION_DREAM_REFRESH`
+broadcast, which the service received and turned into a `refreshTick` the host
+observed. All of it is deleted. The shared `DreamHost` collects
+`FreshDataNotifier.events` — the same process-wide flow the home screen and the
+widget already use, emitted by the same FCM service, in the same process.
+
+Two delivery mechanisms for one signal is how they stop agreeing, and this one
+had the extra property that its receiver was registered in a component the app
+does not control the lifetime of.
+
+#### Deleting the dream emptied v1's theme package, and not v1's util package
+
+The epic says this epic's real exit is that `com.stationly.mobile.ui` finally
+empties. Half right. `ui/theme` is gone — the dream was its last reader, and the
+shared `StationlyThemeHost` is what the screensaver composes now, so the app and
+the dream cannot disagree about a theme because there is one reader.
+
+`ui/util` **stays, and belongs to the widget**: `tickPredictions`,
+`StationStripFitter`, `BoardFallbackState`, `NetworkState` are all on
+`DepartureWidgetProvider`'s render path, and `NetworkState.init` is called from
+`StationlyApplication`. It is EPIC-05's residue, not this one's.
+
+`V1ThemeCarryOverTest` lost the second implementation it was comparing against
+and is one-sided now — the same shape `V1V2StorageContractTest` took when
+`DeviceIdProvider` went. The data it protects did not move: every v1 install's
+theme is still under `StationlyPrefs/app_theme`, and the shared reader's
+`loadDurable() ?: loadString()` fallback is still the entire upgrade path.
+
+### Why the dream itself is still unseen, 2026-09-12
+
+Tried, and worth writing down so nobody repeats the hour:
+
+- The device's screensaver was set to **Clock** and `screensaver_enabled = 0`, so
+  Stationly's dream had never been eligible to start. Pointing
+  `secure screensaver_components` at `.dream.StationlyDreamService` and enabling
+  it works (and was restored afterwards).
+- `am start -n com.android.systemui/.Somnambulator` is the way to start a dream
+  from a shell, and it does start one — but the phone was **dozing with the
+  screen off**, and `DozeService` takes precedence: `dumpsys dreams` kept
+  reporting `mCurrentDream=…DozeService`. A screensaver only runs with the
+  screen on.
+- Waking the phone needs an input event, and this is the owner's daily device.
+  That is where an agent stops.
+
+So the remaining check is genuinely a human one, and it is small: set Stationly
+as the screensaver, dock or charge the phone, and look at it.
+
+### Handoff notes — S016, 2026-09-11
+
+**This is the least verifiable change on the branch and it should be treated
+that way.** The screensaver is the one surface that cannot be opened by tapping
+anything — the OS binds it when the device docks or charges — so a failure shows
+up as a black or blank screen on somebody's bedside table, with no crash dialog
+and no path back to a report.
+
+It compiles, the lifecycle plumbing it needs was already there and is unchanged,
+and the composable it now hosts is the one iOS has been running. None of that is
+the same as having seen it.
+
+**The device script, and it is four steps:**
+
+```
+1. Settings → Display → Screen saver → Stationly → tap the gear.
+   The SHARED settings screen should appear. Change the layout, press back:
+   you should land back in Settings, NOT in Stationly's home screen.
+   (That is the taskAffinity/singleTask contract — invariant 1 in dream/CLAUDE.md.)
+2. "Start now" from that system screen. The board should render, in the layout
+   just chosen, with the theme the APP is set to.
+3. Leave it running and wait for a push (~30s on a tracked stop). The times
+   should move without the broadcast that used to carry them.
+4. A station with two lines: both should be on the board. v1 showed the first
+   selection only, and that is the visible difference this story buys.
+```
+
+**If it is blank**, the first thing to check is not the composable: it is whether
+`AndroidAppContext.context` is initialised in the process the dream was started
+in. `Platform.initialize` runs in `StationlyApplication.onCreate`, which the
+system runs before binding the service — but a dream is one of the few things
+that can start the process on its own.
+
+---
+
+### S017 (2026-09-12) — it has been seen, and it was wrong twice
+
+**It can be previewed from the CLI**, which is what the "four steps" above did
+not know. No docking, no charging, no unlocking, no human:
+
+```bash
+adb shell am start -a android.settings.DREAM_SETTINGS
+adb shell input tap 435 955      # the eye on the Stationly tile
+adb shell dumpsys dreams | grep -E 'mCurrentDream|mCrash'
+adb exec-out screencap -p > dream.png
+adb shell input tap 540 1170 && adb shell input keyevent KEYCODE_BACK
+```
+
+`com.android.systemui/.Somnambulator` does **not** work on this Pixel (SDK 37):
+`am start` reports success and no dream binds, with nothing in logcat. Do not
+spend time on it. `dumpsys dreams` is the honest check either way —
+`mCurrentDream=null` means it never bound, and `mCrashRetryCount` /
+`mLastCrashTimeMillis` say whether the dream has ever thrown. On this device:
+bound with `isPreview=true`, `mCrashRetryCount=0`, `mLastCrashTimeMillis=never`.
+
+**It was not blank.** The composable rendered, the theme followed the app, the
+clock ticked and the "ago" timer moved. The guess above — `AndroidAppContext`
+uninitialised in a process the dream started — did not materialise.
+
+**Two defects, neither reachable from a test, a compile, or the settings screen:**
+
+1. **The rows were centred vertically.** `DreamBoard` had
+   `if (fullscreen) Alignment.CenterVertically else Alignment.Top`, a port of v1
+   Android's `fillViewport` + centre gravity. In portrait that put three
+   departures in the middle of the panel with a hand's width of black above and
+   below — it reads as a board that failed to load rather than one with three
+   trains on it. Rows fill from the TOP now, which is also the only arrangement
+   with a referent: every departure board in the network fills downward, and the
+   empty space belongs at the bottom where its blank rows would be.
+
+2. **It named a station and drew one board.** Step 4 of the script above is
+   exactly the criterion that failed. `loadDreamSnapshot` resolved the setting
+   with `firstOrNull { it.station == id }`, so the panel said "King's Cross St.
+   Pancras Underground Station" above Piccadilly, Platform 6, Eastbound — a
+   quarter of what the user tracks there. The same defect the widget had
+   (`WidgetMultiLineBoardTest`), and the empty space below those three rows was
+   the other platforms all along. The dream now builds the same feeds the widget
+   and home screen build and draws a header per platform; on the phone,
+   Platform 6 Eastbound and Platform 5 Westbound under one station name.
+
+   Three things this had to get right, each asserted in `DreamBoardsForTest`
+   rather than assumed: the feeds are carried RAW and the rows rebuilt each
+   minute (finished rows would say "2 min" all night between pushes); the key is
+   the NAPTAN and not the hub (a bus hub's poles are separate choices); and a
+   deleted station or "Auto" falls back to the first board's WHOLE station,
+   never to that one board.
+
+**And the settings screen itself had two, from the owner's own feedback:**
+
+- **No Start button on Android.** iOS has no system screensaver, so the app is
+  the only thing that can present one. Android's is started by the OS, and this
+  screen is reached FROM system Settings — so "Start now" was a round trip back
+  to where the user had just been. It is replaced by the sentence somebody on
+  this screen is actually asking for: when the screensaver appears, and where to
+  change that. Behind `screensaverIsStartedBySystem`.
+- **The station picker listed BOARDS.** The setting is one naptan; the picker
+  listed `getAllSelections()` raw. King's Cross drew eight rows with the same
+  name, differing only in "Piccadilly · Outbound" / "Circle · Inbound". All eight
+  wrote the same value, so tapping any lit up all of them — and the dream then
+  showed whichever board sorted first, not the one tapped. A picker offering a
+  choice it had no way to honour. `dreamStationOptions` collapses on the key the
+  setting stores, so rows and outcomes are one-to-one, and rows carry the mode
+  roundel like every other list you configure from.
+
+**Still owed:** nothing on this story. The only thing a preview cannot prove is
+the dream surviving a real overnight run with pushes landing — step 3 above —
+and that needs the phone left charging.

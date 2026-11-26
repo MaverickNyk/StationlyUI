@@ -1,5 +1,8 @@
 package com.stationly.core.config
 
+import com.stationly.core.model.UserSelection
+import com.stationly.core.model.user.Board
+
 /**
  * The two quota questions, as pure functions over a [BoardPolicy].
  *
@@ -49,6 +52,59 @@ object BoardQuota {
     ): Boolean =
         (candidate != null && candidate in groupingIds) ||
             stationCount(groupingIds) < policy.maxBoards
+
+    /**
+     * Which of the account's [incoming] boards a phone can take on top of the
+     * [local] rows it already holds without passing [maxBoards] stations.
+     *
+     * For the first launch after a v1 upgrade, the one sync that MERGES: the v1
+     * board plus four from an iPhone made five on the Pixel on 2026-11-26, past a
+     * limit the app only ever checked at "+". (AV2-11.49.)
+     *
+     * - Everything already on the phone stays.
+     * - What the phone holds is counted the way the account will see it: a local
+     *   row that belongs to an account board counts as that board, matched by hub
+     *   or by stop. A v1 bus row has no hub, so without this one stop tracked both
+     *   ways would count as two stations, and leave out a board that fits.
+     * - The account's other boards are taken in its order until the limit, and
+     *   the rest are returned as [Fit.left]. They are not set up, and the upgrade's
+     *   save then drops them from the account: the save is a full replace.
+     */
+    fun fit(local: List<UserSelection>, incoming: List<Board>, maxBoards: Int): Fit {
+        fun boardOf(row: UserSelection) =
+            incoming.firstOrNull { it.id == row.groupingId || row.station in it.naptanIds }?.id
+        val heldBoards = local.mapNotNull(::boardOf).toSet()
+        var used = stationCount(local.map { boardOf(it) ?: it.groupingId })
+        val (kept, left) = incoming.partition { board ->
+            when {
+                board.id in heldBoards -> true
+                used < maxBoards -> { used++; true }
+                else -> false
+            }
+        }
+        return Fit(kept, left)
+    }
+
+    data class Fit(val kept: List<Board>, val left: List<Board>)
+
+    /**
+     * [fit] against a limit the server has JUST stated, or no cut at all.
+     *
+     * A board left out ends up deleted from the account, so this must never act
+     * on a limit it assumes: not the compiled default, not a cached config from
+     * before a change, not a served config that does not mention the limit. One
+     * network fetch, which this path can afford (it runs once per upgraded phone);
+     * failing that, everything is kept, which costs at most a phone over the limit.
+     */
+    suspend fun fitMerge(local: List<UserSelection>, incoming: List<Board>): Fit {
+        val limit = runCatching { servedLimit() }.getOrNull() ?: return Fit(incoming, emptyList())
+        return fit(local, incoming, limit)
+    }
+
+    /** Where [fitMerge] gets the limit. A seam for tests; the app never sets it. */
+    internal var servedLimit: suspend () -> Int? = {
+        if (SduiConfig.refreshFromNetwork()) BoardPolicyStore.servedMaxBoards else null
+    }
 
     /**
      * Whether a line can be ticked on a station already holding [pickedLines].

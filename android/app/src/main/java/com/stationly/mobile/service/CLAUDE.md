@@ -42,14 +42,20 @@ External integration points:
   `com.google.firebase.MESSAGING_EVENT` intent filter
 - `StationlyApplication.onCreate` calls
   `FcmTokenRegistrar.ensureRegistered(this)` so the token is pushed
-  on cold launch, and subscribes the install to the `stationly_all`
-  topic
-- `dream/StationlyDreamService` registers a broadcast receiver for
-  `ACTION_DREAM_REFRESH`, fired by `FcmMessagingService` after every
-  prediction-update payload is persisted
-- `widget/DepartureWidgetProvider` is called via
-  `updateWidgetContent` from `FcmMessagingService` after every
-  prediction-update
+  on cold launch, calls `BroadcastTopic.ensureSubscribed(this)` for
+  the `stationly_all` install topic, and schedules
+  `ActivityUploadWorker`
+- **Everything downstream of a prediction push goes through
+  `util/FreshDataNotifier`**, which is the one fan-out path: it emits
+  on `core`'s `FreshDataNotifier.events` (collected by the home screen
+  AND, since AV2-6.2, by the screensaver, in this same process) and
+  calls `DepartureWidgetProvider.updateForStation` for the widgets
+  bound to that stop only.
+
+  Two things this used to say are gone, and both were second delivery
+  mechanisms for one signal: the dream's `ACTION_DREAM_REFRESH`
+  broadcast (AV2-6.2) and `updateWidgetContent`, which fanned one
+  board out to every widget id (AV2-5.1).
 
 ## The notification pipeline
 
@@ -115,26 +121,18 @@ investigation.
 the payload `type`. Backend can override per-payload via
 `payload.channel`.
 
-## Status-change auto-notifications
+## Notifications are served policy (since 2026-11-24)
 
-`FcmMessagingService.handleLineStatusUpdate` diffs the previous and
-new `statusSeverityDescription` for the user's selected lines. Fires
-a notification on **significant transitions only**:
+**Read `docs/LINE_ALERTS.md` first.** Line alerts: `LineAlerts` is a thin Android
+shell (`LineAlertPlatform`) over core's `LineAlertCoordinator`. Sent ones:
+`dispatchRemoteNotification` goes through core's `RemoteNotifications`. Nothing
+here decides; never add a compiled-in severity, threshold or cap.
 
-- `wasGood`: line previously had "Good Service" → now something else
-- `isGood`: line previously had a disruption → now "Good Service"
-- `enteredSevere`: any other transition INTO the severe states
-  (`Severe Delays`, `Service Closed`, `Part Suspended`, `Suspended`,
-  `Planned Closure`)
-
-Other transitions (e.g. Minor Delays → Reduced Service) are dropped
-to avoid notification fatigue.
-
-Severity is derived locally from the new status:
-- `Good Service` → `success`
-- Severe set → `danger`
-- Minor Delays / Part Closure / Reduced Service → `warning`
-- else → `neutral`
+`NotificationDispatcher.dispatch` returns false when the user has blocked the app
+or channel: "posted" must mean shown. Images are bounded in time and size (they
+load inside the push handler). An unknown channel falls back, or Android shows
+nothing. `NotificationActionReceiver` (Mute) is not exported, and sent
+notifications cannot carry an in-place action.
 
 ## FCM token registration
 
@@ -172,8 +170,7 @@ silently no-op. The token will be re-tried on next app launch.
 Don't add retry loops; the operation isn't critical-path.
 
 **3. Status-change notifications NEVER fire on first launch.**
-`handleLineStatusUpdate` checks `prevStatus == null` and returns
-early. The user has to OPT IN by experiencing the line being fine
+`LineAlertRules.onChange` returns Nothing when the previous status is null. The user has to OPT IN by experiencing the line being fine
 first; otherwise their first impression of the app is
 "Stationly thinks your line is broken" which is a bad UX.
 
@@ -197,15 +194,18 @@ colour cue, add a new glyph.
 - **`stationly_all` topic subscribe-once tracking.** Subscribing to
   the same FCM topic is idempotent on the FCM side, but we track in
   SharedPrefs anyway to avoid the network call entirely on cold
-  launches.
+  launches. **A token rotation invalidates that flag** — topic
+  subscriptions belong to the token — which is why `onNewToken`
+  calls `BroadcastTopic.resubscribe`. Before AV2-4.2 it did not, and
+  a rotated token dropped the broadcast channel permanently on a
+  device that went on believing it had it.
+- **Board topics are a ledger, not a fire-and-forget.**
+  `AndroidNotificationManager` is the only thing that may reach
+  `FirebaseMessaging.subscribeToTopic` for a board, because FCM has
+  no "what am I subscribed to" call and the `fcm_topics` prefs set is
+  the only record. It is maintained on subscribe AND unsubscribe, and
+  `reconcileTopics` repairs the difference on every foreground.
 - **`onNewToken` can fire mid-session.** When FCM rotates the token,
   the dispatch path goes through `registerIfAuthenticated` again;
   the SharedPrefs cache update happens after a successful POST so
   a failed POST won't poison the cache.
-
-## When you change something here
-
-After modifying any file in this folder, run `graphify update .` from
-the repo root to keep the project's knowledge graph in sync. The
-graph at `graphify-out/` is what future agents read for architecture
-context.

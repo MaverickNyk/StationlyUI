@@ -147,7 +147,7 @@
         <div class="legal-hero">
             <div class="container">
                 <h1>Privacy Policy</h1>
-                <p>Last updated: 13 July 2026 &nbsp;·&nbsp; Effective: 13 July 2026</p>
+                <p>Last updated: 26 November 2026 &nbsp;·&nbsp; Effective: 26 November 2026</p>
             </div>
         </div>
 
@@ -174,33 +174,51 @@
                     <tbody>
                         <tr>
                             <td><strong style="color:white">Account</strong></td>
-                            <td>Name, email address</td>
+                            <td>Name, email address, account ID, and your profile picture if you sign in with Google or Apple</td>
                             <td>Identifying and securing your account</td>
                             <td>Contract</td>
                         </tr>
                         <tr>
-                            <td><strong style="color:white">Station preferences</strong></td>
-                            <td>Saved stations, lines, directions</td>
-                            <td>Syncing your boards across devices</td>
+                            <td><strong style="color:white">Boards and settings</strong></td>
+                            <td>Saved stations, lines, directions, filters, the order of your stations, and line alert level</td>
+                            <td>Showing your boards and syncing them across your devices</td>
                             <td>Contract</td>
                         </tr>
                         <tr>
-                            <td><strong style="color:white">Push token</strong></td>
-                            <td>Firebase Cloud Messaging device token</td>
-                            <td>Delivering real-time departure updates</td>
-                            <td>Consent</td>
+                            <td><strong style="color:white">Location (optional)</strong></td>
+                            <td>Your device's location, only when you ask for nearby stations</td>
+                            <td>Finding the stations and stops near you. It is sent once to search and is not stored</td>
+                            <td>Consent (you grant location permission, and can refuse it)</td>
                         </tr>
                         <tr>
-                            <td><strong style="color:white">Device &amp; app info</strong></td>
-                            <td>Device model, OS version, app version, crash logs</td>
-                            <td>Diagnosing bugs and ensuring compatibility</td>
+                            <td><strong style="color:white">Push token and device record</strong></td>
+                            <td>Firebase Cloud Messaging token, an app installation ID, device model, operating system and app version</td>
+                            <td>Delivering live departures, line alerts and sync to your devices, and keeping each device signed in correctly</td>
+                            <td>Contract</td>
+                        </tr>
+                        <tr>
+                            <td><strong style="color:white">Activity history</strong></td>
+                            <td>Actions in the app linked to your account, such as boards added or removed, settings changed, widgets placed, notifications opened, and steps in the Support Stationly flow</td>
+                            <td>Diagnosing problems with your account, understanding which features are used, and improving the Service</td>
                             <td>Legitimate interests</td>
                         </tr>
                         <tr>
-                            <td><strong style="color:white">Usage data</strong></td>
-                            <td>Features used, screens viewed, session duration (anonymised)</td>
-                            <td>Understanding how people use the app to improve it</td>
+                            <td><strong style="color:white">App analytics</strong></td>
+                            <td>Screen views, feature use and an app instance ID collected by Firebase Analytics; on Android this includes the device advertising ID</td>
+                            <td>Understanding, in aggregate, how the apps are used</td>
                             <td>Legitimate interests</td>
+                        </tr>
+                        <tr>
+                            <td><strong style="color:white">Contributions (optional)</strong></td>
+                            <td>If you choose to support Stationly: the amount, currency, date and the store's transaction reference. Card and payment details are handled by Apple, Google or Stripe and never reach us</td>
+                            <td>Recording your contribution and showing the Supporter mark</td>
+                            <td>Contract</td>
+                        </tr>
+                        <tr>
+                            <td><strong style="color:white">Website contributions (optional)</strong></td>
+                            <td>If you contribute on stationly.co.uk without an account: the name and email address you give Stripe, the amount and the transaction reference</td>
+                            <td>Sending your receipt and thank-you email, and keeping accounting records</td>
+                            <td>Contract and legal obligation</td>
                         </tr>
                         <tr>
                             <td><strong style="color:white">Profile data (optional)</strong></td>
@@ -216,7 +234,7 @@
                         </tr>
                     </tbody>
                 </table>
-                <p style="margin-top:1rem;">We do <strong>not</strong> collect your GPS or precise location at any point. All station selection is made manually by you within the app. We do <strong>not</strong> collect payment information. We do <strong>not</strong> build advertising profiles. We do <strong>not</strong> sell, rent, or trade your personal data to any third party under any circumstances.</p>
+                <p style="margin-top:1rem;">We only use your location when you ask the app to find nearby stations, and we do <strong>not</strong> store it or track where you go. We do <strong>not</strong> receive your card or bank details. We do <strong>not</strong> show adverts or build advertising profiles. We do <strong>not</strong> sell, rent, or trade your personal data to any third party under any circumstances.</p>
             </div>
 
             <div class="legal-section">
@@ -225,9 +243,11 @@
                 <ul>
                     <li>Creating, authenticating, and maintaining your account</li>
                     <li>Synchronising your saved station preferences across your devices</li>
-                    <li>Delivering push notifications containing departure data for your saved stations</li>
-                    <li>Diagnosing technical problems and crashes</li>
-                    <li>Improving the Service through anonymised usage analysis</li>
+                    <li>Delivering push notifications containing departure data for your saved stations, and line alerts at the level you choose</li>
+                    <li>Finding stations near you, when you ask</li>
+                    <li>Recording voluntary contributions and showing the Supporter mark</li>
+                    <li>Diagnosing technical problems with your account or device</li>
+                    <li>Improving the Service by understanding how its features are used</li>
                     <li>Responding to support requests and enquiries</li>
                     <li>Complying with legal and regulatory obligations</li>
                     <li>Protecting the security and integrity of the Service</li>
@@ -238,27 +258,35 @@
                 <h2>4. Third-Party Sub-Processors</h2>
                 <p>To deliver the Service, your data may be processed by the following third parties. Each processes data under their own privacy policies, over which we have no control:</p>
                 <ul>
-                    <li><strong style="color:white">Google Firebase (Authentication, Firestore, Cloud Messaging, Crashlytics)</strong> — core infrastructure for accounts, data storage, push notifications, and crash reporting. <a href="https://firebase.google.com/support/privacy" class="legal-link" target="_blank" rel="noopener">Firebase Privacy Policy</a></li>
-                    <li><strong style="color:white">Google Sign-In</strong> — optional social authentication. Subject to <a href="https://policies.google.com/privacy" class="legal-link" target="_blank" rel="noopener">Google Privacy Policy</a></li>
-                    <li><strong style="color:white">Transport for London (TfL) Open Data API</strong> — source of all departure data. API requests are made without transmitting your identity, account details, or station preferences to TfL</li>
+                    <li><strong style="color:white">Google Firebase (Authentication, Firestore, Cloud Messaging, Analytics)</strong>: accounts, data storage, push notifications and app analytics. <a href="https://firebase.google.com/support/privacy" class="legal-link" target="_blank" rel="noopener">Firebase Privacy Policy</a></li>
+                    <li><strong style="color:white">Google Sign-In and Sign in with Apple</strong>: optional sign-in. Subject to the <a href="https://policies.google.com/privacy" class="legal-link" target="_blank" rel="noopener">Google Privacy Policy</a> and <a href="https://www.apple.com/legal/privacy/" class="legal-link" target="_blank" rel="noopener">Apple Privacy Policy</a></li>
+                    <li><strong style="color:white">Google Play and the Apple App Store</strong>: in-app contributions. They take the payment and tell us the amount and a transaction reference</li>
+                    <li><strong style="color:white">Stripe</strong>: contributions made on our website. <a href="https://stripe.com/gb/privacy" class="legal-link" target="_blank" rel="noopener">Stripe Privacy Policy</a></li>
+                    <li><strong style="color:white">Resend</strong>: sending service emails such as contribution receipts</li>
+                    <li><strong style="color:white">Oracle Cloud Infrastructure</strong>: hosting for our own servers, which run the Stationly service</li>
+                    <li><strong style="color:white">Transport for London (TfL) Open Data API</strong>: source of all departure data. API requests are made without transmitting your identity, account details, or station preferences to TfL</li>
                 </ul>
-                <p>We do not use any advertising networks, data brokers, or marketing analytics platforms. We do not share your personal data with any other third party except as required by law.</p>
+                <p>We do not use advertising networks or data brokers, and we do not share your personal data with any other third party except as required by law.</p>
             </div>
 
             <div class="legal-section">
                 <h2>5. International Data Transfers</h2>
-                <p>Your data may be processed on Google Firebase servers located in the United States and within the European Economic Area. Google LLC relies on Standard Contractual Clauses and the UK International Data Transfer Agreement (IDTA) to ensure lawful transfer of personal data outside the UK. For more information, see <a href="https://firebase.google.com/support/privacy" class="legal-link" target="_blank" rel="noopener">Firebase Privacy &amp; Security</a>.</p>
+                <p>Your data may be processed on Google Firebase, Stripe and Resend servers located in the United States and within the European Economic Area. These providers rely on Standard Contractual Clauses and the UK International Data Transfer Agreement (IDTA) to ensure lawful transfer of personal data outside the UK. For more information, see <a href="https://firebase.google.com/support/privacy" class="legal-link" target="_blank" rel="noopener">Firebase Privacy &amp; Security</a>.</p>
                 <p>We accept no liability for the data handling practices of Google or any other third-party sub-processor, including any failure of their security measures or any data breach on their systems.</p>
             </div>
 
             <div class="legal-section">
                 <h2>6. Data Retention</h2>
                 <ul>
-                    <li><strong style="color:white">Account and preference data</strong> — retained for the duration your account is active and deleted within 30 days of account deletion</li>
-                    <li><strong style="color:white">Push notification tokens</strong> — deleted when you revoke notification permissions or uninstall the app</li>
-                    <li><strong style="color:white">Crash logs and device data</strong> — retained for up to 12 months in anonymised or aggregated form</li>
-                    <li><strong style="color:white">Support emails</strong> — retained for up to 2 years for reference and compliance purposes</li>
-                    <li><strong style="color:white">Optional profile data</strong> — deleted immediately upon account deletion or upon your request</li>
+                    <li><strong style="color:white">Account, boards and settings</strong>: kept while your account is active, and deleted within 30 days of account deletion</li>
+                    <li><strong style="color:white">Activity history</strong>: kept while your account is active, and deleted with your account</li>
+                    <li><strong style="color:white">Location</strong>: not stored. It is used once to answer a nearby search</li>
+                    <li><strong style="color:white">Push notification tokens and device records</strong>: deleted when you sign out, uninstall the app, or delete your account</li>
+                    <li><strong style="color:white">Analytics data</strong>: kept by Firebase Analytics for up to 14 months</li>
+                    <li><strong style="color:white">Contribution records</strong>: the record on your account is deleted with your account. A monthly total of contributions, which holds the amount and transaction reference but nothing that identifies you, is kept for our accounts. Apple, Google and Stripe keep their own payment records as the law requires</li>
+                    <li><strong style="color:white">Website contribution records</strong>: kept for up to 6 years, as UK tax law requires for business records</li>
+                    <li><strong style="color:white">Support emails</strong>: kept for up to 2 years for reference and compliance purposes</li>
+                    <li><strong style="color:white">Optional profile data</strong>: deleted immediately upon account deletion or upon your request</li>
                 </ul>
             </div>
 
@@ -280,16 +308,23 @@
                 <h2>8. Your Rights Under UK GDPR</h2>
                 <p>Subject to applicable law, you have the following rights in relation to your personal data. To exercise any right, contact us at <a href="mailto:info@stationly.co.uk" class="legal-link">info@stationly.co.uk</a>. We will respond within 30 days. We reserve the right to verify your identity before processing any request.</p>
                 <ul>
-                    <li><strong style="color:white">Right of access</strong> — to obtain a copy of the personal data we hold about you</li>
-                    <li><strong style="color:white">Right to rectification</strong> — to request correction of inaccurate or incomplete data</li>
-                    <li><strong style="color:white">Right to erasure</strong> — to request deletion of your personal data ("right to be forgotten"), subject to legal retention obligations</li>
-                    <li><strong style="color:white">Right to restrict processing</strong> — to request that we limit how we process your data in certain circumstances</li>
-                    <li><strong style="color:white">Right to data portability</strong> — to receive your personal data in a structured, commonly used, machine-readable format</li>
-                    <li><strong style="color:white">Right to object</strong> — to object to processing based on legitimate interests</li>
-                    <li><strong style="color:white">Right to withdraw consent</strong> — to withdraw consent at any time for any processing based on consent (including push notifications via your device settings), without affecting the lawfulness of prior processing</li>
-                    <li><strong style="color:white">Right to complain</strong> — to escalate concerns to the relevant data protection authority if you believe your data has not been handled lawfully</li>
+                    <li><strong style="color:white">Right of access</strong>: to obtain a copy of the personal data we hold about you</li>
+                    <li><strong style="color:white">Right to rectification</strong>: to request correction of inaccurate or incomplete data</li>
+                    <li><strong style="color:white">Right to erasure</strong>: to request deletion of your personal data ("right to be forgotten"), subject to legal retention obligations</li>
+                    <li><strong style="color:white">Right to restrict processing</strong>: to request that we limit how we process your data in certain circumstances</li>
+                    <li><strong style="color:white">Right to data portability</strong>: to receive your personal data in a structured, commonly used, machine-readable format</li>
+                    <li><strong style="color:white">Right to object</strong>: to object to processing based on legitimate interests</li>
+                    <li><strong style="color:white">Right to withdraw consent</strong>: to withdraw consent at any time for any processing based on consent (including push notifications via your device settings), without affecting the lawfulness of prior processing</li>
+                    <li><strong style="color:white">Right to complain</strong>: to escalate concerns to the relevant data protection authority if you believe your data has not been handled lawfully</li>
                 </ul>
                 <p>Note that some rights are not absolute and may be subject to limitations under applicable law. We accept no liability for any delay or failure to respond to a rights request caused by circumstances beyond our reasonable control.</p>
+                <h3 id="delete-account" style="color:white; margin-top:1.5rem;">Deleting your account and data</h3>
+                <p>You can delete your account at any time, in either of two ways:</p>
+                <ul>
+                    <li><strong style="color:white">In the app</strong>: open Profile, scroll down, tap Delete Account, then Delete Permanently. This deletes it straight away.</li>
+                    <li><strong style="color:white">By email</strong>: if you no longer have the app, email <a href="mailto:info@stationly.co.uk?subject=Delete%20my%20Stationly%20account" class="legal-link">info@stationly.co.uk</a> from the email address on your account, with the subject "Delete my Stationly account". We will confirm and delete it within 30 days.</li>
+                </ul>
+                <p>Deleting your account removes your sign-in, profile, boards and settings, activity history, push tokens and device records, and the contribution record on your account. We keep only what the law requires: anonymous monthly contribution totals, and the payment records Apple, Google or Stripe hold themselves. Uninstalling the app does not delete your account.</p>
             </div>
 
             <div class="legal-section">
@@ -319,15 +354,15 @@
 
             <div class="legal-section">
                 <h2>14. Firebase Analytics</h2>
-                <p>The Stationly mobile application may use Firebase Analytics (Google) to collect anonymised, aggregated usage data such as screen views and feature interactions. This data is collected without any personally identifying information and is used solely to understand how the app is used in aggregate in order to improve the Service. You may opt out of Firebase Analytics data collection by adjusting your device's advertising settings or by contacting us. We do not use analytics on our website.</p>
+                <p>The Stationly mobile apps use Firebase Analytics (Google) to understand, in aggregate, which screens and features are used. Firebase Analytics uses an app instance ID and, on Android, your device's advertising ID. We do not use this data for advertising, we do not show adverts, and we do not combine it with data from other apps. On Android you can reset or delete your advertising ID in your device settings (Settings, Privacy, Ads); on iOS, Stationly does not ask to track you. You can also ask us to delete your data, as described in Section 8. We do not use analytics on our website.</p>
             </div>
 
             <div class="legal-section">
                 <h2>15. Cookies and Local Storage</h2>
                 <p>Our website uses only the following browser storage mechanisms:</p>
                 <ul>
-                    <li><strong style="color:white">Firebase Authentication tokens</strong> — stored in browser local storage solely to maintain your signed-in session. These are functional and not advertising cookies.</li>
-                    <li><strong style="color:white">Session state</strong> — tab navigation state is held in memory only and is not persisted to storage.</li>
+                    <li><strong style="color:white">Firebase Authentication tokens</strong>: stored in browser local storage solely to maintain your signed-in session. These are functional and not advertising cookies.</li>
+                    <li><strong style="color:white">Session state</strong>: tab navigation state is held in memory only and is not persisted to storage.</li>
                 </ul>
                 <p>We do not use advertising cookies, third-party tracking cookies, analytics cookies, or any form of cross-site tracking. We do not use Google Analytics or any similar analytics platform on this website.</p>
             </div>
@@ -339,7 +374,7 @@
 
             <div class="legal-section">
                 <h2>17. Zero Liability for Data Processing</h2>
-                <p>To the fullest extent permitted by applicable law, Stationly and its directors, officers, employees, contractors, and agents accept <strong>zero liability</strong> for any loss, damage, harm, or consequence — whether direct, indirect, incidental, consequential, or otherwise — arising from or related to:</p>
+                <p>To the fullest extent permitted by applicable law, Stationly and its directors, officers, employees, contractors, and agents accept <strong>zero liability</strong> for any loss, damage, harm, or consequence, whether direct, indirect, incidental, consequential, or otherwise, arising from or related to:</p>
                 <ul>
                     <li>The collection, storage, processing, or use of your personal data in accordance with this Privacy Policy</li>
                     <li>Any data breach, unauthorised access, or accidental disclosure of personal data, however caused</li>

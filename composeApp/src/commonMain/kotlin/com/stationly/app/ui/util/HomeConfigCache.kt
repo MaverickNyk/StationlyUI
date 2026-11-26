@@ -28,5 +28,8 @@ object HomeConfigCache {
     suspend fun save(strings: Map<String, String>) {
         if (strings.isEmpty()) return
         runCatching { Platform.storageManager.saveString(KEY, json.encodeToString(strings)) }
+        // So the background alert path knows how old this copy is (see
+        // SduiConfig.refreshIfStale). Every caller saves a NETWORK result.
+        com.stationly.core.config.SduiConfig.stampFetched()
     }
 }

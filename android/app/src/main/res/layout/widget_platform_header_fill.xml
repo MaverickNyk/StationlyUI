@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- `widget_platform_header`, height-flexible like `widget_departure_row_fill`,
+     for a scroll-mode board whose rows all fit (ScrollFit). Same view id.
+
+     Weight 1.2 against the departure rows' 1: a platform header is always a
+     step deeper than the departures under it, at any widget height (owner,
+     2026-11-23). Must equal `BoardProportions.PLATFORM`. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/platform_name"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1.2"
+    android:minHeight="22dp"
+    android:layout_marginTop="2dp"
+    android:background="@drawable/departure_board_active_row_background"
+    android:gravity="center"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp"
+    android:textColor="@color/tfl_amber"
+    android:textSize="16sp"
+    android:textStyle="bold"
+    android:singleLine="true"
+    android:ellipsize="end" />

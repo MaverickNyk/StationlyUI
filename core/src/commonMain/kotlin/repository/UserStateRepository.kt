@@ -3,6 +3,7 @@ import com.stationly.core.session.SessionStore
 
 import com.stationly.core.model.sdui.UserProfileResponse
 import com.stationly.core.model.user.Board
+import com.stationly.core.model.user.toSubscribedStations
 import com.stationly.core.platform.Platform
 import com.stationly.core.service.SduiApiService
 import kotlinx.coroutines.CoroutineScope
@@ -188,6 +189,25 @@ class UserStateRepository(
     }
 
     /**
+     * Whether this device has seen the account's latest state: the server's
+     * revision is no newer than the one this device last applied (or wrote).
+     *
+     * For a push that is safe only from a device that is up to date. A push is a
+     * full replace, so one from a device that missed a change elsewhere (offline,
+     * a dropped user_sync push) deletes what it missed. One small request; false
+     * on any doubt (no account, no network).
+     */
+    /** Whether every board change so far has been accepted by the server. */
+    fun allPushed(): Boolean = gate.pending() == null
+
+    suspend fun caughtUp(): Boolean {
+        val uid = Platform.storageManager.loadString(UID_KEY)
+        if (uid.isNullOrBlank()) return false
+        val rev = runCatching { api.getUserStateRev(uid) }.getOrNull() ?: return false
+        return rev > 0L && !LocalRevStore.shouldFetch(Platform.storageManager, uid, rev)
+    }
+
+    /**
      * Send anything pending right now, skipping the debounce.
      *
      * For the moments where the process may not survive the wait: the app going
@@ -247,14 +267,14 @@ class UserStateRepository(
     private suspend fun buildBoards(): List<Board> {
         UserSettings.ensureLoaded()
         val now = Clock.System.now().toEpochMilliseconds()
-        return Board.fromSelections(
+        val boards = Board.fromSelections(
             selections = sqlStorage.getAllSelections(),
             config = UserSettings::configOf,
             addedAt = { id -> addedAt.getOrPut(id) { now } },
         )
-            // Sorted so the array's order and `config.position` always agree,
-            // and a reader that honours either gets the same home screen.
-            .sortedWith(compareBy({ it.config.sortKey }, { it.addedAt }))
+        // In the home screen's order, dragged or not: the one thing about the
+        // arrangement the account keeps, so a sign-in elsewhere shows the same order.
+        return Board.inOrder(boards, UserSettings::ordered)
     }
 
     private suspend fun pushBoards() = mutex.withLock {
@@ -286,6 +306,28 @@ class UserStateRepository(
             deviceId = deviceId,
         )
 
+        // ── The legacy projection, for as long as a v1 device can exist ──
+        //
+        // AFTER the boards write and only when it was ACCEPTED, which is the
+        // whole safety argument: `/user/sync/stations` has no staleness check
+        // and no empty guard, so it will store an empty array as readily as a
+        // full one. `syncBoards` has both, so writing in this order borrows
+        // them — a stale replay and an unexplained empty list are refused
+        // before this line is reached, and the content here is the same content
+        // the server just agreed to keep.
+        //
+        // Best-effort. The boards write is the one that must succeed; a v1
+        // device seeing a slightly older flat list is the degraded case this
+        // whole mechanism is for, and the next accepted board change re-sends
+        // everything because both payloads are full replacements.
+        //
+        // Retirement is Q2's answer, not a date. See [toSubscribedStations].
+        val legacy = if (response.success && response.applied) {
+            runCatching { api.syncStations(uid, boards.toSubscribedStations(), deviceId) }.getOrNull()
+        } else {
+            null
+        }
+
         // Stamp the revision this write produced, so this device does not turn
         // round on its next foreground and read back the profile it just wrote.
         //
@@ -298,7 +340,15 @@ class UserStateRepository(
         // Only on an ACCEPTED write. A declined one (`stale`, `empty_rejected`)
         // changed nothing on the server, so there is no new revision — and
         // stamping a rev the account never reached would suppress a real fetch.
-        response.rev?.let { rev ->
+        //
+        // From the LEGACY response when there was one: two writes mean two
+        // revision bumps, and the second one is the account's real state. Taking
+        // the first would leave this device one behind its own write and cost it
+        // exactly the fetch this stamp exists to avoid. If the projection failed
+        // or was skipped, the boards rev is correct because it is then the only
+        // write that happened.
+        val stamped = legacy?.rev?.takeIf { legacy.success } ?: response.rev
+        stamped?.let { rev ->
             if (response.success && response.applied) {
                 LocalRevStore.store(Platform.storageManager, uid, rev)
             }

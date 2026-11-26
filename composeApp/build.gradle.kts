@@ -46,6 +46,11 @@ kotlin {
                 implementation(compose.materialIconsExtended)
                 implementation(compose.ui)
                 implementation(compose.components.resources)
+                // System back for overlays and multi-step flows (in-app browser,
+                // add-station steps). Already in the build at runtime through
+                // navigation-compose; declared so common code can call it.
+                // Keep in step with the org.jetbrains.compose plugin version.
+                implementation("org.jetbrains.compose.ui:ui-backhandler:1.8.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
@@ -63,7 +68,35 @@ kotlin {
                 implementation("androidx.activity:activity-compose:1.8.1")
                 implementation("com.google.firebase:firebase-auth-ktx:22.1.1")
                 implementation("com.google.android.gms:play-services-auth:20.7.0")
+                // Nearby-station search. `:android:app` already ships this (at
+                // 21.0.1); :composeApp needs its own edge because the dependency
+                // runs app → library, so the app's classpath is not this one's.
+                implementation("com.google.android.gms:play-services-location:21.0.1")
                 implementation("io.coil-kt.coil3:coil-network-okhttp:3.0.4")
+                // Play In-App Updates — AV2-7.1 task (b). Android's answer to
+                // the one thing iOS cannot do here: an update taken without
+                // leaving the app. iOS links out to the App Store because it has
+                // no other option, and copying that would be porting a
+                // constraint (see README rule 3).
+                //
+                // Here rather than in `:android:app` because the surfaces that
+                // use it are shared composables and the expect/actual seam has
+                // to resolve inside this module.
+                implementation("com.google.android.play:app-update-ktx:2.1.0")
+                // Play Billing for the support tiers (ui/support/PlayBilling.kt).
+                implementation("com.android.billingclient:billing-ktx:9.1.0")
+            }
+        }
+
+        // The Android actuals are mostly Android APIs, which a JVM unit test
+        // cannot exercise. What it CAN exercise is the handful of decisions
+        // inside them that are not Android at all: a filename that has to match
+        // the shipped app's byte for byte, and a haptic mapping that is pure
+        // taste. Both are invisible to every compiler check and both have a
+        // second implementation in `android/` that they must not drift from.
+        val androidUnitTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
             }
         }
 
@@ -81,10 +114,10 @@ kotlin {
 
 android {
     namespace = "com.stationly.composeapp"
-    compileSdk = 34
+    compileSdk = 36
     defaultConfig {
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 36
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

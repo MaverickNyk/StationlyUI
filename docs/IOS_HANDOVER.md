@@ -9,6 +9,9 @@ deep-dive appendix; §7 says which one to reach for and when. Nothing here
 duplicates them — where a topic has a dedicated doc, this file gives the
 one-paragraph version and a pointer.
 
+**Notifications on iOS (line alerts, sent notifications):** not built. Start from
+`IOS_NOTIFICATIONS.md` before the next iOS release.
+
 ---
 
 ## 1. What this branch is

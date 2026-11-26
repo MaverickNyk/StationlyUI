@@ -71,6 +71,8 @@ fun SupportProfileCard(
     isSupporter: Boolean,
     contributionCount: Int,
     onOpen: () -> Unit,
+    /** The running-costs line on the ask, when the server has switched it on. */
+    progress: SupportProgress? = null,
 ) {
     if (isSupporter) {
         SupporterStateCard(
@@ -80,7 +82,7 @@ fun SupportProfileCard(
             onOpen = onOpen,
         )
     } else {
-        SupportAskCard(config = config, strings = strings, onOpen = onOpen)
+        SupportAskCard(config = config, strings = strings, onOpen = onOpen, progress = progress)
     }
 }
 
@@ -135,6 +137,7 @@ private fun SupportAskCard(
     config: SupportMoneyConfig,
     strings: Map<String, String>,
     onOpen: () -> Unit,
+    progress: SupportProgress? = null,
 ) {
     val t = LocalThemeTokens.current
     SupportCardShell(borderAlpha = 0.28f, borderWidth = 1.dp, washFrom = 0.10f, washTo = 0f) {
@@ -159,6 +162,11 @@ private fun SupportAskCard(
                             lineHeight = 18.sp,
                         )
                     }
+                }
+
+                if (progress != null) {
+                    Spacer(Modifier.height(14.dp))
+                    SupportProgressBar(progress)
                 }
 
                 Spacer(Modifier.height(16.dp))
@@ -254,7 +262,7 @@ private fun SupporterStateCard(
         // Still a way back in, and deliberately the quiet kind. Removing it
         // entirely would mean the one group of people who have already shown
         // they want to help have no way to do it twice.
-        if (config.isPayable) {
+        if (config.isOfferable) {
             Spacer(Modifier.height(16.dp))
             Surface(
                 color = Color.Transparent,

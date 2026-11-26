@@ -47,6 +47,8 @@ data class BoardFallbackState(
     val statusSeverity: String? = null,
     /** Real TfL reason (e.g. "Engineering works"), only set for DISRUPTED. */
     val statusReason: String? = null,
+    /** Words that replace the kind's own: a station notice's title and detail rows. */
+    val message: Pair<String, List<String>>? = null,
 )
 
 /**
@@ -162,6 +164,7 @@ private fun inTimeWindow(now: LocalTime, start: LocalTime, endExclusive: LocalTi
 private data class Copy(val title: String, val detail: String)
 
 private fun resolveCopy(state: BoardFallbackState, strings: Map<String, String>): Copy {
+    state.message?.let { (title, details) -> return Copy(title, details.joinToString("\n")) }
     // DISRUPTED title = the live TfL severity (the "what"). Detail = a
     // short generic pointer to the full reason elsewhere — on home that's
     // the collapsible disclaimer banner above the board, on the widget
@@ -291,6 +294,12 @@ fun buildFallbackRowRemoteViews(
     context: Context,
     state: BoardFallbackState,
     strings: Map<String, String>,
+    /** `widget_departure_row_fill` when the message fills a non-scrolling board. */
+    rowLayout: Int = R.layout.widget_departure_row,
+    /** The widget's size-class row type (WidgetSize); null keeps the layout's. */
+    textSizeSp: Float? = null,
+    /** On the smallest widget one warning sign: two would cost the words their room. */
+    compact: Boolean = false,
 ): List<RemoteViews> {
     val copy = resolveCopy(state, strings)
     val packageName = context.packageName
@@ -302,7 +311,16 @@ fun buildFallbackRowRemoteViews(
     // with a BOLD StyleSpan (RemoteViews can't call setTypeface directly).
     // See applyBoardFallbackToRows for the View path equivalent.
     fun addRow(text: String, bold: Boolean) {
-        val row = RemoteViews(packageName, R.layout.widget_departure_row)
+        // A closure's title wears warning signs (owner, 2026-11-25).
+        val warn = bold && state.message != null
+        val row = RemoteViews(packageName, if (warn) R.layout.widget_warning_row_fill else rowLayout)
+        if (warn) row.setTextViewCompoundDrawablesRelative(
+            R.id.destination_text, R.drawable.ic_board_warning, 0, if (compact) 0 else R.drawable.ic_board_warning, 0,
+        )
+        if (textSizeSp != null) {
+            row.setTextViewTextSize(R.id.destination_text, android.util.TypedValue.COMPLEX_UNIT_SP, textSizeSp)
+            row.setTextViewTextSize(R.id.eta_text, android.util.TypedValue.COMPLEX_UNIT_SP, textSizeSp)
+        }
         val displayText: CharSequence = if (bold && text.isNotEmpty()) {
             SpannableString(text).apply {
                 setSpan(StyleSpan(Typeface.BOLD), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)

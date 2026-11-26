@@ -1,4 +1,5 @@
 package com.stationly.app.ui.summary
+import com.stationly.core.session.AuthIdentity
 import com.stationly.core.session.SessionStore
 
 import androidx.lifecycle.ViewModel
@@ -15,6 +16,10 @@ import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.config.SduiConfig
 import com.stationly.core.config.BoardQuota
 import com.stationly.core.usecase.SyncPredictionsUseCase
+import com.stationly.core.model.StationNotice
+import com.stationly.core.repository.StationNoticeStore
+import com.stationly.app.ui.station.RouteTextBackfill
+import com.stationly.core.util.MultiLineBoardProcessor
 import com.stationly.core.util.FreshData
 import com.stationly.core.util.FreshDataNotifier
 import com.stationly.core.util.GlobalBoardProcessor
@@ -121,6 +126,9 @@ class SummaryViewModel(
      */
     val boardConfigs: StateFlow<Map<String, BoardConfig>> = UserSettings.configs
 
+    /** Closures and the like, by stop id. Empty unless the feature is on. */
+    val stationNotices: StateFlow<Map<String, StationNotice>> = StationNoticeStore.all
+
     /** Stacked list or one station per swipeable page — see [HomeLayout]. */
     val homeLayout: StateFlow<HomeLayout> = UserSettings.layout
 
@@ -182,6 +190,10 @@ class SummaryViewModel(
             // overlaps with the screen composing, so it is deliberately the
             // first thing after the selections are known.
             refreshStaleBoards(selectionRepository.selections.value)
+            // After the departures. Both sides of an unlettered stop read "Bus 498" without it.
+            runCatching {
+                RouteTextBackfill.run(selectionRepository, oncePerProcess = true) { MultiLineBoardProcessor.isBus(it.mode) && RouteTextBackfill.lacksText(it) }
+            }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
         }
         viewModelScope.launch {
             selectionRepository.selections.collect { newSelections ->
@@ -200,7 +212,15 @@ class SummaryViewModel(
         viewModelScope.launch {
             while (true) {
                 delay(30_000)
-                _selections.value.forEach { loadPredictions(it) }
+                // The poll re-reads SQL that nothing has changed since the last
+                // push. On Android every SQL write already redraws the widgets
+                // (FreshDataNotifier, ProcessPredictionsUseCase) and the minute
+                // watchdog ticks them, so redrawing here too only restarted the
+                // status marquee every 30 s, even with the app in the
+                // background (2026-11-23). iOS has no push path into WidgetKit,
+                // so it keeps reloading from here.
+                val pollRedrawsWidget = Platform.getPlatformName() == "iOS"
+                _selections.value.forEach { loadPredictions(it, pushToWidget = pollRedrawsWidget) }
             }
         }
         // Instant refresh when an FCM push lands while the app is active:
@@ -268,7 +288,7 @@ class SummaryViewModel(
         }
     }
 
-    private fun loadPredictions(selection: UserSelection) {
+    private fun loadPredictions(selection: UserSelection, pushToWidget: Boolean = true) {
         viewModelScope.launch {
             try {
                 val rawPreds = Platform.sqlStorage.getPredictions(
@@ -343,7 +363,7 @@ class SummaryViewModel(
                         if (reason.isNotEmpty()) "${s.statusSeverityDescription}: $reason"
                         else s.statusSeverityDescription
                     }
-                    Platform.widgetManager.updateWidget(
+                    if (pushToWidget) Platform.widgetManager.updateWidget(
                         com.stationly.core.model.WidgetState(
                             stationName = selection.stationName,
                             lineName = selection.line,
@@ -351,7 +371,15 @@ class SummaryViewModel(
                             status = widgetStatus,
                             lastUpdated = predsTimestamp / 1000,
                             direction = selection.direction,
-                            mode = selection.mode
+                            mode = selection.mode,
+                            // Name the board. Blank means "redraw every widget",
+                            // and this runs once per board on every poll: 8 boards
+                            // were 8 full sweeps of 8 widgets (64 renders) every
+                            // 30 s, each one restarting the status marquee
+                            // (2026-11-23). Named, Android redraws only that
+                            // board's widgets, merged with the push burst. iOS
+                            // ignores the id (it reloads every timeline).
+                            stationId = selection.station,
                         )
                     )
                 }
@@ -425,6 +453,12 @@ class SummaryViewModel(
      * whether the user tracks one station or seven.
      */
     private suspend fun refreshStaleBoards(selections: List<UserSelection>) {
+        // Not only with stale departures: a board kept fresh by pushes has none,
+        // and this is what recovers a closure push the phone never got.
+        viewModelScope.launch {
+            StationNoticeStore.ensureLoaded()
+            StationNoticeStore.refresh(selections) { NetworkModule.tflApi.getStationNotices(it) }
+        }
         // Cold start fires this from `init` AND from the screen's first
         // ON_RESUME, within milliseconds of each other. Both would pass the
         // staleness test — neither has written anything yet — and every stop
@@ -526,27 +560,36 @@ class SummaryViewModel(
     }
 
     private suspend fun loadUserInitial() {
-        // Swift AuthBridge re-persists the identity keys at launch via the
-        // auth-state listener — a cold start can race it and read nothing
-        // (the intermittent "?" avatar). One delayed re-read covers the gap
-        // instead of pinning "?" until the next foreground.
-        var name = Platform.storageManager.loadString("firebase_user_display_name")
-            ?: Platform.storageManager.loadString("firebase_user_email")
-        // Poll briefly so the avatar resolves the instant the keys land, instead
-        // of a single fixed 1.5 s re-read (mirrors ProfileViewModel's poll).
+        // Both platforms publish the identity from an auth-state listener at
+        // launch, and a cold start can out-run either one and read nothing
+        // (the intermittent "?" avatar). Polling briefly resolves the avatar
+        // the instant the keys land, rather than pinning "?" until the next
+        // foreground. Mirrors ProfileViewModel's poll.
+        //
+        // Read through SessionStore, not raw string literals. The literals are
+        // how this got its longest-lived bug: iOS's AuthBridge was the only
+        // writer these keys had ever had, Android held the same values on
+        // FirebaseAuth.currentUser and published none of them, and so every
+        // Android device showed "?" forever. Naming the keys in one place is
+        // what makes a missing writer visible; see AuthIdentity.
+        suspend fun storedName(): String? =
+            SessionStore.get(SessionStore.Key.DISPLAY_NAME)
+                ?: SessionStore.get(SessionStore.Key.EMAIL)
+
+        var name = storedName()
         var waited = 0L
         while (name == null && waited < 3000L) {
             delay(120L)
             waited += 120L
-            name = Platform.storageManager.loadString("firebase_user_display_name")
-                ?: Platform.storageManager.loadString("firebase_user_email")
+            name = storedName()
         }
-        val initial = name?.firstOrNull { it.isLetter() }?.uppercaseChar()?.toString() ?: "?"
-        // Firebase profile photo (Google sign-in) — written by AuthBridge.swift
-        // to NSUserDefaults under "firebase_user_photo_url". Rendered as the
-        // top-bar avatar; falls back to the monogram when absent.
-        val photoUrl = Platform.storageManager.loadString("firebase_user_photo_url")
-        _uiState.value = _uiState.value.copy(userInitial = initial, photoUrl = photoUrl)
+        // Firebase profile photo (Google sign-in). Rendered as the top-bar
+        // avatar; falls back to the monogram when absent.
+        val photoUrl = SessionStore.get(SessionStore.Key.PHOTO_URL)
+        _uiState.value = _uiState.value.copy(
+            userInitial = AuthIdentity.monogram(name),
+            photoUrl = photoUrl,
+        )
     }
 
     /**
@@ -571,11 +614,9 @@ class SummaryViewModel(
                     email          = SessionStore.get(SessionStore.Key.EMAIL) ?: "",
                     displayName    = SessionStore.get(SessionStore.Key.DISPLAY_NAME),
                     photoURL       = SessionStore.get(SessionStore.Key.PHOTO_URL),
-                    signInProvider = when (SessionStore.get(SessionStore.Key.SIGNIN_PROVIDER)) {
-                        "Google" -> "google.com"
-                        "Apple"  -> "apple.com"
-                        else     -> "email"
-                    },
+                    signInProvider = AuthIdentity.providerIdFor(
+                        SessionStore.get(SessionStore.Key.SIGNIN_PROVIDER)
+                    ),
                     deviceId       = com.stationly.app.platform.DeviceIdentity.deviceId(),
                     deviceInfo     = com.stationly.app.platform.DeviceIdentity.deviceInfo()
                 )

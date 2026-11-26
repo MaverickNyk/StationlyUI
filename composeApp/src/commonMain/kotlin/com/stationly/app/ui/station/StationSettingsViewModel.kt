@@ -14,13 +14,7 @@ import com.stationly.app.platform.performHaptic
 import com.stationly.core.platform.Platform
 import com.stationly.core.repository.DepartureRepository
 import com.stationly.core.repository.SelectionRepository
-import com.stationly.core.model.sdui.SduiAppComponent
-import com.stationly.core.model.sdui.SduiAppScreen
-import com.stationly.core.model.sdui.SduiDropdownOption
 import com.stationly.core.service.NetworkModule
-import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.json.Json
-import com.stationly.core.config.BoardPolicyStore
 import com.stationly.core.usecase.StationLifecycleUseCase
 import com.stationly.core.usecase.SyncPredictionsUseCase
 import com.stationly.core.model.user.BoardConfig
@@ -67,7 +61,6 @@ class StationSettingsViewModel(
     ),
 ) : ViewModel() {
 
-    private val sduiApi = NetworkModule.sduiApi
 
     private val departureRepository = DepartureRepository(
         NetworkModule.tflApi,
@@ -186,7 +179,7 @@ class StationSettingsViewModel(
             // Once per board, and only for boards that predate the fields. NOT
             // in `refresh()`: that runs on every ON_RESUME, and this can reach
             // the network.
-            backfillDirectionDetail()
+            RouteTextBackfill.run(selectionRepository) { it.groupingId == stationId }
         }
     }
 
@@ -285,6 +278,8 @@ class StationSettingsViewModel(
                 stationId = board.station,
                 line = board.line,
                 direction = board.direction,
+                terminus = board.singleTerminus,
+                nextStop = board.directionTowards,
                 predictions = predictions,
             )
         }
@@ -307,173 +302,6 @@ class StationSettingsViewModel(
         if (isBus && UserSettings.configOf(stationId).pin?.kind == BoardPin.Kind.PLATFORM) {
             UserSettings.update(stationId) { it.copy(pin = null) }
         }
-    }
-
-    /**
-     * Fill in [UserSelection.directionName] and [UserSelection.directionDestinations]
-     * for boards saved before those existed.
-     *
-     * ## Why this is here and not left to the picker
-     * They are route data — the backend's compass mapping and the destination
-     * chips — so nothing on the device can derive them. Boards created from now
-     * on carry them (`SelectionViewModel.buildSelection`), but every board
-     * already on a phone has neither, and would go on showing TfL's raw
-     * "Inbound" until the user happened to edit its lines again.
-     *
-     * ## It reads the picker's own cache first
-     * The URL is resolved exactly as `SelectionViewModel.fetchDirectionsFor`
-     * resolves it, so the cache key matches and a board set up in the last 24
-     * hours costs no network at all. A miss falls through to one request per
-     * line, and the result is written back to the same cache.
-     *
-     * ## Failure is silent and harmless
-     * Every board keeps working without this: [BoardLabels] falls back to its
-     * own compass table for the name, and to "All destinations" for the detail.
-     * So there is no retry, no error state and no spinner — it either improves
-     * the labels or leaves them exactly as they were.
-     *
-     * A board that resolves is stamped and then left alone for a fortnight —
-     * see [ROUTE_TEXT_MAX_AGE_MS], which is also what finally gives
-     * `routeResolvedAt` a reader. A board that does NOT resolve (a direction TfL
-     * has withdrawn) is retried on every visit, which costs one storage read
-     * inside the dropdown cache's own 24-hour window and no network. Stamping it
-     * anyway would be recording an answer we never got.
-     */
-    private suspend fun backfillDirectionDetail() {
-        val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
-        val stale = selectionRepository.selections.value
-            .filter { it.groupingId == stationId }
-            .filter { board ->
-                // Never resolved…
-                val unresolved = board.directionName.isBlank() &&
-                    board.directionDestinations.isEmpty() &&
-                    board.directionTowards.isBlank()
-                // …or resolved so long ago that TfL may have moved underneath it.
-                //
-                // `routeResolvedAt` was written and never read by anything, which
-                // mattered little when the resolution was a list of ids nobody
-                // displayed. It matters now: these fields are TEXT ON THE SCREEN,
-                // and a renamed destination or a rerouted branch would otherwise
-                // sit there indefinitely.
-                //
-                // Cheap, because it goes through the same cache-first path: a
-                // re-resolve inside the dropdown cache's own window
-                // costs one storage read and no network.
-                unresolved || now - board.routeResolvedAt > BoardPolicyStore.current.routeTextMaxAgeMs
-            }
-        if (stale.isEmpty()) return
-
-        val template = directionUrlTemplate() ?: return
-
-        // One fetch per LINE, not per board: both directions of a line come back
-        // in the same list. And ONE write at the end, not one per board — every
-        // replacement rewrites the whole selection table.
-        //
-        // Collected as TEXT keyed by [UserSelection.boardKey] — the model's own
-        // (station, line, direction) identity — never as finished rows.
-        // `stale` is a snapshot taken before the fetches below, which await the
-        // network: the user can reach the line picker, change a filter and come
-        // back inside that window, and writing these snapshots back would revert
-        // the edit they just made. The keys are re-matched against the
-        // repository as it stands at write time instead.
-        val resolved = mutableMapOf<String, RouteText>()
-        for ((line, boards) in stale.groupBy { it.line }) {
-            val sample = boards.first()
-            val url = template
-                .replace("{line}", line)
-                .replace("{mode}", sample.mode)
-                .replace("{station}", sample.groupingId)
-            // A placeholder we do not know how to fill. Guessing would build a
-            // URL that either 404s or, worse, answers for the wrong station.
-            if (url.contains("{")) continue
-            val options = directionOptions(url) ?: continue
-            for (board in boards) {
-                val option = options.find { it.id.equals(board.direction, ignoreCase = true) }
-                    ?: continue
-                val name = option.directionName.orEmpty()
-                val destinations = option.destinations?.map { it.label }.orEmpty()
-                val towards = option.towards.orEmpty()
-                if (name.isBlank() && destinations.isEmpty() && towards.isBlank()) continue
-                resolved[board.boardKey] = RouteText(name, destinations, towards)
-            }
-        }
-        if (resolved.isEmpty()) return
-
-        // Applied to the CURRENT rows. A board deleted or edited while the
-        // fetches were in flight is picked up as it is now, or not at all.
-        val updated = selectionRepository.selections.value.mapNotNull { row ->
-            resolved[row.boardKey]?.let { text ->
-                row.copy(
-                    directionName = text.name,
-                    directionDestinations = text.destinations,
-                    directionTowards = text.towards,
-                    // Stamped so the staleness test above has something to move
-                    // against. Without this a board with no filter keeps
-                    // `routeResolvedAt = 0` and re-resolves on every visit.
-                    routeResolvedAt = now,
-                )
-            }
-        }
-        selectionRepository.updateSelectionsInPlace(updated)
-    }
-
-    /** What one direction is CALLED, apart from the row it belongs to. */
-    private data class RouteText(
-        val name: String,
-        val destinations: List<String>,
-        val towards: String,
-    )
-
-    /**
-     * The `dataSourceUrl` of the SDUI direction dropdown, cache first.
-     *
-     * The selection layout is already on disk — `SelectionViewModel` writes it to
-     * `cached_app_layout` and reads it back on every launch — so calling the API
-     * for it here was a network round trip for a string we own. It matters
-     * because this runs on a screen that must open instantly and offline, and it
-     * runs for any board still lacking route text: a board that cannot be
-     * resolved at all (an option TfL has withdrawn) would have re-fetched the
-     * whole layout on every single visit.
-     */
-    private suspend fun directionUrlTemplate(): String? {
-        fun extract(screen: SduiAppScreen): String? = screen.components
-            .filterIsInstance<SduiAppComponent.Dropdown>()
-            .find { it.id == "direction" }
-            ?.dataSourceUrl
-
-        Platform.storageManager.loadString(LAYOUT_CACHE_KEY)?.let { raw ->
-            runCatching { extract(dropdownJson.decodeFromString<SduiAppScreen>(raw)) }
-                .getOrNull()
-                ?.let { return it }
-        }
-        return runCatching { extract(sduiApi.getSelectionLayout()) }.getOrNull()
-    }
-
-    /** The line picker's 24-hour dropdown cache, read first and written on a miss. */
-    private suspend fun directionOptions(url: String): List<SduiDropdownOption>? {
-        val cacheKey = "cached_dropdown_$url"
-        val tsKey = "${cacheKey}_ts"
-        val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
-        val cachedAt = Platform.storageManager.loadString(tsKey)?.toLongOrNull() ?: 0L
-        if (now - cachedAt < BoardPolicyStore.current.dropdownCacheTtlMs) {
-            Platform.storageManager.loadString(cacheKey)
-                ?.let { raw ->
-                    runCatching { dropdownJson.decodeFromString(dropdownListSerializer, raw) }
-                        .getOrNull()
-                }
-                // A cache entry that will not decode is not an answer. Falling
-                // through re-fetches and overwrites it.
-                ?.let { return it }
-        }
-        return runCatching {
-            val fetched = sduiApi.getDropdownData(url)
-            Platform.storageManager.saveString(
-                cacheKey,
-                dropdownJson.encodeToString(dropdownListSerializer, fetched),
-            )
-            Platform.storageManager.saveString(tsKey, now.toString())
-            fetched
-        }.getOrNull()
     }
 
     /**
@@ -647,21 +475,6 @@ class StationSettingsViewModel(
                 _isDeleting.value = false
             }
         }
-    }
-
-    private companion object {
-        /** Written by `SelectionViewModel.loadCachedLayout`; read, never written, here. */
-        const val LAYOUT_CACHE_KEY = "cached_app_layout"
-
-        /**
-         * Lenient for the same reason every other SDUI decode is: the payload is
-         * backend-owned and gains fields, and a strict parse would fail the whole
-         * backfill on one it has not been taught yet.
-         */
-        val dropdownJson = Json { ignoreUnknownKeys = true; isLenient = true }
-
-        /** Named once so the encode and the decode cannot disagree. */
-        val dropdownListSerializer = ListSerializer(SduiDropdownOption.serializer())
     }
 
     private suspend fun discard(board: UserSelection) {

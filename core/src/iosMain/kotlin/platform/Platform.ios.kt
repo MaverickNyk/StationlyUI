@@ -645,6 +645,8 @@ class IosWidgetManager : WidgetManager {
                 stationId = selection.station,
                 line = selection.line,
                 direction = selection.direction,
+                terminus = selection.singleTerminus,
+                nextStop = selection.directionTowards,
                 predictions = sql.getPredictions(
                     selection.station, selection.line, selection.direction
                 ),

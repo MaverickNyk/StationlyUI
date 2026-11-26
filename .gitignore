@@ -97,3 +97,4 @@ staging_*.sh
 xcuserdata/
 *.xcuserstate
 IDEWorkspaceChecks.plist
+qa-out/

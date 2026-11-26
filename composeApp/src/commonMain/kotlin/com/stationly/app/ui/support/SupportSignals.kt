@@ -101,3 +101,86 @@ object SupportReturn {
         _thanks.value = null
     }
 }
+
+/**
+ * What the platform store said about a purchase the user just started, when it
+ * did not end in a payment.
+ *
+ * ## Why a signal, and why it lands in the sheet
+ * The store answers asynchronously, after [SupportViewModel.payTier] has already
+ * returned "opened". By then the only thing the user is looking at is the
+ * sheet, still open behind the store's own UI, so that is where the answer is
+ * shown: in the line under the Pay button, the same slot that says "couldn't
+ * open checkout". A toast would appear somewhere else, in the platform's
+ * styling, with copy no one can change without a release.
+ *
+ * Every wording is a home-config key with a compiled fallback, like the rest
+ * of the support copy, and follows the same voice rules (no dashes).
+ *
+ * Raised today by Android's Play Billing. iOS keeps StoreKit's own alerts.
+ */
+enum class StoreNotice(
+    /** The home-config key whose value replaces [fallback]. */
+    val key: String,
+    /** Compiled-in copy for a backend that does not serve [key] yet. */
+    val fallback: String,
+    /** Shown in the error colour. Pending is not an error: the money is on its way. */
+    val isError: Boolean,
+) {
+    /** The store could not show the product: not set up, offline, or no store app. */
+    UNAVAILABLE(
+        key = "support_money.store.unavailable",
+        fallback = "We couldn't open the payment right now. Please try again in a moment.",
+        isError = true,
+    ),
+
+    /** The store showed the sheet and the payment then failed. */
+    FAILED(
+        key = "support_money.store.failed",
+        fallback = "That payment didn't go through. Please try again.",
+        isError = true,
+    ),
+
+    /** Paid by a method that settles later. Credited automatically once it does. */
+    PENDING(
+        key = "support_money.store.pending",
+        fallback = "Your payment is pending. We'll add it as soon as it's confirmed.",
+        isError = false,
+    ),
+
+    /**
+     * The previous purchase of this tier is still being credited, and the store
+     * will not sell the same one-time product again until it is.
+     */
+    FINISHING_PREVIOUS(
+        key = "support_money.store.finishing",
+        fallback = "Finishing your last payment first. Give it a moment, then try again.",
+        isError = false,
+    ),
+    ;
+
+    /** This notice's copy: the served wording, or the fallback. */
+    fun text(strings: Map<String, String>): String = strings[key]?.takeIf { it.isNotBlank() } ?: fallback
+}
+
+/**
+ * The latest [StoreNotice], from whichever platform store raised it.
+ *
+ * A plain flow rather than a callback, for the reason [SupportReturn] is one:
+ * the store answers from platform code that knows nothing about screens.
+ * [SupportViewModel] collects it into its state, and clears it whenever the
+ * sheet opens, closes or starts a new payment, so a stale notice never sits
+ * under a fresh tap.
+ */
+object StoreNotices {
+    private val _notice = MutableStateFlow<StoreNotice?>(null)
+    val notice: StateFlow<StoreNotice?> = _notice.asStateFlow()
+
+    fun post(notice: StoreNotice) {
+        _notice.value = notice
+    }
+
+    fun clear() {
+        _notice.value = null
+    }
+}

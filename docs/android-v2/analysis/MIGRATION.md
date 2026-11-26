@@ -1,0 +1,416 @@
+# Android v2 — migration and compatibility
+
+**Branch:** `dev_android_bring_to_v2`. **Frame:** [`GAP_ANALYSIS.md`](GAP_ANALYSIS.md) §5–§6.
+
+Four things migrate, and they fail differently. In order of damage:
+
+1. **The database** — fails as a crash on the longest-standing users. §1.
+2. **Cloud user state** — fails as silently deleted boards. §2.
+3. **Preferences** — fails as a reset arrangement. §3.
+4. **FCM topics** — fails as a board that never updates. §4.
+
+---
+
+## 1. The database
+
+### 1.1 The premise that expired
+
+`StationlyDatabase.sq` opens with a banner removing migrations, resting on one
+stated premise:
+
+> **Android is live (versionCode 2) and is FROZEN** — no new Android release is
+> planned, so nothing in this file can reach an Android user.
+
+and it names its own expiry condition:
+
+> If you find yourself writing one, check that premise first — it is the only
+> thing this policy rests on.
+
+Decision D1 falsifies the premise. Migrations come back. The banner must be
+rewritten in the same commit as the migration, not left to contradict it.
+
+### 1.2 The banner's hand-maintained list is INCOMPLETE. Do not use it as the spec.
+
+The banner lists 7 items the upgrade "owes". The real delta, computed by
+extracting column names from both revisions of the file, is **21**:
+
+```
+git show master:core/src/commonMain/sqldelight/com/stationly/db/StationlyDatabase.sq
+git show HEAD:core/src/commonMain/sqldelight/com/stationly/db/StationlyDatabase.sq
+```
+
+| Table | v2 adds | In the banner? |
+|---|---|---|
+| `UserSelectionEntity` | `parentStationId` | **NO** |
+| | `filterMode` | **NO** |
+| | `viaStationId` | **NO** |
+| | `viaStationName` | **NO** |
+| | `routeResolvedAt` | **NO** |
+| | `viaKeys` | yes |
+| | `patternIds` | yes |
+| | `patternNames` | yes |
+| | `directionName` | yes |
+| | `directionDestinations` | yes |
+| | `directionTowards` | yes |
+| `PredictionEntity` | `direction` | **NO** |
+| | `destId` | **NO** |
+| | `matchesFilter` | **NO** |
+| | `viaKey` | yes |
+| | **PK** `(stationId, lineId, destination, platform, eta)` → `(stationId, lineId, **direction**, destination, platform, eta)` | **NO** |
+| | index `prediction_lookup` gains `direction` | **NO** |
+| `SyncStatusEntity` | `direction` | **NO** |
+| | **PK** `(stationId, lineId)` → `(stationId, lineId, **direction**)` | **NO** |
+| `ActivityEventEntity` | whole table | yes |
+| | index `activity_by_time` | yes |
+| `LineStatusEntity` | unchanged | — |
+
+**Finding:** a hand-maintained list drifted, exactly as the file warned that the
+`.sqm` and the `.sq` would. The migration spec is the computed diff above, and
+the fix for the class of problem is `verifyMigrations` (§1.6), not more diligence.
+
+### 1.3 Why a table rebuild, not `ALTER TABLE`
+
+Two primary keys change. SQLite cannot alter a primary key — the only way is
+create-copy-drop-rename. The banner already reaches this conclusion for a
+different reason (*"version 1" has meant several different schemas over time*)
+and it is right on both counts. Rebuild every table that changes, including the
+ones that would technically survive `ALTER`, so the result is identical whatever
+the source database contained.
+
+### 1.4 What is preserved and what is dropped
+
+| Table | Action | Why |
+|---|---|---|
+| `UserSelectionEntity` | **REBUILD, copy all rows.** New columns take their `.sq` defaults: `parentStationId=''` (= "same as station", the correct reading of a pre-hub row), `filterMode='ALL'`, `viaStationId/Name=NULL`, `viaKeys/patternIds/patternNames/directionName/directionDestinations/directionTowards=''`, `routeResolvedAt=0`. | This is the user's boards. It is the only table whose loss the user would notice, and it is also the only one recoverable from the cloud — belt and braces. |
+| `PredictionEntity` | **REBUILD, DROP all rows.** | Old rows have no `direction`, and `direction` is now in the primary key and in every board query's `WHERE`. Backfilling it by joining against `UserSelectionEntity` is guesswork on a bus hub, and the payoff is zero: departures older than ~2 minutes are filtered out on read anyway, and FCM or the first REST refresh repopulates the table within seconds of launch. Dropping is both safer and honest. |
+| `SyncStatusEntity` | **REBUILD, DROP all rows.** | Same reason. The cost is one "X ago" reading "just now" after upgrade. |
+| `LineStatusEntity` | Untouched. | Unchanged. |
+| `ActivityEventEntity` | **CREATE.** | New. `Schema.create` never runs on an upgraded database, so without this the first enqueue is "no such table" — on the longest-standing installs and never on a dev device. |
+
+### 1.4b "Version 1" means two different schemas, because iOS shares the number
+
+**Found while writing the migration (AV2-2.1). It changes what the migration has
+to be, not just what it does.**
+
+`StationlyDatabase.Schema` is shared by both platforms — `AndroidSqliteDriver`
+and `NativeSqliteDriver` are handed the same object, and its version is derived
+from the migration count. So the number is global, and the two platforms' idea
+of "version 1" diverged:
+
+| | Created from | Contains at version 1 |
+|---|---|---|
+| **Android**, released `versionCode 2` | the `.sq` as it was **then** | 8-column `UserSelectionEntity`, no `direction` in any primary key, no activity table |
+| **iOS**, TestFlight, never publicly shipped | the `.sq` as it is **now** | the full current schema — every column, both new primary keys, the activity table |
+
+iOS ran `Schema.create`, which applies the file in full. Its databases are
+stamped version 1 and have nothing to migrate.
+
+The `.sq` banner predicted exactly this — *"'version 1' has meant several
+different schemas over time"* — and prescribed a table rebuild as the answer. A
+rebuild does survive both shapes structurally, because both have the eight
+columns the copy reads. What it does **not** survive is the data: copying only
+those eight columns silently discards `parentStationId`, every filter, `viaKeys`
+and `patternIds` from an iOS database, and then fails anyway at
+`CREATE TABLE ActivityEventEntity`.
+
+**There is no pure-SQL migration that is correct for both shapes.** SQLite has no
+`ADD COLUMN IF NOT EXISTS` and no way to copy the intersection of two column
+sets. So the migration targets Android's shape — which is its entire purpose —
+and is ordered so that it **fails safely** on the other:
+
+> `CREATE TABLE ActivityEventEntity` is the **first** statement in `1.sqm`, and
+> its position is load-bearing. On an iOS-shaped database it throws
+> `table ActivityEventEntity already exists` before a single row is touched.
+> Both drivers run a migration inside a transaction, so the whole thing rolls
+> back and the database is left exactly as it was.
+
+Verified on both shapes (2026-09-05): an Android v1 database migrates cleanly
+with rows and `id` order preserved; an iOS-shaped database fails on statement one
+with `parentStationId`, `filterMode`, `viaKeys` and `patternIds` **fully intact**
+and no orphan `_v1` table left behind.
+
+⚠️ **Do not "fix" this with `IF NOT EXISTS`.** That turns a loud, safe,
+rolled-back failure into a quiet one that proceeds to delete the user's filters.
+
+**What it costs iOS:** a TestFlight tester on an older build must delete and
+reinstall once. That is already the standing iOS policy for a schema change, it
+has already been exercised once (2026-08-23, the "no such column" crash), and
+boards come back from the cloud on sign-in. Raised as **Q5** because it affects
+people who are testing right now.
+
+#### 🔴 Corrected 2026-09-11: it is not TestFlight testers any more
+
+`origin/master` contains **no `.sqm` files at all**. SQLDelight derives the
+database version from the migration count, so the build that shipped to the App
+Store stamps its databases `user_version = 1` — while its `.sq` already holds the
+full current schema. Every paragraph above describing "the iOS shape" is now
+describing **every App Store user**, and "delete and reinstall once" is not
+something they can be asked to do.
+
+Nothing on this branch causes it; it became true the moment iOS shipped publicly
+with migrations still absent from `master`. But the first iOS release cut from
+this branch runs `1.sqm` on all of them, hits the `CREATE TABLE
+ActivityEventEntity` guard, and rolls back — safe for the data, fatal for opening
+the database.
+
+#### The fix, ready to apply (option (a) on the board's Q5)
+
+The two shapes ARE distinguishable: an iOS-shaped v1 database has
+`ActivityEventEntity`, an Android v1 database does not. So a database at version 1
+that already has that table only needs its stamp corrected to 2, after which
+`2.sqm` runs normally and it converges with everyone else.
+
+`core/src/iosMain/kotlin/platform/Database.ios.kt` is four lines today
+(`NativeSqliteDriver(StationlyDatabase.Schema, "stationly.db")`). The change is to
+inspect before opening:
+
+```
+1. Open the database file directly (or use NativeSqliteDriver's
+   DatabaseConfiguration.upgrade hook, which receives oldVersion).
+2. If oldVersion == 1 AND a row exists in sqlite_master for
+   'ActivityEventEntity' → treat the old version as 2.
+3. Run Schema.migrate(driver, effectiveOldVersion, Schema.version).
+```
+
+**Guard it as tightly as that reads.** The condition must be BOTH the version and
+the table: a version-1 database WITHOUT the table is a genuine Android v1
+database, and re-stamping that one to 2 would skip `1.sqm` and leave an
+eight-column `UserSelectionEntity` under a schema that expects nineteen — which
+is the one outcome worse than the current failure.
+
+**Not applied here.** It is iOS runtime behaviour on a shipping app, it cannot be
+exercised from this branch's tooling (the XCFramework builds it but never runs
+it), and Q5 offers two other routes the owner may prefer — shipping the schema in
+an iOS release that carries nothing else, or accepting the reinstall and telling
+people. The decision is the owner's; the code is one function either way.
+
+### 1.5 Android Auto Backup widens the blast radius
+
+`res/xml/backup_rules.xml` and `res/xml/data_extraction_rules.xml` both carry:
+
+```xml
+<include domain="database" path="." />
+```
+
+So `stationly.db` travels through cloud backup and device-to-device transfer.
+A user on v1 who buys a new phone and installs **v2 from Play as a fresh
+install** still receives a **v1 database** during restore. `Schema.create` does
+not run — the file is already there. Without the migration that device fails on
+its first query having never had v1 installed on it.
+
+The migration fixes this too. The point of recording it is that "upgrade path"
+is a larger set than "devices that had v1 installed", and any test plan scoped to
+in-place upgrades misses it.
+
+### 1.6 `verifyMigrations`
+
+`core/build.gradle.kts` documents why it is off: turning it on fails
+`:core:build` with *"Verifying a migration requires a database file to be
+present"*, and the `generate…Schema` task the error names is not registered by
+SQLDelight 2.0.2 in this configuration. The note is explicit that closing it
+properly means checking in a recorded schema baseline under
+`sqldelight/databases/<version>.db`.
+
+That is now worth doing, because §1.2 is the exact failure the flag prevents.
+It is EPIC-02 work with its own verification, and it is the only durable answer
+— the alternative is keeping two files identical by hand forever, which has
+already failed once.
+
+### 1.7 There is no rollback
+
+A v1 APK installed over v2 opens a version-2 database with a version-1 schema.
+`AndroidSqliteDriver` has no downgrade path and the framework throws. Play does
+not serve downgrades, so this is a sideload-only scenario, but it means:
+
+**Once v2 reaches a device, that device cannot go back.** A bad v2 is fixed by
+shipping v2.0.1, never by rolling back. Plan the staged rollout accordingly (§5).
+
+---
+
+## 2. Cloud user state: `stations` → `boards`
+
+### 2.1 The two lists
+
+`users/{uid}` holds both, deliberately:
+
+- `stations` — the v1 flat list, written by `/user/sync/stations`.
+- `boards` — the v2 board list with filters, written by `/user/sync/boards`.
+
+The subscription registry reads the **UNION**. Never merge them back into one
+field — that decision is recorded and still holds.
+
+### 2.2 The proven hazard
+
+`syncStations` is a **full replace**: it diffs old ids against new to inc/dec
+subscription counts. A one-element post therefore deletes every other board on
+the account. This already happened — it is why `SelectionViewModel` on this
+branch reads the full list out of SQLite before posting.
+
+So during rollout, on an account with one v1 device and one v2 device:
+a v1 save posts its (single) station and can prune the v2 device's work.
+
+### 2.3 The rule for v2
+
+**v2 dual-writes for the transition window.** On every board push, v2 posts:
+
+1. `/user/sync/boards` with the authoritative `Board` list, and
+2. `/user/sync/stations` with that same list **flattened** to
+   `SubscribedStation` rows.
+
+`SubscribedStation(id, parentStationId, name, line, mode, direction)` is exactly
+`UserSelection`, and `Board.toSelections()` already produces it — so the
+flattening is total, not lossy in the fields `stations` has. What the flat form
+cannot carry is the filters, which is fine: a v1 device cannot render them.
+
+This gives a v1 device on a shared account a **degraded but correct** view
+instead of a stale or emptied one, and it keeps the registry's union consistent
+from either side.
+
+Drop the dual write when the v1 population falls below the threshold set in §5,
+not before.
+
+**Open verification (EPIC-04):** confirm on the backend that `syncStations` does
+not touch `boards` and `syncBoards` does not touch `stations`. The plan above
+depends on it and it has not been read.
+
+### 2.4 First-run fold-up
+
+On a v2 device's first launch after upgrade:
+
+1. Read state. If `boards` is non-empty, it wins; ignore `stations`.
+2. If `boards` is empty and `stations` is not, fold the flat rows into boards
+   with `Board.from(...)`, grouping on `groupingId`, and push.
+3. If both are empty, fall back to the local `UserSelectionEntity` rows the
+   migration preserved (§1.4) and push those.
+
+Step 3 is the one that matters for a user who has never signed in. `Board.isUsable`
+already exists so an empty board list reads as ABSENT rather than as "delete
+everything" — rely on it rather than adding a second guard.
+
+---
+
+## 3. Preferences
+
+Three SharedPreferences files exist today:
+
+| File | Owner | v2 disposition |
+|---|---|---|
+| `StationlyPrefs` | `AndroidStorageManager` — `selections`, `line_status_*`, `fcm_topics`, `subscribed_all_topic` | Keep. Same keys, same meanings. |
+| `stationly_durable_prefs` | `saveDurable`/`loadDurable` — survives the logout wipe | Keep. `UserSettings` writes here, uid-namespaced. |
+| `widget_prefs` | `last_refresh_ms` debounce | Extended in EPIC-05 to hold the per-`appWidgetId` station binding. |
+
+v1's home/appearance state lives in `HomeConfigStore` and `ThemeRepository`
+(`com.stationly.mobile.util` / `.ui.theme`). v2's equivalents are `UserSettings`
+(uid-namespaced, durable) and `composeApp`'s `ThemeRepository`. **A one-shot
+translation on first v2 launch** should carry theme choice across; the rest of
+the arrangement is per-account appearance state that defaults cleanly and is
+recoverable by the user in seconds. Do not over-invest here.
+
+⚠️ `UserSettings` prunes rows equal to the default, so never read a preference
+straight off the map and never treat a default as an answer. Flipping a default
+is a one-way change.
+
+---
+
+## 4. FCM topics
+
+v1 and v2 emit the **same topic shapes** — `Station_{naptan}` and
+`LineStatus_{mode}_{line}` — so there is no rename to migrate. Two differences:
+
+1. **Who emits them.** v1 subscribes from `FirebaseAuthManager` and
+   `SelectionViewModel`; v2 uses `StationLifecycleUseCase` in `commonMain`.
+   Delete the v1 paths rather than leaving both running.
+2. **How many.** A v2 user with several boards and several lines each subscribes
+   to many more topics than a v1 user ever did.
+
+`AndroidNotificationManager` already persists the subscribed set under
+`StationlyPrefs.fcm_topics`. Diff against it on launch and subscribe only the
+difference — on upgrade day every device would otherwise re-subscribe its whole
+set at once (R6).
+
+Keep `stationly_all`. It is how `audience: {type:"all"}` pushes fan out with no
+Firestore reads, and it is guarded by `subscribed_all_topic` already.
+
+---
+
+## 5. Rollout
+
+| Step | Gate |
+|---|---|
+| `versionCode 3`, `versionName 2.0` | Migration test suite green on a real v1 database fixture. |
+| Internal testing track | Upgrade-in-place verified on a device carrying a genuine v1 install. |
+| Closed testing | Backup-restore path verified (§1.5): v1 backup restored onto a fresh v2 install. |
+| Staged rollout, small first slice | Crash-free rate on the migration path. There is no rollback (§1.7). |
+| Set `ReleasePolicy.android.minVersion` floor | Only after the staged rollout is healthy. This is what eventually retires R2. |
+| Drop the `stations` dual write (§2.3) | v1 population below threshold, measured, not assumed. |
+
+`ReleasePolicy` already carries an `android: PlatformRelease` alongside `ios`, so
+the floor is a config change, not a code change.
+
+---
+
+## 6. What the v1 upgrade does once (added 2026-11-24)
+
+The 1 → 2 migration leaves two one-shot notes in durable prefs (`V1Upgrade`,
+written from `DriverFactory`'s `onUpgrade`, so only a real v1 install gets them).
+
+| Note | Spent by | What it does |
+|---|---|---|
+| widgets | `V1WidgetAdoption`, at the first app start (or widget draw) after the update | Binds every unbound widget to the first selection, which is what v1 drew. Without it every v1 widget became "Choose a station". |
+| boards | `UserSyncCoordinator.publishV1Boards`, on the first reconcile | Keeps boards only this phone has (`reconcileBoards(keepLocalBoards = true)`), publishes the union, and clears the note only after reading the account back. Without it, on an account that also has an iPhone, the v1 boards were deleted and the next push overwrote `stations` too. |
+
+Details that matter:
+
+- A v1 row has no hub. Under `keepLocalBoards` it takes the cloud's, or the push
+  would split one bus stop into two boards; bindings follow (`followHubs`).
+- While the boards note stands, a board deleted on another device comes back, so
+  it gives up after five completed attempts. Offline does not count.
+- The widget note is spent at once on a phone with no widgets. Left standing, it
+  would bind the first widget the user ever adds to their first station, and
+  "Add to Home Screen" would not correct it. With widgets but no stations (signed
+  out at the update) it waits, because v1 drew the first station on sign-in.
+- The boards push runs after the screens are refreshed, so a failed push or
+  read-back cannot leave them stale.
+- The revision is not stamped by that reconcile, so a failed push is retried.
+- iOS never passes `keepLocalBoards`; its reconcile is unchanged.
+
+**Verified on a Pixel 10 Pro Fold, staging, 2026-11-24**, by planting a v1-shaped
+database and installing over it: three widgets kept the v1 station, a v1-only board survived and
+reached the account, the bus hub stayed one board, and the notes were cleared.
+After that run the note began to be spent at app start as well, and the boards
+push moved after the screen refresh. Rerun on the phone: an unbound widget was
+bound on a cold start and the note cleared (app start and a draw both run there,
+so which one did it is not known). NOT rerun: the boards push in its new place.
+NOT covered: a real v1 from Play updating to v2 (internal track).
+
+Testing trap: install the new build BEFORE planting the v1 database, then
+reinstall it. Planting first lets a push wake the old build, which migrates the
+file without leaving the notes.
+
+**v1's saved preferences (found by the owner on production build 5, 2026-11-24).**
+The planted-database test above did not include them. v1 wrote each
+`cached_dropdown_*_ts` with `putLong` and `dismissed_announcement_*` with
+`putBoolean`; the shared code reads both as text, and `getString` throws on
+another type. Symptom: "Couldn't load modes" coming and going in Set up a Board,
+for ever. By code reading, also the line and direction steps, and an uncaught
+throw (a crash) opening a v1 station's settings. Fixed in `textOrNull`
+(`Platform.kt`, Android), pinned by `StoredTextTest`. The audit compared every v1
+preference write with v2's reads: those two were the only mismatches. Any future
+upgrade test must plant v1's `StationlyPrefs` as well as its database.
+
+The mode, line and direction steps also no longer show an error over a list they have, and a
+line failure is cleared when the user moves to another station.
+
+**Boards lost in a process a push started (code review, 2026-11-24; in build 5).**
+`SelectionRepository.saveSelection` rewrites the whole table from an in-memory
+cache that only a screen loaded. A reconcile with no screen, adding one board from
+the cloud, wrote that board alone, and the read-back then cleared the v1 note. The
+reconcile calls `loadIfEmpty()` first, and since 2026-11-24 so does every save
+(`ColdProcessSaveTest`). Live iOS 1.1 has the same fault: see the end of
+`docs/QA_2026-11-23_ANDROID_SWEEP.md`.
+
+Known and unchanged: a v1 database arriving by backup onto a NEW phone goes
+through sign-in, which restores the account's `boards` list, so an account with
+an iPhone list still loses a v1-only board there. And any Android push from a
+process that has not signed in restamps `addedAt`, which can change board order
+at the next sign-in.

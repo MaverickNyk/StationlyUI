@@ -32,6 +32,13 @@
              guarantees one instance in one task; every launch is funnelled through
              onNewIntent (already implemented) so the nav state is never duplicated
              or lost. -->
+        <!-- The four `stationly://` intent-filters below carry
+             `${deepLinkScheme}`, not a literal. Prod resolves it to
+             `stationly`; staging to `stationly-staging`, so the two builds
+             cannot answer for each other's links. The same value reaches the
+             code as `BuildConfig.DEEP_LINK_SCHEME` — see `deepLinkScheme()` in
+             build.gradle.kts, and `handleDeepLink` below, which must agree with
+             this filter or the link arrives and is silently dropped. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -46,25 +53,25 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="stationly" android:host="auth" />
+                <data android:scheme="${deepLinkScheme}" android:host="auth" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="stationly" android:host="reset" />
+                <data android:scheme="${deepLinkScheme}" android:host="reset" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="stationly" android:host="home" />
+                <data android:scheme="${deepLinkScheme}" android:host="home" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="stationly" android:host="verified" />
+                <data android:scheme="${deepLinkScheme}" android:host="verified" />
             </intent-filter>
         </activity>
 
@@ -117,6 +124,11 @@
             android:excludeFromRecents="true" />
 
         <!-- Widget Provider -->
+        <!-- In-place notification buttons (Mute). Never reachable from outside. -->
+        <receiver
+            android:name=".service.NotificationActionReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".widget.DepartureWidgetProvider"
             android:exported="false"
@@ -124,11 +136,42 @@
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="com.stationly.mobile.ACTION_UPDATE_WIDGET" />
+                <!-- After an app update: rebuild every widget from the NEW
+                     layout. See DepartureWidgetProvider / widget_reinflate. -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/departure_widget_info" />
+            <!-- The same widget, 6 columns wide. See WidgetDefaultSize. -->
+            <meta-data
+                android:name="com.stationly.mobile.widget.SIX_COLUMNS"
+                android:resource="@xml/departure_widget_info_6" />
         </receiver>
+
+        <!-- Which station a given widget is for.
+             Named by `android:configure` in departure_widget_info.xml, so the
+             launcher starts it when the widget is dropped and does not create
+             the widget at all unless it returns RESULT_OK. That is Android's
+             answer to iOS's widget stack: not one frame the user swipes, but
+             many instances of one provider, each told which station it is.
+
+             exported="true" is required and is not a hole: the launcher is a
+             different process and has to be able to start it. It carries no
+             intent-filter, so nothing can reach it by action — only by
+             component, with an appWidgetId the system issued.
+
+             excludeFromRecents + taskAffinity="": it is a sheet the launcher
+             put up, not a place in the app. Without them, backing out of it
+             lands in Stationly's own task, and the widget the user was placing
+             is behind them. -->
+        <activity
+            android:name=".widget.WidgetConfigureActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:label="@string/widget_name"
+            android:theme="@style/Theme.Stationly" />
 
         <!-- WorkManager for background updates -->
         <provider

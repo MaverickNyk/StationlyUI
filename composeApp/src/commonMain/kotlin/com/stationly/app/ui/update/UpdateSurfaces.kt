@@ -78,12 +78,34 @@ fun UpdateSurfaces() {
     val scope = rememberCoroutineScope()
     val openStore = rememberStoreOpener()
 
+    // A flexible update that finished downloading while the app was being used.
+    //
+    // OUTSIDE the `when`, because it is not a verdict: the download was started
+    // from a nudge the user has long since dismissed, and the bytes can land on
+    // any screen. Android only — `InAppUpdate.readyToInstall` is a flow that is
+    // permanently false on iOS, so this composable never appears there and needs
+    // no platform check of its own.
+    val readyToInstall by InAppUpdate.readyToInstall.collectAsState()
+    if (readyToInstall) {
+        UpdateReadyDialog(
+            onInstall = { InAppUpdate.completeInstall() },
+            onLater = { InAppUpdate.dismissReady() },
+        )
+    }
+
     when (val v = verdict) {
         is UpdateVerdict.Ok -> Unit
 
         is UpdateVerdict.Blocked -> UpdateBlockedScreen(
             copy = v.copy,
-            onUpdate = { openStore(v.store) },
+            // Play first, the listing second. The blocking screen is already
+            // saying "you cannot use this app until you update", and an
+            // IMMEDIATE Play flow says exactly that and then performs it — so
+            // the one button stops being "go and find the update" and starts
+            // being the update. It answers false on anything not installed from
+            // Play (every development build, see `InAppUpdate`), and the link
+            // out is what has always happened.
+            onUpdate = { scope.launch { if (!InAppUpdate.startImmediate()) openStore(v.store) } },
         )
 
         is UpdateVerdict.Nudge -> {
@@ -104,8 +126,13 @@ fun UpdateSurfaces() {
             UpdateNudgeDialog(
                 copy = v.copy,
                 onUpdate = {
-                    openStore(v.store)
-                    scope.launch { ReleaseGate.acknowledgeNudge() }
+                    scope.launch {
+                        // FLEXIBLE: Play downloads in the background and the app
+                        // stays usable, which is what an optional update should
+                        // cost. `readyToInstall` above is the other half.
+                        if (!InAppUpdate.startFlexible()) openStore(v.store)
+                        ReleaseGate.acknowledgeNudge()
+                    }
                 },
                 onDismiss = { scope.launch { ReleaseGate.snoozeNudge() } },
             )
@@ -275,6 +302,80 @@ private fun UpdateNudgeDialog(
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
                     Text(
                         copy.dismiss,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.40f),
+                        fontSize = 14.sp,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * "Downloaded — restart to finish."
+ *
+ * ## Why the user is asked at all
+ * `completeUpdate()` restarts the app immediately. Doing that off the back of a
+ * download the user started ten minutes ago, while they are reading a departure
+ * board, is a worse interruption than the dialog they dismissed to get here —
+ * and it is the failure mode people remember, because it looks like a crash.
+ *
+ * ## Why "Later" is not a snooze
+ * It clears the flag for this app run only. The update is still downloaded and
+ * Play installs it on the next natural restart anyway, so a timer would be
+ * managing a decision that resolves itself. Ask once per launch, not once per
+ * fortnight.
+ *
+ * Hardcoded copy rather than `policy.strings`, deliberately: the release policy
+ * is one document shared by both platforms and this state cannot occur on iOS.
+ * Adding two iOS-unreachable keys to it would make every future reader of that
+ * document wonder which platform they are for.
+ */
+@Composable
+private fun UpdateReadyDialog(
+    onInstall: () -> Unit,
+    onLater: () -> Unit,
+) {
+    Dialog(onDismissRequest = onLater) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                StationlyLogo(size = 52.dp)
+                Text(
+                    "Update ready",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    "Stationly has downloaded the update. It needs to restart to finish installing.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(4.dp))
+                Button(
+                    onClick = onInstall,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                ) {
+                    Text("Restart now", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+                TextButton(onClick = onLater, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "Later",
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.40f),
                         fontSize = 14.sp,
                     )
