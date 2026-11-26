@@ -6,6 +6,11 @@
 
 ## Live state
 
+> **2026-11-26: Android 2.0 build 9 on internal testing, upgrade run passed.**
+> Read [`../ANDROID_2.0_RELEASE_RECORD.md`](../ANDROID_2.0_RELEASE_RECORD.md).
+> **Q5 (iOS database) is deferred by the owner and BLOCKS merging this branch
+> into `master` or cutting any iOS build from it:** release record §12.1.
+
 ```
 SPRINT:            5-6 — release surfaces + rollout (sprints 1-4 complete)
 WIP LIMIT:         1 story In Progress per agent, 2 across the project

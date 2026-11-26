@@ -41,7 +41,7 @@ than repeating them; where it summarises, the linked document is the authority.
 | Live iOS app | 1.1 (build 3). Unchanged by any of this; see §12. |
 | Backend | PR #163 (DLR label + support reach) merged and **deployed to production** 2026-11-26 by the owner. Production serves the on-open ask (Android only), the running-costs line (£600 a month) and What's new copy. |
 | Syncer | PR #85 (blank destination id) merged 2026-11-25. |
-| App branch | `dev_android_bring_to_v2`, pushed, last commit `0fbeb1b`. Not yet merged to `master`; Q5 (iOS database) must be solved at that merge (§12). |
+| App branch | `dev_android_bring_to_v2`, pushed. 103 commits ahead of `master`, 0 behind (a clean merge). **Not merged, on purpose**: merging brings Q5 (§12.1) onto `master`, and any iOS build from `master` after that breaks every updating iPhone user. Owner, 2026-11-26: no iOS fix now; document it and look later. |
 | Play support products | Live in production (`SUPPORT_MONEY_ANDROID_ENABLED` on). Server crediting not yet proven with a real purchase (§14). |
 | Test phones | Pixel 11 Pro (production, owner's phone; now signed in as the test account Njk Hhj with two Stationly widgets). Pixel 10 Pro Fold (staging debug). Redmi 13C 5G (staging, seen 2026-11-25). |
 
@@ -337,17 +337,55 @@ by rendering it before and after). The on-open ask is served `false` to iOS.
 
 Before the next iOS release from this branch:
 
-1. **Q5, the database (must fix):** iOS 1.0/1.1 databases are stamped version 1
-   but hold the current schema, so the v1 migration fails on them ("table
-   ActivityEventEntity already exists") and the database will not open. Fix at
-   merge time: re-stamp such a database as version 2 before migrating
-   (`Database.ios.kt`). Parked on the board.
+1. **Q5, the database (must fix before any iOS build from this code):** see
+   §12.1.
 2. AV2-11.33: a background sync that adds a board drops the iPhone's other
    boards, live in 1.1, fixed in shared code; ships with the next iOS build.
 3. AV2-11.51(a): iOS should call `publishOrderIfPending` from `UserSyncBridge`.
 4. To give iOS the on-open ask: add `ios` to
    `SUPPORT_MONEY_ASK_ON_OPEN_PLATFORMS` once a build with the shared code is out.
 5. App Store Connect: check the Paid Apps agreement and the support products.
+
+### 12.1 Q5: the iOS database, deferred by the owner
+
+**Status:** open, deliberately not fixed. Owner, 2026-11-26: "avoid any iOS fix
+now but document it and we'll take a look at it later."
+
+**The problem.** The app's SQLDelight schema is versioned. Android 1.0 shipped
+schema version 1 (the old layout), and this branch adds migrations 1 → 2 → 3.
+iOS 1.0 and 1.1 shipped from `ios-parity`, whose database ALSO says version 1
+but already has the newer tables (iOS never had the old layout). So when a
+future iOS build from this branch opens an existing iPhone database, SQLDelight
+sees version 1 and runs `migrations/1.sqm`, whose first statements create
+tables that already exist (`CREATE TABLE ActivityEventEntity` and others). The
+migration throws ("table ActivityEventEntity already exists"), the transaction
+rolls back, the database stays at version 1, and the same failure happens on
+every launch. The only way out for the user is to delete and reinstall.
+
+**Who it hits.** Every App Store iPhone user who updates to the first iOS build
+made from `dev_android_bring_to_v2` or from `master` after it is merged. Nobody
+today: no iOS build has been made from this code, and Android is unaffected
+(Android's version-1 databases really are the old layout).
+
+**Where.** `core/src/commonMain/sqldelight/com/stationly/db/migrations/1.sqm`
+(its header comment says iOS "has never shipped publicly", no longer true) and
+the iOS driver, `core/src/iosMain/.../Database.ios.kt` (`NativeSqliteDriver`).
+Background: [`android-v2/analysis/MIGRATION.md`](android-v2/analysis/MIGRATION.md)
+§1.4b; the 2026-11-26 app code review flagged it as the one important finding.
+
+**The fix when it is picked up** (not done): before the driver migrates, on
+iOS only, detect a version-1 database that already has the v2 tables (for
+example, `ActivityEventEntity` exists) and stamp it as version 2
+(`PRAGMA user_version = 2`) so only `2.sqm` runs. Correct the comment in
+`1.sqm`. Test on a simulator against a real 1.1 database (copy one off a
+device or build 1.1 and seed it), then upgrade to the new build: boards,
+settings and the activity queue must survive.
+
+**Until then, the rules:**
+- Do not merge `dev_android_bring_to_v2` into `master` without this fix, or
+  merge it and make sure nobody builds iOS from `master` until it lands.
+- Do not cut an iOS release from this branch.
+- Android releases (2.0.x hotfixes) are unaffected and come from this branch.
 
 ---
 
