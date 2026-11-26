@@ -7,7 +7,9 @@ import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.auth.FirebaseAuth
 import com.stationly.core.model.UserSelection
 import com.stationly.core.model.WidgetState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
@@ -20,6 +22,11 @@ class AndroidWidgetManager(
         val intent = android.content.Intent("com.stationly.mobile.ACTION_UPDATE_WIDGET")
         intent.setComponent(android.content.ComponentName(context.packageName, "com.stationly.mobile.widget.DepartureWidgetProvider"))
         intent.putExtra("ACTION_TYPE", "UPDATE_WIDGET")
+        // Which board changed. Without it the receiver has to assume "all of
+        // them", and this fires once per processed payload: a refresh over
+        // several stops then redrew every placed widget several times each.
+        // Blank stays "all", which is what the other two callers mean.
+        intent.putExtra("stationId", state.stationId)
         context.sendBroadcast(intent)
     }
 
@@ -50,38 +57,76 @@ class AndroidWidgetManager(
     }
 }
 
-// Android NotificationManager implementation
+/**
+ * Android's FCM topics, and the ledger that is the only record of them.
+ *
+ * ## Why there is a ledger at all
+ * FCM has no "what is this device subscribed to" call. The subscription lives in
+ * the Google Play services process, survives the app being killed, updated and
+ * uninstalled-with-backup, and outlives the account that asked for it. So the
+ * only way to know what we asked for is to write it down, and the only way for
+ * the written record to be worth anything is for EVERY path that changes a
+ * subscription to maintain it. That is this class, and nothing else should
+ * reach `FirebaseMessaging.subscribeToTopic` directly.
+ *
+ * Two deliberate exceptions, both documented at their call sites:
+ *  - `StationlyApplication` subscribes `stationly_all`, tracked by its own
+ *    boolean because it is not a board and must never be reconciled away, and
+ *  - `FcmMessagingService.onNewToken` re-sends the ledger after a token
+ *    rotation, because the new token starts subscribed to nothing.
+ *
+ * ## The bug this class shipped with
+ * [subscribeToTopics] added to the ledger and [unsubscribeFromTopics] did not
+ * remove from it, so the record only ever grew. It read as harmless — it is only
+ * a list — right up until something diffs against it, at which point a topic
+ * that was subscribed, removed and re-added is "already subscribed" and the
+ * board it belongs to silently never receives another push.
+ */
 class AndroidNotificationManager(
     private val context: Context
 ) : NotificationManager {
-    
+
     override suspend fun subscribeToTopics(topics: List<String>) {
-        val fcm = FirebaseMessaging.getInstance()
-        val prefs = context.getSharedPreferences("StationlyPrefs", android.content.Context.MODE_PRIVATE)
-        val stored = (prefs.getStringSet("fcm_topics", emptySet()) ?: emptySet()).toMutableSet()
-        topics.forEach { topic ->
-            try {
-                fcm.subscribeToTopic(topic).await()
-                stored.add(topic)
-                android.util.Log.d("NotificationManager", "Successfully subscribed to $topic")
-            } catch (e: Exception) {
-                android.util.Log.e("NotificationManager", "Failed to subscribe to $topic", e)
-            }
-        }
-        prefs.edit().putStringSet("fcm_topics", stored).apply()
+        if (topics.isEmpty()) return
+        val added = topics.filter { subscribe(it) }
+        if (added.isNotEmpty()) writeLedger(readLedger() + added)
     }
-    
+
     override suspend fun unsubscribeFromTopics(topics: List<String>) {
-        val fcm = FirebaseMessaging.getInstance()
-        topics.forEach { topic ->
-            try {
-                fcm.unsubscribeFromTopic(topic).await()
-            } catch (e: Exception) {
-                android.util.Log.e("NotificationManager", "Failed to unsubscribe from $topic", e)
-            }
-        }
+        if (topics.isEmpty()) return
+        // Dropped from the ledger only on success. A failed unsubscribe leaves a
+        // live subscription behind, and the ledger entry is the only thing that
+        // will ever find it again — the next reconcile sees a topic no board
+        // wants and retries. Forgetting it here is how a leak becomes permanent.
+        val removed = topics.filter { unsubscribe(it) }
+        if (removed.isNotEmpty()) writeLedger(readLedger() - removed.toSet())
     }
-    
+
+    /**
+     * The whole set, stated. See [NotificationManager.reconcileTopics].
+     *
+     * Cheap when there is nothing to do, which is almost always: two set
+     * differences over a `SharedPreferences` read, and no FCM call at all. That
+     * matters more than it sounds — this runs on every foreground, and it is
+     * also what makes upgrade day a no-op. A v1 install arrives with its ledger
+     * already written by this same class under this same key, so the diff is
+     * empty and nobody re-subscribes anything (risk R6).
+     */
+    override suspend fun reconcileTopics(desired: List<String>) {
+        val ledger = readLedger()
+        val plan = TopicLedger.plan(ledger, desired)
+        if (plan.isEmpty) return
+
+        android.util.Log.d(
+            TAG,
+            "reconcile: +${plan.subscribe.size} -${plan.unsubscribe.size} " +
+                "(ledger ${ledger.size} → ${desired.distinct().size})",
+        )
+        val added = plan.subscribe.filter { subscribe(it) }
+        val removed = plan.unsubscribe.filter { unsubscribe(it) }
+        writeLedger(readLedger() + added - removed.toSet())
+    }
+
     override suspend fun handleNotification(payload: Map<String, String>) {
         // This would be called from FcmMessagingService
         // Would trigger ProcessPredictionsUseCase
@@ -95,25 +140,112 @@ class AndroidNotificationManager(
         }
     }
 
+    /**
+     * Everything, gone: sign-out, account deletion, forced logout.
+     *
+     * Deliberately driven off the LEDGER rather than off the selections. They
+     * are usually the same set, and when they are not it is because a
+     * subscription outlived its board — exactly the row that must not be left
+     * behind on a device somebody else is about to sign into.
+     */
     override suspend fun clearAllTopics() {
-        val fcm = FirebaseMessaging.getInstance()
-        // Android FCM doesn't expose a "get all subscriptions" API; tracked topics
-        // are stored in shared prefs under "fcm_topics" — unsubscribe each.
-        val prefs = context.getSharedPreferences("StationlyPrefs", android.content.Context.MODE_PRIVATE)
-        val topics = prefs.getStringSet("fcm_topics", emptySet()) ?: emptySet()
-        topics.forEach { runCatching { fcm.unsubscribeFromTopic(it).await() } }
-        prefs.edit().remove("fcm_topics").apply()
+        // All requested first, then a bounded wait. FCM keeps a request and
+        // retries it by itself, but its Task stays open until it succeeds, so
+        // awaiting without a limit hung a sign-out made offline.
+        val requests = readLedger().map { FirebaseMessaging.getInstance().unsubscribeFromTopic(it) }
+        withTimeoutOrNull(CLEAR_TOPICS_WAIT_MS) {
+            requests.forEach { request ->
+                try {
+                    request.await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    android.util.Log.e(TAG, "Failed to unsubscribe during teardown", e)
+                }
+            }
+        }
+        prefs().edit().remove(KEY_TOPICS).apply()
+    }
+
+    // ── the ledger ───────────────────────────────────────────────────────────
+
+    private fun prefs(): SharedPreferences =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    /**
+     * A COPY. `getStringSet` hands back the live set held by the
+     * `SharedPreferences` instance, and mutating it (or holding it across an
+     * `apply`) is documented as undefined.
+     */
+    private fun readLedger(): Set<String> =
+        (prefs().getStringSet(KEY_TOPICS, emptySet()) ?: emptySet()).toSet()
+
+    private fun writeLedger(topics: Set<String>) {
+        prefs().edit().putStringSet(KEY_TOPICS, HashSet(topics)).apply()
+    }
+
+    private suspend fun subscribe(topic: String): Boolean = try {
+        FirebaseMessaging.getInstance().subscribeToTopic(topic).await()
+        android.util.Log.d(TAG, "subscribed $topic")
+        true
+    } catch (e: Exception) {
+        android.util.Log.e(TAG, "Failed to subscribe to $topic", e)
+        false
+    }
+
+    private suspend fun unsubscribe(topic: String): Boolean = try {
+        FirebaseMessaging.getInstance().unsubscribeFromTopic(topic).await()
+        android.util.Log.d(TAG, "unsubscribed $topic")
+        true
+    } catch (e: Exception) {
+        android.util.Log.e(TAG, "Failed to unsubscribe from $topic", e)
+        false
+    }
+
+    private companion object {
+        const val TAG = "NotificationManager"
+        const val CLEAR_TOPICS_WAIT_MS = 5_000L
+        const val PREFS = "StationlyPrefs"
+
+        /**
+         * The key v1 writes, unchanged and load-bearing. An upgrading device
+         * carries its subscriptions in here; renaming it would make every v1
+         * install look unsubscribed, and the first reconcile would re-subscribe
+         * the lot on upgrade day.
+         */
+        const val KEY_TOPICS = "fcm_topics"
+    }
+}
+
+/**
+ * A stored value as text, whatever type it was written as.
+ *
+ * `getString` THROWS on a value of another type, and v1 wrote two of the keys
+ * the shared code reads here as something else: each `cached_dropdown_*_ts` with
+ * `putLong`, and `dismissed_announcement_*` with `putBoolean`. On an upgraded
+ * phone the throw failed the station picker ("Couldn't load modes") before it
+ * could overwrite the value, so it never healed.
+ *
+ * Text rather than null: the timestamp and the dismissal are still true.
+ */
+internal fun SharedPreferences.textOrNull(key: String): String? = try {
+    getString(key, null)
+} catch (_: ClassCastException) {
+    when (val value = all[key]) {
+        is Number, is Boolean -> value.toString()
+        else -> null
     }
 }
 
 // Android StorageManager implementation
-class AndroidStorageManager(
-    private val context: Context
+class AndroidStorageManager internal constructor(
+    /** Opens a prefs file by name; a seam for the test. */
+    private val open: (String) -> SharedPreferences,
 ) : StorageManager {
-    
-    private val prefs: SharedPreferences by lazy {
-        context.getSharedPreferences("StationlyPrefs", Context.MODE_PRIVATE)
-    }
+
+    constructor(context: Context) : this({ context.getSharedPreferences(it, Context.MODE_PRIVATE) })
+
+    private val prefs: SharedPreferences by lazy { open(PREFS) }
     
     private val json = Json { ignoreUnknownKeys = true }
     
@@ -155,32 +287,64 @@ class AndroidStorageManager(
         prefs.edit().putString(key, value).apply()
     }
     
-    override suspend fun loadString(key: String): String? {
-        return prefs.getString(key, null)
-    }
+    override suspend fun loadString(key: String): String? = prefs.textOrNull(key)
 
     /**
      * A SEPARATE prefs file, so the logout wipe of the session store misses it.
      * The direct mirror of iOS keeping these in the App Group suite.
      */
-    private val durablePrefs by lazy {
-        context.getSharedPreferences("stationly_durable_prefs", android.content.Context.MODE_PRIVATE)
-    }
+    private val durablePrefs by lazy { open(DURABLE_PREFS) }
 
     override suspend fun saveDurable(key: String, value: String) {
         durablePrefs.edit().putString(key, value).apply()
     }
 
-    override suspend fun loadDurable(key: String): String? = durablePrefs.getString(key, null)
+    override suspend fun loadDurable(key: String): String? = durablePrefs.textOrNull(key)
 
     override suspend fun removeDurable(key: String) {
         durablePrefs.edit().remove(key).apply()
+    }
+
+    /**
+     * The two file names, named rather than spelled out at each use.
+     *
+     * They were four inline literals until AV2-3.5, which is fine right up
+     * until something OUTSIDE this class has to agree with one of them. Two
+     * things now do: the app's own `AppSettings` (`:android:app`), which reads
+     * the theme the shared UI writes, and `V1ThemeCarryOverTest`, which is the
+     * only thing that would notice either name drifting.
+     *
+     * `PREFS` in particular is the file the v1 Android app has been writing
+     * since launch. Renaming it does not migrate anything; it abandons it.
+     */
+    internal companion object {
+        const val PREFS = "StationlyPrefs"
+        const val DURABLE_PREFS = "stationly_durable_prefs"
     }
 }
 
 // Android Platform implementation
 actual object Platform {
-    private lateinit var appContext: Context
+    /**
+     * The process-wide application context, set once by the host's
+     * `Application.onCreate` and never reassigned.
+     *
+     * Public because `:composeApp`'s Android `actual`s need a `Context` and
+     * this is already the one place the app has agreed to keep it — every other
+     * Android platform service in the codebase (`widgetManager`,
+     * `notificationManager`, `storageManager`, `sqlStorage`) is built from it.
+     * A second context holder in `composeApp/androidMain` would be a parallel
+     * mechanism for a job that already has one, with its own initialisation
+     * order to get wrong.
+     *
+     * `private set` because [initialize] is the only legitimate writer. Reading
+     * it before that throws `UninitializedPropertyAccessException` naming this
+     * property, which is the right failure: it means the host skipped
+     * `Platform.initialize`, and nothing downstream can paper over that.
+     */
+    lateinit var appContext: Context
+        private set
+
     private var apiKey: String = ""
     private var environment: AppEnvironment = AppEnvironment.PRODUCTION
 

@@ -63,6 +63,9 @@ import com.stationly.core.model.user.HomeLayout
 import com.stationly.core.repository.UserSettings
 import com.stationly.core.activity.ActivityEvents
 import com.stationly.core.activity.ActivityLog
+import com.stationly.core.config.NotificationPolicy.AlertLevel
+import com.stationly.core.config.NotificationPolicyStore
+import com.stationly.core.notification.LineAlertPreferences
 import com.stationly.core.platform.Platform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -82,6 +85,19 @@ fun HomeSettingsScreen(
     onBack: () -> Unit,
     onOpenScreensaver: () -> Unit,
     onOpenWidgetGuide: () -> Unit,
+    /**
+     * Open the platform's widget manager — the screen that lists every widget
+     * on the home screen and lets each one be pointed at a station.
+     *
+     * **Null on iOS, and that is not a gap.** An iOS app can never read a
+     * widget's AppIntent configuration (`getCurrentConfigurations` returns `[]`
+     * inside a timeline), so there is no list to show and no binding to write;
+     * changing an iOS widget's station is long-press-and-edit, on the home
+     * screen. Android has `AppWidgetManager.getAppWidgetIds()` and owns its own
+     * binding store, so it can do both. The row is hidden rather than disabled
+     * where the platform cannot answer.
+     */
+    onManageWidgets: (() -> Unit)? = null,
     /** Straight through to that station's own settings — see [StationOrderCard]. */
     onOpenStationSettings: (stationId: String, mode: String, stationName: String) -> Unit = { _, _, _ -> },
 ) {
@@ -132,6 +148,8 @@ fun HomeSettingsScreen(
     // can see them (see [StationOrderCard]); this is the second lock, and the
     // one that also stops a fling started elsewhere from carrying on mid-drag.
     var reordering by remember { mutableStateOf(false) }
+    // Whether the current drag moved anything, so a tap-and-release sends nothing.
+    var orderMoved by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -205,14 +223,24 @@ fun HomeSettingsScreen(
                 val reorder: (List<HomeStation>) -> Unit = { reordered ->
                     stations = reordered
                     scope.launch { UserSettings.reorder(reordered.map { it.id }) }
-                    // Fires per drag step, and the upload behind it is debounced
-                    // — so a drag across four positions is four events and one
-                    // request. The events are the cheap half and worth keeping
-                    // at that grain; the request is the one that had to be
-                    // collapsed.
+                    // Saved to the account when the drag ENDS (below), not per step.
+                    orderMoved = true
+                    // Fires per drag step. The events are the cheap half and
+                    // worth keeping at that grain.
                     ActivityLog.record(
                         ActivityEvents.SETTINGS_HOME_REORDERED, "count", reordered.size.toString()
                     )
+                }
+                // The account keeps the stations' ORDER (not the rest of the
+                // arrangement), so a sign-in elsewhere shows it too. Once per
+                // drag, at its end; see UserStateSync.orderChanged for when it
+                // is safe to send.
+                val draggingChange: (Boolean) -> Unit = { dragging ->
+                    reordering = dragging
+                    if (!dragging && orderMoved) {
+                        orderMoved = false
+                        scope.launch { com.stationly.app.sync.UserStateSync.orderChanged() }
+                    }
                 }
                 val openStation: (HomeStation) -> Unit = { s ->
                     performHaptic(HapticType.TAP)
@@ -223,7 +251,7 @@ fun HomeSettingsScreen(
                         stations = stations,
                         onReorder = reorder,
                         onOpen = openStation,
-                        onDraggingChange = { reordering = it },
+                        onDraggingChange = draggingChange,
                     )
                     SettingsCaption("Hold and drag a page left or right. Tap for settings.")
                 } else {
@@ -231,7 +259,7 @@ fun HomeSettingsScreen(
                         stations = stations,
                         onReorder = reorder,
                         onOpen = openStation,
-                        onDraggingChange = { reordering = it },
+                        onDraggingChange = draggingChange,
                     )
                     SettingsCaption("Hold and drag to reorder. Tap for settings.")
                 }
@@ -257,20 +285,40 @@ fun HomeSettingsScreen(
                 // promo was removed on 2026-08-23 for asking without being
                 // asked; the guide is the same subject reached the other way
                 // round. See `WidgetGuideScreen`.
+                // ONE widget row, and where it goes depends on what the
+                // platform can do about widgets.
+                //
+                // It was briefly two — "Widgets" (a guide) and "Widget
+                // stations" (the manager) — and that was worse than either
+                // alone. Somebody looking for widget settings taps the row
+                // called "Widgets", gets a page explaining what a widget is,
+                // and concludes the app has no widget settings. Reported by
+                // the owner within a day of it shipping.
+                //
+                // Android goes to the manager: it lists the placed widgets,
+                // adds one, and explains how if the launcher will not. iOS
+                // cannot list or place anything, so its row keeps the guide,
+                // which is genuinely all iOS has to offer here.
                 SettingsActionRow(
                     icon = Icons.Rounded.GridView,
                     title = "Widgets",
-                    subtitle = "Boards on your Home Screen",
-                    onClick = onOpenWidgetGuide,
+                    subtitle = if (onManageWidgets != null) "Choose what each widget shows"
+                    else "Boards on your Home Screen",
+                    onClick = onManageWidgets ?: onOpenWidgetGuide,
                 )
                 SettingsDivider()
                 SettingsActionRow(
                     icon = Icons.Rounded.Notifications,
                     title = "Notifications",
-                    subtitle = "Open iOS notification settings",
+                    // Not "iOS notification settings", which is what this said
+                    // while the shared UI only ran on iOS — it is now on screen
+                    // in the Android app too. Both platforms open the OS's own
+                    // settings, so the copy names neither.
+                    subtitle = "Open notification settings",
                     onClick = { openAppNotificationSettings() },
                 )
             }
+            LineAlertsSetting()
 
             Spacer(Modifier.height(28.dp))
 
@@ -294,6 +342,61 @@ fun HomeSettingsScreen(
     }
 }
 
+
+/* ── Line alerts ────────────────────────────────────────────────────────── */
+
+/**
+ * How loud line-status alerts are: Severe only / All changes / Off.
+ *
+ * Android only: it is the only platform that turns a line-status change into a
+ * notification (iOS shows none, so the row would be a control for nothing).
+ * Hidden too while the backend's kill switch (`notify.line.enabled`) is off,
+ * for the same reason. Which severities each level means is SERVED
+ * (`notify.line.alertSeverities` / `allSeverities`); an untouched setting
+ * follows `notify.line.defaultLevel`. See docs/LINE_ALERTS.md.
+ */
+@Composable
+private fun LineAlertsSetting() {
+    if (Platform.getPlatformName() != "Android") return
+    val policy = NotificationPolicyStore.current
+    if (!policy.enabled) return
+    val scope = rememberCoroutineScope()
+    var level by remember { mutableStateOf<AlertLevel?>(null) }
+    LaunchedEffect(Unit) {
+        level = LineAlertPreferences.effective(policy)
+    }
+    val current = level ?: return
+
+    Spacer(Modifier.height(16.dp))
+    SettingsSectionLabel("Line alerts")
+    SegmentedRow(
+        options = AlertLevel.entries,
+        selected = current,
+        onSelect = { option ->
+            if (option != current) {
+                performHaptic(HapticType.TAP)
+                level = option
+                scope.launch { LineAlertPreferences.set(option) }
+            }
+        },
+        label = {
+            when (it) {
+                AlertLevel.SEVERE -> "Severe"
+                AlertLevel.ALL -> "All"
+                AlertLevel.OFF -> "Off"
+            }
+        },
+    )
+    SettingsCaption(
+        // Served, like what each level MEANS (notify.line.*Severities), so the
+        // words can never describe a policy the backend has since changed.
+        when (current) {
+            AlertLevel.SEVERE -> policy.copy.levelSevere
+            AlertLevel.ALL -> policy.copy.levelAll
+            AlertLevel.OFF -> policy.copy.levelOff
+        },
+    )
+}
 
 /* ── Layout picker ──────────────────────────────────────────────────────── */
 

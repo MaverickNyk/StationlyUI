@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     widget_platform_page, for the ONE page a refresh press brings in: the same
+     container with a layout animation, so its rows roll in one after another
+     (widget_rows_refresh). A layout animation plays whenever the view is first
+     drawn, which is why it lives in its own layout: on the ordinary page every
+     push, tick and step would play it. Only WidgetMotion.REFRESH uses this.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/platform_page_rows"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:layoutAnimation="@anim/widget_rows_refresh"
+    android:orientation="vertical" />

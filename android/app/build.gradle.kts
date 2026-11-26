@@ -12,22 +12,70 @@ val localProperties = Properties().apply {
     if (f.exists()) load(f.inputStream())
 }
 
+/**
+ * The custom URL scheme this build answers to, declared ONCE per flavour and
+ * spent in two places that must never disagree:
+ *
+ *  - `${deepLinkScheme}` in the manifest, which decides what Android is willing
+ *    to deliver to us;
+ *  - `BuildConfig.DEEP_LINK_SCHEME`, which decides what we do with it once it
+ *    arrives (`parseDeepLink`, and the links we build ourselves for FCM).
+ *
+ * Two literals is how iOS lost two days: the app registered
+ * `stationly-staging://` and then compared the incoming URL against a hardcoded
+ * `"stationly"`. Every staging link was silently dropped — nothing errored, taps
+ * simply did nothing. Setting both from one argument makes that mismatch
+ * unspellable rather than merely discouraged.
+ */
+fun com.android.build.api.dsl.ApplicationProductFlavor.deepLinkScheme(scheme: String) {
+    manifestPlaceholders["deepLinkScheme"] = scheme
+    buildConfigField("String", "DEEP_LINK_SCHEME", "\"$scheme\"")
+}
+
 android {
     namespace = "com.stationly.mobile"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.stationly.mobile"
         minSdk = 26
-        // Google Play requires new apps and updates to target API 35
-        // (Android 15) as of 31 Aug 2025. The app already opts into
-        // edge-to-edge via enableEdgeToEdge() in MainActivity, which is the
-        // main behaviour change enforced at this level.
-        targetSdk = 35
-        // v2: patched reCAPTCHA (security fix) over the first uploaded bundle.
-        // versionName stays 1.0 (no user-facing feature change).
-        versionCode = 2
-        versionName = "1.0"
+        // Google Play requires API 36 (Android 16) for new uploads; it refused
+        // the first v2 bundle at 35. What 36 changes, checked against this app:
+        // edge-to-edge was already enforced at 35 (enableEdgeToEdge() in
+        // MainActivity, no opt-out attribute anywhere); predictive back is on by
+        // default, which Compose's BackHandler / navigation already speak, and
+        // nothing overrides onBackPressed; large-screen orientation and
+        // resizability locks are ignored, and none are declared.
+        targetSdk = 36
+        // ── v2 (AV2-8.3 task a) ──────────────────────────────────────────
+        //
+        // `versionCode 2` / `versionName "1.0"` is what is live in the Play
+        // Store: the first uploaded bundle plus a patched reCAPTCHA, with the
+        // name left alone because nothing user-facing had changed.
+        //
+        // 3 / "2.0" is the shared-UI release. The code had to move before
+        // AV2-8.2 can run at all — an in-place upgrade test installs this build
+        // OVER the live one, and Android refuses a package whose versionCode is
+        // not higher. So this is a prerequisite for the hardware verification,
+        // not a step after it.
+        //
+        // 4: Play Console kept version code 3 from the first upload, which it
+        // refused (Billing 7, target 35). A used code can never be reused.
+        //
+        // ⚠️ **There is no rollback.** A v1 APK installed over v2 opens a
+        // version-3 database with a version-1 schema and the framework throws;
+        // `AndroidSqliteDriver` has no downgrade path. Play does not serve
+        // downgrades, so this is sideload-only in practice — but the consequence
+        // stands: once this reaches a device, that device cannot go back. A bad
+        // v2 is fixed by shipping 2.0.1.
+        //
+        // 4 is the committed FLOOR. A Play upload names its own code on the
+        // command line (`scripts/android-release.sh production --version-code N`
+        // passes -Pstationly.versionCode=N), the way the iOS script passes the
+        // build number: Play rejects any code it has seen before, including
+        // ones it refused, so the number belongs to the upload, not the commit.
+        versionCode = (project.findProperty("stationly.versionCode") as String?)?.toInt() ?: 4
+        versionName = "2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -55,12 +103,17 @@ android {
             dimension = "environment"
             signingConfig = signingConfigs.getByName("prod")
             buildConfigField("String", "STATIONLY_API_KEY", "\"${localProperties.getProperty("prod.STATIONLY_API_KEY") ?: ""}\"")
+            deepLinkScheme("stationly")
         }
         create("staging") {
             dimension = "environment"
             versionNameSuffix = "-staging"
             resValue("string", "app_name", "Stationly Staging")
+            // `v2_launcher_label` lived here until AV2-3.5. It named the SECOND
+            // launcher icon while the shared UI was a staging-only door beside
+            // the shipped app. There is one door now, and it is `app_name`.
             buildConfigField("String", "STATIONLY_API_KEY", "\"${localProperties.getProperty("staging.STATIONLY_API_KEY") ?: ""}\"")
+            deepLinkScheme("stationly-staging")
         }
     }
 
@@ -110,6 +163,35 @@ dependencies {
     // KMP Core Module
     implementation(project(":core"))
 
+    // The shared Compose Multiplatform UI — the same 101 files iOS runs on.
+    // Since AV2-3.5 it is not "the shared UI" as distinct from the app's: it IS
+    // the app. `MainActivity` is `setContent { App(...) }` and there is no other
+    // screen. See docs/android-v2/DECISIONS.md D2.
+    //
+    // This was `stagingImplementation` until the cutover, and the reason it was
+    // scoped is worth keeping written down. `:composeApp` builds against Compose
+    // Multiplatform 1.8.0 and drags every AndroidX Compose artifact up with it:
+    //
+    //     androidx.compose.runtime     1.7.0 -> 1.8.0
+    //     androidx.compose.foundation  1.7.0 -> 1.8.0
+    //     androidx.compose.material3   1.3.0 -> 1.3.2
+    //
+    // overriding the compose-bom pin below. The hazard was never the bump on its
+    // own: it was `navigation-compose:2.8.0`, which is pinned to Compose **1.7**
+    // and which v1's NavHost depended on. That pairing exists because it already
+    // went wrong once — a shipped blank screen, recorded in the navigation
+    // comment this replaced.
+    //
+    // v1's NavHost is deleted and `navigation-compose` with it, so the pairing
+    // has no second half left to break. The only NavHost in the app is the
+    // shared one, which brings its own navigation at its own aligned version.
+    // The bom below is now a FLOOR for the app module's remaining Compose (the
+    // Daydream), not a ceiling on the shared UI's.
+    //
+    // Staging has been running exactly this resolution since AV2-3.1, on
+    // hardware, through three device passes.
+    implementation(project(":composeApp"))
+
     // AndroidX Core
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
@@ -128,20 +210,27 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
-    // Downloadable Google Fonts — used for the Stationly brand wordmark
-    // (Inter Tight). Fetched via Google Play Services Fonts provider so
-    // we don't ship a TTF and fonts can be added/swapped without an
-    // APK update. See ui/theme/Type.kt for the FontFamily declaration.
-    implementation("androidx.compose.ui:ui-text-google-fonts")
+    // ONE font pipeline, and this is not it (AV2-3.5 task (c)).
+    //
+    // v1 loaded Inter Tight through the Google Play Services Fonts provider
+    // (`ui-text-google-fonts` + `res/values/font_certs.xml`), and `:composeApp`
+    // bundles the same six static weights as compose-resources. Two font
+    // pipelines in one app is two places for the brand face to come out wrong,
+    // and the downloadable one has a failure mode the bundled one does not: no
+    // GMS, no network, or a blocked provider silently degrades the wordmark to
+    // the system face. Both users of the provider — v1's `Type.kt` and its
+    // `font_certs.xml` — are deleted, so the dependency goes with them.
+    //
+    // The cost is ~250KB of TTF in the APK. That is the price of the app and
+    // the widget agreeing about what Stationly looks like offline.
 
-    // Navigation — must match Compose 1.7 (compose-bom 2024.09.00). nav 2.7.x
-    // targets Compose 1.6 and its screen transitions break on 1.7's AnimatedContent
-    // rewrite: fast navigate+pop (e.g. open/close Profile repeatedly) leaves the
-    // fade transition stuck mid-flight, so destinations overlap (ghosted Profile
-    // behind Summary) and eventually nothing draws → blank screen. 2.8.x is the
-    // Compose-1.7-aligned line and fixes this; it also brings lifecycle 2.8.x in
-    // transitively, so the viewmodel-compose pin below is lifted to match.
-    implementation("androidx.navigation:navigation-compose:2.8.0")
+    // Navigation — `androidx.navigation:navigation-compose` was here until
+    // AV2-3.5 and is deliberately NOT replaced. v1's NavHost was its only user;
+    // the shared UI brings its own navigation, aligned to its own Compose.
+    // Adding a second navigation library back would recreate the exact version
+    // pairing whose breakage shipped a blank screen — see the `:composeApp`
+    // comment above.
+
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
 
     // Splash Screen
@@ -180,4 +269,32 @@ dependencies {
     // Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     implementation("io.coil-kt:coil-compose:2.5.0")
+}
+
+// ── The copy guard's inputs ─────────────────────────────────────────────────
+//
+// `UserFacingCopyTest` reads source trees off disk at run time, which Gradle
+// cannot see. Without this the task is UP-TO-DATE whenever its CLASSPATH is
+// unchanged, and a caption edit does not always change the classpath: editing
+// the text of an existing `<string>` in `strings.xml` leaves `R` identical, so
+// the guard would be skipped by exactly the change it exists to catch.
+//
+// Declaring the trees it walks makes the dependency real. Keep this list and
+// `SOURCE_ROOTS` in that test in step.
+tasks.withType<Test>().configureEach {
+    inputs.files(
+        rootProject.fileTree("android/app/src/main/java/com/stationly/mobile") {
+            include("**/*.kt")
+        },
+        rootProject.fileTree("composeApp/src/commonMain/kotlin/com/stationly/app/ui") {
+            include("**/*.kt")
+        },
+        rootProject.file("android/app/src/main/res/values/strings.xml"),
+        // Read off disk by `WidgetDefaultSizeTest`, for the same reason.
+        rootProject.file("android/app/src/main/res/xml/departure_widget_info.xml"),
+        rootProject.file("android/app/src/main/res/xml-v31/departure_widget_info.xml"),
+        rootProject.file("android/app/src/main/res/xml/departure_widget_info_6.xml"),
+    )
+        .withPropertyName("userFacingCopySources")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }

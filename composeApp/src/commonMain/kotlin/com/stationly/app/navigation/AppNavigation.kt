@@ -12,13 +12,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.stationly.app.platform.openSystemScreensaverSettings
 import com.stationly.app.ui.dream.DreamHost
 import com.stationly.app.ui.dream.DreamSettingsScreen
 import com.stationly.app.ui.summary.BoardFocus
 import com.stationly.app.ui.support.SupportMoment
+import com.stationly.app.sync.SessionEnd
 import com.stationly.app.ui.login.LoginScreen
 import com.stationly.app.ui.login.PlatformAuthProvider
 import com.stationly.app.ui.profile.ProfileScreen
@@ -27,18 +30,78 @@ import com.stationly.app.ui.station.HomeSettingsScreen
 import com.stationly.app.ui.station.StationSettingsScreen
 import com.stationly.app.ui.widgets.WidgetGuideScreen
 import com.stationly.app.ui.summary.SummaryScreen
+import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.flow.first
 
 @Composable
 fun AppNavigation(
     authProvider: PlatformAuthProvider,
     startLoggedIn: Boolean = false,
-    deepLinkOobCode: String? = null
+    deepLinkOobCode: String? = null,
+    /**
+     * Bumped by the host each time it has applied an email-verification code
+     * from a deep link, so the verify screen re-runs the check it already does
+     * on resume. Zero means "nothing applied" — see [emailVerifiedSignal] on
+     * the verify route below for why this is a counter and not a boolean.
+     */
+    emailVerifiedSignal: Int = 0,
+    /** A `…://auth` link landed: the user finished a password reset in email. */
+    showPasswordResetSuccess: Boolean = false,
+    onPasswordResetBannerShown: () -> Unit = {},
+    /** Android's widget manager. Null on iOS — see [HomeSettingsScreen]. */
+    onManageWidgets: (() -> Unit)? = null,
+    /**
+     * Put a widget for one station on the home screen, by grouping id. Null on
+     * iOS, which cannot place widgets — see
+     * [com.stationly.app.ui.station.StationSettingsScreen].
+     */
+    onAddWidgetForStation: ((String) -> Unit)? = null,
+    /** Open the settings of the widget already showing this station. */
+    onOpenWidgetSettingsForStation: ((String) -> Unit)? = null,
+    /**
+     * The account went while the app was running: deleted on another device, or the
+     * server refused it. [onSessionEnded] tears down what is left; then the login screen,
+     * with nothing behind it. Zero means it has not. iOS rebuilds its host instead.
+     */
+    sessionEndedSignal: Int = 0,
+    onSessionEnded: suspend () -> Unit = {},
 ) {
     val navController = rememberNavController()
-    val startDestination = when {
-        !startLoggedIn -> "auth/login"
-        authProvider.isEmailProvider() && !authProvider.isEmailVerified() -> "auth/verify-email"
-        else -> "summary"
+
+    LaunchedEffect(sessionEndedSignal) {
+        if (sessionEndedSignal == 0 || SessionEnd.deliberate) return@LaunchedEffect
+        // Waits for the graph: this can be true from the first frame after a restore.
+        val route = navController.currentBackStackEntryFlow.first().destination.route
+        if (route == null || route.startsWith("auth/")) return@LaunchedEffect
+        onSessionEnded()
+        navController.navigate("auth/login") {
+            popUpTo(0) { inclusive = true }
+            launchSingleTop = true
+        }
+    }
+
+    /**
+     * SAVED, not recomputed — and the saving has to be here rather than in the
+     * host, because two of the three branches ask the auth provider.
+     *
+     * A NavHost can only restore a saved back stack onto the same start
+     * destination it was built with. Recomputing after process death asks
+     * Firebase questions it may not have rehydrated: it answers "not verified",
+     * the start destination flips to `auth/verify-email`, and a stack rooted at
+     * `summary` has nowhere to land — a blank screen. Android shipped exactly
+     * that in v1 and fixed it with `rememberSaveable` around the same decision;
+     * the host's `startLoggedIn` covered the first branch only, and AV2-3.1
+     * logged the other two as still open. This closes them, for both platforms.
+     *
+     * Saving the STRING rather than the inputs is deliberate: it is the value
+     * the NavHost must see again, and re-deriving it is the bug.
+     */
+    val startDestination = rememberSaveable {
+        when {
+            !startLoggedIn -> "auth/login"
+            authProvider.isEmailProvider() && !authProvider.isEmailVerified() -> "auth/verify-email"
+            else -> "summary"
+        }
     }
 
     // Deep link: code passed directly from Swift on cold start
@@ -147,6 +210,8 @@ fun AppNavigation(
             LoginScreen(
                 screenType = "login",
                 authProvider = authProvider,
+                showPasswordResetSuccess = showPasswordResetSuccess,
+                onPasswordResetBannerShown = onPasswordResetBannerShown,
                 onNavigateToSummary = {
                     navController.navigate("summary") {
                         popUpTo("auth/login") { inclusive = true }
@@ -214,6 +279,11 @@ fun AppNavigation(
         composable("auth/verify-email") {
             com.stationly.app.ui.login.VerifyEmailScreen(
                 authProvider = authProvider,
+                // A COUNTER, not a boolean: the host can apply a second code
+                // (the user taps an older link, or the first one expired) and a
+                // boolean that is already true would not change, so the screen
+                // would never re-check. Zero is the resting value.
+                recheckSignal = emailVerifiedSignal.takeIf { it > 0 },
                 onVerified = {
                     navController.navigate("summary") {
                         popUpTo(0) { inclusive = true }
@@ -246,8 +316,34 @@ fun AppNavigation(
         composable("home/settings") {
             HomeSettingsScreen(
                 onBack = { navController.popBackStack() },
-                onOpenScreensaver = { navController.navigate("dream/settings") },
+                // Android's screensaver is a Daydream, bound by the OS and
+                // configured in system settings; the in-app screen would take
+                // the user's choices and drop them (EPIC-06). iOS has no system
+                // screensaver, answers false, and reaches the screen below.
+                onOpenScreensaver = {
+                    if (!openSystemScreensaverSettings()) navController.navigate("dream/settings")
+                },
                 onOpenWidgetGuide = { navController.navigate("widget-guide") },
+                // ── The row goes to the MANAGER where there is one ──
+                //
+                // This parameter was declared on this function and then never
+                // passed on, so it was null at the only place that reads it and
+                // the Widgets row fell through to `onOpenWidgetGuide` on BOTH
+                // platforms. A producer with no consumer is silent: `MainActivity`
+                // supplied a manager callback, `App()` forwarded it, this
+                // function accepted it, and nothing used it.
+                //
+                // What that shipped on Android was the iOS guide — "until the
+                // icons jiggle", "Tap Edit, then Add Widget, top-left corner",
+                // "Hold the widget, tap Edit Widget" — four gestures that do not
+                // exist there, on the one screen a user opens BECAUSE they could
+                // not work out how widgets work. Meanwhile the in-app manager,
+                // which is the thing Android has and iOS cannot, was unreachable.
+                // Found by opening the screen on a Pixel; the subtitle gave it
+                // away before the tap did, because it read "Boards on your Home
+                // Screen" (the iOS string) instead of "Choose what each widget
+                // shows".
+                onManageWidgets = onManageWidgets,
                 // Pushed ON TOP of home settings rather than replacing it: the
                 // station list is where the user was, and back should return
                 // them to it — same rule as the settings → line picker → back
@@ -276,6 +372,17 @@ fun AppNavigation(
                     stationId = stationId,
                     stationName = stationName,
                     mode = mode,
+                    // Bound to THIS station: the row is on its screen, so the
+                    // station never has to be chosen again.
+                    onAddWidget = onAddWidgetForStation?.let { add -> { add(stationId) } },
+                    onOpenWidgetSettings = onOpenWidgetSettingsForStation
+                        ?.let { open -> { open(stationId) } },
+                    // Straight off the store the placement probe keeps current,
+                    // so the row knows whether this station already has a widget
+                    // rather than always offering to add another.
+                    widgetPlacement = com.stationly.core.repository.UserSettings
+                        .widgets.collectAsState().value[stationId]
+                        ?: com.stationly.core.model.user.WidgetPlacement(),
                     // ── Come back to the station you were editing ──
                     //
                     // Not "come back to the home screen". A user on page C of a

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     The board leaving on a REFRESH: a short fade in place. The new board's rows
+     then roll in one by one (widget_row_roll_in). It used to roll the whole
+     board up and out as one sheet, which read as a curtain (owner, 2026-11-23).
+-->
+<alpha xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="90"
+    android:fromAlpha="1"
+    android:toAlpha="0" />

@@ -5,7 +5,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -36,8 +36,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.stationly.app.ui.summary.components.BoardWarning
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.foundation.layout.BoxWithConstraints
 import com.stationly.app.platform.ModeIconStore
+import kotlinx.coroutines.delay
 import com.stationly.core.util.BOARD_FALLBACK_ROW_COUNT
+import com.stationly.core.util.asFallback
 import com.stationly.core.util.computeBoardFallbackState
 import com.stationly.app.ui.util.rememberMinuteTick
 import com.stationly.app.ui.util.rememberTickedPredictions
@@ -51,6 +58,15 @@ import com.stationly.core.util.StationlyFormatters
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import com.stationly.core.model.user.PlatformNav
+import com.stationly.core.util.PlatformPages
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import com.stationly.core.util.BoardTicker
+import com.stationly.core.config.BoardPolicyStore
+import com.stationly.app.ui.common.StationlyLogo
+import com.stationly.app.ui.common.pressScale
+import com.stationly.app.platform.HapticType
 
 /**
  * The dream's departure board — pure-Compose port of Android
@@ -68,9 +84,10 @@ import kotlinx.datetime.toLocalDateTime
 // Dot-matrix signage palette — locked dark regardless of dream theme (the
 // board IS the signage, not chrome). Same values as Board.kt.
 private val BoardAmber  = Color(0xFFFFC819)
+/** A retained already-departed row. Same as Board.kt's `BoardAmberDim` and the widget's `tfl_amber_dim`. */
+private val BoardAmberDim = Color(0xFFB88F1A)
 private val ActiveRowBg = Color(0xFF161616)
 private val CardBg      = Color(0xFF050505)
-private val StationlyRed = Color(0xFFE32017)
 
 /**
  * Uniform baseline for every row on the dream board. The widget XML's tiered
@@ -101,11 +118,14 @@ fun DreamBoard(
      * stronger amber border + larger radius, small inter-row margin.
      */
     fullscreen: Boolean = false,
+    /** How this screensaver reaches platforms that do not fit — see [PlatformNav]. */
+    platformNav: PlatformNav = PlatformNav.SCROLL,
 ) {
     val sel = snapshot.selection
     // Self-tick row ETAs once per minute — shared contract with home/widget.
     val predictions = rememberTickedPredictions(snapshot.predictions)
     val lineStatus = snapshot.lineStatus
+    val notice = snapshot.notice
     val lastUpdated = snapshot.lastUpdatedMs
     // Same wall-clock minute tick drives the ago-colour (amber → grey → red)
     // in lockstep with the home Board and the widget.
@@ -138,7 +158,8 @@ fun DreamBoard(
 
     // Same fallback rules as home + widget so the three surfaces never
     // disagree about why the board is empty.
-    val fallbackState = if (sel == null) null else remember(predictions, lastUpdated, nowMs, lineStatus) {
+    val fallbackState = if (sel == null) null else remember(predictions, lastUpdated, nowMs, lineStatus, notice) {
+        if (notice?.hides == true && !snapshot.someOpen) return@remember notice.asFallback()
         val londonTime = Instant.fromEpochMilliseconds(nowMs)
             .toLocalDateTime(TimeZone.of("Europe/London")).time
         computeBoardFallbackState(
@@ -151,6 +172,42 @@ fun DreamBoard(
             lineStatusReason = lineStatus?.reason,
         )
     }
+
+    // ── The station's platforms, rebuilt each minute ────────────────────────
+    //
+    // The same steps as the home board (`Board.kt`) and the widget
+    // (`tickedGroupsFor`): group the RAW feeds with the full reserve, tick the
+    // blocks with [BoardTicker.tick] under the served [BoardPolicy] (departed
+    // grace, retained "Gone" rows, the departed label), then cap to the
+    // station's depth. It used to tick each feed first and group after, which
+    // honoured the served grace but never retained a departed train, so the
+    // screensaver could empty a platform the home board was still holding
+    // (2026-11-23). Rebuilt here rather than carried on the snapshot because a
+    // screensaver runs all night between pushes.
+    //
+    // Empty when the snapshot carries no feeds, which is every caller that
+    // still builds a DreamSnapshot by hand (the settings preview). Those fall
+    // through to the legacy single-board rows below, unchanged.
+    val boardRows: List<MultiLineBoardProcessor.Row> =
+        remember(snapshot.feeds, snapshot.rowCap, nowMs, lastUpdated) {
+            if (snapshot.feeds.isEmpty()) emptyList() else {
+                val policy = BoardPolicyStore.current
+                val ticked = BoardTicker.tick(
+                    groups = MultiLineBoardProcessor.buildGroups(
+                        feeds = snapshot.feeds,
+                        isBus = MultiLineBoardProcessor.isBus(sel?.mode),
+                        rowCap = MultiLineBoardProcessor.rowReserve,
+                        nowMs = nowMs,
+                        policy = policy,
+                    ),
+                    nowMs = nowMs,
+                    payloadAgeMs = if (lastUpdated <= 0L) 0L else (nowMs - lastUpdated).coerceAtLeast(0L),
+                    displayRows = snapshot.rowCap,
+                    policy = policy,
+                )
+                MultiLineBoardProcessor.rowsFrom(ticked, rowCap = snapshot.rowCap, policy = policy)
+            }
+        }
 
     val legacyRows: List<LegacyRow> = remember(sel, predictions, lineStatus, nowMs) {
         if (sel == null) {
@@ -171,16 +228,7 @@ fun DreamBoard(
     // Fallback copy rows (bold title + detail lines padded to the shared row
     // count) — override the legacy rows when active, exactly like Android's
     // applyBoardFallbackToRows.
-    val fallbackRows: List<Pair<String, Boolean>>? = remember(fallbackState, sduiStrings) {
-        fallbackState?.let { st ->
-            val copy = resolveBoardFallbackCopy(st, sduiStrings)
-            buildList {
-                add(copy.title to true)
-                copy.detailLines.forEach { add(it to false) }
-                while (size < BOARD_FALLBACK_ROW_COUNT) add("" to false)
-            }
-        }
-    }
+    val fallbackCopy = remember(fallbackState, sduiStrings) { fallbackState?.let { resolveBoardFallbackCopy(it, sduiStrings) } }
 
     // Dream-scaled sizes — everything multiplies the uniform row baseline.
     val rowSp    = (ROW_BASE_SP * textScale).sp
@@ -237,26 +285,174 @@ fun DreamBoard(
                 }
             }
 
-            // ── Rows — scroll independently; centred when short in
-            //    fullscreen (Android's fillViewport + centre gravity). ──
+            // ── One platform at a time, when the screensaver is set to step ─────────
+    //
+    // The dream is `isInteractive = true`, so touches reach the views and the
+    // chevrons are real controls rather than decoration. Without that they
+    // would dismiss the dream instead, which is why this is a setting the
+    // SCREENSAVER owns rather than one inherited from the board.
+    //
+    // The index is remembered across recompositions but not across sessions: a
+    // screensaver that resumes on "the third platform" from last night is
+    // answering a question nobody asked. It resets whenever the platform count
+    // changes, which is what a board reshuffling under it looks like.
+    val pageCount = PlatformPages.count(boardRows)
+    val stepping = platformNav == PlatformNav.STEP && pageCount > 1
+    var page by remember(pageCount) { mutableStateOf(0) }
+    val pagedRows = remember(boardRows, page, stepping) {
+        if (stepping) PlatformPages.page(boardRows, page) else boardRows
+    }
+
+    // ── And it turns the page by itself ─────────────────────────────────────
+    //
+    // This is the answer to the open question the owner left on the screensaver:
+    // does it get the same arrows as the widget? It gets them AND it does not
+    // wait for them.
+    //
+    // A screensaver is the one surface nobody is holding. It is on a desk, a
+    // dock or a bedside table, being read from across a room, and every other
+    // surface in the app is a thing you hold and press. A page control that only
+    // moves when tapped therefore shows one platform of four to somebody who is
+    // never going to walk over and tap it — which is the widget's behaviour
+    // transplanted into a place where the gesture it assumes does not happen.
+    //
+    // The referent is the departure board hanging over a concourse: it cycles,
+    // steadily, and nobody operates it. The chevrons stay for the case where
+    // somebody IS standing there and wants the next one now, and pressing one
+    // restarts the dwell rather than fighting it — [page] is a key of this
+    // effect, so a manual step cancels the pending advance and begins a fresh
+    // full turn on the platform just chosen.
+    //
+    // Keyed on the page and the count only. A prediction push rewrites
+    // `boardRows` every thirty seconds and must NOT reset the rotation, or a
+    // busy station would sit on platform one indefinitely.
+    if (stepping) {
+        LaunchedEffect(pageCount, page) {
+            delay(DREAM_PAGE_DWELL_MS)
+            page = PlatformPages.step(page, 1, pageCount)
+        }
+    }
+
+    // ── Rows — scroll independently, and always fill from the TOP ──
+            //
+            // Fullscreen used to centre them vertically, a port of v1 Android's
+            // `fillViewport` + centre gravity. Seen on a phone for the first
+            // time on 2026-09-12 (the dream had never been rendered), that is
+            // plainly wrong in portrait: three departures floated in the middle
+            // of the panel with a hand's width of black between them and the
+            // station name above, and the same again below. It reads as a board
+            // that failed to load rather than one with three trains on it.
+            //
+            // Top is also the only arrangement with a referent. Every departure
+            // board in the network fills downward from the first row, and the
+            // empty space sits at the BOTTOM where its blank rows would be —
+            // which is what the space below now is. Centring only ever looked
+            // right on a wide short panel, and the layout does not know it is
+            // on one.
             Column(
                 modifier = Modifier
                     .weight(1f, fill = fullscreen)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(
-                    rowGap,
-                    if (fullscreen) Alignment.CenterVertically else Alignment.Top
-                )
+                verticalArrangement = Arrangement.spacedBy(rowGap, Alignment.Top),
             ) {
-                if (fallbackRows != null) {
+                if (fallbackCopy != null) BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val roomPx = with(LocalDensity.current) { (maxWidth - 8.dp).toPx() }
+                    val measurer = rememberTextMeasurer()
+                    val style = LocalTextStyle.current.copy(fontSize = rowSp)
+                    val fallbackRows = remember(fallbackCopy, roomPx, style) {
+                        buildList {
+                            add(fallbackCopy.title to true)
+                            fallbackCopy.rows { measurer.measure(it, style, maxLines = 1).size.width <= roomPx }.forEach { add(it to false) }
+                            while (size < BOARD_FALLBACK_ROW_COUNT) add("" to false)
+                        }
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(rowGap)) {
                     fallbackRows.forEach { (text, bold) ->
                         DreamActiveStrip {
-                            Text(
-                                text, color = BoardAmber, fontSize = rowSp,
-                                fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
-                                textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                val warn = bold && fallbackState?.message != null
+                                val sign = with(LocalDensity.current) { rowSp.toDp() }
+                                if (warn) BoardWarning(sign, Modifier.padding(end = 8.dp))
+                                Text(
+                                    text, color = BoardAmber, fontSize = rowSp,
+                                    fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+                                    textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                                if (warn) BoardWarning(sign, Modifier.padding(start = 8.dp))
+                            }
+                        }
+                    }
+                    }
+                } else if (pagedRows.isNotEmpty()) {
+                    // The bar between the chevrons names the platform, so the
+                    // page's own header would draw it twice — same rule the
+                    // widget follows. See PlatformPages.body.
+                    if (stepping) {
+                        DreamPlatformPager(
+                            title = PlatformPages.title(pagedRows),
+                            position = page + 1,
+                            count = pageCount,
+                            rowSp = rowSp,
+                            fullscreen = fullscreen,
+                            onStep = { delta -> page = PlatformPages.step(page, delta, pageCount) },
+                        )
+                    }
+                    // The whole station: a header per platform, its departures
+                    // under it. `row.title` is already complete — the processor
+                    // built it from the block's own lines and direction — so it
+                    // is NOT passed through `platformHeaderText`, which would
+                    // prefix the single selection's line onto a header that may
+                    // belong to a different one.
+                    (if (stepping) PlatformPages.body(pagedRows) else pagedRows).forEach { row ->
+                        when (row) {
+                            is MultiLineBoardProcessor.Row.PlatformHeader -> DreamActiveStrip {
+                                Text(
+                                    row.title,
+                                    color = BoardAmber, fontSize = rowSp, fontWeight = FontWeight.Bold,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                                )
+                            }
+                            is MultiLineBoardProcessor.Row.Departure -> DreamActiveStrip {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    // A retained departed train ("Gone") in dim
+                                    // amber, as the home board and the widget
+                                    // draw it: one fact, one shade.
+                                    val ink = if (row.departed) BoardAmberDim else BoardAmber
+                                    // Per ROW, not per selection: the processor
+                                    // decides block by block whether a prefix
+                                    // helps — a single-line block does not need
+                                    // one, a mixed block does.
+                                    if (row.linePrefix.isNotBlank()) {
+                                        Text(
+                                            row.linePrefix, color = ink, fontSize = rowSp,
+                                            fontWeight = FontWeight.Bold, maxLines = 1,
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                    }
+                                    Text(
+                                        row.destination, color = ink, fontSize = rowSp,
+                                        fontWeight = FontWeight.Normal,
+                                        modifier = Modifier.weight(1f), maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (row.eta.isNotBlank()) {
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            row.eta, color = ink, fontSize = rowSp,
+                                            fontWeight = FontWeight.Bold,
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 } else {
@@ -311,15 +507,15 @@ fun DreamBoard(
             }
 
             // ── Status strip: severity : reason ──
-            val severity = lineStatus?.statusSeverityDescription?.takeIf { it.isNotBlank() }
-                ?: "Good Service"
-            val reason = lineStatus?.reason?.takeIf { it.isNotBlank() } ?: ""
+            val lineSeverity = lineStatus?.statusSeverityDescription?.takeIf { it.isNotBlank() } ?: "Good Service"
+            val (severity, reason) = notice?.stripWith((lineSeverity to lineStatus?.reason.orEmpty()).takeIf { snapshot.someOpen }) ?: (lineSeverity to lineStatus?.reason.orEmpty())
             DreamActiveStrip {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(severity, color = BoardAmber, fontSize = statusSp, fontWeight = FontWeight.Bold)
+                    if (notice != null) BoardWarning(with(LocalDensity.current) { statusSp.toDp() }, Modifier.padding(end = 4.dp))
+                    Text(severity, color = BoardAmber, fontSize = statusSp, fontWeight = FontWeight.Bold, maxLines = if (notice != null) 1 else Int.MAX_VALUE)
                     if (reason.isNotBlank()) {
                         Text(" : ", color = BoardAmber, fontSize = statusSp)
                         Text(
@@ -332,19 +528,17 @@ fun DreamBoard(
 
             // ── Footer: brand mark + optional clock + "X ago" chronometer ──
             Box(modifier = Modifier.fillMaxWidth().padding(top = 2.dp)) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = 6.dp)
-                        .size((22f * textScale).dp)
-                        .background(StationlyRed, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "S", color = Color.White,
-                        fontSize = (12f * textScale).sp, fontWeight = FontWeight.Black
-                    )
-                }
+                // The REAL brand mark, the same one in the same place as the
+                // home board's footer and the widget's (`stationly_logo`). It
+                // was a drawn red disc with a white "S" here, so the screensaver
+                // was the one surface wearing a different logo (owner,
+                // 2026-11-23: "we have a consistent icon on the bottom left").
+                // [StationlyLogo] is the single source; it carries its own
+                // fallback for a build without bundled resources.
+                StationlyLogo(
+                    size = (22f * textScale).dp,
+                    modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp),
+                )
                 if (showClock) {
                     Box(
                         modifier = Modifier.align(Alignment.Center)
@@ -414,5 +608,83 @@ private fun DreamTflRoundel(color: Color, size: androidx.compose.ui.unit.Dp) {
             topLeft = Offset(0f, r - r * 0.17f),
             size = Size(this.size.width, r * 0.34f)
         )
+    }
+}
+
+/**
+ * The screensaver's platform stepper: a chevron either side of the name.
+ *
+ * ## Why a screensaver has buttons at all
+ * `StationlyDreamService` sets `isInteractive = true`, so touches reach the
+ * views rather than dismissing the dream. Without that these would be a picture
+ * of a control — the first tap would end the screensaver, which is the opposite
+ * of what the arrow says it does.
+ *
+ * Sized off the board's own row scale so it belongs to the panel rather than
+ * sitting on it: at fullscreen the rows are large enough to read across a room,
+ * and a fixed-size control beside them would look like a dialog.
+ *
+ * The targets are deliberately larger than the glyphs. This is tapped on a
+ * phone propped on a bedside table, at arm's length, usually in the dark.
+ */
+@Composable
+private fun DreamPlatformPager(
+    title: String,
+    position: Int,
+    count: Int,
+    rowSp: androidx.compose.ui.unit.TextUnit,
+    fullscreen: Boolean,
+    onStep: (Int) -> Unit,
+) {
+    DreamActiveStrip {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            DreamPagerChevron("\u2039", rowSp, fullscreen) { onStep(-1) }
+            Text(
+                title,
+                color = BoardAmber,
+                fontSize = rowSp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "$position/$count",
+                color = BoardAmber.copy(alpha = 0.65f),
+                fontSize = rowSp * 0.7f,
+                maxLines = 1,
+            )
+            DreamPagerChevron("\u203a", rowSp, fullscreen) { onStep(1) }
+        }
+    }
+}
+
+@Composable
+private fun DreamPagerChevron(
+    glyph: String,
+    rowSp: androidx.compose.ui.unit.TextUnit,
+    fullscreen: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            // ── Sized for the distance it is read from ──────────────────────
+            //
+            // 44dp is the minimum for a control on a phone in the hand, and a
+            // fullscreen screensaver is not that: it is on a dock or a bedside
+            // table and reached for at arm's length, often in the dark, by
+            // somebody who is not looking closely. The board rotates on its own
+            // (see DREAM_PAGE_DWELL_MS), so this is the shortcut rather than the
+            // only way through — but a shortcut you miss is worse than none,
+            // because on a dream a miss lands on the board behind it.
+            .size(if (fullscreen) 60.dp else 44.dp)
+            .pressScale(onClick = onClick, haptic = HapticType.SELECTION),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(glyph, color = BoardAmber, fontSize = rowSp * 1.3f, fontWeight = FontWeight.Bold)
     }
 }

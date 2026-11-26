@@ -1,6 +1,7 @@
 package com.stationly.app.ui.sdui
 
 import com.stationly.app.platform.DeviceIdentity
+import com.stationly.core.repository.SelectionRepository
 import com.stationly.core.repository.UserSettings
 
 /**
@@ -23,7 +24,7 @@ import com.stationly.core.repository.UserSettings
  * | `os.major` | `26` | what a `gte` gate should compare against |
  * | `widget.supported` | `yes` / `` | see below; blank rather than `no`, so `empty` reads naturally |
  * | `widget.count` | `2` | instances, not boards. `UserSettings.widgetTotal` |
- * | `board.count` | `4` | boards the user has saved |
+ * | `board.count` | `4` | boards the user has saved — one per STATION |
  *
  * ## `widget.supported` is a floor this file has to know
  * The app deploys to iOS 16 and the WIDGET EXTENSION deploys to iOS 26
@@ -58,7 +59,19 @@ object SduiFacts {
             // and "no" is truthy to both of them.
             put("widget.supported", if (widgetSupported) "yes" else "")
             put("widget.count", UserSettings.widgetTotal.value.toString())
-            put("board.count", UserSettings.widgets.value.size.toString())
+            // The user's BOARDS, which is not what this read before: it was
+            // `UserSettings.widgets`, the widget PLACEMENT map. So `board.count`
+            // answered "how many of your boards are on a widget" — zero for
+            // every user who has never placed one — under a name that says
+            // something else. A payload gating "you have no stations yet" on it
+            // would have shown that to somebody with five.
+            //
+            // Counted by hub, because that is what a board is: one per station,
+            // however many lines and directions are ticked inside it.
+            put(
+                "board.count",
+                SelectionRepository.currentSelections.distinctBy { it.groupingId }.size.toString(),
+            )
         }
     }
 

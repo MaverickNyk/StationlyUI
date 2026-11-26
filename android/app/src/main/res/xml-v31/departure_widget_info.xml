@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+. A new widget starts at the full width and 2 rows (owner,
+     2026-11-24). AOSP's launcher (LauncherAppWidgetProviderInfo.initSpans) uses
+     targetCell* only when it FITS the grid, else the cells min* needs, capped at
+     the grid. So 5 columns, the Pixel default, is exactly 5x2 whatever its cells
+     measure; 4 refuse it, 340dp fills them and 130dp is their 2 rows. 6 columns
+     would stop at 5: where the app can tell, WidgetDefaultSize switches to
+     departure_widget_info_6. A target of 6 for everyone would leave 5 column
+     phones to the fallback, whose rows depend on their cells. xml/ is the older
+     twin. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:initialKeyguardLayout="@layout/widget_departure_board"
+    android:initialLayout="@layout/widget_departure_board"
+    android:minWidth="340dp"
+    android:minHeight="130dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="110dp"
+    android:targetCellWidth="5"
+    android:targetCellHeight="2"
+    android:previewImage="@mipmap/ic_launcher"
+    android:previewLayout="@layout/widget_preview"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="86400000"
+    android:widgetCategory="home_screen"
+    android:configure="com.stationly.mobile.widget.WidgetConfigureActivity"
+    android:widgetFeatures="reconfigurable" />

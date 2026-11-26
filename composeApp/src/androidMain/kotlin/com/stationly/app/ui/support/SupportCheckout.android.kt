@@ -1,27 +1,39 @@
 package com.stationly.app.ui.support
 
 /**
- * Not wired on Android.
+ * Android takes a contribution through Google Play Billing ([PlayBilling]),
+ * never a web checkout. See [checkoutSupported] in `commonMain`.
  *
- * `composeApp`'s Android target exists so the shared UI keeps compiling for it;
- * the shipping Android app is `:android:app`, which does not depend on this
- * module and has its own screens. Rather than half-implement a Custom Tabs
- * launch that nothing calls and nobody tests, this states the position: the
- * Android money path is a separate piece of work, and when it lands it belongs
- * here as `CustomTabsIntent` over the host activity.
+ * ## Why Play Billing (Q1, answered)
+ * Google Play's payments policy treats a tip to the developer as a digital
+ * purchase, which must go through Play's own billing; the exemption for external
+ * checkout covers registered charities only, and Stationly is not one. So this
+ * mirrors iOS's StoreKit route rather than the website's Stripe one.
  *
- * A no-op rather than a throw. This is reachable only from a support surface,
- * and every one of those is already gated on `enabled` plus a non-blank
- * checkout URL — neither of which an Android build has. Crashing on a code path
- * that cannot be reached would be a worse answer than doing nothing on one that
- * can.
+ * ## Still "built and off" until the backend says otherwise
+ * This is `true` so the platform CAN take a payment. Whether it is OFFERED is
+ * `SupportMoneyConfig.enabled`, which the backend serves from
+ * `SUPPORT_MONEY_ANDROID_ENABLED`, off until the Play products exist. Both have
+ * to agree before an Android user sees a tier ladder.
+ */
+actual val checkoutSupported: Boolean = true
+
+/**
+ * A no-op, deliberately. Android never opens a web checkout (see the class note
+ * on [PlayBilling]); the backend sends Android no Stripe links, and this is the
+ * second guard behind that.
  */
 actual fun openCheckout(url: String) {
-    // Intentionally empty — see the KDoc.
+    // Intentionally empty.
 }
 
 actual fun dismissCheckout() {
-    // Nothing is ever presented — see the note on `openCheckout`.
+    // Nothing is ever presented; Play's sheet dismisses itself.
 }
 
-actual fun startNativePurchase(productId: String, amountMinor: Int, tierId: String): Boolean = false
+actual fun startNativePurchase(productId: String, amountMinor: Int, tierId: String): Boolean =
+    PlayBilling.purchase(productId, amountMinor, tierId)
+
+actual fun nativeProductId(tier: SupportTier): String = tier.googleProductId
+
+actual fun resumeNativePurchases() = PlayBilling.resume()

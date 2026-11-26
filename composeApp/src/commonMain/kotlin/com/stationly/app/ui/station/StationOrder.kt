@@ -237,8 +237,10 @@ private fun StationOrderChip(
                     Spacer(Modifier.width(4.dp))
                 }
                 Text(
-                    station.lines.joinToString(" · ") { LineShortNames.shortName(it) }
-                        .ifBlank { "No lines yet" },
+                    // `listLines`, not shortName per line: one line gets its
+                    // full name because the card has room for it. This used to
+                    // render "Mild." for a station on the Mildmay line.
+                    LineShortNames.listLines(station.lines).ifBlank { "No lines yet" },
                     fontSize = 11.sp,
                     color = onBackground.copy(alpha = 0.55f),
                     maxLines = 1,
@@ -319,8 +321,11 @@ private fun StationOrderRow(
                 }
                 Spacer(Modifier.width(2.dp))
                 Text(
-                    station.lines.joinToString(" · ") { LineShortNames.displayName(it) }
-                        .ifBlank { "No lines yet" },
+                    // The other half of the same rule. This row took the FULL
+                    // name for every line, so a four-line interchange rendered
+                    // "Piccadilly · Metropolitan · Circle · Victoria" and lost
+                    // most of it to the ellipsis. See LineShortNames.listLines.
+                    LineShortNames.listLines(station.lines).ifBlank { "No lines yet" },
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
                     maxLines = 1,

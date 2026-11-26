@@ -191,13 +191,20 @@ data class UserSelection(
      */
     val directionDestinations: List<String> = emptyList(),
     /**
-     * Where this direction heads, as the picker put it — "Putney Bridge".
+     * The direction's NEXT STOP: the second half of the picker's headline,
+     * "Levana Close" for "Towards Levana Close". It is the backend's `towards`
+     * (`SduiDropdownOption.towards`), which TfL fills with the next stop.
      *
-     * The answer for anything with no compass bearing, which is every bus: TfL
-     * publishes no direction for a route, the backend returns the literal
-     * "Towards" as [directionName], and "Inbound" is not something a passenger
-     * standing at a stop can act on. The picker's own headline is "Towards
-     * Putney Bridge"; this is the second half of it.
+     * **Not the terminus, despite the name.** This used to be documented as
+     * "where this direction heads, Putney Bridge", and that is what a reader
+     * builds on. On device (QA 2026-11-23) Smithwood Close's 39 inbound stores
+     * "Levana Close" here and "Putney Bridge Station" in [directionDestinations].
+     * Use [directionDestinations] to say where a direction ENDS; use this for
+     * what a bus stop flag prints ("towards Levana Close").
+     *
+     * It matters for buses, which have no compass bearing: TfL publishes no
+     * direction for a route, the backend returns the literal "Towards" as
+     * [directionName], and "Inbound" means nothing to a passenger.
      *
      * Blank on a board saved before it was stored, and on the rare direction TfL
      * gives no towards for at all.
@@ -209,6 +216,15 @@ data class UserSelection(
     /** True when this board shows every departure in its direction. */
     val isUnfiltered: Boolean
         get() = filterMode == FilterMode.ALL || destinationIds.isEmpty()
+
+    /**
+     * Where this direction ENDS when it ends in one place ("Putney Bridge
+     * Station"); blank when it divides or is unknown. What a bus header names
+     * after "→" (see `MultiLineBoardProcessor.Feed.terminus`). A getter, so it
+     * is never serialised or stored.
+     */
+    val singleTerminus: String
+        get() = directionDestinations.singleOrNull().orEmpty()
 
     /**
      * What this board's CARD is keyed on. Falls back to [station] for rows saved
@@ -286,7 +302,7 @@ data class LineStatus(
 @Serializable
 data class PredictionsPayload(
     val lines: Map<String, LineData> = emptyMap(),
-    val id: String,
+    val id: String = "",
     /**
      * Station name, DEFAULTED because the backend sends `null` for it.
      *
@@ -321,7 +337,7 @@ data class PredictionsPayload(
  */
 @Serializable
 data class LineData(
-    val id: String,
+    val id: String = "",
     /** Defaulted for the same reason as [PredictionsPayload.name] — a null here would
      *  reject the whole payload, and one unnamed line must not blank a board. */
     val name: String = "",
@@ -334,7 +350,7 @@ data class LineData(
  */
 @Serializable
 data class DirectionPredictions(
-    val preds: List<PredictionItem>
+    val preds: List<PredictionItem> = emptyList()
 )
 
 /**
@@ -382,7 +398,22 @@ data class WidgetState(
     val direction: String = "",
     // Transport mode (e.g. "tube"). Same optional+defaulted pattern; the iOS
     // widget tints the header roundel per mode like Android's mode_icon.
-    val mode: String = ""
+    val mode: String = "",
+    /**
+     * The naptan these departures were fetched from, so a listener can tell
+     * WHICH board changed.
+     *
+     * Added because Android's `AndroidWidgetManager.updateWidget` broadcasts on
+     * every processed payload and the receiver, having no id to go on, redrew
+     * every placed widget. One refresh produced 156 renders across four
+     * widgets, arriving as a burst of flashes; every FCM push did a smaller
+     * version of the same thing.
+     *
+     * Blank means "not stated", which keeps the old behaviour of redrawing
+     * everything. That is the right default for a caller that genuinely does
+     * not know, and it is what `showWaitingState` and `clearWidgetData` are.
+     */
+    val stationId: String = ""
 )
 
 /**

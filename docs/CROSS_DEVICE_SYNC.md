@@ -5,7 +5,7 @@ _Client design notes. Introduced in commit `e4d92c1` (branch `dev_25Apr`)._
 Covers how the Android app keeps a user's state in lockstep across devices, how it
 participates in the backend's per-device session model, and the fast board-setup
 flow. Pairs with `stationly-backend/docs/SESSIONS_AND_SUBSCRIPTIONS.md`. Touch points:
-`UserSyncCoordinator`, `DeviceIdProvider`, `FcmMessagingService`, `FcmTokenRegistrar`,
+`UserSyncCoordinator`, `DeviceIdentity`, `FcmMessagingService`, `FcmTokenRegistrar`,
 `FirebaseAuthManager`, `LoginViewModel`, `SelectionViewModel`, `UserSyncRepository`,
 `StationLifecycleUseCase`.
 

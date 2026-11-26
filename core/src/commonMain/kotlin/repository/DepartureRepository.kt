@@ -10,6 +10,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -171,6 +172,9 @@ class DepartureRepository(
                     }
                 }
 
+            // ── Closures at them ── one request, beside the rest, never failing it.
+            val noticeJob = async { StationNoticeStore.refresh(selections) { apiService.getStationNotices(it) } }
+
             // ── Unique stops ──
             val stopJobs = selections
                 .groupBy { it.station }
@@ -207,6 +211,8 @@ class DepartureRepository(
 
             statusJobs.awaitAll()
             val succeeded = stopJobs.awaitAll().count { it }
+            // A slow one must not make a refresh that has its departures look failed.
+            if (withTimeoutOrNull(NOTICE_GRACE_MS) { noticeJob.await() } == null) noticeJob.cancel()
             RefreshResult(requested = stopJobs.size, succeeded = succeeded)
         } finally {
             _isLoading.value = false
@@ -248,6 +254,7 @@ class DepartureRepository(
          * about its own bound, which has happened.
          */
         const val STOP_TIMEOUT_MS = 15_000L
+        private const val NOTICE_GRACE_MS = 1_500L
     }
 
     /**

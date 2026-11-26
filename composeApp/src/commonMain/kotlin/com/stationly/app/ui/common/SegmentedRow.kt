@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
+import com.stationly.app.platform.HapticType
 
 /**
  * A row of mutually exclusive options with the selection sliding between them.
@@ -116,7 +117,17 @@ fun <T> SegmentedRow(
                     Box(
                         modifier = Modifier
                             .width(segmentWidth)
-                            .pressScale(onClick = { onSelect(option) }, scale = 0.94f),
+                            // SELECTION, not TAP. A segmented control is one
+                            // exclusive choice and the pill slides to the
+                            // segment you picked, so the message is "you are on
+                            // that one now" — lighter and drier than "that
+                            // registered". This is the Light/Dark/System row and
+                            // the Expanded/Collapsed row, among others.
+                            .pressScale(
+                                onClick = { onSelect(option) },
+                                scale = 0.94f,
+                                haptic = HapticType.SELECTION,
+                            ),
                         contentAlignment = Alignment.Center,
                     ) {
                         Row(

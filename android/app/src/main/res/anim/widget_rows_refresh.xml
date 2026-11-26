@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     The stagger for widget_row_roll_in: each row starts 15% of the row
+     animation (36ms) after the one above. A full board of nine rows has turned
+     over in about 0.6s, well before the next redraw, which would cut it off
+     (see WidgetMotion.REFRESH and REFRESH_SNAPSHOT_MS).
+-->
+<layoutAnimation xmlns:android="http://schemas.android.com/apk/res/android"
+    android:animation="@anim/widget_row_roll_in"
+    android:animationOrder="normal"
+    android:delay="15%" />
