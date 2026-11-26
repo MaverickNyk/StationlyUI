@@ -404,7 +404,9 @@ operator adds iOS. The decision is one pure function, `askTriggerAt`, tested in
 only on an account change.
 
 ### 9.3 Running costs line
-`SUPPORT_MONEY_MONTHLY_COST_MINOR` (pence) turns on `support_money.progress.*`:
+`SUPPORT_MONEY_MONTHLY_COST_MINOR` (pence; 60000 = £600, set in the backend's
+`.env.defaults` with the other reach settings, not GitHub secrets) turns on
+`support_money.progress.*`:
 "Stationly costs about £X a month to run. Supporters have given £Y so far in
 <month>." with a bar, in the amounts sheet and on the Profile card. Off when
 unset. Until the month's REAL total reaches `SUPPORT_MONEY_SHOW_RAISED_FROM_MINOR`
