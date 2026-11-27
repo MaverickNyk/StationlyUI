@@ -118,9 +118,22 @@
       ]
     }
     </script>
+    <script>
+        /* Put the visitor's own store first. The App Store badge is first in the
+           markup (iPhone and desktop); on Android, Google Play moves in front of it.
+           Moving the element, not just the visual order, keeps tab order matching. */
+        (function () {
+            if (!/Android/i.test(navigator.userAgent || '')) return;
+            document.addEventListener('DOMContentLoaded', function () {
+                var play = document.querySelector('.store-badges .store-badge-play');
+                if (play && play.previousElementSibling) play.parentNode.insertBefore(play, play.parentNode.firstElementChild);
+            });
+        })();
+    </script>
 </head>
 
 <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
 
     <!-- Header -->
     <header class="header">
@@ -147,7 +160,7 @@
         </div>
     </header>
 
-    <main>
+    <main id="main-content">
 
         <!-- ══════════════════════════════════════
              HOME TAB
@@ -165,7 +178,7 @@
                             <h1 class="gradient-text">The only departure<br>board you need.</h1>
                             <p class="hero-subtitle">Live TfL departures on your home screen. Just glance at your phone. No tapping, no apps to open.</p>
                             <div class="store-badges">
-                                <a href="/mobile/app/ios/" class="store-badge" target="_blank" rel="noopener noreferrer" aria-label="Download Stationly on the Apple App Store">
+                                <a href="/mobile/app/ios/" class="store-badge store-badge-ios" target="_blank" rel="noopener noreferrer" aria-label="Download Stationly on the Apple App Store">
                                     <svg class="store-badge-icon" viewBox="0 0 24 24" fill="currentColor">
                                         <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
                                     </svg>
@@ -174,7 +187,7 @@
                                         <span class="store-badge-name">App Store</span>
                                     </div>
                                 </a>
-                                <a href="/mobile/app/android/" class="store-badge" target="_blank" rel="noopener noreferrer" aria-label="Download Stationly on Google Play">
+                                <a href="/mobile/app/android/" class="store-badge store-badge-play" target="_blank" rel="noopener noreferrer" aria-label="Download Stationly on Google Play">
                                     <svg class="store-badge-icon" viewBox="0 0 24 24" fill="currentColor">
                                         <path d="M3.18 23.76c.37.2.8.22 1.2.06l11.4-6.58-2.5-2.5-10.1 9.02zM.5 1.5C.19 1.88 0 2.42 0 3.1v17.8c0 .68.19 1.22.5 1.6l.08.08 9.97-9.97v-.24L.58 1.42.5 1.5zM20.3 10.37l-2.65-1.53-2.8 2.8 2.8 2.8 2.67-1.54c.76-.44.76-1.09-.02-1.53zM4.38.18L15.78 6.76l-2.5 2.5L3.18.24C3.58.08 4.01.1 4.38.18z"/>
                                     </svg>
@@ -189,7 +202,7 @@
 
                         <div class="hero-visual">
                             <div class="widget-glow"></div>
-                            <img src="assets/widget_board_wide.png" alt="The Stationly home screen widget: a live Oxford Circus departure board for the Victoria line to Brixton, with next trains in 1, 9 and 11 minutes" class="widget-hero-img" width="1500" height="535" fetchpriority="high" decoding="async">
+                            <picture><source srcset="assets/widget_board_wide.webp" type="image/webp"><img src="assets/widget_board_wide.png" alt="The Stationly home screen widget: a live Oxford Circus departure board for the Victoria line to Brixton, with next trains in 1, 9 and 11 minutes" class="widget-hero-img" width="1500" height="535" fetchpriority="high" decoding="async"></picture>
                         </div>
                     </div>
                 </div>
@@ -277,8 +290,9 @@
                                 <h3>Every TfL line, live</h3>
                                 <p>Real-time departures across Tube, Overground, DLR, Elizabeth line and bus, live from TfL and kept up to date all day.</p>
                             </div>
-                            <div class="feature-card-shot">
-                                <img src="assets/app_main.png" alt="Stationly app showing live Victoria line departures to Brixton from Oxford Circus, with platform, countdown and a minor-delays status" loading="lazy" width="448" height="1000">
+                            <div class="feature-card-shot feature-card-shot-duo">
+                                <picture><source srcset="assets/app_stations_v2.webp" type="image/webp"><img class="shot-back" src="assets/app_stations_v2.jpg" alt="Stationly list of saved stations: King's Cross St. Pancras, Liverpool Street and Highbury &amp; Islington, each with its next departures" loading="lazy" width="741" height="1100"></picture>
+                                <picture><source srcset="assets/app_board_v2.webp" type="image/webp"><img class="shot-front" src="assets/app_board_v2.jpg" alt="Stationly live board for King's Cross St. Pancras with the Victoria, Piccadilly and Northern lines, platforms and next trains" loading="lazy" width="640" height="1100"></picture>
                             </div>
                         </div>
                         <div class="feature-col">
@@ -317,7 +331,7 @@
                         </div>
                         <div class="spotlight-visual reveal" style="transition-delay: 0.15s;">
                             <div class="spotlight-glow"></div>
-                            <img src="assets/widget_board.png" alt="A Stationly widget showing live Victoria line departures from Oxford Circus: next trains Due, 2 and 5 minutes, with a minor-delays note and a last-updated timestamp" class="spotlight-img" width="1143" height="539">
+                            <picture><source srcset="assets/widget_board.webp" type="image/webp"><img src="assets/widget_board.png" alt="A Stationly widget showing live Victoria line departures from Oxford Circus: next trains Due, 2 and 5 minutes, with a minor-delays note and a last-updated timestamp" class="spotlight-img" width="1143" height="539"></picture>
                         </div>
                     </div>
                 </div>
@@ -358,10 +372,10 @@
                         <div class="screensaver-glow"></div>
                         <div class="device-landscape">
                             <div class="device-screen">
-                                <img class="screensaver-img"
+                                <picture><source srcset="assets/screensaver_dock.webp" type="image/webp"><img class="screensaver-img"
                                      src="assets/screensaver_dock.png"
                                      alt="Stationly full-screen screen saver on a docked Android phone: a large 20:02 clock beside a live Oxford Circus departure board for the Victoria line to Brixton"
-                                     loading="lazy" width="1600" height="717">
+                                     loading="lazy" width="1600" height="717"></picture>
                             </div>
                             <span class="device-cam" aria-hidden="true"></span>
                         </div>
@@ -511,7 +525,7 @@
                     <p>Widget playing up? Something not showing right? Or just want to tell us what you think? We're one email away.</p>
                 </div>
 
-                <div class="grid grid-2" style="max-width: 900px; margin: 3rem auto 0;">
+                <div class="grid grid-2" style="max-width: 900px; margin: 2.5rem auto 0;">
                     <div class="glass contact-card">
                         <h3>Need Support?</h3>
                         <p>For bugs, crashes, and "why isn't this working" questions.</p>
@@ -634,6 +648,7 @@
                     <a href="/support/">Support Stationly</a>
                     <a href="/privacy/">Privacy Policy</a>
                     <a href="/terms/">Terms of Service</a>
+                    <a href="#developer" onclick="switchTab('developer'); return false;">Developers</a>
                     <a href="#" onclick="manageCookies(event)">Cookie Settings</a>
                 </div>
             </div>
@@ -644,7 +659,6 @@
         </div>
     </footer>
 
-    <!-- Cookie consent (UK PECR / UK GDPR) is injected by the shared /js/cookie-consent.js?v=1 on every page -->
 
     <script src="/js/staging-banner.js" defer></script>
 
@@ -653,10 +667,9 @@
         // Tab init - runs before main.js to prevent flash
         (function () {
             try {
-                var hash = window.location.hash.substring(1) || 'home';
-                var el = document.getElementById(hash);
-                if (el) el.classList.add('active');
-                else document.getElementById('home').classList.add('active');
+                var hash = window.location.hash.substring(1);
+                if (['home', 'developer', 'support'].indexOf(hash) === -1) hash = 'home';
+                document.getElementById(hash).classList.add('active');
                 document.querySelectorAll('.nav-btn').forEach(function (b) {
                     b.classList.toggle('active', b.getAttribute('data-tab') === hash);
                 });
@@ -685,7 +698,7 @@
         if (docsIframe) docsIframe.src = docsUrl;
         if (docsLink) docsLink.href = docsUrl;
 
-        // Cookie consent is handled by the shared /js/cookie-consent.js?v=1 (loaded on every page).
+        // Cookie consent is handled by /js/cookie-consent.js, loaded at the end of <body> on every page.
 
         // FAQ toggle (single-open accordion, with ARIA state)
         function toggleFaq(btn) {
@@ -703,6 +716,8 @@
         }
     </script>
     <script type="module" src="js/main.js"></script>
+    <!-- Cookie consent (UK PECR / UK GDPR): shows the banner until a choice is saved, and powers the footer "Cookie Settings" link. -->
+    <script src="/js/cookie-consent.js?v=2"></script>
 </body>
 
 </html>
