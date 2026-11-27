@@ -50,6 +50,7 @@
 </head>
 
 <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
 
     <!-- Header -->
     <header class="header">
@@ -82,7 +83,7 @@
         </div>
     </header>
 
-    <main>
+    <main id="main-content">
         <!-- ── Hero: the ask, and the picker ── -->
         <section class="sp-hero" aria-labelledby="sp-title">
             <div class="sp-hero-glow" aria-hidden="true"></div>
@@ -166,6 +167,7 @@
                     <a href="/support/">Support Stationly</a>
                     <a href="/privacy/">Privacy Policy</a>
                     <a href="/terms/">Terms of Service</a>
+                    <a href="/#developer">Developers</a>
                     <a href="#" onclick="manageCookies(event)">Cookie Settings</a>
                 </div>
             </div>
@@ -176,7 +178,7 @@
     </footer>
 
     <!-- Cookie consent -->
-    <script src="/js/cookie-consent.js"></script>
+    <script src="/js/cookie-consent.js?v=2"></script>
 
     <!-- Tier picker, board animation and the thank-you on return from Stripe -->
     <script type="module" src="../js/support.js"></script>

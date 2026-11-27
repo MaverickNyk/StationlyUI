@@ -45,13 +45,17 @@
     if (choice === 'accepted') enableOptionalCookies();
     else disableOptionalCookies();
   }
+  var hideTimer = null;
   function show() {
+    clearTimeout(hideTimer);
     banner.removeAttribute('hidden');
-    requestAnimationFrame(function () { banner.classList.add('show'); });
+    void banner.offsetWidth;   // apply the un-hide first, so the slide-in still animates
+    banner.classList.add('show');
   }
   function hide() {
     banner.classList.remove('show');
-    setTimeout(function () { banner.setAttribute('hidden', ''); }, 320);
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(function () { banner.setAttribute('hidden', ''); }, 320);
   }
   function set(choice) {
     try { localStorage.setItem(CONSENT_KEY, choice); } catch (e) {}
