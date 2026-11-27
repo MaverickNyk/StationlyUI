@@ -646,9 +646,14 @@
 .faq-answer {
     max-height: 0;
     overflow: hidden;
-    transition: max-height 0.3s ease;
+    visibility: hidden;
+    transition: max-height 0.3s ease, visibility 0s linear 0.3s;
 }
-.faq-item.open .faq-answer { max-height: 200px; }
+.faq-item.open .faq-answer {
+    max-height: 32rem;
+    visibility: visible;
+    transition: max-height 0.3s ease, visibility 0s;
+}
 .faq-answer p {
     padding-bottom: 1.25rem;
     font-size: 0.97rem;
@@ -1055,4 +1060,83 @@ a.nav-btn { text-decoration: none; }
     .keep-free { grid-template-columns: 1fr; text-align: center; padding: 2rem 1.5rem; gap: 1.5rem; }
     .keep-free p { margin: 0 auto; }
     .keep-free-cta { justify-self: center; }
+}
+
+/* ── Gentle support nudges: hero line, keep-free note, Help line, footer line ── */
+.hero-support-note,
+.help-support-note,
+.footer-kept {
+    color: var(--text-muted);
+    text-wrap: balance;
+}
+.hero-support-note {
+    margin: 1.25rem 0 0;
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+.help-support-note {
+    max-width: 900px;
+    margin: 1.75rem auto 0;
+    text-align: center;
+    font-size: 0.95rem;
+}
+.help-support-note .nav-heart {
+    color: var(--amber);
+    vertical-align: -1px;
+    margin-right: 0.4rem;
+}
+.footer-kept {
+    margin: 1.75rem 0 0;
+    text-align: center;
+    font-size: 0.85rem;
+}
+/* The links are amber and underlined, so they never rely on colour alone. */
+.hero-support-note a,
+.help-support-note a,
+.footer-kept a {
+    color: var(--amber);
+    font-weight: 600;
+    text-decoration: none;
+    border-bottom: 1px solid rgba(245, 166, 35, 0.35);
+    transition: border-color 0.2s var(--ease-out), color 0.2s var(--ease-out);
+}
+.hero-support-note a:focus-visible,
+.help-support-note a:focus-visible,
+.footer-kept a:focus-visible { color: #FFD27A; border-color: rgba(255, 210, 122, 0.8); }
+@media (hover: hover) and (pointer: fine) {
+    .hero-support-note a:hover,
+    .help-support-note a:hover,
+    .footer-kept a:hover { color: #FFD27A; border-color: rgba(255, 210, 122, 0.8); }
+}
+/* Short phrases that must not split across lines, so a link never ends up alone. */
+.keep-together { white-space: nowrap; }
+
+.keep-free-action {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+}
+.keep-free-note {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+.faq-answer p a {
+    color: var(--amber);
+    font-weight: 600;
+}
+
+/* Contact cards: long email addresses pushed the cards past the screen edge. */
+.contact-card { min-width: 0; }
+.email-link { overflow-wrap: anywhere; }
+
+@media (max-width: 1024px) {
+    .contact-card { padding: 2rem 1.25rem; }
+    .email-link { font-size: 1.15rem; }
+}
+@media (max-width: 768px) {
+    .hero-support-note { font-size: 0.85rem; }
+    .keep-free-action { justify-self: center; }
 }

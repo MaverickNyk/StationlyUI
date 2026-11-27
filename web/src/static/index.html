@@ -110,7 +110,9 @@
             { "@type": "Question", "name": "How accurate is the departure data?",
               "acceptedAnswer": { "@type": "Answer", "text": "Stationly pulls data directly from TfL Open Data, the same source used by official TfL apps and journey planners. Every board shows exactly when the data was last refreshed." } },
             { "@type": "Question", "name": "Which platforms does Stationly support?",
-              "acceptedAnswer": { "@type": "Answer", "text": "Stationly is available for free on both iOS (iPhone) and Android. You can download it directly from the Apple App Store and Google Play Store." } }
+              "acceptedAnswer": { "@type": "Answer", "text": "Stationly is available for free on both iOS (iPhone) and Android. You can download it directly from the Apple App Store and Google Play Store." } },
+            { "@type": "Question", "name": "Is Stationly really free?",
+              "acceptedAnswer": { "@type": "Answer", "text": "Yes. No adverts, no paywall and nothing locked away, for everyone. That works because some of the people who use it choose to give a little back, and it pays for the servers and live data behind every board. If Stationly has ever saved you a run for a train, you can <a href=\"https://stationly.co.uk/support/\">join them here</a>." } }
           ]
         }
       ]
@@ -182,6 +184,7 @@
                                     </div>
                                 </a>
                             </div>
+                            <p class="hero-support-note">Free for everyone, thanks to the people who <span class="keep-together">chip in. <a href="/support/" aria-label="Join them in supporting Stationly">Join them</a></span></p>
                         </div>
 
                         <div class="hero-visual">
@@ -320,6 +323,29 @@
                 </div>
             </section>
 
+            <!-- ── Keep Stationly free ── -->
+            <section class="section reveal" aria-labelledby="keep-free-heading">
+                <div class="container">
+                    <div class="keep-free">
+                        <div>
+                            <div class="launch-badge launch-badge-amber" style="margin-bottom: 1rem;">
+                                <span class="launch-dot"></span>
+                                Free forever &middot; No ads
+                            </div>
+                            <h2 id="keep-free-heading">Keep Stationly free.</h2>
+                            <p>We work hard to keep it fast, free and completely ad free. A little support covers the servers and live data behind your boards, and everyone else's too.</p>
+                        </div>
+                        <div class="keep-free-action">
+                            <a href="/support/" class="keep-free-cta">
+                                Support Stationly
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                            </a>
+                            <span class="keep-free-note">One payment. Nothing renews.</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- ── Screen Saver / Docked Board ── -->
             <section class="section screensaver-section" aria-labelledby="screensaver-heading">
                 <div class="container">
@@ -382,26 +408,6 @@
                             <h3>Just glance</h3>
                             <p>Look at your home screen. See the next departure. No tapping. Sprint or stroll, your choice.</p>
                         </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- ── Keep Stationly free ── -->
-            <section class="section reveal" aria-labelledby="keep-free-heading">
-                <div class="container">
-                    <div class="keep-free">
-                        <div>
-                            <div class="launch-badge launch-badge-amber" style="margin-bottom: 1rem;">
-                                <span class="launch-dot"></span>
-                                Free forever &middot; No ads
-                            </div>
-                            <h2 id="keep-free-heading">Keep Stationly free.</h2>
-                            <p>We work hard to keep it fast, free and completely ad free. A little support covers the servers and live data behind your boards.</p>
-                        </div>
-                        <a href="/support/" class="keep-free-cta">
-                            Support Stationly
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                        </a>
                     </div>
                 </div>
             </section>
@@ -518,6 +524,8 @@
                     </div>
                 </div>
 
+                <p class="help-support-note"><span class="keep-together"><svg class="nav-heart" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-4.4-9.5-9C.8 8.6 3 5 6.5 5c2 0 3.5 1.2 5.5 3.2C14 6.2 15.5 5 17.5 5 21 5 23.2 8.6 21.5 12 19 16.6 12 21 12 21z"/></svg>Enjoying Stationly?</span> It stays free because people like you <span class="keep-together">chip in. <a href="/support/">Support Stationly</a></span></p>
+
                 <!-- FAQ -->
                 <div class="faq-section">
                     <h2 style="text-align:center; margin-bottom: 2.5rem;">Common questions</h2>
@@ -587,6 +595,15 @@
                         </div>
                         <div class="faq-item">
                             <button class="faq-question" onclick="toggleFaq(this)" aria-expanded="false">
+                                <span>Is Stationly really free?</span>
+                                <span class="faq-chevron">+</span>
+                            </button>
+                            <div class="faq-answer">
+                                <p>Yes. No adverts, no paywall and nothing locked away, for everyone. That works because some of the people who use it choose to give a little back, and it pays for the servers and live data behind every board. If Stationly has ever saved you a run for a train, you can <a href="/support/">join them here</a>.</p>
+                            </div>
+                        </div>
+                        <div class="faq-item">
+                            <button class="faq-question" onclick="toggleFaq(this)" aria-expanded="false">
                                 <span>How do I add multiple stations to the widget?</span>
                                 <span class="faq-chevron">+</span>
                             </button>
@@ -620,7 +637,8 @@
                     <a href="#" onclick="manageCookies(event)">Cookie Settings</a>
                 </div>
             </div>
-            <div style="margin-top: 1.75rem; text-align: center; opacity: 0.3; font-size: 0.82rem;">
+            <p class="footer-kept">Made in London. Kept free by the people who <span class="keep-together">use it. <a href="/support/">Thank you</a></span></p>
+            <div style="margin-top: 0.75rem; text-align: center; opacity: 0.3; font-size: 0.82rem;">
                 &copy; 2026 STATIONLY LTD. All rights reserved.
             </div>
         </div>
