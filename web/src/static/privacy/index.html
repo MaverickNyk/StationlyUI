@@ -108,18 +108,36 @@
             line-height: 1.6;
         }
         a.legal-link {
-            color: var(--primary);
+            color: var(--primary-text);
             text-decoration: none;
         }
         a.legal-link:hover { text-decoration: underline; }
         @media (max-width: 600px) {
             .legal-hero h1 { font-size: 1.8rem; }
-            .data-table { font-size: 0.8rem; }
+            /* Phones: each row becomes a small card, labelled from the header,
+               instead of four columns squeezed to a few words each. */
+            .data-table, .data-table tbody, .data-table tr, .data-table td { display: block; width: 100%; }
+            .data-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+            .data-table { font-size: 0.88rem; }
+            .data-table tr { padding: 0.85rem 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
+            .data-table td { padding: 0.15rem 0; border: 0; }
+            .data-table td:first-child { color: white; font-weight: 700; padding-bottom: 0.35rem; }
+            .data-table td:nth-child(n+2)::before {
+                display: block;
+                font-size: 0.7rem;
+                font-weight: 700;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                color: var(--text-muted);
+                margin-top: 0.35rem;
+            }
+            .data-table td:nth-child(n+2)::before { content: attr(data-label); }
         }
     </style>
 </head>
 
 <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
 
     <header class="header">
         <div class="container nav-container">
@@ -143,7 +161,7 @@
         </div>
     </header>
 
-    <main>
+    <main id="main-content">
         <div class="legal-hero">
             <div class="container">
                 <h1>Privacy Policy</h1>
@@ -162,75 +180,75 @@
 
             <div class="legal-section">
                 <h2>2. Data We Collect</h2>
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Category</th>
-                            <th>Data</th>
-                            <th>Why We Collect It</th>
-                            <th>Legal Basis</th>
+                <table class="data-table" role="table">
+                    <thead role="rowgroup">
+                        <tr role="row">
+                            <th role="columnheader">Category</th>
+                            <th role="columnheader">Data</th>
+                            <th role="columnheader">Why We Collect It</th>
+                            <th role="columnheader">Legal Basis</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        <tr>
-                            <td><strong style="color:white">Account</strong></td>
-                            <td>Name, email address, account ID, and your profile picture if you sign in with Google or Apple</td>
-                            <td>Identifying and securing your account</td>
-                            <td>Contract</td>
+                    <tbody role="rowgroup">
+                        <tr role="row">
+                            <td role="cell" data-label="Category"><strong style="color:white">Account</strong></td>
+                            <td role="cell" data-label="Data">Name, email address, account ID, and your profile picture if you sign in with Google or Apple</td>
+                            <td role="cell" data-label="Why We Collect It">Identifying and securing your account</td>
+                            <td role="cell" data-label="Legal Basis">Contract</td>
                         </tr>
-                        <tr>
-                            <td><strong style="color:white">Boards and settings</strong></td>
-                            <td>Saved stations, lines, directions, filters, the order of your stations, and line alert level</td>
-                            <td>Showing your boards and syncing them across your devices</td>
-                            <td>Contract</td>
+                        <tr role="row">
+                            <td role="cell" data-label="Category"><strong style="color:white">Boards and settings</strong></td>
+                            <td role="cell" data-label="Data">Saved stations, lines, directions, filters, the order of your stations, and line alert level</td>
+                            <td role="cell" data-label="Why We Collect It">Showing your boards and syncing them across your devices</td>
+                            <td role="cell" data-label="Legal Basis">Contract</td>
                         </tr>
-                        <tr>
-                            <td><strong style="color:white">Location (optional)</strong></td>
-                            <td>Your device's location, only when you ask for nearby stations</td>
-                            <td>Finding the stations and stops near you. It is sent once to search and is not stored</td>
-                            <td>Consent (you grant location permission, and can refuse it)</td>
+                        <tr role="row">
+                            <td role="cell" data-label="Category"><strong style="color:white">Location (optional)</strong></td>
+                            <td role="cell" data-label="Data">Your device's location, only when you ask for nearby stations</td>
+                            <td role="cell" data-label="Why We Collect It">Finding the stations and stops near you. It is sent once to search and is not stored</td>
+                            <td role="cell" data-label="Legal Basis">Consent (you grant location permission, and can refuse it)</td>
                         </tr>
-                        <tr>
-                            <td><strong style="color:white">Push token and device record</strong></td>
-                            <td>Firebase Cloud Messaging token, an app installation ID, device model, operating system and app version</td>
-                            <td>Delivering live departures, line alerts and sync to your devices, and keeping each device signed in correctly</td>
-                            <td>Contract</td>
+                        <tr role="row">
+                            <td role="cell" data-label="Category"><strong style="color:white">Push token and device record</strong></td>
+                            <td role="cell" data-label="Data">Firebase Cloud Messaging token, an app installation ID, device model, operating system and app version</td>
+                            <td role="cell" data-label="Why We Collect It">Delivering live departures, line alerts and sync to your devices, and keeping each device signed in correctly</td>
+                            <td role="cell" data-label="Legal Basis">Contract</td>
                         </tr>
-                        <tr>
-                            <td><strong style="color:white">Activity history</strong></td>
-                            <td>Actions in the app linked to your account, such as boards added or removed, settings changed, widgets placed, notifications opened, and steps in the Support Stationly flow</td>
-                            <td>Diagnosing problems with your account, understanding which features are used, and improving the Service</td>
-                            <td>Legitimate interests</td>
+                        <tr role="row">
+                            <td role="cell" data-label="Category"><strong style="color:white">Activity history</strong></td>
+                            <td role="cell" data-label="Data">Actions in the app linked to your account, such as boards added or removed, settings changed, widgets placed, notifications opened, and steps in the Support Stationly flow</td>
+                            <td role="cell" data-label="Why We Collect It">Diagnosing problems with your account, understanding which features are used, and improving the Service</td>
+                            <td role="cell" data-label="Legal Basis">Legitimate interests</td>
                         </tr>
-                        <tr>
-                            <td><strong style="color:white">App analytics</strong></td>
-                            <td>Screen views, feature use and an app instance ID collected by Firebase Analytics; on Android this includes the device advertising ID</td>
-                            <td>Understanding, in aggregate, how the apps are used</td>
-                            <td>Legitimate interests</td>
+                        <tr role="row">
+                            <td role="cell" data-label="Category"><strong style="color:white">App analytics</strong></td>
+                            <td role="cell" data-label="Data">Screen views, feature use and an app instance ID collected by Firebase Analytics; on Android this includes the device advertising ID</td>
+                            <td role="cell" data-label="Why We Collect It">Understanding, in aggregate, how the apps are used</td>
+                            <td role="cell" data-label="Legal Basis">Legitimate interests</td>
                         </tr>
-                        <tr>
-                            <td><strong style="color:white">Contributions (optional)</strong></td>
-                            <td>If you choose to support Stationly: the amount, currency, date and the store's transaction reference. Card and payment details are handled by Apple, Google or Stripe and never reach us</td>
-                            <td>Recording your contribution and showing the Supporter mark</td>
-                            <td>Contract</td>
+                        <tr role="row">
+                            <td role="cell" data-label="Category"><strong style="color:white">Contributions (optional)</strong></td>
+                            <td role="cell" data-label="Data">If you choose to support Stationly: the amount, currency, date and the store's transaction reference. Card and payment details are handled by Apple, Google or Stripe and never reach us</td>
+                            <td role="cell" data-label="Why We Collect It">Recording your contribution and showing the Supporter mark</td>
+                            <td role="cell" data-label="Legal Basis">Contract</td>
                         </tr>
-                        <tr>
-                            <td><strong style="color:white">Website contributions (optional)</strong></td>
-                            <td>If you contribute on stationly.co.uk without an account: the name and email address you give Stripe, the amount and the transaction reference</td>
-                            <td>Sending your receipt and thank-you email, and keeping accounting records</td>
-                            <td>Contract and legal obligation</td>
+                        <tr role="row">
+                            <td role="cell" data-label="Category"><strong style="color:white">Website contributions (optional)</strong></td>
+                            <td role="cell" data-label="Data">If you contribute on stationly.co.uk without an account: the name and email address you give Stripe, the amount and the transaction reference</td>
+                            <td role="cell" data-label="Why We Collect It">Sending your receipt and thank-you email, and keeping accounting records</td>
+                            <td role="cell" data-label="Legal Basis">Contract and legal obligation</td>
                         </tr>
-                        <tr>
-                            <td><strong style="color:white">Profile data (optional)</strong></td>
-                            <td>Mobile number, address, city</td>
-                            <td>Profile features you voluntarily complete</td>
-                            <td>Consent</td>
+                        <tr role="row">
+                            <td role="cell" data-label="Category"><strong style="color:white">Profile data (optional)</strong></td>
+                            <td role="cell" data-label="Data">Mobile number, address, city</td>
+                            <td role="cell" data-label="Why We Collect It">Profile features you voluntarily complete</td>
+                            <td role="cell" data-label="Legal Basis">Consent</td>
                         </tr>
-                        <tr>
-                            <td><strong style="color:white">Support communications</strong></td>
-                            <td>Emails you send to us</td>
-                            <td>Responding to your enquiries</td>
-                            <td>Legitimate interests</td>
+                        <tr role="row">
+                            <td role="cell" data-label="Category"><strong style="color:white">Support communications</strong></td>
+                            <td role="cell" data-label="Data">Emails you send to us</td>
+                            <td role="cell" data-label="Why We Collect It">Responding to your enquiries</td>
+                            <td role="cell" data-label="Legal Basis">Legitimate interests</td>
                         </tr>
                     </tbody>
                 </table>
@@ -410,8 +428,10 @@
                 </div>
                 <div class="footer-links">
                     <a href="/#support">Contact Us</a>
+                    <a href="/support/">Support Stationly</a>
                     <a href="/privacy/">Privacy Policy</a>
                     <a href="/terms/">Terms of Service</a>
+                    <a href="/#developer">Developers</a>
                     <a href="#" onclick="manageCookies(event)">Cookie Settings</a>
                 </div>
             </div>
@@ -421,5 +441,7 @@
         </div>
     </footer>
 
+    <!-- Cookie consent (UK PECR / UK GDPR): shows the banner until a choice is saved, and powers the footer "Cookie Settings" link. -->
+    <script src="/js/cookie-consent.js?v=2"></script>
 </body>
 </html>

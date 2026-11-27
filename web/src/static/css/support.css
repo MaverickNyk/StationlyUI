@@ -520,10 +520,17 @@
 
 /* ── Responsive ── */
 @media (max-width: 960px) {
-    .sp-hero-inner { grid-template-columns: minmax(0, 1fr); gap: 3rem; }
-    .sp-hero-text { text-align: center; }
-    .sp-lede, .sp-board { margin-left: auto; margin-right: auto; }
-    .sp-card { max-width: 520px; margin: 0 auto; width: 100%; }
+    /* Stacked: the amounts come first so paying needs no scrolling.
+       Only the small badge stays above them; the title, lede and promise
+       board follow below the card. */
+    .sp-hero-inner { display: flex; flex-direction: column; align-items: center; gap: 0; text-align: center; }
+    .sp-hero-text { display: contents; }
+    .sp-hero-text > .launch-badge { order: 0; margin-bottom: 1rem; }
+    .sp-card { order: 1; max-width: 520px; margin: 0 auto; width: 100%; text-align: left; --i: 1 !important; }
+    .sp-hero-text > h1 { --i: 2 !important; }
+    .sp-hero-text > h1 { order: 2; margin: 3rem 0 1rem; }
+    .sp-lede { order: 3; margin-left: auto; margin-right: auto; }
+    .sp-board { order: 4; width: 100%; margin-left: auto; margin-right: auto; }
 }
 @media (max-width: 480px) {
     .sp-hero { padding: 112px 0 3.5rem; }
